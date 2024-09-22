@@ -1,0 +1,270 @@
+{
+  "version": "0.1.0",
+  "name": "ballista",
+  "instructions": [
+    {
+      "name": "CreateSchema",
+      "accounts": [
+        {
+          "name": "programId",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "Ballista program"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "System program"
+          ]
+        },
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "Payer account"
+          ]
+        },
+        {
+          "name": "schema",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "Schema Account"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "schema",
+          "type": {
+            "defined": "Schema"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 0
+      }
+    },
+    {
+      "name": "AddTask",
+      "accounts": [
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "Payer account"
+          ]
+        },
+        {
+          "name": "schema",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "Schema Account"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "System program"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "task",
+          "type": {
+            "defined": "TaskDefinition"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 1
+      }
+    },
+    {
+      "name": "RemoveTask",
+      "accounts": [
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "Payer account"
+          ]
+        },
+        {
+          "name": "schema",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "Schema Account"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "System program"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "taskIndex",
+          "type": "u8"
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 2
+      }
+    },
+    {
+      "name": "SetTask",
+      "accounts": [
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "Payer account"
+          ]
+        },
+        {
+          "name": "schema",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "Schema Account"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "System program"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "taskIndex",
+          "type": "u8"
+        },
+        {
+          "name": "task",
+          "type": {
+            "defined": "TaskDefinition"
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 3
+      }
+    },
+    {
+      "name": "ExecuteTask",
+      "accounts": [
+        {
+          "name": "schema",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "Schema Account"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "taskValues",
+          "type": {
+            "vec": {
+              "defined": "Value"
+            }
+          }
+        }
+      ],
+      "discriminant": {
+        "type": "u8",
+        "value": 4
+      }
+    }
+  ],
+  "types": [
+    {
+      "name": "UpdateSchemaArgs",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "AddTask",
+            "fields": [
+              {
+                "name": "task",
+                "type": {
+                  "defined": "TaskDefinition"
+                }
+              }
+            ]
+          },
+          {
+            "name": "RemoveTask",
+            "fields": [
+              {
+                "name": "task_index",
+                "type": "u8"
+              }
+            ]
+          },
+          {
+            "name": "SetTask",
+            "fields": [
+              {
+                "name": "task_index",
+                "type": "u8"
+              },
+              {
+                "name": "task",
+                "type": {
+                  "defined": "TaskDefinition"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidInstructionData",
+      "msg": "Invalid instruction"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidSchemaData",
+      "msg": "Invalid schema data"
+    }
+  ],
+  "metadata": {
+    "origin": "shank",
+    "address": "BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2",
+    "binaryVersion": "0.3.0",
+    "libVersion": "=0.3.0"
+  }
+}

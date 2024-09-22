@@ -1,0 +1,15 @@
+{
+  "rust-analyzer.linkedProjects": [
+    "${workspaceFolder}/programs/ballista/Cargo.toml",
+    "${workspaceFolder}/tests/ballista/Cargo.toml",
+    "${workspaceFolder}/clients/rust/Cargo.toml",
+    "${workspaceFolder}/common/Cargo.toml",
+    "${workspaceFolder}/macros/borsh_boxed/Cargo.toml"
+  ],
+  "lldb.launch.terminal": "integrated",
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer",
+    "editor.formatOnSave": true
+  },
+  "prettier.requireConfig": true
+}

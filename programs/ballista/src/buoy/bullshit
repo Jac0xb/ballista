@@ -1,0 +1,27 @@
+        // Call the instruction
+        // let instruction = InstructionC {
+        //     program_id: program_account.key(),
+        //     accounts: instruction_account_metas.as_ptr(),
+        //     accounts_len: instruction_account_metas.len() as u64,
+        //     data: serialized_instruction_arguments.as_ptr(),
+        //     data_len: serialized_instruction_arguments.len() as u64,
+        // };
+
+        // Get infos and seeds
+        // let infos = instruction_accounts
+        //     .iter()
+        //     .map(|account| account.to_info_c())
+        //     .collect::<Vec<_>>();
+        // let seeds: &[&[&[u8]]] = &[];
+
+        // // Invoke system program
+        // #[cfg(target_os = "solana")]
+        // unsafe {
+        //     solana_program::syscalls::sol_invoke_signed_c(
+        //         &instruction as *const InstructionC as *const u8,
+        //         infos.as_ptr() as *const u8,
+        //         infos.len() as u64,
+        //         seeds.as_ptr() as *const u8,
+        //         seeds.len() as u64,
+        //     );
+        // }

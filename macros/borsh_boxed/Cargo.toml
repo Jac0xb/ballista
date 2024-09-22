@@ -1,0 +1,29 @@
+# [package]
+# name = "borsh_enum_derive"
+# version = "0.1.0"
+# edition = "2021"
+
+# [lib]
+# proc-macro = true
+
+# [dependencies]
+# syn = { version = "1.0", features = ["full", "extra-traits"] }
+# quote = "1.0"
+# proc-macro2 = "1.0"
+
+[package]
+name = "borsh_boxed"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "1.0", features = ["full"] }
+borsh = "=0.10.3"
+
+[dev-dependencies]
+borsh = "=0.10.3"

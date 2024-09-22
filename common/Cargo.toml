@@ -1,0 +1,24 @@
+[package]
+name = "ballista-common"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+license-file = "../../LICENSE"
+description = "Shared common library used in ballista protocol and sdk"
+repository = "https://github.com/Jac0xb/ballista"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+serde = ["dep:serde", "dep:serde_with"]
+
+default = []
+
+[dependencies]
+borsh = "=0.10.3"
+serde = { version = "^1.0", features = ["derive"], optional = true }
+serde_with = { version = "^3.0", optional = true }
+leb128 = "0.2.5"
+borsh_boxed = { path = "../macros/borsh_boxed" }

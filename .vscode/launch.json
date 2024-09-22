@@ -1,0 +1,39 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run - Ballista Tests",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/tests/ballista/target/debug/deps/${input:latestTestBinary}",
+      "args": [],
+      "cwd": "${workspaceFolder}/tests/ballista",
+      "env": {
+        "RUST_LOG": "error",
+        "RUST_BACKTRACE": "1",
+        "SBF_OUT_DIR": "${workspaceFolder}/configs/.programs"
+      },
+      "preLaunchTask": "find-test-binary",
+      "sourceLanguages": ["rust"]
+    },
+    {
+      "type": "node-terminal",
+      "name": "Run - Current Typescript File",
+      "request": "launch",
+      "command": "ts-node -- ${fileBasenameNoExtension}",
+      "cwd": "${fileDirname}"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "latestTestBinary",
+      "type": "command",
+      "command": "extension.commandvariable.file.content",
+      "args": {
+        "fileName": "${workspaceFolder}/.tmp/ballista_test_binary.txt",
+        "key": "KEY",
+        "debug": true
+      }
+    }
+  ]
+}

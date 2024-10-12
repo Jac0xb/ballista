@@ -1,36 +1,23 @@
-// pub mod blackhat_program;
-// pub mod bubblegum;
-pub mod bubblegum;
-pub mod context;
+pub mod ballista;
+pub mod cloning;
 pub mod error;
+pub mod jupiter;
 pub mod program_test;
-pub mod schema;
+pub mod setup;
+pub mod test_context;
 pub mod transaction;
-pub mod tx_builder;
 
-// use anchor_spl::{associated_token, token::Mint};
 use bincode::serialize;
-// use lighthouse_sdk::errors::LighthouseError;
 use solana_banks_interface::BanksTransactionResultWithMetadata;
-use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_program_test::{BanksClient, BanksClientError};
 use solana_sdk::{
-    account::AccountSharedData,
-    instruction::{Instruction, InstructionError},
-    pubkey::Pubkey,
-    rent::Rent,
+    instruction::InstructionError,
     signature::Keypair,
-    signer::Signer,
-    system_instruction,
-    transaction::{Transaction, TransactionError, VersionedTransaction},
+    transaction::{TransactionError, VersionedTransaction},
 };
 use std::result;
 
-use self::{
-    context::{TestContext, DEFAULT_LAMPORTS_FUND_AMOUNT},
-    error::Error,
-    // test_program::TestProgram,
-};
+use self::{error::Error, test_context::TestContext};
 
 pub type Result<T> = result::Result<T, Box<error::Error>>;
 pub type BanksResult<T> = std::result::Result<T, BanksClientError>;
@@ -40,233 +27,6 @@ pub type BanksResult<T> = std::result::Result<T, BanksClientError>;
 pub fn clone_keypair(k: &Keypair) -> Keypair {
     Keypair::from_bytes(k.to_bytes().as_slice()).unwrap()
 }
-
-pub async fn create_user(ctx: &mut TestContext) -> Result<Keypair> {
-    let user = Keypair::new();
-    let _ = ctx
-        .fund_account(user.pubkey(), DEFAULT_LAMPORTS_FUND_AMOUNT)
-        .await;
-
-    Ok(user)
-}
-
-pub async fn create_user_with_balance(ctx: &mut TestContext, balance: u64) -> Result<Keypair> {
-    let user = Keypair::new();
-    let _ = ctx.fund_account(user.pubkey(), balance).await;
-
-    Ok(user)
-}
-
-pub struct CreateMintParameters {
-    pub token_program: Pubkey,
-    pub mint_authority: Option<Option<Pubkey>>,
-    pub freeze_authority: Option<Pubkey>,
-    pub decimals: u8,
-    pub mint_to: Option<(Pubkey, u64)>,
-}
-
-// pub async fn create_mint(
-//     ctx: &mut TestContext,
-//     payer: &Keypair,
-//     parameters: CreateMintParameters,
-// ) -> Result<(Transaction, Keypair)> {
-//     let mint = Keypair::new();
-
-//     let mint_rent = Rent::default().minimum_balance(Mint::LEN);
-
-//     let mut ixs = Vec::new();
-
-//     let create_ix = system_instruction::create_account(
-//         &payer.pubkey(),
-//         &mint.pubkey(),
-//         mint_rent,
-//         Mint::LEN as u64,
-//         &parameters.token_program,
-//     );
-//     let mint_ix = spl_token::instruction::initialize_mint2(
-//         &parameters.token_program,
-//         &mint.pubkey(),
-//         &payer.pubkey(),
-//         parameters.freeze_authority.as_ref(),
-//         parameters.decimals,
-//     )
-//     .unwrap();
-
-//     ixs.push(create_ix);
-//     ixs.push(mint_ix);
-
-//     if let Some((dest, amount)) = parameters.mint_to {
-//         let token_account = associated_token::get_associated_token_address(&dest, &mint.pubkey());
-//         let create_account_ix =
-//             spl_associated_token_account::instruction::create_associated_token_account(
-//                 &payer.pubkey(),
-//                 &dest,
-//                 &mint.pubkey(),
-//                 &spl_token::id(),
-//             );
-
-//         let mint_to_ix = spl_token::instruction::mint_to(
-//             &spl_token::id(),
-//             &mint.pubkey(),
-//             &token_account,
-//             &payer.pubkey(),
-//             &[],
-//             amount,
-//         )
-//         .unwrap();
-
-//         ixs.push(create_account_ix);
-//         ixs.push(mint_to_ix);
-//     }
-
-//     if let Some(mint_authority) = parameters.mint_authority {
-//         let set_authority_ix = spl_token::instruction::set_authority(
-//             &parameters.token_program,
-//             &mint.pubkey(),
-//             mint_authority.as_ref(),
-//             spl_token::instruction::AuthorityType::MintTokens,
-//             &payer.pubkey(),
-//             &[],
-//         )
-//         .unwrap();
-//         ixs.push(set_authority_ix);
-//     }
-
-//     let mut tx = Transaction::new_with_payer(&ixs, Some(&payer.pubkey()));
-//     let signers: &[Keypair; 2] = &[payer.insecure_clone(), mint.insecure_clone()];
-
-//     // print all the accounts in tx and is_signer
-//     for (i, account) in tx.message().account_keys.iter().enumerate() {
-//         println!("account: {} {}", account, tx.message.is_signer(i));
-//     }
-
-//     // print the signers pubkey in array
-//     for signer in signers.iter() {
-//         let pos = tx.get_signing_keypair_positions(&[signer.pubkey()]);
-//         println!(
-//             "signer: {} {}",
-//             signer.insecure_clone().pubkey(),
-//             pos.unwrap()[0].unwrap_or(0)
-//         );
-//     }
-
-//     tx.try_partial_sign(
-//         &signers.iter().collect::<Vec<_>>(),
-//         ctx.client().get_latest_blockhash().await.unwrap(),
-//     )
-//     .unwrap();
-
-//     Ok((tx, mint))
-// }
-
-pub async fn set_authority_mint(
-    ctx: &mut TestContext,
-    mint: &Pubkey,
-    authority: &Keypair,
-    new_authority: Option<Pubkey>,
-    authority_type: spl_token::instruction::AuthorityType,
-) -> Result<Transaction> {
-    let ix = spl_token::instruction::set_authority(
-        &spl_token::id(),
-        mint,
-        new_authority.as_ref(),
-        authority_type,
-        &authority.pubkey(),
-        &[],
-    )
-    .unwrap();
-
-    let mut tx = Transaction::new_with_payer(&[ix], Some(&authority.pubkey()));
-
-    let signers: &[Keypair; 1] = &[authority.insecure_clone()];
-
-    tx.try_partial_sign(
-        &signers.iter().collect::<Vec<_>>(),
-        ctx.client().get_latest_blockhash().await.unwrap(),
-    )
-    .unwrap();
-
-    Ok(tx)
-}
-
-pub async fn set_authority_token_account(
-    ctx: &mut TestContext,
-    token_account: &Pubkey,
-    authority: &Keypair,
-    new_authority: Option<Pubkey>,
-    authority_type: spl_token::instruction::AuthorityType,
-) -> Result<Transaction> {
-    let ix = spl_token::instruction::set_authority(
-        &spl_token::id(),
-        token_account,
-        new_authority.as_ref(),
-        authority_type,
-        &authority.pubkey(),
-        &[],
-    )
-    .unwrap();
-
-    let mut tx = Transaction::new_with_payer(&[ix], Some(&authority.pubkey()));
-
-    let signers: &[Keypair; 1] = &[authority.insecure_clone()];
-
-    tx.try_partial_sign(
-        &signers.iter().collect::<Vec<_>>(),
-        ctx.client().get_latest_blockhash().await.unwrap(),
-    )
-    .unwrap();
-
-    Ok(tx)
-}
-
-// pub async fn create_and_transfer_token_account_ix(
-//     ctx: &mut TestContext,
-//     sender: &Pubkey,
-//     mint: &Pubkey,
-//     dest: &Pubkey,
-//     amount: u64,
-// ) -> Result<Vec<Instruction>> {
-//     let src_token_account = associated_token::get_associated_token_address(sender, mint);
-//     let dest_token_account = associated_token::get_associated_token_address(dest, mint);
-
-//     let mut ixs = Vec::new();
-
-//     if let Some(account) = ctx.get_account(dest_token_account).await {
-//         if account.lamports == 0 {
-//             ixs.push(
-//                 spl_associated_token_account::instruction::create_associated_token_account(
-//                     sender,
-//                     dest,
-//                     mint,
-//                     &spl_token::id(),
-//                 ),
-//             )
-//         }
-//     } else {
-//         ixs.push(
-//             spl_associated_token_account::instruction::create_associated_token_account(
-//                 sender,
-//                 dest,
-//                 mint,
-//                 &spl_token::id(),
-//             ),
-//         )
-//     }
-
-//     ixs.push(
-//         spl_token::instruction::transfer(
-//             &spl_token::id(),
-//             &src_token_account,
-//             &dest_token_account,
-//             sender,
-//             &[],
-//             amount,
-//         )
-//         .unwrap(),
-//     );
-
-//     Ok(ixs)
-// }
 
 // pub async fn mint_to(
 //     ctx: &mut TestContext,
@@ -377,7 +137,7 @@ pub async fn process_transaction_assert_success(
     if tx_metadata.result.is_err() {
         return Err(Box::new(Error::TransactionFailed(format!(
             "Tx Result {:?}",
-            tx_metadata.result.clone().err()
+            tx_metadata
         ))));
     }
 
@@ -499,36 +259,36 @@ pub fn to_transaction_error_u8(ix_index: u8, program_error: u32) -> TransactionE
     TransactionError::InstructionError(ix_index, InstructionError::Custom(program_error))
 }
 
-pub async fn set_account_from_rpc(
-    context: &mut TestContext,
-    connection: &RpcClient,
-    account_pubkey: &Pubkey,
-) {
-    let account = connection.get_account(account_pubkey).await.unwrap();
+// pub async fn set_account_from_rpc(
+//     context: &mut TestContext,
+//     connection: &RpcClient,
+//     account_pubkey: &Pubkey,
+// ) {
+//     let account = connection.get_account(account_pubkey).await.unwrap();
 
-    let mut shared_account =
-        AccountSharedData::new(account.lamports, account.data.len(), &account.owner);
-    shared_account.set_data_from_slice(account.data.as_slice());
+//     let mut shared_account =
+//         AccountSharedData::new(account.lamports, account.data.len(), &account.owner);
+//     shared_account.set_data_from_slice(account.data.as_slice());
 
-    context
-        .program_context
-        .set_account(account_pubkey, &shared_account);
-}
+//     context
+//         .program_context
+//         .set_account(account_pubkey, &shared_account);
+// }
 
-pub async fn set_account_from_refs(
-    context: &mut TestContext,
-    account_pubkey: &Pubkey,
-    data: &[u8],
-    owner: &Pubkey,
-) {
-    let lamports = context
-        .get_minimum_balance_for_rent_exemption(data.len())
-        .await;
+// pub async fn set_account_from_refs(
+//     context: &mut TestContext,
+//     account_pubkey: &Pubkey,
+//     data: &[u8],
+//     owner: &Pubkey,
+// ) {
+//     let lamports = context
+//         .get_minimum_balance_for_rent_exemption(data.len())
+//         .await;
 
-    let mut shared_account = AccountSharedData::new(lamports, data.len(), owner);
-    shared_account.set_data_from_slice(data);
+//     let mut shared_account = AccountSharedData::new(lamports, data.len(), owner);
+//     shared_account.set_data_from_slice(data);
 
-    context
-        .program_context
-        .set_account(account_pubkey, &shared_account);
-}
+//     context
+//         .program_context
+//         .set_account(account_pubkey, &shared_account);
+// }

@@ -4,26 +4,26 @@ use crate::{
 };
 use borsh_boxed::{BorshDeserializeBoxed, BorshSerializeBoxed};
 
-use super::action::{
-    associated_token_program_instruction::AssociatedTokenProgramInstruction,
-    raw_instruction::RawInstruction,
-    schema_instruction::{SchemaInstruction, TaskAccount},
-    set_cache::SetCacheType,
-    system_instruction::SystemInstructionAction,
-    token_program_instruction::TokenProgramInstruction,
+use super::{
+    action::{
+        associated_token_program_instruction::AssociatedTokenProgramInstruction,
+        defined_instruction::DefinedInstruction, raw_instruction::RawInstruction,
+        set_cache::SetCacheType, system_instruction::SystemInstructionAction,
+        token_program_instruction::TokenProgramInstruction,
+    },
+    shared::TaskAccount,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, BorshDeserializeBoxed, BorshSerializeBoxed)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TaskAction {
-    SchemaInstruction(SchemaInstruction),
+    DefinedInstruction(DefinedInstruction),
     SystemInstruction(SystemInstructionAction),
     AssociatedTokenProgramInstruction(AssociatedTokenProgramInstruction),
     TokenProgramInstruction(TokenProgramInstruction),
     RawInstruction(RawInstruction),
-    RawInstructionGroup(Vec<RawInstruction>),
     SetCache(SetCacheType),
-    Validate(Validation),
+    // Assert(Validation),
     Conditional {
         condition: Condition,
         true_action: Box<TaskAction>,
@@ -32,11 +32,12 @@ pub enum TaskAction {
         condition: Condition,
         actions: Vec<Box<TaskAction>>,
     },
+    Log(Expression),
 }
 
 impl TaskAction {
-    pub fn schema_instruction(instruction: SchemaInstruction) -> TaskAction {
-        TaskAction::SchemaInstruction(instruction)
+    pub fn defined_instruction(instruction: DefinedInstruction) -> TaskAction {
+        TaskAction::DefinedInstruction(instruction)
     }
 
     pub fn system_instruction(instruction: SystemInstructionAction) -> TaskAction {
@@ -53,10 +54,6 @@ impl TaskAction {
 
     pub fn raw_instruction(instruction: RawInstruction) -> TaskAction {
         TaskAction::RawInstruction(instruction)
-    }
-
-    pub fn raw_instruction_group(instructions: Vec<RawInstruction>) -> TaskAction {
-        TaskAction::RawInstructionGroup(instructions)
     }
 
     pub fn set_cache(cache: SetCacheType) -> TaskAction {

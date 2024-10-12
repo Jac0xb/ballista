@@ -1,0 +1,7 @@
+- Spending Limit Constraints
+- Batching
+  - Send 30 SOL transfers
+  - Mint 15 cNFTs
+  - Transfer 21 tokens.
+- Conditional Execution
+  - If token account does not exist, create it

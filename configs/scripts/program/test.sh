@@ -18,7 +18,7 @@ if [ ! -z "$ARGS" ]; then
     ARGS=$*
 fi
 
-SOLFMT="solfmt"
+# SOLFMT="solfmt"
 export SBF_OUT_DIR="${WORKING_DIR}/${OUTPUT}"
 
 # cd ${WORKING_DIR}/ballista-common
@@ -37,5 +37,5 @@ export SBF_OUT_DIR="${WORKING_DIR}/${OUTPUT}"
 
 
 cd ${WORKING_DIR}/tests/ballista/
-# RUST_LOG=trace RUST_BACKTRACE=1 
-cargo test 2>&1
+# RUST_LOG=info RUST_BACKTRACE=1 
+RUST_BACKTRACE=1 cargo test 2>&1

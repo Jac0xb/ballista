@@ -1,6 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 
-use crate::task::action::schema_instruction::TaskAccount;
+use crate::task::shared::TaskAccount;
 
 #[derive(Clone, Debug, BorshDeserialize, BorshSerialize, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

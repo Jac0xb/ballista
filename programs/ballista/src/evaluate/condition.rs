@@ -1,10 +1,13 @@
 use ballista_common::logical_components::Condition;
 
-use crate::task_state::TaskState;
+use crate::{error::BallistaError, task_state::TaskState};
 
 use super::{evaluate_expression, evaluate_validation};
 
-pub fn evaluate_condition(condition: &Condition, task_state: &TaskState) -> Result<bool, String> {
+pub fn evaluate_condition(
+    condition: &Condition,
+    task_state: &TaskState,
+) -> Result<bool, BallistaError> {
     match condition {
         Condition::Equal(left, right) => {
             Ok(evaluate_expression(left, task_state)? == evaluate_expression(right, task_state)?)

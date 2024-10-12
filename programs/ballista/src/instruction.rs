@@ -1,40 +1,39 @@
-use ballista_common::{
-    logical_components::Value,
-    schema::{Schema, TaskDefinition},
-};
+use ballista_common::{logical_components::Value, schema::TaskDefinition};
 use borsh::{BorshDeserialize, BorshSerialize};
 use shank::ShankInstruction;
 
 #[derive(BorshSerialize, BorshDeserialize, ShankInstruction)]
 #[rustfmt::skip]
 pub(crate) enum BallistaInstruction {
-    #[account(0, name = "program_id", desc = "Ballista program")]
-    #[account(1, name = "system_program", desc = "System program")]
-    #[account(2, name = "payer", desc = "Payer account", signer, writable)]
-    #[account(3, name = "schema", desc = "Schema Account", writable)]
-    CreateSchema { 
-        schema: Schema,
-    },
+    // #[account(0, name = "program_id", desc = "Ballista program")]
+    // #[account(1, name = "system_program", desc = "System program")]
+    // #[account(2, name = "payer", desc = "Payer account", signer, writable)]
+    // #[account(3, name = "schema", desc = "Schema Account", writable)]
+    // CreateSchema { 
+    //     schema: Schema,
+    // },
     #[account(0, name = "payer", desc = "Payer account", signer, writable)]
-    #[account(1, name = "schema", desc = "Schema Account", writable)]
+    #[account(1, name = "task_definition", desc = "Task definition account", writable)]
     #[account(2, name = "system_program", desc = "System program")]
-    AddTask {
+    CreateTask {
         task: TaskDefinition,
+        task_id: u16,
     },
-    #[account(0, name = "payer", desc = "Payer account", signer, writable)]
-    #[account(1, name = "schema", desc = "Schema Account", writable)]
-    #[account(2, name = "system_program", desc = "System program")]
-    RemoveTask {
-        task_index: u8,
-    },
-    #[account(0, name = "payer", desc = "Payer account", signer, writable)]
-    #[account(1, name = "schema", desc = "Schema Account", writable)]
-    #[account(2, name = "system_program", desc = "System program")]
-    SetTask {
-        task_index: u8,
-        task: TaskDefinition,
-    },
+    // #[account(0, name = "payer", desc = "Payer account", signer, writable)]
+    // #[account(1, name = "schema", desc = "Schema Account", writable)]
+    // #[account(2, name = "system_program", desc = "System program")]
+    // RemoveTask {
+    //     task_index: u8,
+    // },
+    // #[account(0, name = "payer", desc = "Payer account", signer, writable)]
+    // #[account(1, name = "schema", desc = "Schema Account", writable)]
+    // #[account(2, name = "system_program", desc = "System program")]
+    // SetTask {
+    //     task_index: u8,
+    //     task: TaskDefinition,
+    // },
     #[account(0, name = "schema", desc = "Schema Account")]
+    #[account(1, name = "payer", desc = "Payer account", signer, writable)]
     ExecuteTask {
         task_values: Vec<Value>,
     }

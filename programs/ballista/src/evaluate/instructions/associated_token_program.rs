@@ -1,11 +1,11 @@
-use crate::{evaluate::evaluate_task_account, task_state::TaskState};
+use crate::{error::BallistaError, evaluate::evaluate_task_account, task_state::TaskState};
 use ballista_common::task::action::associated_token_program_instruction::AssociatedTokenProgramInstruction;
 use solana_program::instruction::{AccountMeta, Instruction};
 
 pub fn evaluate(
     program_instruction: &AssociatedTokenProgramInstruction,
     task_state: &mut TaskState,
-) -> Result<(), String> {
+) -> Result<(), BallistaError> {
     // let mut account_infos = vec![];
 
     let instruction: Instruction = match program_instruction {

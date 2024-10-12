@@ -1,8 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 
-use crate::logical_components::Expression;
-
-use super::schema_instruction::TaskAccount;
+use crate::{logical_components::Expression, task::shared::TaskAccount};
 
 #[derive(Clone, Debug, BorshDeserialize, BorshSerialize, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

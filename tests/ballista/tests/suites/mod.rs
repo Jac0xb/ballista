@@ -1,4 +1,11 @@
-pub mod system_transfer;
-// pub mod schema;
-// pub mod token_program;
-// pub mod mpl_bubblegum;
+#[cfg(feature = "suites_bubblegum")]
+mod bubblegum_program;
+
+#[cfg(feature = "suites_system")]
+mod system_program;
+
+#[cfg(feature = "suites_token")]
+mod token_program;
+
+#[cfg(feature = "suites_jup")]
+mod jup_program;

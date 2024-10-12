@@ -1,6 +1,7 @@
-use crate::{logical_components::Expression, schema::instruction::SerializationType};
+use crate::{logical_components::Expression, task::action::defined_instruction::SerializationType};
 use borsh::{BorshDeserialize, BorshSerialize};
 use borsh_boxed::{BorshDeserializeBoxed, BorshSerializeBoxed};
+use solana_program::msg;
 
 #[derive(Clone, Debug, BorshDeserialize, BorshSerialize, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -13,6 +14,14 @@ pub enum ValueType {
     I32,
     U64,
     I64,
+    I128,
+    U128,
+    Bytes,
+    Vec,
+    Option,
+    Struct,
+    String,
+    Bool,
 }
 
 #[derive(Clone, Debug, Eq, BorshDeserializeBoxed, BorshSerializeBoxed)]
@@ -33,6 +42,7 @@ pub enum Value {
     Option(Option<Box<Value>>),
     Struct(Vec<(String, Value)>),
     String(String),
+    Pubkey([u8; 32]),
     Bool(bool),
 }
 
@@ -65,6 +75,7 @@ impl Value {
             Value::String(_) => panic!("Cannot convert string to u128"),
             Value::Bool(_) => panic!("Cannot convert bool to u128"),
             Value::Vec(_) => panic!("Cannot convert vec to u128"),
+            Value::Pubkey(_) => panic!("Cannot convert pubkey to u128"),
         }
     }
 
@@ -92,65 +103,72 @@ impl Value {
             Value::String(_) => panic!("Cannot convert string to i128"),
             Value::Bool(_) => panic!("Cannot convert bool to i128"),
             Value::Vec(_) => panic!("Cannot convert vec to i128"),
+            Value::Pubkey(_) => panic!("Cannot convert pubkey to i128"),
         }
     }
 
-    pub fn as_bytes(&self, serialization_type: SerializationType) -> Vec<u8> {
+    pub fn as_bytes(&self, serialization_type: SerializationType, output: &mut Vec<u8>) {
+        // match self {
+        //     Value::U8(v) => msg!("evaluating u8"),
+        //     Value::I8(v) => msg!("evaluating i8"),
+        //     Value::U16(v) => msg!("evaluating u16"),
+        //     Value::I16(v) => msg!("evaluating i16"),
+        //     Value::U32(v) => msg!("evaluating u32"),
+        //     Value::I32(v) => msg!("evaluating i32"),
+        //     Value::U64(v) => msg!("evaluating u64"),
+        //     Value::I64(v) => msg!("evaluating i64"),
+        //     Value::I128(v) => msg!("evaluating i128"),
+        //     Value::U128(v) => msg!("evaluating u128"),
+        //     Value::Bytes(v) => msg!("evaluating bytes"),
+        //     Value::Vec(v) => msg!("evaluating vec"),
+        //     Value::Option(v) => msg!("evaluating option"),
+        //     Value::Struct(v) => msg!("evaluating struct"),
+        //     Value::String(v) => msg!("evaluating string"),
+        //     Value::Pubkey(v) => msg!("evaluating pubkey"),
+        //     Value::Bool(v) => msg!("evaluating bool"),
+        // }
+
         match self {
-            Value::U8(v) => v.to_le_bytes().to_vec(),
-            Value::I8(v) => v.to_le_bytes().to_vec(),
-            Value::U16(v) => v.to_le_bytes().to_vec(),
-            Value::I16(v) => v.to_le_bytes().to_vec(),
-            Value::U32(v) => v.to_le_bytes().to_vec(),
-            Value::I32(v) => v.to_le_bytes().to_vec(),
-            Value::U64(v) => v.to_le_bytes().to_vec(),
-            Value::I64(v) => v.to_le_bytes().to_vec(),
-            Value::I128(v) => v.to_le_bytes().to_vec(),
-            Value::U128(v) => v.to_le_bytes().to_vec(),
-            Value::Bytes(v) => v.clone(),
+            Value::U8(v) => output.extend_from_slice(&v.to_le_bytes()),
+            Value::I8(v) => output.extend_from_slice(&v.to_le_bytes()),
+            Value::U16(v) => output.extend_from_slice(&v.to_le_bytes()),
+            Value::I16(v) => output.extend_from_slice(&v.to_le_bytes()),
+            Value::U32(v) => output.extend_from_slice(&v.to_le_bytes()),
+            Value::I32(v) => output.extend_from_slice(&v.to_le_bytes()),
+            Value::U64(v) => output.extend_from_slice(&v.to_le_bytes()),
+            Value::I64(v) => output.extend_from_slice(&v.to_le_bytes()),
+            Value::I128(v) => output.extend_from_slice(&v.to_le_bytes()),
+            Value::U128(v) => output.extend_from_slice(&v.to_le_bytes()),
+            Value::Bytes(v) => output.extend_from_slice(v),
             Value::Vec(v) => {
-                // TODO: dog shit
-                let mut bytes = vec![0, 0, 0, v.len() as u8];
+                output.extend_from_slice(&(v.len() as u32).to_le_bytes());
+
                 for value in v.iter() {
-                    bytes.extend_from_slice(&value.as_bytes(serialization_type));
+                    value.as_bytes(serialization_type, output);
                 }
-                bytes
             }
-            Value::Option(v) => match serialization_type {
-                SerializationType::Borsh => {
-                    let mut bytes = vec![];
-                    if let Some(v) = v {
-                        bytes.extend_from_slice(&[1]);
-                        bytes.extend_from_slice(&v.as_bytes(serialization_type));
-                    } else {
-                        bytes.extend_from_slice(&[0]);
+            Value::Option(v) => {
+                output.extend_from_slice(&[v.is_some() as u8]);
+
+                match v {
+                    Some(v) => {
+                        v.as_bytes(serialization_type, output);
                     }
-                    bytes
+                    None => output.extend_from_slice(&[]),
                 }
-                SerializationType::C => {
-                    panic!("C serialization not supported for structs");
+            }
+            Value::Struct(v) => {
+                for (_, value) in v.iter() {
+                    // output.extend_from_slice(name.as_bytes());
+                    value.as_bytes(serialization_type, output);
                 }
-                SerializationType::Bytemuck => {
-                    panic!("Bytes serialization not supported for structs");
-                }
-            },
-            Value::Struct(fields) => match serialization_type {
-                SerializationType::Borsh => {
-                    let mut bytes = vec![];
-                    for (name, value) in fields.iter() {
-                        bytes.extend_from_slice(&value.as_bytes(serialization_type));
-                    }
-                    bytes
-                }
-                SerializationType::C => {
-                    panic!("C serialization not supported for structs");
-                }
-                SerializationType::Bytemuck => {
-                    panic!("Bytes serialization not supported for structs");
-                }
-            },
-            Value::String(v) => v.try_to_vec().unwrap(),
-            Value::Bool(v) => vec![*v as u8],
+            }
+            Value::String(v) => {
+                output.extend_from_slice(&(v.len() as u32).to_le_bytes());
+                output.extend_from_slice(v.as_bytes())
+            }
+            Value::Bool(v) => output.extend_from_slice(&[*v as u8]),
+            Value::Pubkey(v) => output.extend_from_slice(v),
         }
     }
 
@@ -217,6 +235,26 @@ impl Value {
                     Err("Out of range for I64".into())
                 }
             }
+            ValueType::I128 => {
+                if (i128::MIN as i128..=i128::MAX as i128).contains(&v) {
+                    Ok(Value::I128(v as i128))
+                } else {
+                    Err("Out of range for I128".into())
+                }
+            }
+            ValueType::U128 => {
+                if (0..=u128::MAX as i128).contains(&v) {
+                    Ok(Value::U128(v as u128))
+                } else {
+                    Err("Out of range for U128".into())
+                }
+            }
+            ValueType::Bytes => Err("Cannot cast to bytes".into()),
+            ValueType::Vec => Err("Cannot cast to vec".into()),
+            ValueType::Option => Err("Cannot cast to option".into()),
+            ValueType::Struct => Err("Cannot cast to struct".into()),
+            ValueType::String => Err("Cannot cast to string".into()),
+            ValueType::Bool => Err("Cannot cast to bool".into()),
         }
     }
 
@@ -476,67 +514,3 @@ impl_unchecked_arithmetic!(wrapping_op, wrapping_sub, wrapping_sub);
 
 // Implement wrapped division
 impl_unchecked_arithmetic!(wrapping_op, wrapping_div, wrapping_div);
-
-// impl<T> TryFrom<T> for Value
-// where
-//     T: TryInto<Value>,
-//     <T as TryInto<Value>>::Error: std::fmt::Debug,
-// {
-//     type Error = String;
-
-//     fn try_from(value: T) -> Result<Self, Self::Error> {
-//         value
-//             .try_into()
-//             .map_err(|e| format!("Conversion error: {:?}", e))
-//     }
-// }
-
-// macro_rules! impl_try_into_value {
-//     ($($t:ty => $variant:ident),*) => {
-//         $(
-//             impl TryInto<Value> for $t {
-//                 type Error = String;
-
-//                 fn try_into(self) -> Result<Value, Self::Error> {
-//                     Ok(Value::$variant(self))
-//                 }
-//             }
-//         )*
-//     };
-// }
-
-// impl_try_into_value! {
-//     u8 => U8,
-//     i8 => I8,
-//     u16 => U16,
-//     i16 => I16,
-//     u32 => U32,
-//     i32 => I32,
-//     u64 => U64,
-//     i64 => I64,
-//     i128 => I128,
-//     u128 => U128
-// }
-
-// pub struct MetadataArgs {
-//     /// The name of the asset
-//     pub name: String,
-//     /// The symbol for the asset
-//     pub symbol: String,
-//     /// URI pointing to JSON representing the asset
-//     pub uri: String,
-//     /// Royalty basis points that goes to creators in secondary sales (0-10000)
-//     pub seller_fee_basis_points: u16,
-//     pub primary_sale_happened: bool,
-//     pub is_mutable: bool,
-//     /// nonce for easy calculation of editions, if present
-//     pub edition_nonce: Option<u8>,
-//     /// Since we cannot easily change Metadata, we add the new DataV2 fields here at the end.
-//     pub token_standard: Option<TokenStandard>,
-//     /// Collection
-//     pub collection: Option<Collection>,
-//     /// Uses
-//     pub uses: Option<Uses>,
-//     pub token_program_version: TokenProgramVersion,
-//     pub creators: Vec<Creator>,
-// }

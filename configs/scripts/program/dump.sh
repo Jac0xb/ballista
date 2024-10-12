@@ -27,6 +27,9 @@ copy_from_chain() {
     ACCOUNT_TYPE=$(echo $2 | cut -d. -f2)
     PREFIX=$3
 
+    echo "Copying $2 from $1"
+    echo "Account type: $ACCOUNT_TYPE"
+
     case "$ACCOUNT_TYPE" in
     "bin")
         solana account -u $RPC $1 -o ${PROGRAMS_OUTPUT_DIR}/$3$2 >/dev/null

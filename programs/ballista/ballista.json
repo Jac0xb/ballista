@@ -3,24 +3,8 @@
   "name": "ballista",
   "instructions": [
     {
-      "name": "CreateSchema",
+      "name": "CreateTask",
       "accounts": [
-        {
-          "name": "programId",
-          "isMut": false,
-          "isSigner": false,
-          "docs": [
-            "Ballista program"
-          ]
-        },
-        {
-          "name": "systemProgram",
-          "isMut": false,
-          "isSigner": false,
-          "docs": [
-            "System program"
-          ]
-        },
         {
           "name": "payer",
           "isMut": true,
@@ -30,150 +14,37 @@
           ]
         },
         {
-          "name": "schema",
+          "name": "taskDefinition",
           "isMut": true,
           "isSigner": false,
           "docs": [
-            "Schema Account"
+            "Task definition account"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "System program"
           ]
         }
       ],
       "args": [
         {
-          "name": "schema",
+          "name": "task",
           "type": {
-            "defined": "Schema"
+            "defined": "TaskDefinition"
           }
+        },
+        {
+          "name": "taskId",
+          "type": "u16"
         }
       ],
       "discriminant": {
         "type": "u8",
         "value": 0
-      }
-    },
-    {
-      "name": "AddTask",
-      "accounts": [
-        {
-          "name": "payer",
-          "isMut": true,
-          "isSigner": true,
-          "docs": [
-            "Payer account"
-          ]
-        },
-        {
-          "name": "schema",
-          "isMut": true,
-          "isSigner": false,
-          "docs": [
-            "Schema Account"
-          ]
-        },
-        {
-          "name": "systemProgram",
-          "isMut": false,
-          "isSigner": false,
-          "docs": [
-            "System program"
-          ]
-        }
-      ],
-      "args": [
-        {
-          "name": "task",
-          "type": {
-            "defined": "TaskDefinition"
-          }
-        }
-      ],
-      "discriminant": {
-        "type": "u8",
-        "value": 1
-      }
-    },
-    {
-      "name": "RemoveTask",
-      "accounts": [
-        {
-          "name": "payer",
-          "isMut": true,
-          "isSigner": true,
-          "docs": [
-            "Payer account"
-          ]
-        },
-        {
-          "name": "schema",
-          "isMut": true,
-          "isSigner": false,
-          "docs": [
-            "Schema Account"
-          ]
-        },
-        {
-          "name": "systemProgram",
-          "isMut": false,
-          "isSigner": false,
-          "docs": [
-            "System program"
-          ]
-        }
-      ],
-      "args": [
-        {
-          "name": "taskIndex",
-          "type": "u8"
-        }
-      ],
-      "discriminant": {
-        "type": "u8",
-        "value": 2
-      }
-    },
-    {
-      "name": "SetTask",
-      "accounts": [
-        {
-          "name": "payer",
-          "isMut": true,
-          "isSigner": true,
-          "docs": [
-            "Payer account"
-          ]
-        },
-        {
-          "name": "schema",
-          "isMut": true,
-          "isSigner": false,
-          "docs": [
-            "Schema Account"
-          ]
-        },
-        {
-          "name": "systemProgram",
-          "isMut": false,
-          "isSigner": false,
-          "docs": [
-            "System program"
-          ]
-        }
-      ],
-      "args": [
-        {
-          "name": "taskIndex",
-          "type": "u8"
-        },
-        {
-          "name": "task",
-          "type": {
-            "defined": "TaskDefinition"
-          }
-        }
-      ],
-      "discriminant": {
-        "type": "u8",
-        "value": 3
       }
     },
     {
@@ -185,6 +56,14 @@
           "isSigner": false,
           "docs": [
             "Schema Account"
+          ]
+        },
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "Payer account"
           ]
         }
       ],
@@ -200,52 +79,7 @@
       ],
       "discriminant": {
         "type": "u8",
-        "value": 4
-      }
-    }
-  ],
-  "types": [
-    {
-      "name": "UpdateSchemaArgs",
-      "type": {
-        "kind": "enum",
-        "variants": [
-          {
-            "name": "AddTask",
-            "fields": [
-              {
-                "name": "task",
-                "type": {
-                  "defined": "TaskDefinition"
-                }
-              }
-            ]
-          },
-          {
-            "name": "RemoveTask",
-            "fields": [
-              {
-                "name": "task_index",
-                "type": "u8"
-              }
-            ]
-          },
-          {
-            "name": "SetTask",
-            "fields": [
-              {
-                "name": "task_index",
-                "type": "u8"
-              },
-              {
-                "name": "task",
-                "type": {
-                  "defined": "TaskDefinition"
-                }
-              }
-            ]
-          }
-        ]
+        "value": 1
       }
     }
   ],
@@ -259,6 +93,71 @@
       "code": 6001,
       "name": "InvalidSchemaData",
       "msg": "Invalid schema data"
+    },
+    {
+      "code": 6002,
+      "name": "EvaluationError",
+      "msg": "Failed to get account from all accounts"
+    },
+    {
+      "code": 6003,
+      "name": "StaticValueNotFound",
+      "msg": "Static value not found"
+    },
+    {
+      "code": 6004,
+      "name": "CachedValueNotFound",
+      "msg": "Cached value not found"
+    },
+    {
+      "code": 6005,
+      "name": "InputValueNotFound",
+      "msg": "Input value not found"
+    },
+    {
+      "code": 6006,
+      "name": "InvalidCast",
+      "msg": "Invalid cast"
+    },
+    {
+      "code": 6007,
+      "name": "ArithmeticOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidTokenAccount",
+      "msg": "Invalid token account"
+    },
+    {
+      "code": 6009,
+      "name": "AccountNotFound",
+      "msg": "Account not found"
+    },
+    {
+      "code": 6010,
+      "name": "TaskNotFound",
+      "msg": "Task not found"
+    },
+    {
+      "code": 6011,
+      "name": "InstructionSchemaNotFound",
+      "msg": "Instruction schema not found"
+    },
+    {
+      "code": 6012,
+      "name": "AccountEmpty",
+      "msg": "Account empty"
+    },
+    {
+      "code": 6013,
+      "name": "InvalidAccountRange",
+      "msg": "Invalid account range"
+    },
+    {
+      "code": 6014,
+      "name": "RangeOutOfBounds",
+      "msg": "Range out of bounds"
     }
   ],
   "metadata": {

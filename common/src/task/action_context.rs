@@ -78,6 +78,7 @@ impl ActionCollection for &[&Box<TaskAction>] {
 
 pub struct ActionContext<'a> {
     pub current_index: u8,
+    pub depth: u8,
     pub actions: &'a dyn ActionCollection,
 }
 

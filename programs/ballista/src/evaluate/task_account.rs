@@ -1,35 +1,50 @@
 use super::evaluate_expression;
-use crate::task_state::TaskState;
-use ballista_common::{logical_components::Value, task::action::schema_instruction::TaskAccount};
+use crate::{error::BallistaError, task_state::TaskState};
+use ballista_common::{logical_components::Value, task::shared::TaskAccount};
 use solana_program::account_info::AccountInfo;
 
 pub fn evaluate_program_task_account<'info, 'a>(
     program: &TaskAccount,
     task_state: &TaskState<'info, 'a>,
-) -> Result<&'a AccountInfo<'info>, String> {
+) -> Result<&'a AccountInfo<'info>, BallistaError> {
     match program {
+        TaskAccount::FeePayer => todo!(),
         TaskAccount::FromInput(index) => task_state
             .all_accounts
             .get(*index as usize)
-            .ok_or_else(|| format!("Input account at index {} not found", index)),
+            .ok_or(BallistaError::AccountNotFound),
         TaskAccount::Evaluated(expression) => {
             let account_value = evaluate_expression(expression, task_state)?;
 
-            let index = match account_value {
-                Value::U8(value) => value as usize,
-                _ => return Err("Program account index must be a u8".to_string()),
+            let index = match account_value.as_ref() {
+                Value::U8(value) => *value as usize,
+                _ => return Err(BallistaError::InvalidCast),
             };
 
             task_state
                 .all_accounts
                 .get(index)
-                .ok_or_else(|| format!("Input account at index {} not found", index))
+                .ok_or(BallistaError::AccountNotFound)
         }
-        TaskAccount::MultipleInput { .. } => {
-            Err("Multiple input not implemented for program account".to_string())
-        }
-        TaskAccount::MultipleEvaluated { .. } => {
-            Err("Multiple evaluated not implemented for program account".to_string())
+        TaskAccount::FromGroup {
+            group_index,
+            account_index,
+        } => {
+            let group = task_state
+                .definition
+                .account_groups
+                .get(*group_index as usize)
+                // TODO: Better error handling
+                .ok_or(BallistaError::TaskNotFound)?;
+
+            let offset = evaluate_expression(&group.account_offset, task_state)?.as_u128();
+
+            let account = task_state
+                .all_accounts
+                .get((offset + *account_index as u128) as usize)
+                .ok_or(BallistaError::AccountNotFound)?;
+
+            Ok(account)
         }
     }
 }
@@ -37,104 +52,139 @@ pub fn evaluate_program_task_account<'info, 'a>(
 pub fn evaluate_task_account<'info, 'a>(
     account: &TaskAccount,
     task_state: &TaskState<'info, 'a>,
-) -> Result<&'a AccountInfo<'info>, String> {
+) -> Result<&'a AccountInfo<'info>, BallistaError> {
     match account {
+        TaskAccount::FeePayer => Ok(task_state.payer),
         TaskAccount::FromInput(index) => task_state
             .all_accounts
             .get(*index as usize)
-            .ok_or_else(|| format!("Input account at index {} not found", index)),
+            .ok_or(BallistaError::InputValueNotFound),
         TaskAccount::Evaluated(expression) => {
             let account_value = evaluate_expression(expression, task_state)?;
 
-            let index = match account_value {
-                Value::U8(value) => value as usize,
-                _ => return Err("Program account index must be a u8".to_string()),
+            let index = match account_value.as_ref() {
+                Value::U8(value) => *value as usize,
+                _ => return Err(BallistaError::InvalidCast),
             };
 
             task_state
                 .all_accounts
                 .get(index)
-                .ok_or_else(|| format!("Input account at index {} not found", index))
+                .ok_or(BallistaError::InputValueNotFound)
         }
-        TaskAccount::MultipleInput { .. } => {
-            Err("Multiple input not implemented for task account".to_string())
-        }
-        TaskAccount::MultipleEvaluated { .. } => {
-            Err("Multiple evaluated not implemented for task account".to_string())
-        }
+        TaskAccount::FromGroup {
+            group_index,
+            account_index,
+        } => {
+            let group = task_state
+                .definition
+                .account_groups
+                .get(*group_index as usize)
+                .ok_or(BallistaError::TaskNotFound)?;
+
+            let offset = evaluate_expression(&group.account_offset, task_state)?.as_u128();
+
+            let account = task_state
+                .all_accounts
+                .get((offset + *account_index as u128) as usize)
+                .ok_or(BallistaError::AccountNotFound)?;
+
+            Ok(account)
+        } //
+          //
+          // TaskAccount::MultipleInput { start, length } => {
+          //     let range = *start as usize..(*start + *length) as usize;
+
+          // }
+          // TaskAccount::MultipleEvaluated { .. } => {
+          //     // Err("Multiple evaluated not implemented for task account".to_string())
+
+          //     panic!("unimplemented")
+          // }
     }
 }
 
-pub fn evaluate_task_accounts<'info, 'a, 'b>(
-    account: &TaskAccount,
-    task_state: &TaskState<'info, 'a>,
-    instruction_accounts: &'b mut Vec<&'a AccountInfo<'info>>,
-) -> Result<(), String>
-where
-    'a: 'b,
-{
-    match account {
-        TaskAccount::FromInput(index) => {
-            let account = task_state
-                .all_accounts
-                .get(*index as usize)
-                .ok_or_else(|| format!("Input account at index {} not found", index))?;
+// pub fn evaluate_task_accounts<'info, 'a>(
+//     account: &TaskAccount,
+//     task_state: &mut TaskState<'_, '_>,
+//     // instruction_accounts: &'_ mut CacheVec<AccountInfo<'info>>,
+// ) -> Result<&'a AccountInfo<'info>, BallistaError> {
+//     debug_msg!("evaluate task accounts");
 
-            instruction_accounts.push(account);
-        }
-        TaskAccount::Evaluated(expression) => {
-            let account_value = evaluate_expression(expression, task_state)?;
+//     match account {
+//         TaskAccount::FromInput(index) => {
+//             // debug_msg!("evaluating from input 1");
 
-            let index = match account_value {
-                Value::U8(value) => value as usize,
-                _ => return Err("Program account index must be a u8".to_string()),
-            };
+//             let account = task_state
+//                 .all_accounts
+//                 .get(*index as usize)
+//                 .ok_or(BallistaError::EvaluationError)?;
 
-            let account = task_state
-                .all_accounts
-                .get(index)
-                .ok_or_else(|| format!("Input account at index {} not found", index))?;
+//             // debug_msg!("evaluated from input 2");
 
-            instruction_accounts.push(account);
-        }
-        TaskAccount::MultipleInput { start, length } => {
-            let range = *start as usize..(*start + *length) as usize;
+//             // let account = account.clone();
 
-            for i in range {
-                let account = task_state
-                    .all_accounts
-                    .get(i)
-                    .ok_or_else(|| format!("Input account at index {} not found", i))?;
+//             // debug_msg!("evaluated from input 3");
 
-                instruction_accounts.push(account);
-            }
-        }
-        TaskAccount::MultipleEvaluated { start, length } => {
-            let evaluated_start = evaluate_expression(start, task_state)?;
-            let evaluated_length = evaluate_expression(length, task_state)?;
+//             // task_state.account_info_cache.push(account.clone());
 
-            let start = match evaluated_start {
-                Value::U8(value) => value as usize,
-                _ => return Err("Start index must be a u8".to_string()),
-            };
+//             // debug_msg!("evaluated from input 4");
 
-            let length = match evaluated_length {
-                Value::U8(value) => value as usize,
-                _ => return Err("Length must be a u8".to_string()),
-            };
+//             Ok(account)
+//         }
+//         TaskAccount::Evaluated(expression) => {
+//             let account_value = evaluate_expression(expression, task_state)?;
 
-            for i in 0..length {
-                let index = start + i;
+//             let index = match account_value {
+//                 Value::U8(value) => value as usize,
+//                 _ => return Err(BallistaError::InvalidCast),
+//             };
 
-                let account = task_state
-                    .all_accounts
-                    .get(index)
-                    .ok_or_else(|| format!("Input account at index {} not found", index))?;
+//             let account = task_state
+//                 .all_accounts
+//                 .get(index)
+//                 .ok_or(BallistaError::EvaluationError)?;
 
-                instruction_accounts.push(account);
-            }
-        }
-    };
+//             task_state.account_info_cache.push(account.clone());
+//         }
+//         TaskAccount::MultipleInput { start, length } => {
+//             let range = *start as usize..(*start + *length) as usize;
 
-    Ok(())
-}
+//             for i in range {
+//                 let account = task_state
+//                     .all_accounts
+//                     .get(i)
+//                     .ok_or(BallistaError::EvaluationError)?;
+
+//                 task_state.account_info_cache.push(account.clone());
+//             }
+//         }
+//         TaskAccount::MultipleEvaluated { start, length } => {
+//             let evaluated_start = evaluate_expression(start, task_state)?;
+//             let evaluated_length = evaluate_expression(length, task_state)?;
+
+//             let start = match evaluated_start {
+//                 Value::U8(value) => value as usize,
+//                 _ => return Err(BallistaError::EvaluationError),
+//             };
+
+//             let length = match evaluated_length {
+//                 Value::U8(value) => value as usize,
+//                 _ => return Err(BallistaError::EvaluationError),
+//             };
+
+//             for i in 0..length {
+//                 let index = start + i;
+
+//                 let account = task_state
+//                     .all_accounts
+//                     .get(index)
+//                     .ok_or(BallistaError::EvaluationError)?;
+
+//                 task_state.account_info_cache.push(account.clone());
+//             }
+//         }
+//     };
+
+//     Ok(())
+// }

@@ -25,6 +25,45 @@ pub enum BallistaError {
 
     #[error("Invalid schema data")]
     InvalidSchemaData = 6001,
+
+    #[error("Failed to get account from all accounts")]
+    EvaluationError = 6002,
+
+    #[error("Static value not found")]
+    StaticValueNotFound = 6003,
+
+    #[error("Cached value not found")]
+    CachedValueNotFound,
+
+    #[error("Input value not found")]
+    InputValueNotFound,
+
+    #[error("Invalid cast")]
+    InvalidCast,
+
+    #[error("Arithmetic overflow")]
+    ArithmeticOverflow,
+
+    #[error("Invalid token account")]
+    InvalidTokenAccount,
+
+    #[error("Account not found")]
+    AccountNotFound,
+
+    #[error("Task not found")]
+    TaskNotFound,
+
+    #[error("Instruction schema not found")]
+    InstructionSchemaNotFound,
+
+    #[error("Account empty")]
+    AccountEmpty,
+
+    #[error("Invalid account range")]
+    InvalidAccountRange,
+
+    #[error("Range out of bounds")]
+    RangeOutOfBounds,
 }
 
 impl From<BallistaError> for ProgramError {

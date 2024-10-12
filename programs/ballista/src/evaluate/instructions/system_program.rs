@@ -1,6 +1,7 @@
-use std::ptr;
+use std::{ops::Deref, ptr};
 
 use crate::{
+    error::BallistaError,
     evaluate::{evaluate_expression, evaluate_task_account},
     task_state::TaskState,
 };
@@ -16,16 +17,17 @@ use solana_program::{
 pub fn evaluate(
     system_instruction: &SystemInstructionAction,
     task_state: &mut TaskState,
-) -> Result<(), String> {
+    instruction_data_cache: &mut Vec<u8>,
+) -> Result<(), BallistaError> {
     let instruction: Instruction = match system_instruction {
         SystemInstructionAction::Transfer { from, to, amount } => {
             let from_account = evaluate_task_account(from, task_state)?;
             let to_account = evaluate_task_account(to, task_state)?;
 
             let amount = evaluate_expression(amount, task_state)?;
-            let amount = match amount {
-                Value::U64(value) => value,
-                _ => return Err("Amount must be a u64".to_string()),
+            let amount = match amount.as_ref() {
+                Value::U64(value) => *value,
+                _ => return Err(BallistaError::InvalidCast),
             };
 
             task_state
@@ -34,12 +36,12 @@ pub fn evaluate(
 
             task_state.account_meta_cache.extend_from_slice(&[
                 AccountMeta {
-                    pubkey: unsafe { ptr::read(from_account.key) },
+                    pubkey: *from_account.key,
                     is_signer: true,
                     is_writable: true,
                 },
                 AccountMeta {
-                    pubkey: unsafe { ptr::read(to_account.key) },
+                    pubkey: *to_account.key,
                     is_signer: false,
                     is_writable: true,
                 },
@@ -47,9 +49,9 @@ pub fn evaluate(
 
             unsafe {
                 let mut instruction_data: Vec<u8> = Vec::from_raw_parts(
-                    task_state.instruction_data_cache.as_ptr() as *mut u8,
-                    task_state.instruction_data_cache.len(),
-                    task_state.instruction_data_cache.capacity(),
+                    instruction_data_cache.as_ptr() as *mut u8,
+                    instruction_data_cache.len(),
+                    instruction_data_cache.capacity(),
                 );
 
                 bincode::serialize_into(
@@ -80,15 +82,15 @@ pub fn evaluate(
             let owner = evaluate_task_account(program_owner, task_state)?;
 
             let space = evaluate_expression(space, task_state)?;
-            let space = match space {
-                Value::U64(value) => value,
-                _ => return Err("Space must be a u64".to_string()),
+            let space = match space.as_ref() {
+                Value::U64(value) => *value,
+                _ => return Err(BallistaError::InvalidCast),
             };
 
             let lamports = evaluate_expression(lamports, task_state)?;
-            let lamports = match lamports {
-                Value::U64(value) => value,
-                _ => return Err("Lamports must be a u64".to_string()),
+            let lamports = match lamports.as_ref() {
+                Value::U64(value) => *value,
+                _ => return Err(BallistaError::InvalidCast),
             };
 
             task_state.account_info_cache.push(account.to_owned());
@@ -112,9 +114,9 @@ pub fn evaluate(
                 // );
 
                 let mut instruction_data: Vec<u8> = Vec::from_raw_parts(
-                    task_state.instruction_data_cache.as_ptr() as *mut u8,
-                    task_state.instruction_data_cache.len(),
-                    task_state.instruction_data_cache.capacity(),
+                    instruction_data_cache.as_ptr() as *mut u8,
+                    instruction_data_cache.len(),
+                    instruction_data_cache.capacity(),
                 );
 
                 bincode::serialize_into(

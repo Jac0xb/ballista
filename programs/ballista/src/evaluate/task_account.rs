@@ -1,12 +1,12 @@
 use super::evaluate_expression;
 use crate::{error::BallistaError, task_state::TaskState};
 use ballista_common::{logical_components::Value, task::shared::TaskAccount};
-use solana_program::account_info::AccountInfo;
+use pinocchio::account_info::AccountInfo;
 
-pub fn evaluate_program_task_account<'info, 'a>(
+pub fn evaluate_program_task_account<'a>(
     program: &TaskAccount,
-    task_state: &TaskState<'info, 'a>,
-) -> Result<&'a AccountInfo<'info>, BallistaError> {
+    task_state: &TaskState<'a>,
+) -> Result<&'a AccountInfo, BallistaError> {
     match program {
         TaskAccount::FeePayer => todo!(),
         TaskAccount::FromInput(index) => task_state
@@ -51,8 +51,8 @@ pub fn evaluate_program_task_account<'info, 'a>(
 
 pub fn evaluate_task_account<'info, 'a>(
     account: &TaskAccount,
-    task_state: &TaskState<'info, 'a>,
-) -> Result<&'a AccountInfo<'info>, BallistaError> {
+    task_state: &TaskState<'a>,
+) -> Result<&'a AccountInfo, BallistaError> {
     match account {
         TaskAccount::FeePayer => Ok(task_state.payer),
         TaskAccount::FromInput(index) => task_state

@@ -133,7 +133,7 @@ pub fn mint_bubblegum_nft_task_definition(loop_count: u8) -> TaskDefinition {
 }
 
 pub fn build_mint_bubblegum_nft_task_execution(
-    schema: &Pubkey,
+    task: &Pubkey,
     tree_authority: &Pubkey,
     leaf_owner: &Pubkey,
     leaf_delegate: &Pubkey,
@@ -142,7 +142,7 @@ pub fn build_mint_bubblegum_nft_task_execution(
 ) -> Instruction {
     let instruction = ExecuteTaskBuilder::new()
         .task_values(vec![])
-        .schema(*schema)
+        .task(*task)
         .payer(*payer)
         .add_remaining_accounts(&vec![
             AccountMeta {

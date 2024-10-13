@@ -14,12 +14,13 @@ default = [
   "suites_bubblegum",
   "suites_system",
   "suites_token",
+  "suites_jup"
 
 ]
 suites_bubblegum = []
 suites_system = []
 suites_token = []
-
+suites_jup = []
 
 
 [lib]
@@ -52,6 +53,8 @@ solana-client = "1.18.23"
 solana-loader-v4-program = "1.18.23"
 solana-program = "1.18.23"
 solana-program-test = "1.18.23"
+
+
 # marginfi = { git = "https://github.com/mrgnlabs/marginfi-v2", rev = "7b10c51b9934130b029f220c410e517c0ad8c7c4", package = "marginfi-v2-cli" }
 # { git = "https://github.com/Jac0xb/agave-redux.git", rev = "51fe82762cc75b991433226cda55b820db15be5d", package = "solana-program-test" }
 solana-sdk = "1.18.23"

@@ -4,15 +4,20 @@ use ballista_common::logical_components::{
     AccountInfoType, ArithmeticBehavior, Expression, Value, ValueType,
 };
 use borsh::BorshDeserialize;
-use solana_program::{account_info::AccountInfo, msg, rent::Rent, sysvar::Sysvar};
+use pinocchio::{
+    account_info::AccountInfo,
+    msg,
+    sysvars::{rent::Rent, Sysvar},
+};
+// use solana_program::{account_info::AccountInfo, msg, rent::Rent, sysvar::Sysvar};
 
 use crate::{debug_msg, error::BallistaError, task_state::TaskState};
 
-use super::{evaluate_condition, evaluate_task_account};
+use super::evaluate_task_account;
 
 pub fn evaluate_expression<'info, 'a, 'b>(
     expression: &'b Expression,
-    task_state: &'a TaskState<'info, 'a>,
+    task_state: &'a TaskState<'a>,
 ) -> Result<Cow<'a, Value>, BallistaError>
 where
     'b: 'a,
@@ -113,8 +118,8 @@ where
             let account = evaluate_task_account(index, task_state)?;
             let field_value = match field_name {
                 // AccountInfoType::Data => account.data,
-                AccountInfoType::Key => Value::Pubkey(account.key.to_bytes()),
-                AccountInfoType::Owner => Value::Pubkey(account.owner.to_bytes()),
+                AccountInfoType::Key => Value::Pubkey(*account.key()),
+                AccountInfoType::Owner => Value::Pubkey(*account.owner()),
                 // AccountInfoType::Rent => account.rent,
                 _ => todo!(),
             };
@@ -236,45 +241,45 @@ trait BorshDeserializeValues {
     fn get_i128(&self, offset: usize) -> Result<i128, BallistaError>;
 }
 
-impl BorshDeserializeValues for AccountInfo<'_> {
+impl BorshDeserializeValues for AccountInfo {
     fn get_u8(&self, offset: usize) -> Result<u8, BallistaError> {
-        try_from_slice::<u8>(&self.data.try_borrow().unwrap(), offset)
+        try_from_slice::<u8>(&self.try_borrow_data().unwrap(), offset)
     }
 
     fn get_u16(&self, offset: usize) -> Result<u16, BallistaError> {
-        try_from_slice::<u16>(&self.data.try_borrow().unwrap(), offset)
+        try_from_slice::<u16>(&self.try_borrow_data().unwrap(), offset)
     }
 
     fn get_u32(&self, offset: usize) -> Result<u32, BallistaError> {
-        try_from_slice::<u32>(&self.data.try_borrow().unwrap(), offset)
+        try_from_slice::<u32>(&self.try_borrow_data().unwrap(), offset)
     }
 
     fn get_u64(&self, offset: usize) -> Result<u64, BallistaError> {
-        try_from_slice::<u64>(&self.data.try_borrow().unwrap(), offset)
+        try_from_slice::<u64>(&self.try_borrow_data().unwrap(), offset)
     }
 
     fn get_u128(&self, offset: usize) -> Result<u128, BallistaError> {
-        try_from_slice::<u128>(&self.data.try_borrow().unwrap(), offset)
+        try_from_slice::<u128>(&self.try_borrow_data().unwrap(), offset)
     }
 
     fn get_i8(&self, offset: usize) -> Result<i8, BallistaError> {
-        try_from_slice::<i8>(&self.data.try_borrow().unwrap(), offset)
+        try_from_slice::<i8>(&self.try_borrow_data().unwrap(), offset)
     }
 
     fn get_i16(&self, offset: usize) -> Result<i16, BallistaError> {
-        try_from_slice::<i16>(&self.data.try_borrow().unwrap(), offset)
+        try_from_slice::<i16>(&self.try_borrow_data().unwrap(), offset)
     }
 
     fn get_i32(&self, offset: usize) -> Result<i32, BallistaError> {
-        try_from_slice::<i32>(&self.data.try_borrow().unwrap(), offset)
+        try_from_slice::<i32>(&self.try_borrow_data().unwrap(), offset)
     }
 
     fn get_i64(&self, offset: usize) -> Result<i64, BallistaError> {
-        try_from_slice::<i64>(&self.data.try_borrow().unwrap(), offset)
+        try_from_slice::<i64>(&self.try_borrow_data().unwrap(), offset)
     }
 
     fn get_i128(&self, offset: usize) -> Result<i128, BallistaError> {
-        try_from_slice::<i128>(&self.data.try_borrow().unwrap(), offset)
+        try_from_slice::<i128>(&self.try_borrow_data().unwrap(), offset)
     }
 }
 

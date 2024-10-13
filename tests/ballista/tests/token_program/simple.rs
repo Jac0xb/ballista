@@ -1,5 +1,9 @@
-use crate::utils::ballista::definitions::token_program::transfer::create_batch_token_transfer_def;
+use crate::utils::ballista::definitions::token_program::transfer::{
+    create_batch_token_transfer_def, create_token_transfer,
+    get_associated_token_address_and_bump_seed_internal,
+};
 use crate::utils::process_transaction_assert_success;
+use crate::utils::record::TestLogger;
 use crate::utils::setup::user::create_user_with_balance;
 use crate::utils::test_context::TestContext;
 use crate::utils::transaction::utils::create_transaction;
@@ -22,7 +26,9 @@ use spl_associated_token_account::get_associated_token_address;
 
 #[tokio::test]
 async fn batch_token_transfer() {
-    let batch_size = 10;
+    let mut logger = TestLogger::new("token_program", "batch_token_transfer").unwrap();
+
+    let batch_size = 12;
 
     let context = &mut TestContext::new().await.unwrap();
     let user = create_user_with_balance(context, 10e9 as u64)
@@ -81,7 +87,7 @@ async fn batch_token_transfer() {
     )
     .unwrap();
 
-    process_transaction_assert_success(context, mint_tx)
+    process_transaction_assert_success(context, mint_tx, &mut logger)
         .await
         .unwrap();
 
@@ -108,7 +114,7 @@ async fn batch_token_transfer() {
     )
     .await;
 
-    process_transaction_assert_success(context, tx)
+    process_transaction_assert_success(context, tx, &mut logger)
         .await
         .unwrap();
 
@@ -132,38 +138,22 @@ async fn batch_token_transfer() {
     }
 
     // TODO: FIX
-    // let tx = create_transaction(
-    //     context,
-    //     vec![
-    //         create_token_transfer(
-    //             schema,
-    //             &user,
-    //             user_ata,
-    //             &mint_keypair.encodable_pubkey(),
-    //             &dest_accounts_batch_one,
-    //         ),
-    //         // create_token_transfer(
-    //         //     schema,
-    //         //     &user,
-    //         //     user_ata,
-    //         //     &mint_keypair.encodable_pubkey(),
-    //         //     &dest_accounts_batch_two,
-    //         // ),
-    //         // create_token_transfer(
-    //         //     schema,
-    //         //     &user,
-    //         //     user_ata,
-    //         //     &mint_keypair.encodable_pubkey(),
-    //         //     &dest_accounts_batch_three,
-    //         // ),
-    //     ],
-    //     &[&user],
-    // )
-    // .await;
+    let tx = create_transaction(
+        context,
+        vec![create_token_transfer(
+            task_definition,
+            &user,
+            user_ata,
+            &mint_keypair.encodable_pubkey(),
+            &dest_accounts_batch_one,
+        )],
+        &[&user],
+    )
+    .await;
 
-    // process_transaction_assert_success(context, tx)
-    //     .await
-    //     .unwrap();
+    process_transaction_assert_success(context, tx, &mut logger)
+        .await
+        .unwrap();
 
     // for account in dest_accounts_batch_one {
     //     let account_info = context
@@ -186,56 +176,4 @@ async fn batch_token_transfer() {
     // }
 
     // // panic!("done");
-}
-
-fn create_token_transfer(
-    schema: Pubkey,
-    user: &Keypair,
-    user_ata: Pubkey,
-    mint: &Pubkey,
-    destinations: &[Pubkey],
-) -> Instruction {
-    let mut remaining_accounts = vec![
-        AccountMeta::new_readonly(system_program::ID, false), // 0
-        AccountMeta::new_readonly(spl_token::ID, false),      // 1
-        AccountMeta::new_readonly(spl_associated_token_account::ID, false), // 2
-        AccountMeta::new(user.encodable_pubkey(), true),      // 3
-        AccountMeta::new(user_ata, false),                    // 4
-        AccountMeta::new_readonly(*mint, false),              // 5
-    ];
-
-    for destination in destinations {
-        remaining_accounts.push(AccountMeta::new(*destination, false));
-        remaining_accounts.push(AccountMeta::new(
-            get_associated_token_address(destination, mint),
-            false,
-        ));
-    }
-
-    ballista_sdk::generated::instructions::ExecuteTask::instruction_with_remaining_accounts(
-        &ExecuteTask {
-            schema,
-            payer: user.encodable_pubkey(),
-        },
-        ExecuteTaskInstructionArgs {
-            task_values: vec![Value::U8(destinations.len() as u8)],
-        },
-        &remaining_accounts,
-    )
-}
-
-fn get_associated_token_address_and_bump_seed_internal(
-    wallet_address: &Pubkey,
-    token_mint_address: &Pubkey,
-    program_id: &Pubkey,
-    token_program_id: &Pubkey,
-) -> (Pubkey, u8) {
-    Pubkey::find_program_address(
-        &[
-            &wallet_address.to_bytes(),
-            &token_program_id.to_bytes(),
-            &token_mint_address.to_bytes(),
-        ],
-        program_id,
-    )
 }

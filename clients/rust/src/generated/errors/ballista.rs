@@ -55,6 +55,9 @@ pub enum BallistaError {
     /// 6014 - Range out of bounds
     #[error("Range out of bounds")]
     RangeOutOfBounds = 0x177E,
+    /// 6015 - TODO
+    #[error("TODO")]
+    Todo = 0x177F,
 }
 
 impl solana_program::program_error::PrintProgramError for BallistaError {

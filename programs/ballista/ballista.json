@@ -51,11 +51,11 @@
       "name": "ExecuteTask",
       "accounts": [
         {
-          "name": "schema",
+          "name": "task",
           "isMut": false,
           "isSigner": false,
           "docs": [
-            "Schema Account"
+            "Task Account"
           ]
         },
         {
@@ -158,6 +158,11 @@
       "code": 6014,
       "name": "RangeOutOfBounds",
       "msg": "Range out of bounds"
+    },
+    {
+      "code": 6015,
+      "name": "Todo",
+      "msg": "TODO"
     }
   ],
   "metadata": {

@@ -1,25 +1,23 @@
-use std::ptr;
-
 use ballista_common::{logical_components::Value, schema::TaskDefinition};
-use solana_program::{account_info::AccountInfo, instruction::AccountMeta};
+use pinocchio::{
+    account_info::AccountInfo,
+    instruction::{Account, AccountMeta},
+};
 
 use crate::debug_msg;
 
-pub struct TaskState<'info, 'a>
-where
-    'info: 'a,
-{
+pub struct TaskState<'a> {
     pub definition: &'a TaskDefinition,
     pub inputs: &'a [Value],
     pub cached_values: Vec<Value>,
-    pub all_accounts: &'a [AccountInfo<'info>],
-    pub account_meta_cache: Vec<AccountMeta>,
-    pub account_info_cache: Vec<AccountInfo<'info>>,
+    pub all_accounts: &'a [AccountInfo],
+    pub account_meta_cache: Vec<AccountMeta<'a>>,
+    pub account_info_cache: Vec<Account<'a>>,
     // pub instruction_data_cache: &mut Vec<u8>,
-    pub payer: &'a AccountInfo<'info>,
+    pub payer: &'a AccountInfo,
 }
 
-impl<'info, 'a> TaskState<'info, 'a> {
+impl<'a> TaskState<'a> {
     pub fn purge_instruction_cache(&mut self) {
         debug_msg!("purging");
         self.account_meta_cache.clear();

@@ -1,6 +1,7 @@
 use crate::utils::{
     ballista::definitions::system_program::transfer::{SourceType, SystemTransferFactory},
     process_transaction_assert_success,
+    record::TestLogger,
     setup::user::create_user_with_balance,
     test_context::TestContext,
     transaction::utils::create_transaction,
@@ -248,6 +249,8 @@ use solana_sdk::{
 
 #[tokio::test]
 async fn looping_builtin() {
+    let mut logger = TestLogger::new("system_program", "looping_builtin").unwrap();
+
     let context = &mut TestContext::new().await.unwrap();
     let user = create_user_with_balance(context, 10e9 as u64)
         .await
@@ -277,7 +280,7 @@ async fn looping_builtin() {
     )
     .await;
 
-    process_transaction_assert_success(context, tx)
+    process_transaction_assert_success(context, tx, &mut logger)
         .await
         .unwrap();
 
@@ -306,7 +309,7 @@ async fn looping_builtin() {
     )
     .unwrap();
 
-    process_transaction_assert_success(context, tx)
+    process_transaction_assert_success(context, tx, &mut logger)
         .await
         .unwrap();
 
@@ -319,6 +322,8 @@ async fn looping_builtin() {
 
 #[tokio::test]
 async fn single_builtin() {
+    let mut logger = TestLogger::new("system_program", "single_builtin").unwrap();
+
     let context = &mut TestContext::new().await.unwrap();
     let user = create_user_with_balance(context, 10e9 as u64)
         .await
@@ -348,7 +353,7 @@ async fn single_builtin() {
     )
     .await;
 
-    process_transaction_assert_success(context, tx)
+    process_transaction_assert_success(context, tx, &mut logger)
         .await
         .unwrap();
 
@@ -374,7 +379,7 @@ async fn single_builtin() {
     )
     .unwrap();
 
-    process_transaction_assert_success(context, tx)
+    process_transaction_assert_success(context, tx, &mut logger)
         .await
         .unwrap();
 
@@ -384,6 +389,8 @@ async fn single_builtin() {
 
 #[tokio::test]
 async fn fixed_defined() {
+    let mut logger = TestLogger::new("system_program", "fixed_defined").unwrap();
+
     let context = &mut TestContext::new().await.unwrap();
     let user = create_user_with_balance(context, 10e9 as u64)
         .await
@@ -412,7 +419,7 @@ async fn fixed_defined() {
     )
     .await;
 
-    process_transaction_assert_success(context, tx)
+    process_transaction_assert_success(context, tx, &mut logger)
         .await
         .unwrap();
 
@@ -438,7 +445,7 @@ async fn fixed_defined() {
     )
     .unwrap();
 
-    process_transaction_assert_success(context, tx)
+    process_transaction_assert_success(context, tx, &mut logger)
         .await
         .unwrap();
 
@@ -448,6 +455,8 @@ async fn fixed_defined() {
 
 #[tokio::test]
 async fn looping_defined() {
+    let mut logger = TestLogger::new("system_program", "looping_defined").unwrap();
+
     let context = &mut TestContext::new().await.unwrap();
     let user = create_user_with_balance(context, 10e9 as u64)
         .await
@@ -478,7 +487,7 @@ async fn looping_defined() {
     )
     .await;
 
-    process_transaction_assert_success(context, tx)
+    process_transaction_assert_success(context, tx, &mut logger)
         .await
         .unwrap();
 
@@ -507,7 +516,7 @@ async fn looping_defined() {
     )
     .unwrap();
 
-    process_transaction_assert_success(context, tx)
+    process_transaction_assert_success(context, tx, &mut logger)
         .await
         .unwrap();
 

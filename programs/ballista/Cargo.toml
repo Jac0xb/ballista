@@ -40,6 +40,11 @@ solana-invoke = "=0.1.0"
 rhai = "1.19.0"
 serde = { version = "^1.0", features = ["derive"], optional = true }
 serde_with = { version = "^3.0", optional = true }
+pinocchio = { git = "https://github.com/Jac0xb/pinocchio.git", rev = "4689aadc60c591cfcda6fff98a4dae12a9ee6942", package = "pinocchio" }
+pinocchio-system = { git = "https://github.com/Jac0xb/pinocchio.git", rev = "4689aadc60c591cfcda6fff98a4dae12a9ee6942", package = "pinocchio-system" }
+pinocchio-token = { git = "https://github.com/Jac0xb/pinocchio.git", rev = "4689aadc60c591cfcda6fff98a4dae12a9ee6942", package = "pinocchio-token" }
+pinocchio-associated-token = { git = "https://github.com/Jac0xb/pinocchio.git", rev = "4689aadc60c591cfcda6fff98a4dae12a9ee6942", package = "pinocchio-associated-token" }
+bs58 = "0.5.1"
 
 [dev-dependencies]
 # solana-program-test = "=1.18.8"

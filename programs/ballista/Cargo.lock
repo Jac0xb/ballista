@@ -252,9 +252,14 @@ dependencies = [
  "ballista-common",
  "bincode",
  "borsh 0.10.3",
+ "bs58 0.5.1",
  "bytemuck",
  "lib-sokoban",
  "num-traits",
+ "pinocchio",
+ "pinocchio-associated-token",
+ "pinocchio-system",
+ "pinocchio-token",
  "rhai",
  "serde",
  "serde_with 3.9.0",
@@ -497,6 +502,15 @@ name = "bs58"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "771fe0050b883fcc3ea2359b1a96bcfbc090b7116eae7c3c512c7a083fdf23d3"
+
+[[package]]
+name = "bs58"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "bumpalo"
@@ -866,6 +880,21 @@ name = "feature-probe"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "835a3dc7d1ec9e75e2b5fb4ba75396837112d2060b03f7d43bc1897c7f7211da"
+
+[[package]]
+name = "five8_const"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b4f62f0f8ca357f93ae90c8c2dd1041a1f665fde2f889ea9b1787903829015"
+dependencies = [
+ "five8_core",
+]
+
+[[package]]
+name = "five8_core"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b2a72055cd9cffc40c9f75f1e5810c80559e158796cf2202292ce4745889588"
 
 [[package]]
 name = "fnv"
@@ -1413,6 +1442,47 @@ name = "percent-encoding"
 version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
+
+[[package]]
+name = "pinocchio"
+version = "0.4.0"
+source = "git+https://github.com/Jac0xb/pinocchio.git?rev=4689aadc60c591cfcda6fff98a4dae12a9ee6942#4689aadc60c591cfcda6fff98a4dae12a9ee6942"
+
+[[package]]
+name = "pinocchio-associated-token"
+version = "0.1.0"
+source = "git+https://github.com/Jac0xb/pinocchio.git?rev=4689aadc60c591cfcda6fff98a4dae12a9ee6942#4689aadc60c591cfcda6fff98a4dae12a9ee6942"
+dependencies = [
+ "pinocchio",
+ "pinocchio-pubkey",
+]
+
+[[package]]
+name = "pinocchio-pubkey"
+version = "0.1.3"
+source = "git+https://github.com/Jac0xb/pinocchio.git?rev=4689aadc60c591cfcda6fff98a4dae12a9ee6942#4689aadc60c591cfcda6fff98a4dae12a9ee6942"
+dependencies = [
+ "five8_const",
+ "pinocchio",
+]
+
+[[package]]
+name = "pinocchio-system"
+version = "0.1.2"
+source = "git+https://github.com/Jac0xb/pinocchio.git?rev=4689aadc60c591cfcda6fff98a4dae12a9ee6942#4689aadc60c591cfcda6fff98a4dae12a9ee6942"
+dependencies = [
+ "pinocchio",
+ "pinocchio-pubkey",
+]
+
+[[package]]
+name = "pinocchio-token"
+version = "0.1.0"
+source = "git+https://github.com/Jac0xb/pinocchio.git?rev=4689aadc60c591cfcda6fff98a4dae12a9ee6942#4689aadc60c591cfcda6fff98a4dae12a9ee6942"
+dependencies = [
+ "pinocchio",
+ "pinocchio-pubkey",
+]
 
 [[package]]
 name = "polyval"
@@ -1969,7 +2039,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4bfcde2fc6946c99c7e3400fadd04d1628d675bfd66cb34d461c0f3224bd27d1"
 dependencies = [
  "block-buffer 0.10.4",
- "bs58",
+ "bs58 0.4.0",
  "bv",
  "either",
  "generic-array",
@@ -2047,7 +2117,7 @@ dependencies = [
  "borsh 0.10.3",
  "borsh 0.9.3",
  "borsh 1.5.1",
- "bs58",
+ "bs58 0.4.0",
  "bv",
  "bytemuck",
  "cc",
@@ -2096,7 +2166,7 @@ dependencies = [
  "bincode",
  "bitflags 2.6.0",
  "borsh 1.5.1",
- "bs58",
+ "bs58 0.4.0",
  "bytemuck",
  "byteorder",
  "chrono",
@@ -2146,7 +2216,7 @@ version = "1.18.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a8613ca80150f7e277e773620ba65d2c5fcc3a08eb8026627d601421ab43aef"
 dependencies = [
- "bs58",
+ "bs58 0.4.0",
  "proc-macro2",
  "quote",
  "rustversion",

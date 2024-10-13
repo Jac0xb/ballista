@@ -45,16 +45,16 @@ export function getExecuteTaskDiscriminatorBytes() {
 
 export type ExecuteTaskInstruction<
   TProgram extends string = typeof BALLISTA_PROGRAM_ADDRESS,
-  TAccountSchema extends string | IAccountMeta<string> = string,
+  TAccountTask extends string | IAccountMeta<string> = string,
   TAccountPayer extends string | IAccountMeta<string> = string,
   TRemainingAccounts extends readonly IAccountMeta<string>[] = [],
 > = IInstruction<TProgram> &
   IInstructionWithData<Uint8Array> &
   IInstructionWithAccounts<
     [
-      TAccountSchema extends string
-        ? ReadonlyAccount<TAccountSchema>
-        : TAccountSchema,
+      TAccountTask extends string
+        ? ReadonlyAccount<TAccountTask>
+        : TAccountTask,
       TAccountPayer extends string
         ? WritableSignerAccount<TAccountPayer> &
             IAccountSignerMeta<TAccountPayer>
@@ -98,30 +98,30 @@ export function getExecuteTaskInstructionDataCodec(): Codec<
 }
 
 export type ExecuteTaskInput<
-  TAccountSchema extends string = string,
+  TAccountTask extends string = string,
   TAccountPayer extends string = string,
 > = {
-  /** Schema Account */
-  schema: Address<TAccountSchema>;
+  /** Task Account */
+  task: Address<TAccountTask>;
   /** Payer account */
   payer: TransactionSigner<TAccountPayer>;
   taskValues: ExecuteTaskInstructionDataArgs['taskValues'];
 };
 
 export function getExecuteTaskInstruction<
-  TAccountSchema extends string,
+  TAccountTask extends string,
   TAccountPayer extends string,
   TProgramAddress extends Address = typeof BALLISTA_PROGRAM_ADDRESS,
 >(
-  input: ExecuteTaskInput<TAccountSchema, TAccountPayer>,
+  input: ExecuteTaskInput<TAccountTask, TAccountPayer>,
   config?: { programAddress?: TProgramAddress }
-): ExecuteTaskInstruction<TProgramAddress, TAccountSchema, TAccountPayer> {
+): ExecuteTaskInstruction<TProgramAddress, TAccountTask, TAccountPayer> {
   // Program address.
   const programAddress = config?.programAddress ?? BALLISTA_PROGRAM_ADDRESS;
 
   // Original accounts.
   const originalAccounts = {
-    schema: { value: input.schema ?? null, isWritable: false },
+    task: { value: input.task ?? null, isWritable: false },
     payer: { value: input.payer ?? null, isWritable: true },
   };
   const accounts = originalAccounts as Record<
@@ -134,12 +134,12 @@ export function getExecuteTaskInstruction<
 
   const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
   const instruction = {
-    accounts: [getAccountMeta(accounts.schema), getAccountMeta(accounts.payer)],
+    accounts: [getAccountMeta(accounts.task), getAccountMeta(accounts.payer)],
     programAddress,
     data: getExecuteTaskInstructionDataEncoder().encode(
       args as ExecuteTaskInstructionDataArgs
     ),
-  } as ExecuteTaskInstruction<TProgramAddress, TAccountSchema, TAccountPayer>;
+  } as ExecuteTaskInstruction<TProgramAddress, TAccountTask, TAccountPayer>;
 
   return instruction;
 }
@@ -150,8 +150,8 @@ export type ParsedExecuteTaskInstruction<
 > = {
   programAddress: Address<TProgram>;
   accounts: {
-    /** Schema Account */
-    schema: TAccountMetas[0];
+    /** Task Account */
+    task: TAccountMetas[0];
     /** Payer account */
     payer: TAccountMetas[1];
   };
@@ -179,7 +179,7 @@ export function parseExecuteTaskInstruction<
   return {
     programAddress: instruction.programAddress,
     accounts: {
-      schema: getNextAccount(),
+      task: getNextAccount(),
       payer: getNextAccount(),
     },
     data: getExecuteTaskInstructionDataDecoder().decode(instruction.data),

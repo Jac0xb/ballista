@@ -3,11 +3,13 @@ pub mod cloning;
 pub mod error;
 pub mod jupiter;
 pub mod program_test;
+pub mod record;
 pub mod setup;
 pub mod test_context;
 pub mod transaction;
 
 use bincode::serialize;
+use record::TestLogger;
 use solana_banks_interface::BanksTransactionResultWithMetadata;
 use solana_program_test::{BanksClient, BanksClientError};
 use solana_sdk::{
@@ -109,6 +111,7 @@ pub async fn process_transaction(
 pub async fn process_transaction_assert_success(
     context: &mut TestContext,
     tx: VersionedTransaction,
+    logger: &mut TestLogger,
 ) -> Result<BanksTransactionResultWithMetadata> {
     let tx_metadata = process_transaction(&mut context.client(), &tx).await;
 
@@ -124,13 +127,16 @@ pub async fn process_transaction_assert_success(
 
     let tx_metadata = tx_metadata.unwrap();
 
-    println!("\r\n");
-    println!("Transaction size: {}", serialize(&tx).unwrap().len());
+    logger.write("");
+    logger.write(&format!(
+        "Transaction size: {}",
+        serialize(&tx).unwrap().len()
+    ));
 
     if let Some(logs) = tx_metadata.metadata.clone().map(|m| m.log_messages) {
-        println!("Transaction Logs:");
+        logger.write("Transaction Logs:");
         for log in logs {
-            println!("{}", log);
+            logger.write(&log);
         }
     }
 
@@ -141,6 +147,10 @@ pub async fn process_transaction_assert_success(
         ))));
     }
 
+    logger
+        .record_compute(tx_metadata.metadata.clone().unwrap().compute_units_consumed)
+        .unwrap();
+
     Ok(tx_metadata)
 }
 
@@ -149,14 +159,15 @@ pub async fn process_transaction_assert_failure(
     tx: VersionedTransaction,
     expected_tx_error: TransactionError,
     log_match_regex: Option<&[String]>,
+    logger: &mut TestLogger,
 ) -> Result<BanksTransactionResultWithMetadata> {
     let tx_metadata = &mut process_transaction(&mut context.client(), &tx)
         .await
         .unwrap();
 
     if tx_metadata.metadata.is_none() {
-        println!("No metadata found in transaction");
-        println!("{:?}", tx_metadata.result);
+        logger.write("No metadata found in transaction");
+        logger.write(&format!("{:?}", tx_metadata.result));
 
         return Err(Box::new(Error::TransactionFailed(
             "No metadata found in transaction".to_string(),
@@ -164,9 +175,9 @@ pub async fn process_transaction_assert_failure(
     }
 
     let logs = tx_metadata.metadata.clone().unwrap().log_messages;
-    println!("Transaction Logs:");
+    logger.write("Transaction Logs:");
     for log in logs {
-        println!("{:?}", log);
+        logger.write(&log);
     }
 
     if tx_metadata.result.is_ok() {
@@ -223,7 +234,7 @@ pub async fn process_transaction_assert_failure(
 
         let logs = tx_metadata.metadata.clone().unwrap().log_messages;
         for log in &logs {
-            println!("{:?}", log);
+            logger.write(&format!("{:?}", log));
         }
 
         // find one log that matches each regex

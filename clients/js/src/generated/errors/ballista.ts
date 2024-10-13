@@ -44,6 +44,8 @@ export const BALLISTA_ERROR__ACCOUNT_EMPTY = 0x177c; // 6012
 export const BALLISTA_ERROR__INVALID_ACCOUNT_RANGE = 0x177d; // 6013
 /** RangeOutOfBounds: Range out of bounds */
 export const BALLISTA_ERROR__RANGE_OUT_OF_BOUNDS = 0x177e; // 6014
+/** Todo: TODO */
+export const BALLISTA_ERROR__TODO = 0x177f; // 6015
 
 export type BallistaError =
   | typeof BALLISTA_ERROR__ACCOUNT_EMPTY
@@ -60,7 +62,8 @@ export type BallistaError =
   | typeof BALLISTA_ERROR__INVALID_TOKEN_ACCOUNT
   | typeof BALLISTA_ERROR__RANGE_OUT_OF_BOUNDS
   | typeof BALLISTA_ERROR__STATIC_VALUE_NOT_FOUND
-  | typeof BALLISTA_ERROR__TASK_NOT_FOUND;
+  | typeof BALLISTA_ERROR__TASK_NOT_FOUND
+  | typeof BALLISTA_ERROR__TODO;
 
 let ballistaErrorMessages: Record<BallistaError, string> | undefined;
 if (process.env.NODE_ENV !== 'production') {
@@ -80,6 +83,7 @@ if (process.env.NODE_ENV !== 'production') {
     [BALLISTA_ERROR__RANGE_OUT_OF_BOUNDS]: `Range out of bounds`,
     [BALLISTA_ERROR__STATIC_VALUE_NOT_FOUND]: `Static value not found`,
     [BALLISTA_ERROR__TASK_NOT_FOUND]: `Task not found`,
+    [BALLISTA_ERROR__TODO]: `TODO`,
   };
 }
 

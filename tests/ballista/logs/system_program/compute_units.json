@@ -1,0 +1,17 @@
+{
+  "fixed_defined": [
+    6143,
+    4179
+  ],
+  "looping_builtin": [
+    8271,
+    77667
+  ],
+  "looping_defined": [
+    8842,
+    81189
+  ],
+  "single_builtin": [
+    5393
+  ]
+}

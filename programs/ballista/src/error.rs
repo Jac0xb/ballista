@@ -1,4 +1,4 @@
-use solana_program::program_error::ProgramError;
+use pinocchio::program_error::ProgramError;
 use thiserror::Error;
 
 #[macro_export]
@@ -64,6 +64,9 @@ pub enum BallistaError {
 
     #[error("Range out of bounds")]
     RangeOutOfBounds,
+
+    #[error("TODO")]
+    Todo,
 }
 
 impl From<BallistaError> for ProgramError {

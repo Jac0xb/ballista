@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use crate::{
     debug_msg,
     error::BallistaError,
@@ -13,13 +11,14 @@ use ballista_common::{
         action::set_cache::SetCacheType, action_context::ActionContext, task_action::TaskAction,
     },
 };
-use solana_program::{account_info::AccountInfo, msg};
+use pinocchio::account_info::AccountInfo;
+use solana_program::msg;
 
-pub fn process<'info>(
+pub fn process(
     task_definition: &TaskDefinition,
     input_values: &[Value],
-    payer: &AccountInfo<'info>,
-    remaining_accounts: &[AccountInfo<'info>],
+    payer: &AccountInfo,
+    remaining_accounts: &[AccountInfo],
 ) -> Result<(), BallistaError> {
     let mut task_state = TaskState {
         definition: task_definition,
@@ -87,12 +86,16 @@ fn process_action(
             }
             TaskAction::TokenProgramInstruction(program_ix) => {
                 evaluate::instructions::token_program::evaluate(program_ix, task_state).unwrap();
-                task_state.purge_instruction_cache();
+                // task_state.purge_instruction_cache();
+
+                // panic!("Token program not implemented");
             }
             TaskAction::AssociatedTokenProgramInstruction(program_ix) => {
                 evaluate::instructions::associated_token_program::evaluate(program_ix, task_state)
                     .unwrap();
-                task_state.purge_instruction_cache();
+                // task_state.purge_instruction_cache();
+
+                // panic!("Associated token program not implemented");
             }
             TaskAction::DefinedInstruction(defined_instruction) => {
                 evaluate::instructions::defined::evaluate(

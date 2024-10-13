@@ -3,6 +3,7 @@ use crate::utils::ballista::task_definitions::schema::{
 };
 use crate::utils::jupiter::transaction_cloning::print_transaction_info;
 use crate::utils::process_transaction_assert_success;
+use crate::utils::record::TestLogger;
 use crate::utils::test_context::TestContext;
 use crate::utils::transaction::utils::create_transaction;
 use ballista_sdk::find_task_definition_pda;
@@ -46,6 +47,7 @@ pub async fn context_tree_and_leaves(
 ///
 #[tokio::test]
 async fn simple() {
+    let mut logger = TestLogger::new("bubblgum_program", "simple").unwrap();
     let context = &mut TestContext::new().await.unwrap();
 
     let (_bubblegum_context, mut tree, mut leaves) =
@@ -102,7 +104,7 @@ async fn simple() {
     )
     .await;
 
-    process_transaction_assert_success(context, tx.clone())
+    process_transaction_assert_success(context, tx.clone(), &mut logger)
         .await
         .unwrap();
 
@@ -126,7 +128,7 @@ async fn simple() {
     print_transaction_info(context, &mint_tx).await.unwrap();
     print_transaction_info(context, &tx).await.unwrap();
 
-    process_transaction_assert_success(context, tx.clone())
+    process_transaction_assert_success(context, tx.clone(), &mut logger)
         .await
         .unwrap();
 }

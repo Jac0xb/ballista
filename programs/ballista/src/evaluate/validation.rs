@@ -12,7 +12,9 @@ pub fn evaluate_validation(
         Validation::IsTokenAccount(account) => {
             let account_info = evaluate_task_account(account, task_state)?;
 
-            if account_info.owner != &spl_token::ID && account_info.owner != &spl_token_2022::ID {
+            if account_info.owner() != &spl_token::ID.to_bytes()
+                && account_info.owner() != &spl_token_2022::ID.to_bytes()
+            {
                 return Err(BallistaError::InvalidTokenAccount);
             }
 
@@ -22,7 +24,7 @@ pub fn evaluate_validation(
             // panic!("unimplemented")
             let account_info = evaluate_task_account(account, task_state)?;
 
-            Ok(account_info.try_data_is_empty().unwrap())
+            Ok(account_info.data_is_empty())
         }
     }
 }

@@ -8,6 +8,7 @@ use crate::utils::{
         types::SwapArgs,
     },
     process_transaction_assert_success,
+    record::TestLogger,
     setup::user::create_user_with_balance,
     test_context::TestContext,
     transaction::utils::create_transaction,
@@ -16,7 +17,7 @@ use anchor_lang::prelude::AccountMeta;
 use anchor_spl::token;
 use ballista_common::{
     logical_components::{AccountInfoType, Expression, Value, ValueType},
-    schema::{AccountGroupDefinition, Schema, TaskDefinition},
+    schema::{AccountGroupDefinition, ExecutionSettings, TaskDefinition},
     task::{
         action::{
             raw_instruction::RawInstruction,
@@ -29,7 +30,7 @@ use ballista_common::{
 use ballista_sdk::{
     find_task_definition_pda,
     generated::instructions::{
-        CreateSchema, CreateSchemaInstructionArgs, ExecuteTask, ExecuteTaskInstructionArgs,
+        CreateTask, CreateTaskInstructionArgs, ExecuteTask, ExecuteTaskInstructionArgs,
     },
     BALLISTA_ID,
 };
@@ -51,6 +52,8 @@ use spl_token::state::{Account, AccountState};
 
 #[tokio::test]
 async fn test() {
+    let mut logger = TestLogger::new("jup_program", "test").unwrap();
+
     let context = &mut TestContext::new().await.unwrap();
     let client = reqwest::Client::new();
     let rpc_client = RpcClient::new("https://api.mainnet-beta.solana.com".to_string());
@@ -79,6 +82,7 @@ async fn test() {
     };
 
     let jup_swap_task = TaskDefinition {
+        execution_settings: ExecutionSettings::default(),
         actions: vec![
             // Execute jupiter swap using instructions from API.
             TaskAction::RawInstruction({
@@ -119,22 +123,20 @@ async fn test() {
         }],
     };
 
-    // Create jup schema
-    let schema = find_task_definition_pda(user.encodable_pubkey(), 0).0;
+    let task_definition = find_task_definition_pda(user.encodable_pubkey(), 0).0;
     let tx = create_transaction(
         context,
         vec![
-            ballista_sdk::generated::instructions::CreateSchema::instruction(
-                &CreateSchema {
-                    program_id: BALLISTA_ID,
+            ballista_sdk::generated::instructions::CreateTask::instruction(
+                &CreateTask {
+                    // program_id: BALLISTA_ID,
                     system_program: system_program::ID,
                     payer: user.encodable_pubkey(),
-                    schema,
+                    task_definition,
                 },
-                CreateSchemaInstructionArgs {
-                    schema_arg: Schema {
-                        tasks: vec![jup_swap_task],
-                    },
+                CreateTaskInstructionArgs {
+                    task_id: 0,
+                    task: jup_swap_task,
                 },
             ),
         ],
@@ -142,7 +144,7 @@ async fn test() {
     )
     .await;
 
-    process_transaction_assert_success(context, tx)
+    process_transaction_assert_success(context, tx, &mut logger)
         .await
         .unwrap();
 
@@ -225,7 +227,7 @@ async fn test() {
     instructions.push(
         ballista_sdk::generated::instructions::ExecuteTask::instruction_with_remaining_accounts(
             &ExecuteTask {
-                schema,
+                task: task_definition,
                 payer: user.encodable_pubkey(),
             },
             ExecuteTaskInstructionArgs {
@@ -263,7 +265,7 @@ async fn test() {
 
     let signed_tx = VersionedTransaction::try_new(tx.message.clone(), &[&user]).unwrap();
 
-    process_transaction_assert_success(context, signed_tx)
+    process_transaction_assert_success(context, signed_tx, &mut logger)
         .await
         .unwrap();
 

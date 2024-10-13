@@ -111,6 +111,7 @@ impl SystemTransferFactory {
                     amount,
                 )],
                 &Expression::Literal(Value::U8(loop_count)),
+                1,
             ),
             shared_values: amount_source_type.generic_static_values(),
             account_groups: vec![AccountGroupDefinition {
@@ -164,6 +165,7 @@ impl SystemTransferFactory {
                     ),
                 )],
                 &Expression::Literal(Value::U8(loop_count)),
+                1,
             ),
             shared_values: amount_source_type.generic_static_values(),
             account_groups: vec![],
@@ -172,7 +174,7 @@ impl SystemTransferFactory {
 
     pub fn build_single_execute_task_instruction(
         user: &Pubkey,
-        schema: &Pubkey,
+        task: &Pubkey,
         destinations: &Pubkey,
     ) -> Instruction {
         let system_account = AccountMeta {
@@ -196,7 +198,7 @@ impl SystemTransferFactory {
 
         ballista_sdk::generated::instructions::ExecuteTask::instruction_with_remaining_accounts(
             &ExecuteTask {
-                schema: *schema,
+                task: *task,
                 payer: *user,
             },
             ExecuteTaskInstructionArgs {
@@ -208,7 +210,7 @@ impl SystemTransferFactory {
 
     pub fn build_looping_execute_task_instruction(
         user: &Pubkey,
-        schema: &Pubkey,
+        task: &Pubkey,
         destinations: Vec<Pubkey>,
     ) -> Instruction {
         let system_account = AccountMeta {
@@ -236,7 +238,7 @@ impl SystemTransferFactory {
 
         ballista_sdk::generated::instructions::ExecuteTask::instruction_with_remaining_accounts(
             &ExecuteTask {
-                schema: *schema,
+                task: *task,
                 payer: *user,
             },
             ExecuteTaskInstructionArgs {

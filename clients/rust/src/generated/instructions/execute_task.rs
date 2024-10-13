@@ -11,8 +11,8 @@ use borsh::BorshSerialize;
 
 /// Accounts.
 pub struct ExecuteTask {
-    /// Schema Account
-    pub schema: solana_program::pubkey::Pubkey,
+    /// Task Account
+    pub task: solana_program::pubkey::Pubkey,
     /// Payer account
     pub payer: solana_program::pubkey::Pubkey,
 }
@@ -32,8 +32,7 @@ impl ExecuteTask {
     ) -> solana_program::instruction::Instruction {
         let mut accounts = Vec::with_capacity(2 + remaining_accounts.len());
         accounts.push(solana_program::instruction::AccountMeta::new_readonly(
-            self.schema,
-            false,
+            self.task, false,
         ));
         accounts.push(solana_program::instruction::AccountMeta::new(
             self.payer, true,
@@ -78,11 +77,11 @@ pub struct ExecuteTaskInstructionArgs {
 ///
 /// ### Accounts:
 ///
-///   0. `[]` schema
+///   0. `[]` task
 ///   1. `[writable, signer]` payer
 #[derive(Clone, Debug, Default)]
 pub struct ExecuteTaskBuilder {
-    schema: Option<solana_program::pubkey::Pubkey>,
+    task: Option<solana_program::pubkey::Pubkey>,
     payer: Option<solana_program::pubkey::Pubkey>,
     task_values: Option<Vec<Value>>,
     __remaining_accounts: Vec<solana_program::instruction::AccountMeta>,
@@ -92,10 +91,10 @@ impl ExecuteTaskBuilder {
     pub fn new() -> Self {
         Self::default()
     }
-    /// Schema Account
+    /// Task Account
     #[inline(always)]
-    pub fn schema(&mut self, schema: solana_program::pubkey::Pubkey) -> &mut Self {
-        self.schema = Some(schema);
+    pub fn task(&mut self, task: solana_program::pubkey::Pubkey) -> &mut Self {
+        self.task = Some(task);
         self
     }
     /// Payer account
@@ -130,7 +129,7 @@ impl ExecuteTaskBuilder {
     #[allow(clippy::clone_on_copy)]
     pub fn instruction(&self) -> solana_program::instruction::Instruction {
         let accounts = ExecuteTask {
-            schema: self.schema.expect("schema is not set"),
+            task: self.task.expect("task is not set"),
             payer: self.payer.expect("payer is not set"),
         };
         let args = ExecuteTaskInstructionArgs {
@@ -143,8 +142,8 @@ impl ExecuteTaskBuilder {
 
 /// `execute_task` CPI accounts.
 pub struct ExecuteTaskCpiAccounts<'a, 'b> {
-    /// Schema Account
-    pub schema: &'b solana_program::account_info::AccountInfo<'a>,
+    /// Task Account
+    pub task: &'b solana_program::account_info::AccountInfo<'a>,
     /// Payer account
     pub payer: &'b solana_program::account_info::AccountInfo<'a>,
 }
@@ -153,8 +152,8 @@ pub struct ExecuteTaskCpiAccounts<'a, 'b> {
 pub struct ExecuteTaskCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_program::account_info::AccountInfo<'a>,
-    /// Schema Account
-    pub schema: &'b solana_program::account_info::AccountInfo<'a>,
+    /// Task Account
+    pub task: &'b solana_program::account_info::AccountInfo<'a>,
     /// Payer account
     pub payer: &'b solana_program::account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
@@ -169,7 +168,7 @@ impl<'a, 'b> ExecuteTaskCpi<'a, 'b> {
     ) -> Self {
         Self {
             __program: program,
-            schema: accounts.schema,
+            task: accounts.task,
             payer: accounts.payer,
             __args: args,
         }
@@ -209,7 +208,7 @@ impl<'a, 'b> ExecuteTaskCpi<'a, 'b> {
     ) -> solana_program::entrypoint::ProgramResult {
         let mut accounts = Vec::with_capacity(2 + remaining_accounts.len());
         accounts.push(solana_program::instruction::AccountMeta::new_readonly(
-            *self.schema.key,
+            *self.task.key,
             false,
         ));
         accounts.push(solana_program::instruction::AccountMeta::new(
@@ -234,7 +233,7 @@ impl<'a, 'b> ExecuteTaskCpi<'a, 'b> {
         };
         let mut account_infos = Vec::with_capacity(2 + 1 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
-        account_infos.push(self.schema.clone());
+        account_infos.push(self.task.clone());
         account_infos.push(self.payer.clone());
         remaining_accounts
             .iter()
@@ -252,7 +251,7 @@ impl<'a, 'b> ExecuteTaskCpi<'a, 'b> {
 ///
 /// ### Accounts:
 ///
-///   0. `[]` schema
+///   0. `[]` task
 ///   1. `[writable, signer]` payer
 #[derive(Clone, Debug)]
 pub struct ExecuteTaskCpiBuilder<'a, 'b> {
@@ -263,20 +262,17 @@ impl<'a, 'b> ExecuteTaskCpiBuilder<'a, 'b> {
     pub fn new(program: &'b solana_program::account_info::AccountInfo<'a>) -> Self {
         let instruction = Box::new(ExecuteTaskCpiBuilderInstruction {
             __program: program,
-            schema: None,
+            task: None,
             payer: None,
             task_values: None,
             __remaining_accounts: Vec::new(),
         });
         Self { instruction }
     }
-    /// Schema Account
+    /// Task Account
     #[inline(always)]
-    pub fn schema(
-        &mut self,
-        schema: &'b solana_program::account_info::AccountInfo<'a>,
-    ) -> &mut Self {
-        self.instruction.schema = Some(schema);
+    pub fn task(&mut self, task: &'b solana_program::account_info::AccountInfo<'a>) -> &mut Self {
+        self.instruction.task = Some(task);
         self
     }
     /// Payer account
@@ -341,7 +337,7 @@ impl<'a, 'b> ExecuteTaskCpiBuilder<'a, 'b> {
         let instruction = ExecuteTaskCpi {
             __program: self.instruction.__program,
 
-            schema: self.instruction.schema.expect("schema is not set"),
+            task: self.instruction.task.expect("task is not set"),
 
             payer: self.instruction.payer.expect("payer is not set"),
             __args: args,
@@ -356,7 +352,7 @@ impl<'a, 'b> ExecuteTaskCpiBuilder<'a, 'b> {
 #[derive(Clone, Debug)]
 struct ExecuteTaskCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_program::account_info::AccountInfo<'a>,
-    schema: Option<&'b solana_program::account_info::AccountInfo<'a>>,
+    task: Option<&'b solana_program::account_info::AccountInfo<'a>>,
     payer: Option<&'b solana_program::account_info::AccountInfo<'a>>,
     task_values: Option<Vec<Value>>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.

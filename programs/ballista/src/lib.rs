@@ -3,8 +3,8 @@ use borsh::{BorshDeserialize, BorshSerialize};
 
 use error::BallistaError;
 use instruction::BallistaInstruction;
+use pda::get_task_definition_address;
 use pinocchio_system::instructions::CreateAccount;
-use schema::get_task_definition_address;
 use solana_program::declare_id;
 
 // pub mod allocator;
@@ -12,10 +12,9 @@ pub mod error;
 pub mod evaluate;
 pub mod instruction;
 pub mod log;
+pub mod pda;
 pub mod processor;
-pub mod schema;
 pub mod task_state;
-pub mod validation;
 
 use pinocchio::{
     account_info::AccountInfo,

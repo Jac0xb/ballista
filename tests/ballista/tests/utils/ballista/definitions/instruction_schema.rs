@@ -134,11 +134,11 @@ pub fn execute_task_with_args_and_fn<T: InstructionSchema>(
     task: Pubkey,
     params: &T::InstructionAccountParams,
     task_values: Vec<Value>,
-    additional_account_fn: fn(&T::InstructionAccountParams) -> Vec<AccountMeta>,
+    additional_accounts: Vec<AccountMeta>,
 ) -> Instruction {
     let mut remaining_accounts = build_remaining_accounts::<T>(params);
 
-    remaining_accounts.extend(additional_account_fn(params));
+    remaining_accounts.extend(additional_accounts);
 
     ballista_sdk::generated::instructions::ExecuteTask::instruction_with_remaining_accounts(
         &ExecuteTask {
@@ -155,7 +155,7 @@ pub fn execute_task_with_args<T: InstructionSchema>(
     params: &T::InstructionAccountParams,
     task_values: Vec<Value>,
 ) -> Instruction {
-    execute_task_with_args_and_fn::<T>(task, params, task_values, |_| vec![])
+    execute_task_with_args_and_fn::<T>(task, params, task_values, vec![])
 }
 
 pub async fn create_task_transaction(

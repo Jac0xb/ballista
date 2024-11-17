@@ -1,6 +1,6 @@
 use crate::task::shared::TaskAccount;
 
-use super::{Condition, Value, ValueType};
+use super::{Value, ValueType};
 use borsh::{BorshDeserialize, BorshSerialize};
 use borsh_boxed::{BorshDeserializeBoxed, BorshSerializeBoxed};
 

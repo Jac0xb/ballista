@@ -141,31 +141,32 @@ pub fn mint_bubblegum_nft_task_definition(loop_count: u8) -> TaskDefinition {
             ),
         ],
         shared_values: vec![Value::Struct(vec![
-            ("name".to_string(), Value::String("Test #1000".to_string())),
-            ("symbol".to_string(), Value::String("SYMBOL".to_string())),
-            ("uri".to_string(), Value::String("".to_string())),
-            ("seller_fee_basis_points".to_string(), Value::U16(10_000)),
-            ("primary_sale_happened".to_string(), Value::Bool(false)),
-            ("is_mutable".to_string(), Value::Bool(true)),
-            ("edition_nonce".to_string(), Value::Option(None)),
-            (
-                "token_standard".to_string(),
-                Value::Option(Some(Box::new(Value::U8(0)))),
-            ),
-            ("collection".to_string(), Value::Option(None)),
-            ("uses".to_string(), Value::Option(None)),
-            ("token_program_version".to_string(), Value::U8(0)),
-            (
-                "creators".to_string(),
-                Value::Vec(vec![Value::Struct(vec![
-                    (
-                        "address".to_string(),
-                        Value::Bytes(Keypair::new().encodable_pubkey().to_bytes().to_vec()),
-                    ),
-                    ("verified".to_string(), Value::Bool(false)),
-                    ("share".to_string(), Value::U8(100)),
-                ])]),
-            ),
+            Value::String("Test #1000".to_string()),     // name
+            Value::String("SYMBOL".to_string()),         // symbol
+            Value::String("".to_string()),               // uri
+            Value::U16(10_000),                          // seller_fee_basis_points
+            Value::Bool(false),                          // primary_sale_happened
+            Value::Bool(true),                           // is_mutable
+            Value::Option(None),                         // edition_nonce
+            Value::Option(Some(Box::new(Value::U8(0)))), // token_standard
+            Value::Option(None),                         // collection
+            Value::Option(None),                         // uses
+            Value::U8(0),                                // token_program_version
+            Value::Vec(vec![
+                // creators
+                Value::Struct(vec![
+                    // creator
+                    Value::Bytes(Keypair::new().encodable_pubkey().to_bytes().to_vec()), // creator address
+                    Value::Bool(false),                                                  // verified
+                    Value::U8(100),                                                      // share
+                ]),
+                // Value::Struct(vec![
+                //     // creator
+                //     Value::Bytes(Keypair::new().encodable_pubkey().to_bytes().to_vec()), // creator address
+                //     Value::Bool(false),                                                  // verified
+                //     Value::U8(50),                                                       // share
+                // ]),
+            ]),
         ])],
         account_groups: vec![],
     }

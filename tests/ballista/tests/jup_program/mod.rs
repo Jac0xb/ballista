@@ -1,6 +1,10 @@
 use std::str::FromStr;
 
 use crate::utils::{
+    ballista::definitions::defined::jup_program::{
+        create_jupiter_swap_and_transfer_task_definition, execute_jupiter_swap_and_transfer,
+        JupiterSwapInstructionAccountParams,
+    },
     cloning::{copy_accounts_from_transaction, set_account_from_refs},
     jupiter::{
         instruction_cloning::{clone_swap_instructions, SwapInstructions},
@@ -62,67 +66,6 @@ async fn test() {
         .await
         .unwrap();
 
-    // InputValue(0) -> Jup Swap Raw Bytes
-    // InputValue(1) -> Start of Jup Swap Accounts
-    // InputValue(2) -> Length of Jup Swap Accounts
-
-    // Byte offset
-    let token_account_amount_offset = Expression::Literal(Value::U64(64));
-
-    // Expression to pull the balance out of token account.
-    let from_token_balance_expr = Expression::ValueFromAccountData {
-        index: Box::new(TaskAccount::FromInput(0)),
-        offset: Box::new(token_account_amount_offset.clone()),
-        value_type: ValueType::U64,
-    };
-    let to_token_balance_expr = Expression::ValueFromAccountData {
-        index: Box::new(TaskAccount::FromInput(1)),
-        offset: Box::new(token_account_amount_offset),
-        value_type: ValueType::U64,
-    };
-
-    let jup_swap_task = TaskDefinition {
-        execution_settings: ExecutionSettings::default(),
-        actions: vec![
-            // Execute jupiter swap using instructions from API.
-            TaskAction::RawInstruction({
-                RawInstruction {
-                    program: TaskAccount::FromInput(2),
-                    data: Expression::InputValue(0),
-                    accounts: ballista_common::task::shared::TaskAccounts::Evaluated {
-                        start: Expression::InputValue(1),
-                        length: Expression::InputValue(2),
-                    },
-                }
-            }),
-            // Transfer exact amount of tokens from input token account to output token account
-            TaskAction::TokenProgramInstruction(TokenProgramInstruction::Transfer {
-                program_version: TokenProgramVersion::Legacy,
-                multisig: None,
-                from: TaskAccount::FeePayer,
-                from_token_account: TaskAccount::FromGroup {
-                    group_index: 0,
-                    account_index: 0,
-                },
-                to_token_account: TaskAccount::FromGroup {
-                    group_index: 0,
-                    account_index: 1,
-                },
-                amount: from_token_balance_expr.clone(),
-            }),
-            // Log amount transferred + amount
-            TaskAction::Log(Expression::Literal(Value::String(
-                "Transferred".to_string(),
-            ))),
-            TaskAction::Log(to_token_balance_expr),
-        ],
-        shared_values: vec![],
-        account_groups: vec![AccountGroupDefinition {
-            account_offset: Expression::Literal(Value::U8(0)),
-            length: 2,
-        }],
-    };
-
     let task_definition = find_task_definition_pda(user.encodable_pubkey(), 0).0;
     let tx = create_transaction(
         context,
@@ -136,7 +79,7 @@ async fn test() {
                 },
                 CreateTaskInstructionArgs {
                     task_id: 0,
-                    task: jup_swap_task,
+                    task: create_jupiter_swap_and_transfer_task_definition(),
                 },
             ),
         ],
@@ -176,26 +119,7 @@ async fn test() {
     let destination = Keypair::new().encodable_pubkey();
     let destination_token_account = get_associated_token_address(&destination, &mint);
 
-    println!("token_account pubkey {:?}", token_account);
-
-    let mut remaining_accounts = vec![
-        AccountMeta {
-            pubkey: token_account,
-            is_signer: false,
-            is_writable: true,
-        },
-        AccountMeta {
-            pubkey: destination_token_account,
-            is_signer: false,
-            is_writable: true,
-        },
-        AccountMeta {
-            pubkey: swap_instruction.program_id,
-            is_signer: false,
-            is_writable: false,
-        },
-    ];
-
+    let mut remaining_accounts = vec![];
     for account in &swap_instruction.accounts {
         remaining_accounts.push(account.clone());
     }
@@ -225,20 +149,28 @@ async fn test() {
     .await;
 
     instructions.push(
-        ballista_sdk::generated::instructions::ExecuteTask::instruction_with_remaining_accounts(
-            &ExecuteTask {
-                task: task_definition,
-                payer: user.encodable_pubkey(),
-            },
-            ExecuteTaskInstructionArgs {
-                task_values: vec![
-                    Value::Bytes(swap_instruction.data),
-                    Value::U8(3),
-                    Value::U8(swap_instruction.accounts.len() as u8),
-                ],
-            },
-            &remaining_accounts,
-        ),
+        execute_jupiter_swap_and_transfer(&JupiterSwapInstructionAccountParams {
+            payer: user.encodable_pubkey(),
+            from_token_account: token_account,
+            to_token_account: destination_token_account,
+            jupiter_program: swap_instruction.program_id,
+            swap_ix_data: swap_instruction.data,
+            swap_jup_accounts: swap_instruction.accounts,
+        }),
+        // ballista_sdk::generated::instructions::ExecuteTask::instruction_with_remaining_accounts(
+        //     &ExecuteTask {
+        //         task: task_definition,
+        //         payer: user.encodable_pubkey(),
+        //     },
+        //     ExecuteTaskInstructionArgs {
+        //         task_values: vec![
+        //             Value::Bytes(swap_instruction.data),
+        //             Value::U8(3),
+        //             Value::U8(swap_instruction.accounts.len() as u8),
+        //         ],
+        //     },
+        //     &remaining_accounts,
+        // ),
     );
 
     // let signed_tx = VersionedTransaction::try_new(tx.message.clone(), &[&user]).unwrap();

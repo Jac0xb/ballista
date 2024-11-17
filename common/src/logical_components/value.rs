@@ -39,7 +39,7 @@ pub enum Value {
     Bytes(Vec<u8>),
     Vec(Vec<Value>),
     Option(Option<Box<Value>>),
-    Struct(Vec<(String, Value)>),
+    Struct(Vec<Value>),
     String(String),
     Pubkey([u8; 32]),
     Bool(bool),
@@ -157,8 +157,7 @@ impl Value {
                 }
             }
             Value::Struct(v) => {
-                for (_, value) in v.iter() {
-                    // output.extend_from_slice(name.as_bytes());
+                for value in v.iter() {
                     value.as_bytes(serialization_type, output);
                 }
             }

@@ -1,16 +1,8 @@
-// log macro
-
-// pub static LOG_ENABLED: bool = false;
-
-// use pinocchio::{account_info::AccountInfo, instruction::Instruction, msg};
-
-use crate::task_state::TaskState;
-
 #[macro_export]
 macro_rules! debug_msg {
     ($($arg:tt)*) => {
-        if false {
-            solana_program::msg!($($arg)*)
+        if true {
+            pinocchio::msg!($($arg)*)
         }
     };
 }

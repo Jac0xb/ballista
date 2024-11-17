@@ -273,7 +273,7 @@ async fn test() {
 
     let token_account_deserialized = Account::unpack(token_account_data.data.as_slice()).unwrap();
 
-    print_transaction_info(context, &tx).await.unwrap();
+    // print_transaction_info(context, &tx).await.unwrap();
 
     assert_eq!(token_account_deserialized.amount, 0);
 }

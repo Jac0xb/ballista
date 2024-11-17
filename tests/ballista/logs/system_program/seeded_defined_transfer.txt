@@ -1,0 +1,44 @@
+
+Transaction size: 309
+Transaction Logs:
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 invoke [1]
+Program log: Instruction: CreateTask
+Program log: passed validation
+Program log: serialized task
+Program log: created signer
+Program 11111111111111111111111111111111 invoke [2]
+Program 11111111111111111111111111111111 success
+Program log: created account
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 7424 of 1400000 compute units
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 success
+Instruction 0: CompiledInstruction { program_id_index: 4, accounts: [5, 0, 3, 1, 2], data: [1, 0, 0, 0, 0] }
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2
+IxId TxId  Key                                          Owner                                        Writable   Signer     Invoked   
+[0  | 5  ] C7bk9y88yg3HGnWfTLKynu1zX3PAYECd1TFhGLhFz5hJ BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 false      false      false     
+[1  | 0  ] 5R2CfyN4K5Kdm2dR9BYi9sCsCks36uEi51WeH8dvNs4v 11111111111111111111111111111111             true       true       false     
+[2  | 3  ] 11111111111111111111111111111111             NativeLoader1111111111111111111111111111111  false      false      false     
+[3  | 1  ] 2XYTDNzuZPD4UgM8bj14XLFqhycqgFugxKxWF3tJ4EtT 11111111111111111111111111111111             true       false      false     
+[4  | 2  ] 36mjBCcBKYRfi1tA46WJwNSQv4U7C3UD2qUP3R29vsP3 11111111111111111111111111111111             true       false      false     
+
+
+Transaction size: 309
+Transaction Logs:
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 invoke [1]
+Program log: Instruction: ExecuteTask
+Program log: Processing action
+Program 11111111111111111111111111111111 invoke [2]
+Program 11111111111111111111111111111111 success
+Program log: purging
+Program log: purged
+Program log: Processing action
+Program log: evaluate task accounts
+Program log: evaluate arguments
+Program log: evaluating program account
+Program log: Instruction { program_id: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], data: [2, 0, 0, 0, 0, 225, 245, 5, 0, 0, 0, 0], accounts: [AccountMeta { pubkey: [22, 174, 172, 141, 199, 183, 1, 220, 16, 225, 202, 124, 120, 27, 211, 72, 229, 183, 202, 254, 86, 113, 177, 244, 64, 150, 208, 177, 95, 150, 244, 100], is_writable: true, is_signer: true }, AccountMeta { pubkey: [31, 49, 217, 223, 193, 186, 0, 30, 203, 160, 213, 245, 251, 113, 162, 155, 95, 84, 124, 238, 1, 181, 183, 12, 102, 109, 117, 165, 14, 243, 37, 110], is_writable: true, is_signer: false }] }
+Program 11111111111111111111111111111111 invoke [2]
+Program 11111111111111111111111111111111 success
+Program log: finished invoking instruction
+Program log: purging
+Program log: purged
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 40564 of 1400000 compute units
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 success

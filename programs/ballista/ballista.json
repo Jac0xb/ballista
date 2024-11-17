@@ -163,6 +163,11 @@
       "code": 6015,
       "name": "Todo",
       "msg": "TODO"
+    },
+    {
+      "code": 6016,
+      "name": "InvalidPDA",
+      "msg": "Invalid PDA"
     }
   ],
   "metadata": {

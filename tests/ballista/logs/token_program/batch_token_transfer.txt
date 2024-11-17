@@ -33,22 +33,32 @@ Program log: Instruction: MintTo
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4490 of 1376688 compute units
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
 
-Transaction size: 365
+Transaction size: 360
 Transaction Logs:
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 invoke [1]
+Program log: Instruction: CreateTask
+Program log: passed validation
+Program log: serialized task
+Program log: created signer
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 14502 of 1400000 compute units
+Program log: created account
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 13246 of 1400000 compute units
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 success
 
-Transaction size: 1170
+Transaction size: 1038
 Transaction Logs:
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 invoke [1]
+Program log: Instruction: ExecuteTask
+Program log: Processing action
+Program log: Processing action
+Program log: Processing action
+Program log: Processing action
 Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL invoke [2]
 Program log: Create
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
 Program log: Instruction: GetAccountDataSize
-Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1595 of 1382465 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1595 of 1381849 compute units
 Program return: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA pQAAAAAAAAA=
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
 Program 11111111111111111111111111111111 invoke [3]
@@ -57,24 +67,33 @@ Program log: Initialize the associated token account
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
 Program log: Instruction: InitializeImmutableOwner
 Program log: Please upgrade to SPL Token 2022 for immutable owner support
-Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1405 of 1375852 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1405 of 1375236 compute units
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
 Program log: Instruction: InitializeAccount3
-Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4214 of 1371968 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4214 of 1371352 compute units
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
-Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 20490 of 1387940 compute units
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 20490 of 1387324 compute units
 Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+Program log: purging
+Program log: purged
+Program log: Processing action
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]
 Program log: Instruction: Transfer
-Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4645 of 1365568 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4645 of 1364623 compute units
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program log: purging
+Program log: purged
+Program log: Processing action
 Program log: LOG: U8(0)
+Program log: Processing action
+Program log: Processing action
+Program log: Processing action
 Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL invoke [2]
 Program log: Create
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
 Program log: Instruction: GetAccountDataSize
-Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1595 of 1350227 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1595 of 1348798 compute units
 Program return: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA pQAAAAAAAAA=
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
 Program 11111111111111111111111111111111 invoke [3]
@@ -83,24 +102,68 @@ Program log: Initialize the associated token account
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
 Program log: Instruction: InitializeImmutableOwner
 Program log: Please upgrade to SPL Token 2022 for immutable owner support
-Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1405 of 1343614 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1405 of 1342185 compute units
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
 Program log: Instruction: InitializeAccount3
-Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4214 of 1339730 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4214 of 1338301 compute units
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
-Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 20490 of 1355702 compute units
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 20490 of 1354273 compute units
 Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+Program log: purging
+Program log: purged
+Program log: Processing action
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]
 Program log: Instruction: Transfer
-Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4645 of 1333330 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4645 of 1331572 compute units
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program log: purging
+Program log: purged
+Program log: Processing action
+Program log: LOG: U8(1)
+Program log: Processing action
+Program log: Processing action
+Program log: Processing action
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL invoke [2]
+Program log: Create
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: GetAccountDataSize
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1595 of 1315747 compute units
+Program return: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA pQAAAAAAAAA=
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program 11111111111111111111111111111111 invoke [3]
+Program 11111111111111111111111111111111 success
+Program log: Initialize the associated token account
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: InitializeImmutableOwner
+Program log: Please upgrade to SPL Token 2022 for immutable owner support
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1405 of 1309134 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: InitializeAccount3
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4214 of 1305250 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 20490 of 1321222 compute units
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+Program log: purging
+Program log: purged
+Program log: Processing action
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]
+Program log: Instruction: Transfer
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4645 of 1298521 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program log: purging
+Program log: purged
+Program log: Processing action
 Program log: LOG: U8(2)
+Program log: Processing action
+Program log: Processing action
+Program log: Processing action
 Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL invoke [2]
 Program log: Create
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
 Program log: Instruction: GetAccountDataSize
-Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1595 of 1317989 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1595 of 1282696 compute units
 Program return: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA pQAAAAAAAAA=
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
 Program 11111111111111111111111111111111 invoke [3]
@@ -109,18 +172,263 @@ Program log: Initialize the associated token account
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
 Program log: Instruction: InitializeImmutableOwner
 Program log: Please upgrade to SPL Token 2022 for immutable owner support
-Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1405 of 1311376 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1405 of 1276083 compute units
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
 Program log: Instruction: InitializeAccount3
-Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4214 of 1307492 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4214 of 1272199 compute units
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
-Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 20490 of 1323464 compute units
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 20490 of 1288171 compute units
 Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+Program log: purging
+Program log: purged
+Program log: Processing action
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]
 Program log: Instruction: Transfer
-Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4645 of 1301092 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4645 of 1265470 compute units
 Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program log: purging
+Program log: purged
+Program log: Processing action
+Program log: LOG: U8(3)
+Program log: Processing action
+Program log: Processing action
+Program log: Processing action
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL invoke [2]
+Program log: Create
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: GetAccountDataSize
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1595 of 1249645 compute units
+Program return: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA pQAAAAAAAAA=
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program 11111111111111111111111111111111 invoke [3]
+Program 11111111111111111111111111111111 success
+Program log: Initialize the associated token account
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: InitializeImmutableOwner
+Program log: Please upgrade to SPL Token 2022 for immutable owner support
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1405 of 1243032 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: InitializeAccount3
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4214 of 1239148 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 20490 of 1255120 compute units
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+Program log: purging
+Program log: purged
+Program log: Processing action
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]
+Program log: Instruction: Transfer
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4645 of 1232419 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program log: purging
+Program log: purged
+Program log: Processing action
 Program log: LOG: U8(4)
-Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 106517 of 1400000 compute units
+Program log: Processing action
+Program log: Processing action
+Program log: Processing action
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL invoke [2]
+Program log: Create
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: GetAccountDataSize
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1595 of 1216594 compute units
+Program return: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA pQAAAAAAAAA=
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program 11111111111111111111111111111111 invoke [3]
+Program 11111111111111111111111111111111 success
+Program log: Initialize the associated token account
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: InitializeImmutableOwner
+Program log: Please upgrade to SPL Token 2022 for immutable owner support
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1405 of 1209981 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: InitializeAccount3
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4214 of 1206097 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 20490 of 1222069 compute units
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+Program log: purging
+Program log: purged
+Program log: Processing action
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]
+Program log: Instruction: Transfer
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4645 of 1199368 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program log: purging
+Program log: purged
+Program log: Processing action
+Program log: LOG: U8(5)
+Program log: Processing action
+Program log: Processing action
+Program log: Processing action
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL invoke [2]
+Program log: Create
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: GetAccountDataSize
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1595 of 1183543 compute units
+Program return: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA pQAAAAAAAAA=
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program 11111111111111111111111111111111 invoke [3]
+Program 11111111111111111111111111111111 success
+Program log: Initialize the associated token account
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: InitializeImmutableOwner
+Program log: Please upgrade to SPL Token 2022 for immutable owner support
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1405 of 1176930 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: InitializeAccount3
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4214 of 1173046 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 20490 of 1189018 compute units
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+Program log: purging
+Program log: purged
+Program log: Processing action
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]
+Program log: Instruction: Transfer
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4645 of 1166317 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program log: purging
+Program log: purged
+Program log: Processing action
+Program log: LOG: U8(6)
+Program log: Processing action
+Program log: Processing action
+Program log: Processing action
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL invoke [2]
+Program log: Create
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: GetAccountDataSize
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1595 of 1150492 compute units
+Program return: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA pQAAAAAAAAA=
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program 11111111111111111111111111111111 invoke [3]
+Program 11111111111111111111111111111111 success
+Program log: Initialize the associated token account
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: InitializeImmutableOwner
+Program log: Please upgrade to SPL Token 2022 for immutable owner support
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1405 of 1143879 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: InitializeAccount3
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4214 of 1139995 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 20490 of 1155967 compute units
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+Program log: purging
+Program log: purged
+Program log: Processing action
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]
+Program log: Instruction: Transfer
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4645 of 1133266 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program log: purging
+Program log: purged
+Program log: Processing action
+Program log: LOG: U8(7)
+Program log: Processing action
+Program log: Processing action
+Program log: Processing action
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL invoke [2]
+Program log: Create
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: GetAccountDataSize
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1595 of 1117441 compute units
+Program return: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA pQAAAAAAAAA=
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program 11111111111111111111111111111111 invoke [3]
+Program 11111111111111111111111111111111 success
+Program log: Initialize the associated token account
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: InitializeImmutableOwner
+Program log: Please upgrade to SPL Token 2022 for immutable owner support
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1405 of 1110828 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: InitializeAccount3
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4214 of 1106944 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 20490 of 1122916 compute units
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+Program log: purging
+Program log: purged
+Program log: Processing action
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]
+Program log: Instruction: Transfer
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4645 of 1100215 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program log: purging
+Program log: purged
+Program log: Processing action
+Program log: LOG: U8(8)
+Program log: Processing action
+Program log: Processing action
+Program log: Processing action
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL invoke [2]
+Program log: Create
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: GetAccountDataSize
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1595 of 1084390 compute units
+Program return: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA pQAAAAAAAAA=
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program 11111111111111111111111111111111 invoke [3]
+Program 11111111111111111111111111111111 success
+Program log: Initialize the associated token account
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: InitializeImmutableOwner
+Program log: Please upgrade to SPL Token 2022 for immutable owner support
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 1405 of 1077777 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3]
+Program log: Instruction: InitializeAccount3
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4214 of 1073893 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 20490 of 1089865 compute units
+Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success
+Program log: purging
+Program log: purged
+Program log: Processing action
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]
+Program log: Instruction: Transfer
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4645 of 1067164 compute units
+Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success
+Program log: purging
+Program log: purged
+Program log: Processing action
+Program log: LOG: U8(9)
+Program log: Processing action
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 340648 of 1400000 compute units
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 success
+account: Some(Account { lamports: 9974367200, data.len: 0, owner: 11111111111111111111111111111111, executable: false, rent_epoch: 18446744073709551615 })
+account: Some(Account { lamports: 2039280, data.len: 165, owner: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, executable: false, rent_epoch: 18446744073709551615, data: 2d14a18d8fdb1bcb7c24a3c04deecd9a9bad9f71a871ef51b29f4f05abfe3a18b280c991875fd0dc1536c8e475d495155a49426b0db97e98e1e3fa62995bfefd })
+account: Some(Account { lamports: 2039280, data.len: 165, owner: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, executable: false, rent_epoch: 18446744073709551615, data: 2d14a18d8fdb1bcb7c24a3c04deecd9a9bad9f71a871ef51b29f4f05abfe3a18bcb0ab4fa5b2a98a1564b3b7215e2e4d35f0f862501c945ee695151f69aba444 })
+account: Some(Account { lamports: 2039280, data.len: 165, owner: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, executable: false, rent_epoch: 18446744073709551615, data: 2d14a18d8fdb1bcb7c24a3c04deecd9a9bad9f71a871ef51b29f4f05abfe3a186f065599ebdafab9418a993a4fc0e1ba58eef7797d013c60612180d130c5905f })
+account: Some(Account { lamports: 2039280, data.len: 165, owner: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, executable: false, rent_epoch: 18446744073709551615, data: 2d14a18d8fdb1bcb7c24a3c04deecd9a9bad9f71a871ef51b29f4f05abfe3a18eed74e51ad222c212f5e457a07c88c37e6a81451d2a7a80bd678467cfe384185 })
+account: Some(Account { lamports: 2039280, data.len: 165, owner: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, executable: false, rent_epoch: 18446744073709551615, data: 2d14a18d8fdb1bcb7c24a3c04deecd9a9bad9f71a871ef51b29f4f05abfe3a1800c2d54dcaef6d8004feb3d20eaa9e44684b820f8c44be01dc66a6e5f107ae72 })
+account: Some(Account { lamports: 2039280, data.len: 165, owner: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, executable: false, rent_epoch: 18446744073709551615, data: 2d14a18d8fdb1bcb7c24a3c04deecd9a9bad9f71a871ef51b29f4f05abfe3a18afcacb52fda292ccc32a8977f5b1c7bb584bc8cc6f0bc0a9464de1b0712988cc })
+account: Some(Account { lamports: 2039280, data.len: 165, owner: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, executable: false, rent_epoch: 18446744073709551615, data: 2d14a18d8fdb1bcb7c24a3c04deecd9a9bad9f71a871ef51b29f4f05abfe3a180151b71645707bc7222744e923b24785dcf07165f6ef1ea25c5815a0132e8fc1 })
+account: Some(Account { lamports: 2039280, data.len: 165, owner: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, executable: false, rent_epoch: 18446744073709551615, data: 2d14a18d8fdb1bcb7c24a3c04deecd9a9bad9f71a871ef51b29f4f05abfe3a18b54c9330153729f1de54898bcda538f6eb03b09b0c18fdcac57a444f0ec0243e })
+account: Some(Account { lamports: 2039280, data.len: 165, owner: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, executable: false, rent_epoch: 18446744073709551615, data: 2d14a18d8fdb1bcb7c24a3c04deecd9a9bad9f71a871ef51b29f4f05abfe3a18447c26baf6012f9447c0da5ecf384652b5e1468e4841e0d0aee4117150063771 })
+account: Some(Account { lamports: 2039280, data.len: 165, owner: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, executable: false, rent_epoch: 18446744073709551615, data: 2d14a18d8fdb1bcb7c24a3c04deecd9a9bad9f71a871ef51b29f4f05abfe3a18e1e5ccb05d8a04754dda528023356828239ced48bb5de4a27a273bd39ef8cb57 })
+account: Some(Account { lamports: 2039280, data.len: 165, owner: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, executable: false, rent_epoch: 18446744073709551615, data: 2d14a18d8fdb1bcb7c24a3c04deecd9a9bad9f71a871ef51b29f4f05abfe3a185ba7e6d0bab53fc5a6f8311c3553a52b930894f35a5d47bab17dd1bd137004f5 })
+account: Some(Account { lamports: 1, data.len: 14, owner: NativeLoader1111111111111111111111111111111, executable: true, rent_epoch: 0, data: 73797374656d5f70726f6772616d })
+account: None
+account: None
+account: Some(Account { lamports: 929020800, data.len: 133352, owner: BPFLoader2111111111111111111111111111111111, executable: true, rent_epoch: 0, data: 7f454c460201010000000000000000000300f70001000000d8f80000000000004000000000000000a80602000000000000000000400038000400400009000800 })
+account: Some(Account { lamports: 1461600, data.len: 82, owner: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, executable: false, rent_epoch: 18446744073709551615, data: 01000000bcb0ab4fa5b2a98a1564b3b7215e2e4d35f0f862501c945ee695151f69aba44400e1f505000000000601000000000000000000000000000000000000 })
+account: None
+account: None
+account: None
+account: Some(Account { lamports: 1719120, data.len: 119, owner: BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2, executable: false, rent_epoch: 18446744073709551615, data: 00000002000000050100000000070403000700000a00000202040000000608010409030000000702020001030409030000000702040903000000060201040101 })
+account: Some(Account { lamports: 731913600, data.len: 105032, owner: BPFLoader2111111111111111111111111111111111, executable: true, rent_epoch: 0, data: 7f454c460201010000000000000000000300f70001000000c8540000000000004000000000000000089801000000000000000000400038000400400009000800 })
+account: Some(Account { lamports: 2251142400, data.len: 323312, owner: BPFLoader2111111111111111111111111111111111, executable: true, rent_epoch: 0, data: 7f454c460201010000000000000000000300f7000100000070430200000000004000000000000000b0ec04000000000000000000400038000400400009000800 })
+account: None
+account: None
+account: None
+account: None
+account: None

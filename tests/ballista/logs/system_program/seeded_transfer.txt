@@ -1,0 +1,39 @@
+
+Transaction size: 285
+Transaction Logs:
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 invoke [1]
+Program log: Instruction: CreateTask
+Program log: passed validation
+Program log: serialized task
+Program log: created signer
+Program 11111111111111111111111111111111 invoke [2]
+Program 11111111111111111111111111111111 success
+Program log: created account
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 8166 of 1400000 compute units
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 success
+Instruction 0: CompiledInstruction { program_id_index: 4, accounts: [5, 0, 3, 2, 1], data: [1, 0, 0, 0, 0] }
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2
+IxId TxId  Key                                          Owner                                        Writable   Signer     Invoked   
+[0  | 5  ] CvzpHsfA6RhJGHTV7dX8RdazVxw6PosiWuRcR2bM96EQ BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 false      false      false     
+[1  | 0  ] 4BG3k1Stn7BHu1bV1aW5zAWYWoi3z4dDPWLZQmWnb7T9 11111111111111111111111111111111             true       true       false     
+[2  | 3  ] 11111111111111111111111111111111             NativeLoader1111111111111111111111111111111  false      false      false     
+[3  | 2  ] 8HhT1emMmvcsTWEQjHaKbTN4FyoWJuNSv2nQ96itBGdA 11111111111111111111111111111111             true       false      false     
+[4  | 1  ] 5P1XmArqugTu2qTzbyRWor5zUck61j4SVt9WxnuQuSeF 11111111111111111111111111111111             true       false      false     
+
+
+Transaction size: 309
+Transaction Logs:
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 invoke [1]
+Program log: Instruction: ExecuteTask
+Program log: Processing action
+Program 11111111111111111111111111111111 invoke [2]
+Program 11111111111111111111111111111111 success
+Program log: purging
+Program log: purged
+Program log: Processing action
+Program 11111111111111111111111111111111 invoke [2]
+Program 11111111111111111111111111111111 success
+Program log: purging
+Program log: purged
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 8208 of 1400000 compute units
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 success

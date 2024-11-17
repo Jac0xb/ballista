@@ -1,6 +1,7 @@
 use crate::utils::{
     cloning::copy_accounts_from_transaction,
     jupiter::types::{SwapRequest, SwapResponse},
+    record::TestLogger,
     test_context::TestContext,
 };
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -49,6 +50,7 @@ pub async fn clone_swap(
 pub async fn print_transaction_info(
     context: &mut TestContext,
     tx: &VersionedTransaction,
+    logger: &mut TestLogger,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut lookup_table_vecs: Vec<Vec<u8>> = vec![];
     if let Some(address_table_lookups) = tx.message.address_table_lookups() {
@@ -78,12 +80,12 @@ pub async fn print_transaction_info(
 
     // For each instruction
     for (i, instruction) in tx.message.instructions().iter().enumerate() {
-        println!("Instruction {}: {:?}", i, instruction);
+        logger.write(&format!("Instruction {}: {:?}", i, instruction));
 
-        println!(
+        logger.write(&format!(
             "Program {:?}",
             tx.message.static_account_keys()[instruction.program_id_index as usize]
-        );
+        ));
 
         // Collect account indices used in this instruction
         // let mut account_indices = HashSet::new();
@@ -92,10 +94,10 @@ pub async fn print_transaction_info(
         // }
 
         // Prepare the table header
-        println!(
+        logger.write(&format!(
             "{:<4} {:<4}  {:<44} {:<44} {:<10} {:<10} {:<10}",
             "IxId", "TxId", "Key", "Owner", "Writable", "Signer", "Invoked"
-        );
+        ));
 
         for (i, account_index) in instruction.accounts.iter().enumerate() {
             let account_index = *account_index as usize;
@@ -108,7 +110,7 @@ pub async fn print_transaction_info(
             let is_signer = tx.message.is_signer(account_index);
             let is_invoked = tx.message.is_invoked(account_index);
 
-            println!(
+            logger.write(&format!(
                 "[{:<2} | {:<2} ] {:<44} {:<44} {:<10} {:<10} {:<10}",
                 i,
                 account_index,
@@ -117,10 +119,10 @@ pub async fn print_transaction_info(
                 is_writable,
                 is_signer,
                 is_invoked
-            );
+            ));
         }
 
-        println!(); // Add an empty line between instructions for readability
+        logger.write(""); // Add an empty line between instructions for readability
     }
 
     Ok(())

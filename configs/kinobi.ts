@@ -28,20 +28,20 @@ const programDir = path.join(__dirname, '..', 'programs', 'ballista');
 
 const ballistaIdl = require(path.join(programDir, 'ballista.json'));
 
-
 ballistaIdl.accounts = [
   {
     name: 'taskDefinition',
-    data: [{
+    data: [
+      {
         name: 'id',
         type: 'u8',
-    }]
+      },
+    ],
   },
 ];
 
-// Instanciate Kinobi.
+// Instanciate Codama.
 const codama = createFromRoot(rootNodeFromAnchor(ballistaIdl));
-
 
 // // Memory account PDA
 codama.update(
@@ -63,16 +63,16 @@ codama.update(
 
 codama.update(
   setInstructionAccountDefaultValuesVisitor([
-      // {
-      //     // Set this public key as default value to any account named 'counterProgram'.
-      //     account: 'counterProgram',
-      //     defaultValue: publicKeyValueNode('MyCounterProgram11111111111111111111111111'),
-      // },
-      {
-          // Set this PDA as default value to any account named 'associatedToken' or 'ata'.
-          account: /^task/,
-          defaultValue: pdaValueNode('taskDefinition'),
-      },
+    // {
+    //     // Set this public key as default value to any account named 'counterProgram'.
+    //     account: 'counterProgram',
+    //     defaultValue: publicKeyValueNode('MyCounterProgram11111111111111111111111111'),
+    // },
+    {
+      // Set this PDA as default value to any account named 'associatedToken' or 'ata'.
+      account: /^task/,
+      defaultValue: pdaValueNode('taskDefinition'),
+    },
   ]),
 );
 
@@ -96,7 +96,7 @@ codama.update(
 // // How to set a default value for an account in an instruction.
 codama.update(
   updateInstructionsVisitor({
-    'createTask': {
+    createTask: {
       accounts: {
         // systemProgram: {
         //   defaultValue: publicKeyValueNode('<pubkey>'),
@@ -121,7 +121,7 @@ codama.update(
     //     },
     //   },
     // },
-  })
+  }),
 );
 
 // codama.update(
@@ -137,7 +137,6 @@ codama.update(
 //     },
 //   ])
 // );
-
 
 // for (const definedType of [
 //   'value',
@@ -182,24 +181,27 @@ codama.update(
 //   })
 // );
 
-
 // codama.update(fillDefaultPdaSeedValuesVisitor(instructionNode, linkables, strictMode));
 
-
-console.log(codama.getRoot())
+console.log(codama.getRoot());
 
 // // Render preview JavaScript.
 const jsDir = path.join(clientDir, 'js', 'src', 'generated');
 // const prettier = require(path.join(clientDir, 'js', '.prettierrc.json'));
-codama.accept(renderJavaScriptVisitor(jsDir, { 
-  // prettier 
-}));
+codama.accept(
+  renderJavaScriptVisitor(jsDir, {
+    // prettier
+  }),
+);
 
 // Render Rust.
 const crateDir = path.join(clientDir, 'rust');
 const rustDir = path.join(clientDir, 'rust', 'src', 'generated');
 codama.accept(
-  renderRustVisitor(rustDir, { formatCode: true, crateFolder: crateDir, linkOverrides: {
+  renderRustVisitor(rustDir, {
+    formatCode: true,
+    crateFolder: crateDir,
+    linkOverrides: {
       // pdas: {
       //   taskDefinition: 'hooked',
       // },
@@ -209,6 +211,5 @@ codama.accept(
         taskDefinition: 'hooked',
       },
     },
-  },
-),
+  }),
 );

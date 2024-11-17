@@ -18,10 +18,6 @@ pub fn evaluate(
     task_state: &mut TaskState<'_>,
 ) -> Result<(), BallistaError> {
     debug_msg!("evaluate task accounts");
-    // let account_range = (
-    //     // evaluate_expression(&raw_instruction.accounts, task_state)?.as_u128(),
-    //     // evaluate_expression(&raw_instruction.accounts.1, task_state)?.as_u128(),
-    // );
 
     let accounts = match &raw_instruction.accounts {
         TaskAccounts::Evaluated { start, length } => {
@@ -48,7 +44,7 @@ pub fn evaluate(
 
             &task_state.all_accounts[index..index + length]
         }
-        TaskAccounts::FromInput(start, length) => {
+        TaskAccounts::FromInput { start, length } => {
             if *start as usize > task_state.all_accounts.len() {
                 return Err(BallistaError::InvalidAccountRange);
             }

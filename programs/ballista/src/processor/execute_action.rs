@@ -11,8 +11,7 @@ use ballista_common::{
         action::set_cache::SetCacheType, action_context::ActionContext, task_action::TaskAction,
     },
 };
-use pinocchio::account_info::AccountInfo;
-use solana_program::msg;
+use pinocchio::{account_info::AccountInfo, msg};
 
 pub fn process(
     task_definition: &TaskDefinition,
@@ -39,7 +38,6 @@ pub fn process(
                 .map(|size| size as usize)
                 .unwrap_or(remaining_accounts.len() * 2),
         ),
-        // instruction_data_cache: &mut Vec::with_capacity(512),
         payer,
     };
 
@@ -76,26 +74,17 @@ fn process_action(
 
         match action {
             TaskAction::SystemInstruction(program_ix) => {
-                evaluate::instructions::system_program::evaluate(
-                    program_ix,
-                    task_state,
-                    instruction_data_cache,
-                )
-                .unwrap();
+                evaluate::instructions::system_program::evaluate(program_ix, task_state).unwrap();
                 task_state.purge_instruction_cache();
             }
             TaskAction::TokenProgramInstruction(program_ix) => {
                 evaluate::instructions::token_program::evaluate(program_ix, task_state).unwrap();
-                // task_state.purge_instruction_cache();
-
-                // panic!("Token program not implemented");
+                task_state.purge_instruction_cache();
             }
             TaskAction::AssociatedTokenProgramInstruction(program_ix) => {
                 evaluate::instructions::associated_token_program::evaluate(program_ix, task_state)
                     .unwrap();
-                // task_state.purge_instruction_cache();
-
-                // panic!("Associated token program not implemented");
+                task_state.purge_instruction_cache();
             }
             TaskAction::DefinedInstruction(defined_instruction) => {
                 evaluate::instructions::defined::evaluate(
@@ -145,9 +134,6 @@ fn process_action(
                 evaluate::instructions::raw::evaluate(_raw_instruction, task_state).unwrap();
                 task_state.purge_instruction_cache();
             }
-            // TaskAction::Raw(_raw_instruction_group) => {
-            //     panic!("Raw instruction groups not implemented");
-            // }
             TaskAction::SetCache(set_cache) => match set_cache {
                 SetCacheType::AccountData { .. } => {
                     panic!("Account data not implemented");

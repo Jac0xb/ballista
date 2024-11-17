@@ -1,7 +1,8 @@
-use crate::utils::ballista::task_definitions::schema::{
-    build_mint_bubblegum_nft_task_execution, mint_bubblegum_nft_task_definition,
+use crate::utils::ballista::definitions::defined::bubblegum_program::mint::{
+    mint_bubblegum_nft_task_definition, MintBubblegumNftAccountMetaParams,
+    MintBubblegumNftInstructionAccount,
 };
-use crate::utils::jupiter::transaction_cloning::print_transaction_info;
+use crate::utils::ballista::definitions::instruction_schema::execute_task_with_args;
 use crate::utils::process_transaction_assert_success;
 use crate::utils::record::TestLogger;
 use crate::utils::test_context::TestContext;
@@ -112,21 +113,22 @@ async fn simple() {
         context,
         vec![
             compute_budget::ComputeBudgetInstruction::request_heap_frame(HEAP_LENGTH as u32 * 8),
-            build_mint_bubblegum_nft_task_execution(
-                &task_definition,
-                &tree.authority(),
-                &tree_creator.encodable_pubkey(),
-                &tree_creator.encodable_pubkey(),
-                &tree.tree_pubkey(),
-                &tree_creator.encodable_pubkey(),
+            execute_task_with_args::<MintBubblegumNftInstructionAccount>(
+                task_definition,
+                &MintBubblegumNftAccountMetaParams {
+                    tree_authority: tree.authority(),
+                    leaf_owner: tree_creator.encodable_pubkey(),
+                    leaf_delegate: tree_creator.encodable_pubkey(),
+                    merkle_tree: tree.tree_pubkey(),
+                    payer: tree_creator.encodable_pubkey(),
+                    tree_delegate: tree_creator.encodable_pubkey(),
+                },
+                vec![],
             ),
         ],
         &[&tree_creator],
     )
     .await;
-
-    print_transaction_info(context, &mint_tx).await.unwrap();
-    print_transaction_info(context, &tx).await.unwrap();
 
     process_transaction_assert_success(context, tx.clone(), &mut logger)
         .await

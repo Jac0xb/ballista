@@ -621,6 +621,8 @@ dependencies = [
  "bytemuck",
  "mpl-bubblegum",
  "mpl-token-metadata",
+ "num-derive 0.3.3",
+ "num-traits",
  "rand 0.8.5",
  "regex",
  "reqwest",
@@ -640,6 +642,8 @@ dependencies = [
  "spl-noop 0.1.3",
  "spl-token",
  "spl-token-2022 1.0.0",
+ "strum",
+ "strum_macros",
 ]
 
 [[package]]

@@ -67,6 +67,9 @@ pub enum BallistaError {
 
     #[error("TODO")]
     Todo,
+
+    #[error("Invalid PDA")]
+    InvalidPDA,
 }
 
 impl From<BallistaError> for ProgramError {

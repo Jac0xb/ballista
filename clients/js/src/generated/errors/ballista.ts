@@ -46,6 +46,8 @@ export const BALLISTA_ERROR__INVALID_ACCOUNT_RANGE = 0x177d; // 6013
 export const BALLISTA_ERROR__RANGE_OUT_OF_BOUNDS = 0x177e; // 6014
 /** Todo: TODO */
 export const BALLISTA_ERROR__TODO = 0x177f; // 6015
+/** InvalidPDA: Invalid PDA */
+export const BALLISTA_ERROR__INVALID_P_D_A = 0x1780; // 6016
 
 export type BallistaError =
   | typeof BALLISTA_ERROR__ACCOUNT_EMPTY
@@ -58,6 +60,7 @@ export type BallistaError =
   | typeof BALLISTA_ERROR__INVALID_ACCOUNT_RANGE
   | typeof BALLISTA_ERROR__INVALID_CAST
   | typeof BALLISTA_ERROR__INVALID_INSTRUCTION_DATA
+  | typeof BALLISTA_ERROR__INVALID_P_D_A
   | typeof BALLISTA_ERROR__INVALID_SCHEMA_DATA
   | typeof BALLISTA_ERROR__INVALID_TOKEN_ACCOUNT
   | typeof BALLISTA_ERROR__RANGE_OUT_OF_BOUNDS
@@ -78,6 +81,7 @@ if (process.env.NODE_ENV !== 'production') {
     [BALLISTA_ERROR__INVALID_ACCOUNT_RANGE]: `Invalid account range`,
     [BALLISTA_ERROR__INVALID_CAST]: `Invalid cast`,
     [BALLISTA_ERROR__INVALID_INSTRUCTION_DATA]: `Invalid instruction`,
+    [BALLISTA_ERROR__INVALID_P_D_A]: `Invalid PDA`,
     [BALLISTA_ERROR__INVALID_SCHEMA_DATA]: `Invalid schema data`,
     [BALLISTA_ERROR__INVALID_TOKEN_ACCOUNT]: `Invalid token account`,
     [BALLISTA_ERROR__RANGE_OUT_OF_BOUNDS]: `Range out of bounds`,

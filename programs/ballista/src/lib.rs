@@ -1,13 +1,10 @@
 use ballista_common::schema::TaskDefinition;
 use borsh::{BorshDeserialize, BorshSerialize};
-
 use error::BallistaError;
 use instruction::BallistaInstruction;
 use pda::get_task_definition_address;
 use pinocchio_system::instructions::CreateAccount;
-use solana_program::declare_id;
 
-// pub mod allocator;
 pub mod error;
 pub mod evaluate;
 pub mod instruction;
@@ -24,13 +21,16 @@ use pinocchio::{
     pubkey::Pubkey,
     sysvars::{rent::Rent, Sysvar},
 };
-
-use pinocchio::entrypoint;
+use pinocchio_pubkey::declare_id;
 
 declare_id!("BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2");
 
 #[cfg(not(feature = "no-entrypoint"))]
-entrypoint!(process_instruction);
+mod init {
+    use crate::process_instruction;
+    use pinocchio::entrypoint;
+    entrypoint!(process_instruction);
+}
 
 pub fn process_instruction(
     _program_id: &Pubkey,
@@ -101,14 +101,13 @@ pub fn process_instruction(
                 to: task_account,
                 lamports: Rent::get()?.minimum_balance(serialized_task.len()),
                 space: serialized_task.len() as u64,
-                owner: &crate::ID.to_bytes(),
+                owner: &crate::ID,
             }
             .invoke_signed(&[signer])?;
 
             debug_msg!("created account");
 
             task_account
-                // .task_account
                 .try_borrow_mut_data()
                 .unwrap()
                 .copy_from_slice(&serialized_task);

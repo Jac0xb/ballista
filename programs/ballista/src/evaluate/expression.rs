@@ -9,9 +9,8 @@ use pinocchio::{
     msg,
     sysvars::{rent::Rent, Sysvar},
 };
-// use solana_program::{account_info::AccountInfo, msg, rent::Rent, sysvar::Sysvar};
 
-use crate::{debug_msg, error::BallistaError, task_state::TaskState};
+use crate::{error::BallistaError, task_state::TaskState};
 
 use super::evaluate_task_account;
 
@@ -23,48 +22,16 @@ where
     'b: 'a,
 {
     match expression {
-        Expression::Literal(v) => debug_msg!("evaluating literal"),
-        Expression::InputValue(index) => debug_msg!("evaluating input value"),
-        Expression::StaticValue(index) => debug_msg!("evaluating static value"),
-        Expression::CachedValue(index) => debug_msg!("evaluating cached value"),
-        Expression::ValueFromAccountData {
-            index,
-            offset,
-            value_type,
-        } => debug_msg!("evaluating value from account data"),
-        Expression::ValueFromAccountInfo { index, field_name } => {
-            debug_msg!("evaluating value from account info");
-        }
-        Expression::SafeCast(inner_expr, target_type) => {
-            debug_msg!("evaluating safe cast");
-        }
-        Expression::Multiply(left, right, behavior) => {
-            debug_msg!("evaluating multiply");
-        }
-        Expression::Divide(left, right, behavior) => {
-            debug_msg!("evaluating divide");
-        }
-        Expression::Add(left, right, behavior) => {
-            debug_msg!("evaluating add");
-        }
-        Expression::Subtract(left, right, behavior) => {
-            debug_msg!("evaluating subtract");
-        }
-        // Expression::Conditional(condition, true_expr, false_expr) => {
-        //     debug_msg!("evaluating conditional");
-        // }
-        Expression::Rent(space_expr) => {
-            debug_msg!("evaluating rent");
-        }
-    }
-
-    match expression {
         Expression::Literal(v) => Ok(Cow::Borrowed(v)),
         Expression::InputValue(index) => {
             let value = task_state
                 .inputs
                 .get(*index as usize)
-                .ok_or(BallistaError::InputValueNotFound)
+                .ok_or_else(|| {
+                    msg!("Input value not found at index {}", index);
+
+                    BallistaError::InputValueNotFound
+                })
                 .unwrap();
 
             Ok(Cow::Borrowed(value))
@@ -74,7 +41,11 @@ where
                 .definition
                 .shared_values
                 .get(*index as usize)
-                .ok_or(BallistaError::StaticValueNotFound)
+                .ok_or_else(|| {
+                    msg!("Static value not found at index {}", index);
+
+                    BallistaError::StaticValueNotFound
+                })
                 .unwrap();
 
             Ok(Cow::Borrowed(value))
@@ -93,8 +64,7 @@ where
             offset,
             value_type,
         } => {
-            // let index_value = evaluate_expression(index, task_state)?;
-            let account = evaluate_task_account(index, task_state)?;
+            let (account, _) = evaluate_task_account(index, task_state)?;
 
             let offset_value = evaluate_expression(offset, task_state)?;
 
@@ -115,12 +85,11 @@ where
             Ok(Cow::Owned(result))
         }
         Expression::ValueFromAccountInfo { index, field_name } => {
-            let account = evaluate_task_account(index, task_state)?;
+            let (account, _) = evaluate_task_account(index, task_state)?;
             let field_value = match field_name {
-                // AccountInfoType::Data => account.data,
+                // TODO: WE NEED MORE FIELDS FROM ACCOUNT INFO
                 AccountInfoType::Key => Value::Pubkey(*account.key()),
                 AccountInfoType::Owner => Value::Pubkey(*account.owner()),
-                // AccountInfoType::Rent => account.rent,
                 _ => todo!(),
             };
 
@@ -208,14 +177,6 @@ where
 
             Ok(Cow::Owned(result))
         }
-        // Expression::Conditional(condition, true_expr, false_expr) => {
-        //     let condition_value = evaluate_condition(condition, task_state)?;
-        //     if condition_value {
-        //         evaluate_expression(true_expr, task_state, value_output)
-        //     } else {
-        //         evaluate_expression(false_expr, task_state, value_output)
-        //     }
-        // }
         Expression::Rent(space_expr) => {
             let space = evaluate_expression(space_expr, task_state)?;
 

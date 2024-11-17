@@ -58,6 +58,9 @@ pub enum BallistaError {
     /// 6015 - TODO
     #[error("TODO")]
     Todo = 0x177F,
+    /// 6016 - Invalid PDA
+    #[error("Invalid PDA")]
+    InvalidPDA = 0x1780,
 }
 
 impl solana_program::program_error::PrintProgramError for BallistaError {

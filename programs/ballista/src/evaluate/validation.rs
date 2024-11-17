@@ -10,7 +10,7 @@ pub fn evaluate_validation(
 ) -> Result<bool, BallistaError> {
     match validation {
         Validation::IsTokenAccount(account) => {
-            let account_info = evaluate_task_account(account, task_state)?;
+            let (account_info, _) = evaluate_task_account(account, task_state)?;
 
             if account_info.owner() != &spl_token::ID.to_bytes()
                 && account_info.owner() != &spl_token_2022::ID.to_bytes()
@@ -22,7 +22,7 @@ pub fn evaluate_validation(
         }
         Validation::IsEmpty(account) => {
             // panic!("unimplemented")
-            let account_info = evaluate_task_account(account, task_state)?;
+            let (account_info, _) = evaluate_task_account(account, task_state)?;
 
             Ok(account_info.data_is_empty())
         }

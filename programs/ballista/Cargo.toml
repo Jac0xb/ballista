@@ -44,6 +44,7 @@ pinocchio = "=0.6.0"
 pinocchio-pubkey = "=0.2.1"
 pinocchio-token = "0.2.0"
 pinocchio-system = "0.2.0"
+geppetto = { git = "https://github.com/Jac0xb/geppetto.git", rev = "3b2d78a2b5a8722d025482b8c299ee5050e2dc2b", package = "geppetto" }
 # pinocchio = { git = "https://github.com/Jac0xb/pinocchio.git", rev = "4689aadc60c591cfcda6fff98a4dae12a9ee6942", package = "pinocchio" }
 # pinocchio-system = { git = "https://github.com/Jac0xb/pinocchio.git", rev = "4689aadc60c591cfcda6fff98a4dae12a9ee6942", package = "pinocchio-system" }
 # pinocchio-token = { git = "https://github.com/Jac0xb/pinocchio.git", rev = "4689aadc60c591cfcda6fff98a4dae12a9ee6942", package = "pinocchio-token" }

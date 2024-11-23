@@ -254,6 +254,7 @@ dependencies = [
  "borsh 0.10.3",
  "bs58 0.5.1",
  "bytemuck",
+ "geppetto",
  "lib-sokoban",
  "num-traits",
  "pinocchio",
@@ -905,6 +906,21 @@ dependencies = [
  "serde",
  "typenum",
  "version_check",
+]
+
+[[package]]
+name = "geppetto"
+version = "2.1.1"
+source = "git+https://github.com/Jac0xb/geppetto.git?rev=3b2d78a2b5a8722d025482b8c299ee5050e2dc2b#3b2d78a2b5a8722d025482b8c299ee5050e2dc2b"
+dependencies = [
+ "borsh 0.10.3",
+ "bytemuck",
+ "num_enum 0.7.3",
+ "pinocchio",
+ "pinocchio-pubkey",
+ "pinocchio-system",
+ "pinocchio-token",
+ "thiserror",
 ]
 
 [[package]]

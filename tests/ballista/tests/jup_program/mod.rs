@@ -8,7 +8,6 @@ use crate::utils::{
     cloning::{copy_accounts_from_transaction, set_account_from_refs},
     jupiter::{
         instruction_cloning::{clone_swap_instructions, SwapInstructions},
-        transaction_cloning::print_transaction_info,
         types::SwapArgs,
     },
     process_transaction_assert_success,
@@ -17,26 +16,10 @@ use crate::utils::{
     test_context::TestContext,
     transaction::utils::create_transaction,
 };
-use anchor_lang::prelude::AccountMeta;
 use anchor_spl::token;
-use ballista_common::{
-    logical_components::{AccountInfoType, Expression, Value, ValueType},
-    schema::{AccountGroupDefinition, ExecutionSettings, TaskDefinition},
-    task::{
-        action::{
-            raw_instruction::RawInstruction,
-            token_program_instruction::{TokenProgramInstruction, TokenProgramVersion},
-        },
-        shared::TaskAccount,
-        task_action::TaskAction,
-    },
-};
 use ballista_sdk::{
     find_task_definition_pda,
-    generated::instructions::{
-        CreateTask, CreateTaskInstructionArgs, ExecuteTask, ExecuteTaskInstructionArgs,
-    },
-    BALLISTA_ID,
+    generated::instructions::{CreateTask, CreateTaskInstructionArgs},
 };
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_program_test::tokio;
@@ -105,7 +88,7 @@ async fn test() {
             amount: 1_000_000_000,
             input_mint: "So11111111111111111111111111111111111111112",
             output_mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-            max_accounts: 20,
+            max_accounts: 18,
             slippage_bps: 1_000,
         },
     )

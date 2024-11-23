@@ -1,9 +1,9 @@
 use ballista_common::schema::TaskDefinition;
 use borsh::{BorshDeserialize, BorshSerialize};
 use error::BallistaError;
+use geppetto::AccountInfoValidation;
 use instruction::BallistaInstruction;
-use pda::get_task_definition_address;
-use pinocchio_system::instructions::CreateAccount;
+use pda::{get_task_definition_address, TASK_DEFINITION_SEED};
 
 pub mod error;
 pub mod evaluate;
@@ -14,12 +14,8 @@ pub mod processor;
 pub mod task_state;
 
 use pinocchio::{
-    account_info::AccountInfo,
-    entrypoint::ProgramResult,
-    instruction::{Seed, Signer},
-    msg,
-    pubkey::Pubkey,
-    sysvars::{rent::Rent, Sysvar},
+    account_info::AccountInfo, instruction::Seed, msg, program_error::ProgramError, pubkey::Pubkey,
+    ProgramResult,
 };
 use pinocchio_pubkey::declare_id;
 
@@ -48,30 +44,24 @@ pub fn process_instruction(
         BallistaInstruction::CreateTask { task, task_id } => {
             debug_msg!("Instruction: CreateTask");
 
-            let user = &accounts[0];
-            let task_account = &accounts[1];
-            let system_program = &accounts[2];
+            let [user, task_account, system_program] = accounts else {
+                return Err(ProgramError::NotEnoughAccountKeys);
+            };
 
-            if system_program.key() != &pinocchio_system::ID {
-                msg!("system program mismatch");
-                return Err(BallistaError::InvalidSchemaData.into());
-            }
+            let (task_pda, bump_seed) = get_task_definition_address(user.key(), task_id);
 
-            if !user.is_signer() {
-                msg!("user account is not a signer");
-                return Err(BallistaError::InvalidSchemaData.into());
-            }
+            // [account(program === pinocchio_system::ID)]
+            system_program.assert_program(&pinocchio_system::ID)?;
 
-            let (task_pubkey, bump_seed) = get_task_definition_address(user.key(), task_id)
-                .map_err(|e| {
-                    msg!("Error getting task definition address: {}", e);
-                    BallistaError::InvalidSchemaData
-                })?;
+            // [account(writable, signer)]
+            user.assert_signer()?.assert_writable()?;
 
-            if task_pubkey != *task_account.key() {
-                msg!("schema account mismatch");
-                return Err(BallistaError::InvalidSchemaData.into());
-            }
+            // [account(writable, unowned, empty, key === task_pda)]
+            task_account
+                .assert_writable()?
+                .assert_owner(&pinocchio_system::ID)?
+                .assert_empty()?
+                .assert_key(&task_pda)?;
 
             debug_msg!("passed validation");
 
@@ -80,30 +70,22 @@ pub fn process_instruction(
                 BallistaError::InvalidSchemaData
             })?;
 
-            debug_msg!("serialized task");
             let task_id_bytes = task_id.to_le_bytes();
-            let bump_seed_bytes = bump_seed.to_le_bytes();
-
-            // find bump seed
             let seeds = [
-                Seed::from("task-definition".as_bytes()),
+                Seed::from(TASK_DEFINITION_SEED),
                 Seed::from(user.key().as_ref()),
                 Seed::from(task_id_bytes.as_ref()),
-                Seed::from(bump_seed_bytes.as_ref()),
             ];
 
-            let signer: Signer = seeds.as_slice().into();
-
-            debug_msg!("created signer");
-
-            CreateAccount {
-                from: user,
-                to: task_account,
-                lamports: Rent::get()?.minimum_balance(serialized_task.len()),
-                space: serialized_task.len() as u64,
-                owner: &crate::ID,
-            }
-            .invoke_signed(&[signer])?;
+            geppetto::allocate_account_with_bump(
+                task_account,
+                system_program,
+                user,
+                serialized_task.len(),
+                &crate::ID,
+                &seeds,
+                bump_seed,
+            )?;
 
             debug_msg!("created account");
 
@@ -118,20 +100,11 @@ pub fn process_instruction(
             let schema_account = &accounts[0];
             let payer = &accounts[1];
 
-            if !payer.is_writable() {
-                debug_msg!("payer account is not writable");
-                return Err(BallistaError::InvalidSchemaData.into());
-            }
+            // [account(writable, signer)]
+            payer.assert_writable()?.assert_signer()?;
 
-            if !payer.is_signer() {
-                debug_msg!("payer account is not a signer");
-                return Err(BallistaError::InvalidSchemaData.into());
-            }
-
-            if schema_account.data_is_empty() {
-                debug_msg!("schema account is uninitialized");
-                return Err(BallistaError::InvalidSchemaData.into());
-            }
+            // [account(!empty)]
+            schema_account.assert_not_empty()?;
 
             let task_definition =
                 TaskDefinition::try_from_slice(&schema_account.try_borrow_data().unwrap())

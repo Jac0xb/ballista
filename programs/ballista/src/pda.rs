@@ -1,17 +1,18 @@
 use crate::error::BallistaError;
-use pinocchio::pubkey::{find_program_address, Pubkey};
+use pinocchio::{
+    instruction::Seed,
+    pubkey::{find_program_address, Pubkey},
+};
 
-pub fn get_task_definition_address(owner: &Pubkey, id: u16) -> Result<(Pubkey, u8), BallistaError> {
+pub const TASK_DEFINITION_SEED: &[u8] = b"task-definition";
+
+pub fn get_task_definition_address(owner: &Pubkey, id: u16) -> (Pubkey, u8) {
     let (pubkey, bump) = find_program_address(
-        &[
-            "task-definition".as_bytes(),
-            owner.as_ref(),
-            &id.to_le_bytes(),
-        ],
+        &[TASK_DEFINITION_SEED, owner.as_ref(), &id.to_le_bytes()],
         &crate::ID,
     );
 
-    Ok((pubkey, bump))
+    (pubkey, bump)
 }
 
 #[macro_export]

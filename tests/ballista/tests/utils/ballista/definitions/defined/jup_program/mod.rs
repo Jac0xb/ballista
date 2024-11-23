@@ -76,15 +76,6 @@ impl InstructionSchema for JupiterSwapInstructionAccount {
     }
 }
 
-// pub struct MintBubblegumNftAccountMetaParams {
-//     pub tree_authority: Pubkey,
-//     pub leaf_owner: Pubkey,
-//     pub leaf_delegate: Pubkey,
-//     pub merkle_tree: Pubkey,
-//     pub payer: Pubkey,
-//     pub tree_delegate: Pubkey,
-// }
-
 pub fn create_jupiter_swap_and_transfer_task_definition() -> TaskDefinition {
     // InputValue(0) -> Jup Swap Raw Bytes
     // InputValue(1) -> Start of Jup Swap Accounts

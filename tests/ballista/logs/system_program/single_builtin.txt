@@ -4,12 +4,10 @@ Transaction Logs:
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 invoke [1]
 Program log: Instruction: CreateTask
 Program log: passed validation
-Program log: serialized task
-Program log: created signer
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
 Program log: created account
-Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 5884 of 1400000 compute units
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 7279 of 1400000 compute units
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 success
 
 Transaction size: 277
@@ -21,5 +19,5 @@ Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
 Program log: purging
 Program log: purged
-Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 4014 of 1400000 compute units
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 4029 of 1400000 compute units
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 success

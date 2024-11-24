@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+  "programs/ballista",
+  "tests/ballista",
+  "clients/rust",
+  "common",
+  "macros/borsh_boxed",
+]
+
+[workspace.package]
+version = "2.1.1"
+edition = "2021"
+license = "Apache-2.0"
+homepage = "https://steel.new"
+documentation = "https://docs.rs/steel/latest/steel/"
+repository = "https://github.com/regolith-labs/steel"
+readme = "./README.md"
+keywords = ["solana"]
+
+[workspace.dependencies]

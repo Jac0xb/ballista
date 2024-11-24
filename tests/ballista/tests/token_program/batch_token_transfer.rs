@@ -8,7 +8,7 @@ use crate::utils::test_context::TestContext;
 use crate::utils::transaction::mint::mint_tokens;
 use crate::utils::transaction::token::generate_max_bump_token_account_user;
 use crate::utils::transaction::utils::create_transaction;
-use ballista_common::logical_components::{Expression, Value};
+use ballista_common::types::logical_components::{Expression, Value};
 use ballista_sdk::find_task_definition_pda;
 use ballista_sdk::generated::instructions::CreateTaskBuilder;
 use solana_program_test::tokio;

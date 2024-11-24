@@ -27,6 +27,7 @@ Usecases
 ----->----->-----> Close solana account with correct amount to avoid rent minimum error.
 ----->-----> Conditional Execution
 ----->----->-----> If Token Account Doesn't Exist, Create One
+----->----->-----> skip ascoiated token call by using pda token account bruh
 
 - [ ] Spending Limit Constraints
 - [ ] Batching

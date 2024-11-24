@@ -1,5 +1,26 @@
 ### Priority
 
+[] Task Definition Settings (Authority Only, Immutable)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 [ ] Build testing framework at accelerates development of ballista
 ---[ ] Task Definitions in common repo for SPL program
 ---[ ] Find some programs to include in testing (fork marginfi, etc)
@@ -24,3 +45,5 @@ discriminator: TaskArgument::Const(Value::Byte([...]))
 owner: TaskArgument::Input,
 metadata: TaskArgument::Input,
 }
+
+

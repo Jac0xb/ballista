@@ -45,36 +45,36 @@ export function getExecuteTaskDiscriminatorBytes() {
 
 export type ExecuteTaskInstruction<
   TProgram extends string = typeof BALLISTA_PROGRAM_ADDRESS,
-  TAccountTask extends string | IAccountMeta<string> = string,
   TAccountPayer extends string | IAccountMeta<string> = string,
+  TAccountTaskDefinition extends string | IAccountMeta<string> = string,
   TRemainingAccounts extends readonly IAccountMeta<string>[] = [],
 > = IInstruction<TProgram> &
   IInstructionWithData<Uint8Array> &
   IInstructionWithAccounts<
     [
-      TAccountTask extends string
-        ? ReadonlyAccount<TAccountTask>
-        : TAccountTask,
       TAccountPayer extends string
         ? WritableSignerAccount<TAccountPayer> &
             IAccountSignerMeta<TAccountPayer>
         : TAccountPayer,
+      TAccountTaskDefinition extends string
+        ? ReadonlyAccount<TAccountTaskDefinition>
+        : TAccountTaskDefinition,
       ...TRemainingAccounts,
     ]
   >;
 
 export type ExecuteTaskInstructionData = {
   discriminator: number;
-  taskValues: Array<Value>;
+  inputValues: Array<Value>;
 };
 
-export type ExecuteTaskInstructionDataArgs = { taskValues: Array<ValueArgs> };
+export type ExecuteTaskInstructionDataArgs = { inputValues: Array<ValueArgs> };
 
 export function getExecuteTaskInstructionDataEncoder(): Encoder<ExecuteTaskInstructionDataArgs> {
   return transformEncoder(
     getStructEncoder([
       ['discriminator', getU8Encoder()],
-      ['taskValues', getArrayEncoder(getValueEncoder())],
+      ['inputValues', getArrayEncoder(getValueEncoder())],
     ]),
     (value) => ({ ...value, discriminator: EXECUTE_TASK_DISCRIMINATOR })
   );
@@ -83,7 +83,7 @@ export function getExecuteTaskInstructionDataEncoder(): Encoder<ExecuteTaskInstr
 export function getExecuteTaskInstructionDataDecoder(): Decoder<ExecuteTaskInstructionData> {
   return getStructDecoder([
     ['discriminator', getU8Decoder()],
-    ['taskValues', getArrayDecoder(getValueDecoder())],
+    ['inputValues', getArrayDecoder(getValueDecoder())],
   ]);
 }
 
@@ -98,31 +98,35 @@ export function getExecuteTaskInstructionDataCodec(): Codec<
 }
 
 export type ExecuteTaskInput<
-  TAccountTask extends string = string,
   TAccountPayer extends string = string,
+  TAccountTaskDefinition extends string = string,
 > = {
-  /** Task Account */
-  task: Address<TAccountTask>;
   /** Payer account */
   payer: TransactionSigner<TAccountPayer>;
-  taskValues: ExecuteTaskInstructionDataArgs['taskValues'];
+  /** Task definition account */
+  taskDefinition: Address<TAccountTaskDefinition>;
+  inputValues: ExecuteTaskInstructionDataArgs['inputValues'];
 };
 
 export function getExecuteTaskInstruction<
-  TAccountTask extends string,
   TAccountPayer extends string,
+  TAccountTaskDefinition extends string,
   TProgramAddress extends Address = typeof BALLISTA_PROGRAM_ADDRESS,
 >(
-  input: ExecuteTaskInput<TAccountTask, TAccountPayer>,
+  input: ExecuteTaskInput<TAccountPayer, TAccountTaskDefinition>,
   config?: { programAddress?: TProgramAddress }
-): ExecuteTaskInstruction<TProgramAddress, TAccountTask, TAccountPayer> {
+): ExecuteTaskInstruction<
+  TProgramAddress,
+  TAccountPayer,
+  TAccountTaskDefinition
+> {
   // Program address.
   const programAddress = config?.programAddress ?? BALLISTA_PROGRAM_ADDRESS;
 
   // Original accounts.
   const originalAccounts = {
-    task: { value: input.task ?? null, isWritable: false },
     payer: { value: input.payer ?? null, isWritable: true },
+    taskDefinition: { value: input.taskDefinition ?? null, isWritable: false },
   };
   const accounts = originalAccounts as Record<
     keyof typeof originalAccounts,
@@ -134,12 +138,19 @@ export function getExecuteTaskInstruction<
 
   const getAccountMeta = getAccountMetaFactory(programAddress, 'programId');
   const instruction = {
-    accounts: [getAccountMeta(accounts.task), getAccountMeta(accounts.payer)],
+    accounts: [
+      getAccountMeta(accounts.payer),
+      getAccountMeta(accounts.taskDefinition),
+    ],
     programAddress,
     data: getExecuteTaskInstructionDataEncoder().encode(
       args as ExecuteTaskInstructionDataArgs
     ),
-  } as ExecuteTaskInstruction<TProgramAddress, TAccountTask, TAccountPayer>;
+  } as ExecuteTaskInstruction<
+    TProgramAddress,
+    TAccountPayer,
+    TAccountTaskDefinition
+  >;
 
   return instruction;
 }
@@ -150,10 +161,10 @@ export type ParsedExecuteTaskInstruction<
 > = {
   programAddress: Address<TProgram>;
   accounts: {
-    /** Task Account */
-    task: TAccountMetas[0];
     /** Payer account */
-    payer: TAccountMetas[1];
+    payer: TAccountMetas[0];
+    /** Task definition account */
+    taskDefinition: TAccountMetas[1];
   };
   data: ExecuteTaskInstructionData;
 };
@@ -179,8 +190,8 @@ export function parseExecuteTaskInstruction<
   return {
     programAddress: instruction.programAddress,
     accounts: {
-      task: getNextAccount(),
       payer: getNextAccount(),
+      taskDefinition: getNextAccount(),
     },
     data: getExecuteTaskInstructionDataDecoder().decode(instruction.data),
   };

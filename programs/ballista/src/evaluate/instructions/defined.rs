@@ -3,9 +3,10 @@ use crate::{
     error::BallistaError,
     evaluate::{evaluate_expression, evaluate_program_task_account, evaluate_task_account},
     invoke_with_seeds,
-    task_state::TaskState,
 };
-use ballista_common::task::action::defined_instruction::DefinedInstruction;
+
+use ballista_common::types::execution_state::ExecutionState;
+use ballista_common::types::task::action::defined_instruction::DefinedInstruction;
 use pinocchio::{
     account_info::AccountInfo,
     instruction::{AccountMeta, Instruction},
@@ -14,7 +15,7 @@ use pinocchio::{
 
 pub fn evaluate(
     defined_instruction: &DefinedInstruction,
-    task_state: &mut TaskState<'_>,
+    execution_state: &mut ExecutionState<'_>,
     instruction_data_cache: &mut Vec<u8>,
 ) -> Result<(), BallistaError> {
     debug_msg!("evaluate task accounts");
@@ -22,13 +23,13 @@ pub fn evaluate(
     let mut user_pda: Option<(&AccountInfo, u32)> = None;
 
     for task_account in defined_instruction.accounts.iter() {
-        let (account, seeds) = evaluate_task_account(&task_account.task_account, task_state)?;
-        task_state.account_meta_cache.push(AccountMeta {
+        let (account, seeds) = evaluate_task_account(&task_account.task_account, execution_state)?;
+        execution_state.account_meta_cache.push(AccountMeta {
             pubkey: account.key(),
             is_signer: task_account.signer,
             is_writable: task_account.writable,
         });
-        task_state.account_info_cache.push(account.into());
+        execution_state.account_info_cache.push(account.into());
 
         if let Some(seed) = seeds {
             if let Some((curr_pda, _)) = user_pda {
@@ -45,7 +46,7 @@ pub fn evaluate(
 
     debug_msg!("evaluate arguments");
     for schema_arg in defined_instruction.arguments.iter() {
-        let value = evaluate_expression(&schema_arg.value, task_state).unwrap();
+        let value = evaluate_expression(&schema_arg.value, execution_state).unwrap();
 
         value.as_bytes(
             defined_instruction.serialization_type,
@@ -54,42 +55,42 @@ pub fn evaluate(
     }
 
     debug_msg!("evaluating program account");
-    let program_account = evaluate_program_task_account(&defined_instruction.program, task_state)?;
+    let program_account = evaluate_program_task_account(&defined_instruction.program, execution_state)?;
     let instruction = Instruction {
         program_id: program_account.key(),
-        accounts: task_state.account_meta_cache.as_slice(),
+        accounts: execution_state.account_meta_cache.as_slice(),
         data: instruction_data_cache.as_slice(),
     };
 
     if let Some((user_pda, user_pda_index)) = user_pda {
         invoke_with_seeds!(
             &instruction,
-            task_state.account_info_cache.as_slice(),
-            task_state.payer,
+            execution_state.account_info_cache.as_slice(),
+            execution_state.payer,
             user_pda,
             user_pda_index
         );
     } else {
         debug_msg!("invoking instruction");
         unsafe {
-            invoke_unchecked(&instruction, task_state.account_info_cache.as_slice());
+            invoke_unchecked(&instruction, execution_state.account_info_cache.as_slice());
         }
     }
 
     // if let Some(signers_seeds) = defined_instruction.signers_seeds.as_slice() {
     //     debug_msg!("invoking signed instruction");
     //     unsafe {
-    //         invoke_signed_unchecked(&instruction, task_state.account_info_cache.as_slice(), signers_seeds);
+    //         invoke_signed_unchecked(&instruction, execution_state.account_info_cache.as_slice(), signers_seeds);
     //     }
     // } else {
     //     debug_msg!("invoking instruction");
     // unsafe {
-    //     invoke_unchecked(&instruction, task_state.account_info_cache.as_slice());
+    //     invoke_unchecked(&instruction, execution_state.account_info_cache.as_slice());
     // }
 
     // // For clippy
     #[cfg(not(target_os = "solana"))]
-    core::hint::black_box(&(&instruction, &task_state.account_info_cache));
+    core::hint::black_box(&(&instruction, &execution_state.account_info_cache));
 
     debug_msg!("finished invoking instruction");
 

@@ -146,7 +146,7 @@ async fn test() {
         //         payer: user.encodable_pubkey(),
         //     },
         //     ExecuteTaskInstructionArgs {
-        //         task_values: vec![
+        //         input_values: vec![
         //             Value::Bytes(swap_instruction.data),
         //             Value::U8(3),
         //             Value::U8(swap_instruction.accounts.len() as u8),

@@ -1,8 +1,12 @@
 use anchor_lang::prelude::AccountMeta;
-use ballista_common::{
+use ballista_common::types::{
     logical_components::Value,
-    task::{action::defined_instruction::DefinedAccount, shared::TaskAccount},
+    task::{action::defined_instruction::DefinedAccount, task_account::TaskAccount},
 };
+// use ballista_common::{
+//     logical_components::Value,
+//     task::{action::defined_instruction::DefinedAccount, shared::TaskAccount},
+// };
 use ballista_sdk::{
     find_task_definition_pda,
     generated::instructions::{
@@ -131,9 +135,9 @@ pub fn build_remaining_accounts<S: InstructionSchema>(
 }
 
 pub fn execute_task_with_args_and_fn<T: InstructionSchema>(
-    task: Pubkey,
+    task_definition: Pubkey,
     params: &T::InstructionAccountParams,
-    task_values: Vec<Value>,
+    input_values: Vec<Value>,
     additional_accounts: Vec<AccountMeta>,
 ) -> Instruction {
     let mut remaining_accounts = build_remaining_accounts::<T>(params);
@@ -142,10 +146,10 @@ pub fn execute_task_with_args_and_fn<T: InstructionSchema>(
 
     ballista_sdk::generated::instructions::ExecuteTask::instruction_with_remaining_accounts(
         &ExecuteTask {
-            task,
+            task_definition,
             payer: T::get_payer(params),
         },
-        ExecuteTaskInstructionArgs { task_values },
+        ExecuteTaskInstructionArgs { input_values },
         &remaining_accounts,
     )
 }
@@ -153,9 +157,9 @@ pub fn execute_task_with_args_and_fn<T: InstructionSchema>(
 pub fn execute_task_with_args<T: InstructionSchema>(
     task: Pubkey,
     params: &T::InstructionAccountParams,
-    task_values: Vec<Value>,
+    input_values: Vec<Value>,
 ) -> Instruction {
-    execute_task_with_args_and_fn::<T>(task, params, task_values, vec![])
+    execute_task_with_args_and_fn::<T>(task, params, input_values, vec![])
 }
 
 pub async fn create_task_transaction(

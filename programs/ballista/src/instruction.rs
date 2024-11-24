@@ -1,4 +1,6 @@
-use ballista_common::{logical_components::Value, schema::TaskDefinition};
+use ballista_common::{
+    accounts::task_definition::TaskDefinition, types::logical_components::Value,
+};
 use borsh::{BorshDeserialize, BorshSerialize};
 use shank::ShankInstruction;
 
@@ -13,9 +15,9 @@ pub(crate) enum BallistaInstruction {
         task_id: u16,
     },
 
-    #[account(0, name = "task", desc = "Task Account")]
-    #[account(1, name = "payer", desc = "Payer account", signer, writable)]
+    #[account(0, name = "payer", desc = "Payer account", signer, writable)]
+    #[account(1, name = "task_definition", desc = "Task definition account")]
     ExecuteTask {
-        task_values: Vec<Value>,
+        input_values: Vec<Value>,
     }
 }

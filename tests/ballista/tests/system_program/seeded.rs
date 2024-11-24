@@ -12,7 +12,7 @@ use crate::utils::{
     setup::user::create_user_with_balance,
     test_context::TestContext,
 };
-use ballista_common::logical_components::{Expression, Value};
+use ballista_common::types::logical_components::{Expression, Value};
 use ballista_sdk::{find_task_definition_pda, generated::instructions::CreateTaskInstructionArgs};
 use solana_program_test::tokio;
 use solana_sdk::{

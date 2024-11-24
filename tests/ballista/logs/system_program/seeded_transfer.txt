@@ -4,19 +4,19 @@ Transaction Logs:
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 invoke [1]
 Program log: Instruction: CreateTask
 Program log: passed validation
+Program log: created account
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: created account
-Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 11060 of 1400000 compute units
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 8054 of 1400000 compute units
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 success
-Instruction 0: CompiledInstruction { program_id_index: 5, accounts: [4, 0, 3, 1, 2], data: [1, 0, 0, 0, 0] }
+Instruction 0: CompiledInstruction { program_id_index: 4, accounts: [0, 5, 3, 2, 1], data: [1, 0, 0, 0, 0] }
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2
 IxId TxId  Key                                          Owner                                        Writable   Signer     Invoked   
-[0  | 4  ] 8uAa3HSj5pxu264sSvaU9pps2yHotx8QmvjHj7T6G22p BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 false      false      false     
-[1  | 0  ] 4X7Ftv7HyRxUCCpcajoW1gp18YhtV17tAYqTxXjddYZT 11111111111111111111111111111111             true       true       false     
+[0  | 0  ] BmnvZbQRoYNPnjBZX4NdZukW3oHRyfXoxLi7sxPtF3dZ 11111111111111111111111111111111             true       true       false     
+[1  | 5  ] GLHQVGfB27iXGJn3SnijhB2SPjDAtLCQhPoh3grhdNj4 BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 false      false      false     
 [2  | 3  ] 11111111111111111111111111111111             NativeLoader1111111111111111111111111111111  false      false      false     
-[3  | 1  ] 2no1aBPtR4EAR4SWwEBms6PEm7PJ7TNAFpCPSRZGUKZg 11111111111111111111111111111111             true       false      false     
-[4  | 2  ] GURMUWsTBmSRuaiC7B7WN3HrDNfa2aWajdy97jtYy1e9 11111111111111111111111111111111             true       false      false     
+[3  | 2  ] EEv6gumPXYgeaF8u94gcfjqpm5pS4H3RbrzPDcvAeit9 11111111111111111111111111111111             true       false      false     
+[4  | 1  ] 3W1A1TARhBqBWXSe8sAUpAqc1uL1nyj6gZ9RnE2hYzT7 11111111111111111111111111111111             true       false      false     
 
 
 Transaction size: 309
@@ -26,12 +26,8 @@ Program log: Instruction: ExecuteTask
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
-Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 8222 of 1400000 compute units
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 7620 of 1400000 compute units
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 success

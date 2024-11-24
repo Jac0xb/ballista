@@ -4,10 +4,10 @@ Transaction Logs:
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 invoke [1]
 Program log: Instruction: CreateTask
 Program log: passed validation
+Program log: created account
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: created account
-Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 8658 of 1400000 compute units
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 19152 of 1400000 compute units
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 success
 
 Transaction size: 1201
@@ -19,176 +19,118 @@ Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: purging
-Program log: purged
 Program log: Processing action
-Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 90487 of 1400000 compute units
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 82583 of 1400000 compute units
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 success

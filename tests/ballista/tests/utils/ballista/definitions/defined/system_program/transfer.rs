@@ -3,14 +3,16 @@ use crate::utils::ballista::definitions::{
 };
 use anchor_lang::system_program;
 use ballista_common::{
-    logical_components::{Expression, Value},
-    schema::{ExecutionSettings, TaskDefinition},
-    task::{
-        action::defined_instruction::{
-            DefinedAccount, DefinedArgument, DefinedInstruction, SerializationType,
+    accounts::task_definition::{ExecutionSettings, TaskDefinition},
+    types::{
+        logical_components::{Expression, Value},
+        task::{
+            action::defined_instruction::{
+                DefinedAccount, DefinedArgument, DefinedInstruction, SerializationType,
+            },
+            task_account::TaskAccount,
+            task_action::TaskAction,
         },
-        shared::TaskAccount,
-        task_action::TaskAction,
     },
 };
 use num_derive::ToPrimitive;
@@ -208,7 +210,7 @@ pub fn create_looping_task_definition_from_defined(
 //             payer: *user,
 //         },
 //         ExecuteTaskInstructionArgs {
-//             task_values: vec![],
+//             input_values: vec![],
 //         },
 //         &remaining_accounts,
 //     )
@@ -252,7 +254,7 @@ pub fn create_looping_task_definition_from_defined(
 //             payer: *user,
 //         },
 //         ExecuteTaskInstructionArgs {
-//             task_values: vec![],
+//             input_values: vec![],
 //         },
 //         &remaining_accounts,
 //     )
@@ -292,7 +294,7 @@ pub fn create_looping_task_definition_from_defined(
 //             payer: *user,
 //         },
 //         ExecuteTaskInstructionArgs {
-//             task_values: vec![],
+//             input_values: vec![],
 //         },
 //         &remaining_accounts,
 //     )

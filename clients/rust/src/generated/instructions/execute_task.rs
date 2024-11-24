@@ -11,10 +11,10 @@ use borsh::BorshSerialize;
 
 /// Accounts.
 pub struct ExecuteTask {
-    /// Task Account
-    pub task: solana_program::pubkey::Pubkey,
     /// Payer account
     pub payer: solana_program::pubkey::Pubkey,
+    /// Task definition account
+    pub task_definition: solana_program::pubkey::Pubkey,
 }
 
 impl ExecuteTask {
@@ -31,11 +31,12 @@ impl ExecuteTask {
         remaining_accounts: &[solana_program::instruction::AccountMeta],
     ) -> solana_program::instruction::Instruction {
         let mut accounts = Vec::with_capacity(2 + remaining_accounts.len());
-        accounts.push(solana_program::instruction::AccountMeta::new_readonly(
-            self.task, false,
-        ));
         accounts.push(solana_program::instruction::AccountMeta::new(
             self.payer, true,
+        ));
+        accounts.push(solana_program::instruction::AccountMeta::new_readonly(
+            self.task_definition,
+            false,
         ));
         accounts.extend_from_slice(remaining_accounts);
         let mut data = ExecuteTaskInstructionData::new().try_to_vec().unwrap();
@@ -70,20 +71,20 @@ impl Default for ExecuteTaskInstructionData {
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ExecuteTaskInstructionArgs {
-    pub task_values: Vec<Value>,
+    pub input_values: Vec<Value>,
 }
 
 /// Instruction builder for `ExecuteTask`.
 ///
 /// ### Accounts:
 ///
-///   0. `[]` task
-///   1. `[writable, signer]` payer
+///   0. `[writable, signer]` payer
+///   1. `[]` task_definition
 #[derive(Clone, Debug, Default)]
 pub struct ExecuteTaskBuilder {
-    task: Option<solana_program::pubkey::Pubkey>,
     payer: Option<solana_program::pubkey::Pubkey>,
-    task_values: Option<Vec<Value>>,
+    task_definition: Option<solana_program::pubkey::Pubkey>,
+    input_values: Option<Vec<Value>>,
     __remaining_accounts: Vec<solana_program::instruction::AccountMeta>,
 }
 
@@ -91,21 +92,24 @@ impl ExecuteTaskBuilder {
     pub fn new() -> Self {
         Self::default()
     }
-    /// Task Account
-    #[inline(always)]
-    pub fn task(&mut self, task: solana_program::pubkey::Pubkey) -> &mut Self {
-        self.task = Some(task);
-        self
-    }
     /// Payer account
     #[inline(always)]
     pub fn payer(&mut self, payer: solana_program::pubkey::Pubkey) -> &mut Self {
         self.payer = Some(payer);
         self
     }
+    /// Task definition account
     #[inline(always)]
-    pub fn task_values(&mut self, task_values: Vec<Value>) -> &mut Self {
-        self.task_values = Some(task_values);
+    pub fn task_definition(
+        &mut self,
+        task_definition: solana_program::pubkey::Pubkey,
+    ) -> &mut Self {
+        self.task_definition = Some(task_definition);
+        self
+    }
+    #[inline(always)]
+    pub fn input_values(&mut self, input_values: Vec<Value>) -> &mut Self {
+        self.input_values = Some(input_values);
         self
     }
     /// Add an additional account to the instruction.
@@ -129,11 +133,11 @@ impl ExecuteTaskBuilder {
     #[allow(clippy::clone_on_copy)]
     pub fn instruction(&self) -> solana_program::instruction::Instruction {
         let accounts = ExecuteTask {
-            task: self.task.expect("task is not set"),
             payer: self.payer.expect("payer is not set"),
+            task_definition: self.task_definition.expect("task_definition is not set"),
         };
         let args = ExecuteTaskInstructionArgs {
-            task_values: self.task_values.clone().expect("task_values is not set"),
+            input_values: self.input_values.clone().expect("input_values is not set"),
         };
 
         accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
@@ -142,20 +146,20 @@ impl ExecuteTaskBuilder {
 
 /// `execute_task` CPI accounts.
 pub struct ExecuteTaskCpiAccounts<'a, 'b> {
-    /// Task Account
-    pub task: &'b solana_program::account_info::AccountInfo<'a>,
     /// Payer account
     pub payer: &'b solana_program::account_info::AccountInfo<'a>,
+    /// Task definition account
+    pub task_definition: &'b solana_program::account_info::AccountInfo<'a>,
 }
 
 /// `execute_task` CPI instruction.
 pub struct ExecuteTaskCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_program::account_info::AccountInfo<'a>,
-    /// Task Account
-    pub task: &'b solana_program::account_info::AccountInfo<'a>,
     /// Payer account
     pub payer: &'b solana_program::account_info::AccountInfo<'a>,
+    /// Task definition account
+    pub task_definition: &'b solana_program::account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
     pub __args: ExecuteTaskInstructionArgs,
 }
@@ -168,8 +172,8 @@ impl<'a, 'b> ExecuteTaskCpi<'a, 'b> {
     ) -> Self {
         Self {
             __program: program,
-            task: accounts.task,
             payer: accounts.payer,
+            task_definition: accounts.task_definition,
             __args: args,
         }
     }
@@ -207,13 +211,13 @@ impl<'a, 'b> ExecuteTaskCpi<'a, 'b> {
         )],
     ) -> solana_program::entrypoint::ProgramResult {
         let mut accounts = Vec::with_capacity(2 + remaining_accounts.len());
-        accounts.push(solana_program::instruction::AccountMeta::new_readonly(
-            *self.task.key,
-            false,
-        ));
         accounts.push(solana_program::instruction::AccountMeta::new(
             *self.payer.key,
             true,
+        ));
+        accounts.push(solana_program::instruction::AccountMeta::new_readonly(
+            *self.task_definition.key,
+            false,
         ));
         remaining_accounts.iter().for_each(|remaining_account| {
             accounts.push(solana_program::instruction::AccountMeta {
@@ -233,8 +237,8 @@ impl<'a, 'b> ExecuteTaskCpi<'a, 'b> {
         };
         let mut account_infos = Vec::with_capacity(2 + 1 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
-        account_infos.push(self.task.clone());
         account_infos.push(self.payer.clone());
+        account_infos.push(self.task_definition.clone());
         remaining_accounts
             .iter()
             .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
@@ -251,8 +255,8 @@ impl<'a, 'b> ExecuteTaskCpi<'a, 'b> {
 ///
 /// ### Accounts:
 ///
-///   0. `[]` task
-///   1. `[writable, signer]` payer
+///   0. `[writable, signer]` payer
+///   1. `[]` task_definition
 #[derive(Clone, Debug)]
 pub struct ExecuteTaskCpiBuilder<'a, 'b> {
     instruction: Box<ExecuteTaskCpiBuilderInstruction<'a, 'b>>,
@@ -262,18 +266,12 @@ impl<'a, 'b> ExecuteTaskCpiBuilder<'a, 'b> {
     pub fn new(program: &'b solana_program::account_info::AccountInfo<'a>) -> Self {
         let instruction = Box::new(ExecuteTaskCpiBuilderInstruction {
             __program: program,
-            task: None,
             payer: None,
-            task_values: None,
+            task_definition: None,
+            input_values: None,
             __remaining_accounts: Vec::new(),
         });
         Self { instruction }
-    }
-    /// Task Account
-    #[inline(always)]
-    pub fn task(&mut self, task: &'b solana_program::account_info::AccountInfo<'a>) -> &mut Self {
-        self.instruction.task = Some(task);
-        self
     }
     /// Payer account
     #[inline(always)]
@@ -281,9 +279,18 @@ impl<'a, 'b> ExecuteTaskCpiBuilder<'a, 'b> {
         self.instruction.payer = Some(payer);
         self
     }
+    /// Task definition account
     #[inline(always)]
-    pub fn task_values(&mut self, task_values: Vec<Value>) -> &mut Self {
-        self.instruction.task_values = Some(task_values);
+    pub fn task_definition(
+        &mut self,
+        task_definition: &'b solana_program::account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.task_definition = Some(task_definition);
+        self
+    }
+    #[inline(always)]
+    pub fn input_values(&mut self, input_values: Vec<Value>) -> &mut Self {
+        self.instruction.input_values = Some(input_values);
         self
     }
     /// Add an additional account to the instruction.
@@ -328,18 +335,21 @@ impl<'a, 'b> ExecuteTaskCpiBuilder<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
     ) -> solana_program::entrypoint::ProgramResult {
         let args = ExecuteTaskInstructionArgs {
-            task_values: self
+            input_values: self
                 .instruction
-                .task_values
+                .input_values
                 .clone()
-                .expect("task_values is not set"),
+                .expect("input_values is not set"),
         };
         let instruction = ExecuteTaskCpi {
             __program: self.instruction.__program,
 
-            task: self.instruction.task.expect("task is not set"),
-
             payer: self.instruction.payer.expect("payer is not set"),
+
+            task_definition: self
+                .instruction
+                .task_definition
+                .expect("task_definition is not set"),
             __args: args,
         };
         instruction.invoke_signed_with_remaining_accounts(
@@ -352,9 +362,9 @@ impl<'a, 'b> ExecuteTaskCpiBuilder<'a, 'b> {
 #[derive(Clone, Debug)]
 struct ExecuteTaskCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_program::account_info::AccountInfo<'a>,
-    task: Option<&'b solana_program::account_info::AccountInfo<'a>>,
     payer: Option<&'b solana_program::account_info::AccountInfo<'a>>,
-    task_values: Option<Vec<Value>>,
+    task_definition: Option<&'b solana_program::account_info::AccountInfo<'a>>,
+    input_values: Option<Vec<Value>>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(
         &'b solana_program::account_info::AccountInfo<'a>,

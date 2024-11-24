@@ -51,25 +51,25 @@
       "name": "ExecuteTask",
       "accounts": [
         {
-          "name": "task",
-          "isMut": false,
-          "isSigner": false,
-          "docs": [
-            "Task Account"
-          ]
-        },
-        {
           "name": "payer",
           "isMut": true,
           "isSigner": true,
           "docs": [
             "Payer account"
           ]
+        },
+        {
+          "name": "taskDefinition",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "Task definition account"
+          ]
         }
       ],
       "args": [
         {
-          "name": "taskValues",
+          "name": "inputValues",
           "type": {
             "vec": {
               "defined": "Value"

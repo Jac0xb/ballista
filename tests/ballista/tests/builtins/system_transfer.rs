@@ -1,16 +1,12 @@
 use crate::utils::process_transaction_assert_success;
-use crate::utils::schema::create_system_transfer_task_definition;
+use crate::utils::task_definition::create_system_transfer_task_definition;
 use crate::utils::{context::TestContext, create_user_with_balance};
 use anchor_lang::prelude::AccountMeta;
-use ballista_common::logical_components::{Condition, Expression, Value, ValueType};
-use ballista_common::schema::instruction::{
-    AccountDefinition, ArgumentDefinition, InstructionDefinition, SerializationType,
-};
-use ballista_common::schema::{Schema, TaskDefinition};
 use ballista_common::task::action::schema_instruction::TaskAccount;
 use ballista_common::task::action::set_cache::SetCacheType;
 use ballista_common::task::action::system_instruction::SystemInstructionAction;
 use ballista_common::task::task_action::TaskAction;
+use ballista_common::task_definition::{Schema, TaskDefinition};
 use ballista_sdk::generated::instructions::{
     CreateSchema, CreateSchemaInstructionArgs, ExecuteTask, ExecuteTaskInstructionArgs,
 };
@@ -168,7 +164,7 @@ async fn simple() {
                             schema,
                         },
                         ExecuteTaskInstructionArgs {
-                            task_values: vec![],
+                            input_values: vec![],
                         },
                    &remaining_accounts,
                     ),

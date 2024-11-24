@@ -1,6 +1,7 @@
 use std::{any::type_name, borrow::Cow};
 
-use ballista_common::logical_components::{
+use ballista_common::types::execution_state::ExecutionState;
+use ballista_common::types::logical_components::{
     AccountInfoType, ArithmeticBehavior, Expression, Value, ValueType,
 };
 use borsh::BorshDeserialize;
@@ -10,13 +11,13 @@ use pinocchio::{
     sysvars::{rent::Rent, Sysvar},
 };
 
-use crate::{error::BallistaError, task_state::TaskState};
+use crate::error::BallistaError;
 
 use super::evaluate_task_account;
 
 pub fn evaluate_expression<'info, 'a, 'b>(
     expression: &'b Expression,
-    task_state: &'a TaskState<'a>,
+    execution_state: &'a ExecutionState<'a>,
 ) -> Result<Cow<'a, Value>, BallistaError>
 where
     'b: 'a,
@@ -24,8 +25,8 @@ where
     match expression {
         Expression::Literal(v) => Ok(Cow::Borrowed(v)),
         Expression::InputValue(index) => {
-            let value = task_state
-                .inputs
+            let value = execution_state
+                .input_values
                 .get(*index as usize)
                 .ok_or_else(|| {
                     msg!("Input value not found at index {}", index);
@@ -37,7 +38,7 @@ where
             Ok(Cow::Borrowed(value))
         }
         Expression::StaticValue(index) => {
-            let value = task_state
+            let value = execution_state
                 .definition
                 .shared_values
                 .get(*index as usize)
@@ -51,7 +52,7 @@ where
             Ok(Cow::Borrowed(value))
         }
         Expression::CachedValue(index) => {
-            let value = task_state
+            let value = execution_state
                 .cached_values
                 .get(*index as usize)
                 .ok_or(BallistaError::CachedValueNotFound)
@@ -64,9 +65,9 @@ where
             offset,
             value_type,
         } => {
-            let (account, _) = evaluate_task_account(index, task_state)?;
+            let (account, _) = evaluate_task_account(index, execution_state)?;
 
-            let offset_value = evaluate_expression(offset, task_state)?;
+            let offset_value = evaluate_expression(offset, execution_state)?;
 
             let result = match value_type {
                 ValueType::U8 => Value::U8(account.get_u8(offset_value.as_u128() as usize)?),
@@ -85,7 +86,7 @@ where
             Ok(Cow::Owned(result))
         }
         Expression::ValueFromAccountInfo { index, field_name } => {
-            let (account, _) = evaluate_task_account(index, task_state)?;
+            let (account, _) = evaluate_task_account(index, execution_state)?;
             let field_value = match field_name {
                 // TODO: WE NEED MORE FIELDS FROM ACCOUNT INFO
                 AccountInfoType::Key => Value::Pubkey(*account.key()),
@@ -97,7 +98,7 @@ where
         }
         Expression::SafeCast(inner_expr, target_type) => {
             // Default shouldnt matter
-            let inner_value = evaluate_expression(inner_expr, task_state)?;
+            let inner_value = evaluate_expression(inner_expr, execution_state)?;
 
             let value = inner_value
                 .safe_cast(target_type.clone())
@@ -106,8 +107,8 @@ where
             Ok(Cow::Owned(value))
         }
         Expression::Multiply(left, right, behavior) => {
-            let left_value = evaluate_expression(left, task_state)?;
-            let right_value = evaluate_expression(right, task_state)?;
+            let left_value = evaluate_expression(left, execution_state)?;
+            let right_value = evaluate_expression(right, execution_state)?;
 
             let result = match behavior {
                 ArithmeticBehavior::Checked => left_value
@@ -124,8 +125,8 @@ where
             Ok(Cow::Owned(result))
         }
         Expression::Divide(left, right, behavior) => {
-            let left_value = evaluate_expression(left, task_state)?;
-            let right_value = evaluate_expression(right, task_state)?;
+            let left_value = evaluate_expression(left, execution_state)?;
+            let right_value = evaluate_expression(right, execution_state)?;
 
             let result = match behavior {
                 ArithmeticBehavior::Checked => left_value
@@ -142,8 +143,8 @@ where
             Ok(Cow::Owned(result))
         }
         Expression::Add(left, right, behavior) => {
-            let left_value = evaluate_expression(left, task_state)?;
-            let right_value = evaluate_expression(right, task_state)?;
+            let left_value = evaluate_expression(left, execution_state)?;
+            let right_value = evaluate_expression(right, execution_state)?;
 
             let result = match behavior {
                 ArithmeticBehavior::Checked => left_value
@@ -160,8 +161,8 @@ where
             Ok(Cow::Owned(result))
         }
         Expression::Subtract(left, right, behavior) => {
-            let left_value = evaluate_expression(left, task_state)?;
-            let right_value = evaluate_expression(right, task_state)?;
+            let left_value = evaluate_expression(left, execution_state)?;
+            let right_value = evaluate_expression(right, execution_state)?;
 
             let result = match behavior {
                 ArithmeticBehavior::Checked => left_value
@@ -178,7 +179,7 @@ where
             Ok(Cow::Owned(result))
         }
         Expression::Rent(space_expr) => {
-            let space = evaluate_expression(space_expr, task_state)?;
+            let space = evaluate_expression(space_expr, execution_state)?;
 
             Ok(Cow::Owned(Value::U64(
                 Rent::get()

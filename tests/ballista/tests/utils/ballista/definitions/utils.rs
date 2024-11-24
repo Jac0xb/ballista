@@ -1,4 +1,4 @@
-use ballista_common::{
+use ballista_common::types::{
     logical_components::{Condition, Expression, Value},
     task::{action::set_cache::SetCacheType, task_action::TaskAction},
 };

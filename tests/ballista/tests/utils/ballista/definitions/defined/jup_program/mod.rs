@@ -1,14 +1,16 @@
 use anchor_lang::prelude::AccountMeta;
 use ballista_common::{
-    logical_components::{Expression, Value, ValueType},
-    schema::{ExecutionSettings, TaskDefinition},
-    task::{
-        action::{
-            raw_instruction::RawInstruction,
-            token_program_instruction::{TokenProgramInstruction, TokenProgramVersion},
+    accounts::task_definition::{ExecutionSettings, TaskDefinition},
+    types::{
+        logical_components::{Expression, Value, ValueType},
+        task::{
+            action::{
+                raw_instruction::RawInstruction,
+                token_program_instruction::{TokenProgramInstruction, TokenProgramVersion},
+            },
+            task_account::{TaskAccount, TaskAccounts},
+            task_action::TaskAction,
         },
-        shared::{TaskAccount, TaskAccounts},
-        task_action::TaskAction,
     },
 };
 use ballista_sdk::find_task_definition_pda;

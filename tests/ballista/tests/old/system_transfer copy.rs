@@ -1,14 +1,14 @@
 
 use anchor_lang::prelude::AccountMeta;
 use anchor_lang::system_program;
-use ballista_common::schema::expression::condition::Condition;
-use ballista_common::schema::expression::{ArithmeticBehavior, Expression};
-use ballista_common::schema::instruction::{AccountDefinition, ArgumentDefinition, InstructionDefinition, SerializationType};
-use ballista_common::schema::schema::GlobalSchema;
-use ballista_common::schema::task::action::record_value::RecordValue;
-use ballista_common::schema::task::action::schema_instruction::{SchemaInstruction, TaskAccount, TaskArgument};
-use ballista_common::schema::task::task::{TaskAction, TaskDefinition};
-use ballista_common::schema::value::{Value, ValueType};
+use ballista_common::task_definition::expression::condition::Condition;
+use ballista_common::task_definition::expression::{ArithmeticBehavior, Expression};
+use ballista_common::task_definition::instruction::{AccountDefinition, ArgumentDefinition, InstructionDefinition, SerializationType};
+use ballista_common::task_definition::task_definition::GlobalSchema;
+use ballista_common::task_definition::task::action::record_value::RecordValue;
+use ballista_common::task_definition::task::action::schema_instruction::{SchemaInstruction, TaskAccount, TaskArgument};
+use ballista_common::task_definition::task::task::{TaskAction, TaskDefinition};
+use ballista_common::task_definition::value::{Value, ValueType};
 use ballista_sdk::generated::instructions::{
     CreateSchema, CreateSchemaInstructionArgs, ExecuteTask, ExecuteTaskInstructionArgs,
 };
@@ -177,7 +177,7 @@ async fn simple() {
                             schema: find_task_definition_pda(user.encodable_pubkey(), 0).0,
                         },
                         ExecuteTaskInstructionArgs {
-                            task_values: vec![Value::U8(10)],
+                            input_values: vec![Value::U8(10)],
                         },
                     
                    &[

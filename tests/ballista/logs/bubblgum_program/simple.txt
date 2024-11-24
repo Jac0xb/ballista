@@ -4,10 +4,10 @@ Transaction Logs:
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 invoke [1]
 Program log: Instruction: CreateTask
 Program log: passed validation
+Program log: created account
 Program 11111111111111111111111111111111 invoke [2]
 Program 11111111111111111111111111111111 success
-Program log: created account
-Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 13326 of 1400000 compute units
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 23804 of 1400000 compute units
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 success
 
 Transaction size: 452
@@ -26,21 +26,19 @@ Program log: invoking instruction
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY invoke [2]
 Program log: Instruction: MintV1
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [3]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1362816 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1361073 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK invoke [3]
 Program log: Instruction: Append
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [4]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1350786 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1349043 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
-Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8229 of 1358716 compute units
+Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8229 of 1356973 compute units
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK success
-Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 29924 of 1378682 compute units
-Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AOijCDeHFFh5/u9+QgU+vNHbgrXkIdIuvgkoxOhm8IrhvujhWuJr7p3C0ye/v+3U9hXQozaE9FjKZkVJZlrj7Na+6OFa4mvuncLTJ7+/7dT2FdCjNoT0WMpmRUlmWuPs1goAAAAAAAAAeZlvcuuhpPkMyQiB3UwxhKWOZnp5Xb4sXANLc/UTTphd5b2XvMTWb0eNHX3SbubqZ4ixu+cBOubG7fJX79++2A==
+Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 31424 of 1378439 compute units
+Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AD8LrNMrVSBibYZo7ylLG223MSXUn6Z6CEYeu6WrH/rAYst9Cv4iB/u48ZThNPmkcFPwCRUH7NpC/cI8gFK95z1iy30K/iIH+7jxlOE0+aRwU/AJFQfs2kL9wjyAUr3nPQoAAAAAAAAAUD8YTGOIOw8Ny2eRu43ScFytpQuy2NJKmtO70zuuOHdwc7knMtURvS4xX0WUrVSwXEYGlJ5nh6yDsX+0Gv8YHQ==
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY success
 Program log: finished invoking instruction
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program log: evaluate task accounts
@@ -50,21 +48,19 @@ Program log: invoking instruction
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY invoke [2]
 Program log: Instruction: MintV1
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [3]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1317132 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1309607 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK invoke [3]
 Program log: Instruction: Append
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [4]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1305299 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1297774 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
-Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8032 of 1313032 compute units
+Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8032 of 1305507 compute units
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK success
-Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 31227 of 1334498 compute units
-Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AB7fIVYBU3v6x9CL5zDI4FeoS4aeBnPoMKXVB59XwnEOvujhWuJr7p3C0ye/v+3U9hXQozaE9FjKZkVJZlrj7Na+6OFa4mvuncLTJ7+/7dT2FdCjNoT0WMpmRUlmWuPs1gsAAAAAAAAAeZlvcuuhpPkMyQiB3UwxhKWOZnp5Xb4sXANLc/UTTphd5b2XvMTWb0eNHX3SbubqZ4ixu+cBOubG7fJX79++2A==
+Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 37227 of 1332973 compute units
+Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AIhxjQK5rqso+I03IaGdhaQg/HIbo64TruzJilbV+0uqYst9Cv4iB/u48ZThNPmkcFPwCRUH7NpC/cI8gFK95z1iy30K/iIH+7jxlOE0+aRwU/AJFQfs2kL9wjyAUr3nPQsAAAAAAAAAUD8YTGOIOw8Ny2eRu43ScFytpQuy2NJKmtO70zuuOHdwc7knMtURvS4xX0WUrVSwXEYGlJ5nh6yDsX+0Gv8YHQ==
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY success
 Program log: finished invoking instruction
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program log: evaluate task accounts
@@ -74,21 +70,19 @@ Program log: invoking instruction
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY invoke [2]
 Program log: Instruction: MintV1
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [3]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1271645 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1264338 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK invoke [3]
 Program log: Instruction: Append
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [4]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1259172 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1251865 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
-Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8672 of 1267545 compute units
+Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8672 of 1260238 compute units
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK success
-Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 31867 of 1289011 compute units
-Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AIkirKeSCFIh2x1qeUleFbiR/LfFkcQ2MD9GsdbzUUs8vujhWuJr7p3C0ye/v+3U9hXQozaE9FjKZkVJZlrj7Na+6OFa4mvuncLTJ7+/7dT2FdCjNoT0WMpmRUlmWuPs1gwAAAAAAAAAeZlvcuuhpPkMyQiB3UwxhKWOZnp5Xb4sXANLc/UTTphd5b2XvMTWb0eNHX3SbubqZ4ixu+cBOubG7fJX79++2A==
+Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 31867 of 1281704 compute units
+Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY ABaVXs9MTv7Q9yMJowNGYGtsyeTNi/bBXZovNEz47PSGYst9Cv4iB/u48ZThNPmkcFPwCRUH7NpC/cI8gFK95z1iy30K/iIH+7jxlOE0+aRwU/AJFQfs2kL9wjyAUr3nPQwAAAAAAAAAUD8YTGOIOw8Ny2eRu43ScFytpQuy2NJKmtO70zuuOHdwc7knMtURvS4xX0WUrVSwXEYGlJ5nh6yDsX+0Gv8YHQ==
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY success
 Program log: finished invoking instruction
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program log: evaluate task accounts
@@ -98,21 +92,19 @@ Program log: invoking instruction
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY invoke [2]
 Program log: Instruction: MintV1
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [3]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1225518 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1216929 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK invoke [3]
 Program log: Instruction: Append
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [4]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1213685 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1205096 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
-Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8032 of 1221418 compute units
+Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8032 of 1212829 compute units
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK success
-Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 31227 of 1242884 compute units
-Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AHt1tJnf00upuTs8odmx39B1n7Khx/TKRlE3cvk2t6oevujhWuJr7p3C0ye/v+3U9hXQozaE9FjKZkVJZlrj7Na+6OFa4mvuncLTJ7+/7dT2FdCjNoT0WMpmRUlmWuPs1g0AAAAAAAAAeZlvcuuhpPkMyQiB3UwxhKWOZnp5Xb4sXANLc/UTTphd5b2XvMTWb0eNHX3SbubqZ4ixu+cBOubG7fJX79++2A==
+Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 32727 of 1235795 compute units
+Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AO0Q0vyOct0W+oF2iOy0BPJGPwNCdvtZV1IlRLJq4xwIYst9Cv4iB/u48ZThNPmkcFPwCRUH7NpC/cI8gFK95z1iy30K/iIH+7jxlOE0+aRwU/AJFQfs2kL9wjyAUr3nPQ0AAAAAAAAAUD8YTGOIOw8Ny2eRu43ScFytpQuy2NJKmtO70zuuOHdwc7knMtURvS4xX0WUrVSwXEYGlJ5nh6yDsX+0Gv8YHQ==
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY success
 Program log: finished invoking instruction
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program log: evaluate task accounts
@@ -122,21 +114,19 @@ Program log: invoking instruction
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY invoke [2]
 Program log: Instruction: MintV1
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [3]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1177031 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1162660 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK invoke [3]
 Program log: Instruction: Append
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [4]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1165000 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1150629 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
-Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8230 of 1172931 compute units
+Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8230 of 1158560 compute units
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK success
-Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 34425 of 1197397 compute units
-Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY ANJiGy/KX9PPeay18k+Leuvu2lZrpl91GWcv5/e6+fm5vujhWuJr7p3C0ye/v+3U9hXQozaE9FjKZkVJZlrj7Na+6OFa4mvuncLTJ7+/7dT2FdCjNoT0WMpmRUlmWuPs1g4AAAAAAAAAeZlvcuuhpPkMyQiB3UwxhKWOZnp5Xb4sXANLc/UTTphd5b2XvMTWb0eNHX3SbubqZ4ixu+cBOubG7fJX79++2A==
+Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 40425 of 1189026 compute units
+Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AFlh1lK5w8itv1bZnMRpl0eyEUaFwvQxaV7/B5X+IaKuYst9Cv4iB/u48ZThNPmkcFPwCRUH7NpC/cI8gFK95z1iy30K/iIH+7jxlOE0+aRwU/AJFQfs2kL9wjyAUr3nPQ4AAAAAAAAAUD8YTGOIOw8Ny2eRu43ScFytpQuy2NJKmtO70zuuOHdwc7knMtURvS4xX0WUrVSwXEYGlJ5nh6yDsX+0Gv8YHQ==
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY success
 Program log: finished invoking instruction
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program log: evaluate task accounts
@@ -146,21 +136,19 @@ Program log: invoking instruction
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY invoke [2]
 Program log: Instruction: MintV1
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [3]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1126846 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1112693 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK invoke [3]
 Program log: Instruction: Append
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [4]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1115012 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1100859 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
-Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8033 of 1122746 compute units
+Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8033 of 1108593 compute units
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK success
-Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 35728 of 1148712 compute units
-Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AFHoRIbBO48FBX6egN03fE9lZIb9x1skyRdCNKWUqOtUvujhWuJr7p3C0ye/v+3U9hXQozaE9FjKZkVJZlrj7Na+6OFa4mvuncLTJ7+/7dT2FdCjNoT0WMpmRUlmWuPs1g8AAAAAAAAAeZlvcuuhpPkMyQiB3UwxhKWOZnp5Xb4sXANLc/UTTphd5b2XvMTWb0eNHX3SbubqZ4ixu+cBOubG7fJX79++2A==
+Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 35728 of 1134559 compute units
+Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AHYD2y21FmDGHgofBUkE3Ptm7CQpz9lUm69W4WyFxsK7Yst9Cv4iB/u48ZThNPmkcFPwCRUH7NpC/cI8gFK95z1iy30K/iIH+7jxlOE0+aRwU/AJFQfs2kL9wjyAUr3nPQ8AAAAAAAAAUD8YTGOIOw8Ny2eRu43ScFytpQuy2NJKmtO70zuuOHdwc7knMtURvS4xX0WUrVSwXEYGlJ5nh6yDsX+0Gv8YHQ==
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY success
 Program log: finished invoking instruction
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program log: evaluate task accounts
@@ -170,21 +158,19 @@ Program log: invoking instruction
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY invoke [2]
 Program log: Instruction: MintV1
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [3]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1078358 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1067423 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK invoke [3]
 Program log: Instruction: Append
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [4]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1064445 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1053510 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
-Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 10112 of 1074258 compute units
+Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 10112 of 1063323 compute units
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK success
-Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 36307 of 1098724 compute units
-Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AONZuXtT9DgWPtOWkkFL9zxWxvd+9gSjM7GFVfb4rujavujhWuJr7p3C0ye/v+3U9hXQozaE9FjKZkVJZlrj7Na+6OFa4mvuncLTJ7+/7dT2FdCjNoT0WMpmRUlmWuPs1hAAAAAAAAAAeZlvcuuhpPkMyQiB3UwxhKWOZnp5Xb4sXANLc/UTTphd5b2XvMTWb0eNHX3SbubqZ4ixu+cBOubG7fJX79++2A==
+Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 33307 of 1084789 compute units
+Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AL7qtB76u6sRJCh0KfXEH4gRM8Jj+zzZYGrAvIjFrfa/Yst9Cv4iB/u48ZThNPmkcFPwCRUH7NpC/cI8gFK95z1iy30K/iIH+7jxlOE0+aRwU/AJFQfs2kL9wjyAUr3nPRAAAAAAAAAAUD8YTGOIOw8Ny2eRu43ScFytpQuy2NJKmtO70zuuOHdwc7knMtURvS4xX0WUrVSwXEYGlJ5nh6yDsX+0Gv8YHQ==
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY success
 Program log: finished invoking instruction
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program log: evaluate task accounts
@@ -194,21 +180,19 @@ Program log: invoking instruction
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY invoke [2]
 Program log: Instruction: MintV1
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [3]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1026291 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1017074 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK invoke [3]
 Program log: Instruction: Append
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [4]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1014459 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 1005242 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
-Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8031 of 1022191 compute units
+Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8031 of 1012974 compute units
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK success
-Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 35726 of 1048157 compute units
-Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY ABOvOUFG04HCQiH/XWfuSUtBQfopi3Ua8dE2LOC+pYRzvujhWuJr7p3C0ye/v+3U9hXQozaE9FjKZkVJZlrj7Na+6OFa4mvuncLTJ7+/7dT2FdCjNoT0WMpmRUlmWuPs1hEAAAAAAAAAeZlvcuuhpPkMyQiB3UwxhKWOZnp5Xb4sXANLc/UTTphd5b2XvMTWb0eNHX3SbubqZ4ixu+cBOubG7fJX79++2A==
+Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 34226 of 1037440 compute units
+Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY ACTRqPjHxiVYzD7D27Ydb411EVqzHO0v38yrWpG/SFKqYst9Cv4iB/u48ZThNPmkcFPwCRUH7NpC/cI8gFK95z1iy30K/iIH+7jxlOE0+aRwU/AJFQfs2kL9wjyAUr3nPREAAAAAAAAAUD8YTGOIOw8Ny2eRu43ScFytpQuy2NJKmtO70zuuOHdwc7knMtURvS4xX0WUrVSwXEYGlJ5nh6yDsX+0Gv8YHQ==
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY success
 Program log: finished invoking instruction
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program log: evaluate task accounts
@@ -218,21 +202,19 @@ Program log: invoking instruction
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY invoke [2]
 Program log: Instruction: MintV1
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [3]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 979305 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 967306 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK invoke [3]
 Program log: Instruction: Append
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [4]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 967275 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 955276 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
-Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8229 of 975205 compute units
+Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8229 of 963206 compute units
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK success
-Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 32924 of 998171 compute units
-Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY ANWtME9mpPFAF/BCXm+1vPyFEm5YUNam+yGZZQTJuyuIvujhWuJr7p3C0ye/v+3U9hXQozaE9FjKZkVJZlrj7Na+6OFa4mvuncLTJ7+/7dT2FdCjNoT0WMpmRUlmWuPs1hIAAAAAAAAAeZlvcuuhpPkMyQiB3UwxhKWOZnp5Xb4sXANLc/UTTphd5b2XvMTWb0eNHX3SbubqZ4ixu+cBOubG7fJX79++2A==
+Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 35924 of 989172 compute units
+Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY ABritnxG27eJe9gx5NJoh19SLkYoIA/EAaSSmQKEEnBhYst9Cv4iB/u48ZThNPmkcFPwCRUH7NpC/cI8gFK95z1iy30K/iIH+7jxlOE0+aRwU/AJFQfs2kL9wjyAUr3nPRIAAAAAAAAAUD8YTGOIOw8Ny2eRu43ScFytpQuy2NJKmtO70zuuOHdwc7knMtURvS4xX0WUrVSwXEYGlJ5nh6yDsX+0Gv8YHQ==
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY success
 Program log: finished invoking instruction
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program log: evaluate task accounts
@@ -242,21 +224,19 @@ Program log: invoking instruction
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY invoke [2]
 Program log: Instruction: MintV1
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [3]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 933621 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 921840 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK invoke [3]
 Program log: Instruction: Append
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [4]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 921788 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 910007 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
-Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8032 of 929521 compute units
+Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8032 of 917740 compute units
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK success
-Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 31227 of 950987 compute units
-Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY ADYK7m2qlWX+cs/U1CL0sRkuW6HzmuQvf7DfRdS7SzywvujhWuJr7p3C0ye/v+3U9hXQozaE9FjKZkVJZlrj7Na+6OFa4mvuncLTJ7+/7dT2FdCjNoT0WMpmRUlmWuPs1hMAAAAAAAAAeZlvcuuhpPkMyQiB3UwxhKWOZnp5Xb4sXANLc/UTTphd5b2XvMTWb0eNHX3SbubqZ4ixu+cBOubG7fJX79++2A==
+Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 31227 of 939206 compute units
+Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AJRIMsDE89ZfmEFc2F/XNSHNMggKImRyv5JPk7214vq7Yst9Cv4iB/u48ZThNPmkcFPwCRUH7NpC/cI8gFK95z1iy30K/iIH+7jxlOE0+aRwU/AJFQfs2kL9wjyAUr3nPRMAAAAAAAAAUD8YTGOIOw8Ny2eRu43ScFytpQuy2NJKmtO70zuuOHdwc7knMtURvS4xX0WUrVSwXEYGlJ5nh6yDsX+0Gv8YHQ==
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY success
 Program log: finished invoking instruction
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program log: evaluate task accounts
@@ -266,21 +246,19 @@ Program log: invoking instruction
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY invoke [2]
 Program log: Instruction: MintV1
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [3]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 889634 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 876571 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK invoke [3]
 Program log: Instruction: Append
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [4]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 877161 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 864098 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
-Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8672 of 885534 compute units
+Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8672 of 872471 compute units
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK success
-Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 30367 of 905500 compute units
-Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AHP2O6Uw2Krn7meX6xTk/FzpatEx7jnf/4AfXqFCgCiyvujhWuJr7p3C0ye/v+3U9hXQozaE9FjKZkVJZlrj7Na+6OFa4mvuncLTJ7+/7dT2FdCjNoT0WMpmRUlmWuPs1hQAAAAAAAAAeZlvcuuhpPkMyQiB3UwxhKWOZnp5Xb4sXANLc/UTTphd5b2XvMTWb0eNHX3SbubqZ4ixu+cBOubG7fJX79++2A==
+Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 31867 of 893937 compute units
+Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY ALz9yiODABbCjGZjATpaAkY59aO3idVYLPUlOJviKc+KYst9Cv4iB/u48ZThNPmkcFPwCRUH7NpC/cI8gFK95z1iy30K/iIH+7jxlOE0+aRwU/AJFQfs2kL9wjyAUr3nPRQAAAAAAAAAUD8YTGOIOw8Ny2eRu43ScFytpQuy2NJKmtO70zuuOHdwc7knMtURvS4xX0WUrVSwXEYGlJ5nh6yDsX+0Gv8YHQ==
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY success
 Program log: finished invoking instruction
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program log: evaluate task accounts
@@ -290,21 +268,19 @@ Program log: invoking instruction
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY invoke [2]
 Program log: Instruction: MintV1
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [3]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 845007 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 830662 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK invoke [3]
 Program log: Instruction: Append
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [4]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 833174 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 818829 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
-Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8032 of 840907 compute units
+Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8032 of 826562 compute units
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK success
-Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 29727 of 860873 compute units
-Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AHAEJwIw07uHSN5Up/j83AO30u2kmpicZ3TCzD1E5SpDvujhWuJr7p3C0ye/v+3U9hXQozaE9FjKZkVJZlrj7Na+6OFa4mvuncLTJ7+/7dT2FdCjNoT0WMpmRUlmWuPs1hUAAAAAAAAAeZlvcuuhpPkMyQiB3UwxhKWOZnp5Xb4sXANLc/UTTphd5b2XvMTWb0eNHX3SbubqZ4ixu+cBOubG7fJX79++2A==
+Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 31227 of 848028 compute units
+Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AG7O3xP0d3qJYTKV+fB/2Shi1notcpnEEeIInCYYN4QQYst9Cv4iB/u48ZThNPmkcFPwCRUH7NpC/cI8gFK95z1iy30K/iIH+7jxlOE0+aRwU/AJFQfs2kL9wjyAUr3nPRUAAAAAAAAAUD8YTGOIOw8Ny2eRu43ScFytpQuy2NJKmtO70zuuOHdwc7knMtURvS4xX0WUrVSwXEYGlJ5nh6yDsX+0Gv8YHQ==
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY success
 Program log: finished invoking instruction
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program log: evaluate task accounts
@@ -314,21 +290,19 @@ Program log: invoking instruction
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY invoke [2]
 Program log: Instruction: MintV1
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [3]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 799520 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 783893 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK invoke [3]
 Program log: Instruction: Append
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [4]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 787489 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 771862 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
-Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8230 of 795420 compute units
+Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8230 of 779793 compute units
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK success
-Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 31425 of 816886 compute units
-Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AD9Xn20uCBkt5o+xdarANxdAPzO7yY3FLwGsW90XCh4PvujhWuJr7p3C0ye/v+3U9hXQozaE9FjKZkVJZlrj7Na+6OFa4mvuncLTJ7+/7dT2FdCjNoT0WMpmRUlmWuPs1hYAAAAAAAAAeZlvcuuhpPkMyQiB3UwxhKWOZnp5Xb4sXANLc/UTTphd5b2XvMTWb0eNHX3SbubqZ4ixu+cBOubG7fJX79++2A==
+Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 32925 of 802759 compute units
+Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AEgxaIVYMyfz4bDqpNqkpBPdE3SDKA7Fx+wQ2GzQpNOUYst9Cv4iB/u48ZThNPmkcFPwCRUH7NpC/cI8gFK95z1iy30K/iIH+7jxlOE0+aRwU/AJFQfs2kL9wjyAUr3nPRYAAAAAAAAAUD8YTGOIOw8Ny2eRu43ScFytpQuy2NJKmtO70zuuOHdwc7knMtURvS4xX0WUrVSwXEYGlJ5nh6yDsX+0Gv8YHQ==
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY success
 Program log: finished invoking instruction
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program log: evaluate task accounts
@@ -338,21 +312,19 @@ Program log: invoking instruction
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY invoke [2]
 Program log: Instruction: MintV1
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [3]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 755335 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 736926 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK invoke [3]
 Program log: Instruction: Append
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [4]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 743501 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 725092 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
-Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8033 of 751235 compute units
+Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 8033 of 732826 compute units
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK success
-Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 29728 of 771201 compute units
-Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY ABO6d/2w7uu0RPlQDzDatUuQ13RqN2HLY5kzwV7PsChfvujhWuJr7p3C0ye/v+3U9hXQozaE9FjKZkVJZlrj7Na+6OFa4mvuncLTJ7+/7dT2FdCjNoT0WMpmRUlmWuPs1hcAAAAAAAAAeZlvcuuhpPkMyQiB3UwxhKWOZnp5Xb4sXANLc/UTTphd5b2XvMTWb0eNHX3SbubqZ4ixu+cBOubG7fJX79++2A==
+Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 32728 of 755792 compute units
+Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY ANg5fiIl+8o34Wt9hakpESsdma233sOrEn2Ln33qnzAqYst9Cv4iB/u48ZThNPmkcFPwCRUH7NpC/cI8gFK95z1iy30K/iIH+7jxlOE0+aRwU/AJFQfs2kL9wjyAUr3nPRcAAAAAAAAAUD8YTGOIOw8Ny2eRu43ScFytpQuy2NJKmtO70zuuOHdwc7knMtURvS4xX0WUrVSwXEYGlJ5nh6yDsX+0Gv8YHQ==
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY success
 Program log: finished invoking instruction
-Program log: purging
-Program log: purged
 Program log: Processing action
 Program log: Processing action
 Program log: evaluate task accounts
@@ -362,22 +334,20 @@ Program log: invoking instruction
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY invoke [2]
 Program log: Instruction: MintV1
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [3]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 711347 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 691656 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK invoke [3]
 Program log: Instruction: Append
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV invoke [4]
-Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 698246 compute units
+Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV consumed 39 of 678555 compute units
 Program noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV success
-Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 9300 of 707247 compute units
+Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK consumed 9300 of 687556 compute units
 Program cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK success
-Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 30995 of 727213 compute units
-Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AAvqOOPtJz2RSjOgjmPwynMEBaFfY1fwJQvJMMwdb4ZyvujhWuJr7p3C0ye/v+3U9hXQozaE9FjKZkVJZlrj7Na+6OFa4mvuncLTJ7+/7dT2FdCjNoT0WMpmRUlmWuPs1hgAAAAAAAAAeZlvcuuhpPkMyQiB3UwxhKWOZnp5Xb4sXANLc/UTTphd5b2XvMTWb0eNHX3SbubqZ4ixu+cBOubG7fJX79++2A==
+Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY consumed 32495 of 709022 compute units
+Program return: BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY AEQBmwQzmD/Zyt9bflMEvhoNegB2NXhQ/P3yQ0pG+96IYst9Cv4iB/u48ZThNPmkcFPwCRUH7NpC/cI8gFK95z1iy30K/iIH+7jxlOE0+aRwU/AJFQfs2kL9wjyAUr3nPRgAAAAAAAAAUD8YTGOIOw8Ny2eRu43ScFytpQuy2NJKmtO70zuuOHdwc7knMtURvS4xX0WUrVSwXEYGlJ5nh6yDsX+0Gv8YHQ==
 Program BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY success
 Program log: finished invoking instruction
-Program log: purging
-Program log: purged
 Program log: Processing action
-Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 705499 of 1399850 compute units
-Program return: BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 AAvqOOPtJz2RSjOgjmPwynMEBaFfY1fwJQvJMMwdb4ZyvujhWuJr7p3C0ye/v+3U9hXQozaE9FjKZkVJZlrj7Na+6OFa4mvuncLTJ7+/7dT2FdCjNoT0WMpmRUlmWuPs1hgAAAAAAAAAeZlvcuuhpPkMyQiB3UwxhKWOZnp5Xb4sXANLc/UTTphd5b2XvMTWb0eNHX3SbubqZ4ixu+cBOubG7fJX79++2A==
+Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 consumed 724966 of 1399850 compute units
+Program return: BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 AEQBmwQzmD/Zyt9bflMEvhoNegB2NXhQ/P3yQ0pG+96IYst9Cv4iB/u48ZThNPmkcFPwCRUH7NpC/cI8gFK95z1iy30K/iIH+7jxlOE0+aRwU/AJFQfs2kL9wjyAUr3nPRgAAAAAAAAAUD8YTGOIOw8Ny2eRu43ScFytpQuy2NJKmtO70zuuOHdwc7knMtURvS4xX0WUrVSwXEYGlJ5nh6yDsX+0Gv8YHQ==
 Program BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2 success

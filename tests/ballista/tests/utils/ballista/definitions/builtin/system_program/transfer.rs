@@ -1,10 +1,12 @@
 use anchor_lang::{prelude::AccountMeta, system_program};
 use ballista_common::{
-    logical_components::{Expression, Value},
-    schema::{AccountGroupDefinition, ExecutionSettings, TaskDefinition},
-    task::{
-        action::system_instruction::SystemInstructionAction, shared::TaskAccount,
-        task_action::TaskAction,
+    accounts::task_definition::{AccountGroupDefinition, ExecutionSettings, TaskDefinition},
+    types::{
+        logical_components::{Expression, Value},
+        task::{
+            action::system_instruction::SystemInstructionAction, task_account::TaskAccount,
+            task_action::TaskAction,
+        },
     },
 };
 use ballista_sdk::{
@@ -143,11 +145,11 @@ pub fn build_single_execute_task_instruction(
 
     ballista_sdk::generated::instructions::ExecuteTask::instruction_with_remaining_accounts(
         &ExecuteTask {
-            task: *task,
+            task_definition: *task,
             payer: *user,
         },
         ExecuteTaskInstructionArgs {
-            task_values: vec![],
+            input_values: vec![],
         },
         &remaining_accounts,
     )
@@ -187,11 +189,11 @@ pub fn build_single_seeded_execute_task_instruction(
 
     ballista_sdk::generated::instructions::ExecuteTask::instruction_with_remaining_accounts(
         &ExecuteTask {
-            task: *task,
+            task_definition: *task,
             payer: *user,
         },
         ExecuteTaskInstructionArgs {
-            task_values: vec![],
+            input_values: vec![],
         },
         &remaining_accounts,
     )
@@ -227,11 +229,11 @@ pub fn build_looping_execute_task_instruction(
 
     ballista_sdk::generated::instructions::ExecuteTask::instruction_with_remaining_accounts(
         &ExecuteTask {
-            task: *task,
+            task_definition: *task,
             payer: *user,
         },
         ExecuteTaskInstructionArgs {
-            task_values: vec![],
+            input_values: vec![],
         },
         &remaining_accounts,
     )

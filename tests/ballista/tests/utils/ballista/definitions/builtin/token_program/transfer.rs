@@ -1,13 +1,15 @@
 use anchor_lang::prelude::AccountMeta;
 use anchor_lang::system_program;
-use ballista_common::logical_components::{ArithmeticBehavior, Condition, Expression, Value};
-use ballista_common::schema::{ExecutionSettings, TaskDefinition, Validation};
-use ballista_common::task::action::associated_token_program_instruction::AssociatedTokenProgramInstruction;
-use ballista_common::task::action::token_program_instruction::{
+use ballista_common::accounts::task_definition::{ExecutionSettings, TaskDefinition};
+use ballista_common::types::logical_components::{
+    ArithmeticBehavior, Condition, Expression, Validation, Value,
+};
+use ballista_common::types::task::action::associated_token_program_instruction::AssociatedTokenProgramInstruction;
+use ballista_common::types::task::action::token_program_instruction::{
     TokenProgramInstruction, TokenProgramVersion,
 };
-use ballista_common::task::shared::TaskAccount;
-use ballista_common::task::task_action::TaskAction;
+use ballista_common::types::task::task_account::TaskAccount;
+use ballista_common::types::task::task_action::TaskAction;
 use ballista_sdk::generated::instructions::{ExecuteTask, ExecuteTaskInstructionArgs};
 use num_derive::ToPrimitive;
 use solana_sdk::instruction::Instruction;
@@ -143,7 +145,7 @@ pub fn create_batch_token_transfer_def(
 }
 
 pub fn execute_batch_token_transfer_tx(
-    task: Pubkey,
+    task_definition: Pubkey,
     user: &Pubkey,
     mint: &Pubkey,
     destinations: &[Pubkey],
@@ -163,9 +165,12 @@ pub fn execute_batch_token_transfer_tx(
     }
 
     ballista_sdk::generated::instructions::ExecuteTask::instruction_with_remaining_accounts(
-        &ExecuteTask { task, payer: *user },
+        &ExecuteTask {
+            task_definition,
+            payer: *user,
+        },
         ExecuteTaskInstructionArgs {
-            task_values: vec![Value::U8(destinations.len() as u8)],
+            input_values: vec![Value::U8(destinations.len() as u8)],
         },
         &remaining_accounts,
     )

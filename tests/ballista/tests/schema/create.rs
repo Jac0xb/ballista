@@ -2,7 +2,7 @@ use crate::utils::{
     process_transaction_assert_success, setup::user::create_user_with_balance,
     test_context::TestContext, transaction::utils::create_transaction,
 };
-use ballista_common::schema::Schema;
+use ballista_common::task_definition::Schema;
 use ballista_sdk::{
     find_task_definition_pda,
     generated::instructions::{CreateSchema, CreateSchemaInstructionArgs},

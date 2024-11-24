@@ -280,7 +280,13 @@ version = "0.1.0"
 dependencies = [
  "borsh 0.10.3",
  "borsh_boxed",
+ "geppetto",
  "leb128",
+ "num_enum 0.7.3",
+ "pinocchio",
+ "pinocchio-pubkey",
+ "pinocchio-system",
+ "pinocchio-token",
  "solana-program",
 ]
 
@@ -911,7 +917,7 @@ dependencies = [
 [[package]]
 name = "geppetto"
 version = "2.1.1"
-source = "git+https://github.com/Jac0xb/geppetto.git?rev=3b2d78a2b5a8722d025482b8c299ee5050e2dc2b#3b2d78a2b5a8722d025482b8c299ee5050e2dc2b"
+source = "git+https://github.com/Jac0xb/geppetto.git?rev=e3b22d7f5d77f46c02a5f516b2897523e60aabd8#e3b22d7f5d77f46c02a5f516b2897523e60aabd8"
 dependencies = [
  "borsh 0.10.3",
  "bytemuck",

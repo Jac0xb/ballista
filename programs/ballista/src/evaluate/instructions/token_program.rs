@@ -2,9 +2,9 @@ use crate::{
     debug_msg,
     error::BallistaError,
     evaluate::{evaluate_expression, evaluate_task_account},
-    task_state::TaskState,
 };
-use ballista_common::{
+use ballista_common::types::execution_state::ExecutionState;
+use ballista_common::types::{
     logical_components::Value,
     task::action::token_program_instruction::{TokenProgramInstruction, TokenProgramVersion},
 };
@@ -12,7 +12,7 @@ use pinocchio_token::instructions::{InitilizeAccount3, Transfer};
 
 pub fn evaluate(
     token_program_instruction: &TokenProgramInstruction,
-    task_state: &mut TaskState,
+    execution_state: &mut ExecutionState,
 ) -> Result<(), BallistaError> {
     match token_program_instruction {
         TokenProgramInstruction::Transfer {
@@ -23,11 +23,11 @@ pub fn evaluate(
             multisig,
             amount,
         } => {
-            let (from_account, _) = evaluate_task_account(from, task_state)?;
-            let (from_token_account, _) = evaluate_task_account(from_token_account, task_state)?;
-            let (to_token_account, _) = evaluate_task_account(to_token_account, task_state)?;
+            let (from_account, _) = evaluate_task_account(from, execution_state)?;
+            let (from_token_account, _) = evaluate_task_account(from_token_account, execution_state)?;
+            let (to_token_account, _) = evaluate_task_account(to_token_account, execution_state)?;
 
-            let amount = evaluate_expression(amount, task_state)?;
+            let amount = evaluate_expression(amount, execution_state)?;
             let amount = match amount.as_ref() {
                 Value::U64(value) => *value,
                 _ => return Err(BallistaError::InvalidCast),
@@ -63,9 +63,9 @@ pub fn evaluate(
             owner,
             mint,
         } => {
-            let (account, _) = evaluate_task_account(account, task_state)?;
-            let (owner, _) = evaluate_task_account(owner, task_state)?;
-            let (mint, _) = evaluate_task_account(mint, task_state)?;
+            let (account, _) = evaluate_task_account(account, execution_state)?;
+            let (owner, _) = evaluate_task_account(owner, execution_state)?;
+            let (mint, _) = evaluate_task_account(mint, execution_state)?;
 
             InitilizeAccount3 {
                 token: account,

@@ -1,13 +1,15 @@
 use ballista_common::{
-    logical_components::{Condition, Expression, Value},
-    schema::{ExecutionSettings, TaskDefinition},
-    task::{
-        action::{
-            defined_instruction::{DefinedArgument, DefinedInstruction, SerializationType},
-            set_cache::SetCacheType,
+    accounts::task_definition::{ExecutionSettings, TaskDefinition},
+    types::{
+        logical_components::{Condition, Expression, Value},
+        task::{
+            action::{
+                defined_instruction::{DefinedArgument, DefinedInstruction, SerializationType},
+                set_cache::SetCacheType,
+            },
+            task_account::TaskAccount,
+            task_action::TaskAction,
         },
-        shared::TaskAccount,
-        task_action::TaskAction,
     },
 };
 use num_derive::ToPrimitive;

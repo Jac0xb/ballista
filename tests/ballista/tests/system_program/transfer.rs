@@ -9,7 +9,7 @@ use crate::utils::{
     test_context::TestContext,
     transaction::utils::create_transaction,
 };
-use ballista_common::logical_components::{Expression, Value};
+use ballista_common::types::logical_components::{Expression, Value};
 use ballista_sdk::{
     find_task_definition_pda,
     generated::instructions::{CreateTask, CreateTaskInstructionArgs},

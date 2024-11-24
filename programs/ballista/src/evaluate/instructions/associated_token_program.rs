@@ -1,14 +1,16 @@
-use crate::{error::BallistaError, evaluate::evaluate_task_account, task_state::TaskState, ID};
-use ballista_common::task::action::associated_token_program_instruction::AssociatedTokenProgramInstruction;
+use crate::{error::BallistaError, evaluate::evaluate_task_account, ID};
+use ballista_common::types::task::action::associated_token_program_instruction::AssociatedTokenProgramInstruction;
 use pinocchio::{
     instruction::{Seed, Signer},
     pubkey::find_program_address,
 };
+
+use ballista_common::types::execution_state::ExecutionState;
 use pinocchio_associated_token::instructions::Create;
 
 pub fn evaluate(
     program_instruction: &AssociatedTokenProgramInstruction,
-    task_state: &mut TaskState,
+    execution_state: &mut ExecutionState,
 ) -> Result<(), BallistaError> {
     // let mut account_infos = vec![];
 
@@ -21,12 +23,12 @@ pub fn evaluate(
             token_program_id,
             system_program_id,
         } => {
-            let (payer, payer_seed) = evaluate_task_account(payer, task_state)?;
-            let (owner, _) = evaluate_task_account(owner, task_state)?;
-            let (token_account, _) = evaluate_task_account(token_account, task_state)?;
-            let (mint, _) = evaluate_task_account(mint, task_state)?;
-            let (token_program_id, _) = evaluate_task_account(token_program_id, task_state)?;
-            let (system_program_id, _) = evaluate_task_account(system_program_id, task_state)?;
+            let (payer, payer_seed) = evaluate_task_account(payer, execution_state)?;
+            let (owner, _) = evaluate_task_account(owner, execution_state)?;
+            let (token_account, _) = evaluate_task_account(token_account, execution_state)?;
+            let (mint, _) = evaluate_task_account(mint, execution_state)?;
+            let (token_program_id, _) = evaluate_task_account(token_program_id, execution_state)?;
+            let (system_program_id, _) = evaluate_task_account(system_program_id, execution_state)?;
 
             let create = Create {
                 funding_account: payer,

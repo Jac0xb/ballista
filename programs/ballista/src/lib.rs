@@ -1,23 +1,21 @@
-use ballista_common::schema::TaskDefinition;
-use borsh::{BorshDeserialize, BorshSerialize};
+use ballista_common::accounts::task_definition::TaskDefinition;
+use borsh::BorshDeserialize;
 use error::BallistaError;
-use geppetto::AccountInfoValidation;
+use geppetto::{AccountInfoValidation, AsAccount};
 use instruction::BallistaInstruction;
-use pda::{get_task_definition_address, TASK_DEFINITION_SEED};
 
 pub mod error;
 pub mod evaluate;
 pub mod instruction;
-pub mod log;
-pub mod pda;
 pub mod processor;
-pub mod task_state;
+pub mod utils;
 
 use pinocchio::{
-    account_info::AccountInfo, instruction::Seed, msg, program_error::ProgramError, pubkey::Pubkey,
+    account_info::AccountInfo, instruction::Seed, program_error::ProgramError, pubkey::Pubkey,
     ProgramResult,
 };
 use pinocchio_pubkey::declare_id;
+use utils::pda::{get_task_definition_address, TASK_DEFINITION_SEED};
 
 declare_id!("BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2");
 
@@ -44,17 +42,17 @@ pub fn process_instruction(
         BallistaInstruction::CreateTask { task, task_id } => {
             debug_msg!("Instruction: CreateTask");
 
-            let [user, task_account, system_program] = accounts else {
+            let [payer, task_account, system_program] = accounts else {
                 return Err(ProgramError::NotEnoughAccountKeys);
             };
 
-            let (task_pda, bump_seed) = get_task_definition_address(user.key(), task_id);
+            let (task_pda, _) = get_task_definition_address(payer.key(), task_id);
 
             // [account(program === pinocchio_system::ID)]
             system_program.assert_program(&pinocchio_system::ID)?;
 
             // [account(writable, signer)]
-            user.assert_signer()?.assert_writable()?;
+            payer.assert_signer()?.assert_writable()?;
 
             // [account(writable, unowned, empty, key === task_pda)]
             task_account
@@ -65,58 +63,37 @@ pub fn process_instruction(
 
             debug_msg!("passed validation");
 
-            let serialized_task = task.try_to_vec().map_err(|e| {
-                msg!("Error serializing task: {}", e);
-                BallistaError::InvalidSchemaData
-            })?;
-
             let task_id_bytes = task_id.to_le_bytes();
             let seeds = [
                 Seed::from(TASK_DEFINITION_SEED),
-                Seed::from(user.key().as_ref()),
+                Seed::from(payer.key().as_ref()),
                 Seed::from(task_id_bytes.as_ref()),
             ];
 
-            geppetto::allocate_account_with_bump(
-                task_account,
-                system_program,
-                user,
-                serialized_task.len(),
-                &crate::ID,
-                &seeds,
-                bump_seed,
-            )?;
-
             debug_msg!("created account");
 
-            task_account
-                .try_borrow_mut_data()
-                .unwrap()
-                .copy_from_slice(&serialized_task);
+            task_account.create_account::<TaskDefinition>(
+                &task,
+                system_program,
+                payer,
+                &crate::ID,
+                &seeds,
+            )?;
         }
-        BallistaInstruction::ExecuteTask { task_values } => {
+        BallistaInstruction::ExecuteTask { input_values } => {
             debug_msg!("Instruction: ExecuteTask");
 
-            let schema_account = &accounts[0];
-            let payer = &accounts[1];
+            let [payer, task_account, ref remaining_accounts @ ..] = accounts else {
+                debug_msg!("Not enough account keys {}", accounts.len());
+                return Err(ProgramError::NotEnoughAccountKeys);
+            };
 
             // [account(writable, signer)]
             payer.assert_writable()?.assert_signer()?;
 
-            // [account(!empty)]
-            schema_account.assert_not_empty()?;
+            let task_definition = task_account.as_account::<TaskDefinition>(&crate::ID)?;
 
-            let task_definition =
-                TaskDefinition::try_from_slice(&schema_account.try_borrow_data().unwrap())
-                    .or(Err(BallistaError::InvalidSchemaData))?;
-
-            processor::execute_action::process(
-                &task_definition,
-                &task_values,
-                payer,
-                &accounts[2..],
-            )
-            .unwrap();
+            processor::execute(&task_definition, &input_values, payer, remaining_accounts).unwrap();
         }
     }
 

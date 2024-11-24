@@ -1,14 +1,14 @@
 use anchor_lang::prelude::AccountMeta;
 use ballista_common::logical_components::{Condition, Expression, Value, ValueType};
-use ballista_common::schema::instruction::{
-    AccountDefinition, ArgumentDefinition, InstructionDefinition, SerializationType,
-};
-use ballista_common::schema::schema::GlobalSchema;
 use ballista_common::task::action::record_value::SetCache;
 use ballista_common::task::action::schema_instruction::{
     SchemaInstruction, TaskAccount, TaskArgument,
 };
 use ballista_common::task::task::{TaskAction, TaskDefinition};
+use ballista_common::task_definition::instruction::{
+    AccountDefinition, ArgumentDefinition, InstructionDefinition, SerializationType,
+};
+use ballista_common::task_definition::task_definition::GlobalSchema;
 use ballista_sdk::generated::instructions::{
     CreateSchema, CreateSchemaInstructionArgs, ExecuteTask, ExecuteTaskInstructionArgs,
 };
@@ -244,7 +244,7 @@ async fn simple() {
                             schema,
                         },
                         ExecuteTaskInstructionArgs {
-                            task_values: vec![],
+                            input_values: vec![],
                         },
                    &remaining_accounts,
                     ),

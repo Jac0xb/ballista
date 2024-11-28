@@ -7,6 +7,8 @@
 
 pub(crate) mod r#create_task;
 pub(crate) mod r#execute_task;
+pub(crate) mod r#execute_task_no_inputs;
 
 pub use self::r#create_task::*;
 pub use self::r#execute_task::*;
+pub use self::r#execute_task_no_inputs::*;

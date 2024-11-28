@@ -95,6 +95,21 @@ pub fn process_instruction(
 
             processor::execute(&task_definition, &input_values, payer, remaining_accounts).unwrap();
         }
+        BallistaInstruction::ExecuteTaskNoInputs {} => {
+            debug_msg!("Instruction: ExecuteTaskNoInputs");
+
+            let [payer, task_account, ref remaining_accounts @ ..] = accounts else {
+                debug_msg!("Not enough account keys {}", accounts.len());
+                return Err(ProgramError::NotEnoughAccountKeys);
+            };
+
+            // [account(writable, signer)]
+            payer.assert_writable()?.assert_signer()?;
+
+            let task_definition = task_account.as_account::<TaskDefinition>(&crate::ID)?;
+
+            processor::execute(&task_definition, &[], payer, remaining_accounts).unwrap();
+        }
     }
 
     Ok(())

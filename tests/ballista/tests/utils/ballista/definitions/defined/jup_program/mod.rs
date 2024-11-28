@@ -1,21 +1,23 @@
-use anchor_lang::prelude::AccountMeta;
 use ballista_common::{
     accounts::task_definition::{ExecutionSettings, TaskDefinition},
     types::{
         logical_components::{Expression, Value, ValueType},
         task::{
-            action::{
+            command::{
                 raw_instruction::RawInstruction,
                 token_program_instruction::{TokenProgramInstruction, TokenProgramVersion},
+                Command,
             },
             task_account::{TaskAccount, TaskAccounts},
-            task_action::TaskAction,
         },
     },
 };
 use ballista_sdk::find_task_definition_pda;
 use num_derive::ToPrimitive;
-use solana_sdk::{instruction::Instruction, pubkey::Pubkey};
+use solana_sdk::{
+    instruction::{AccountMeta, Instruction},
+    pubkey::Pubkey,
+};
 use strum::EnumIter;
 use strum_macros::EnumCount as EnumCountMacro;
 
@@ -107,7 +109,7 @@ pub fn create_jupiter_swap_and_transfer_task_definition() -> TaskDefinition {
         execution_settings: ExecutionSettings::default(),
         actions: vec![
             // Execute jupiter swap using instructions from API.
-            TaskAction::RawInstruction({
+            Command::InvokeRawInstruction({
                 RawInstruction {
                     program: TaskAccount::FromInput(
                         JupiterSwapInstructionAccount::JupiterProgram as u8,
@@ -120,7 +122,7 @@ pub fn create_jupiter_swap_and_transfer_task_definition() -> TaskDefinition {
                 }
             }),
             // Transfer exact amount of tokens from input token account to output token account
-            TaskAction::TokenProgramInstruction(TokenProgramInstruction::Transfer {
+            Command::InvokeTokenProgram(TokenProgramInstruction::Transfer {
                 program_version: TokenProgramVersion::Legacy,
                 multisig: None,
                 from: TaskAccount::FeePayer,
@@ -129,10 +131,10 @@ pub fn create_jupiter_swap_and_transfer_task_definition() -> TaskDefinition {
                 amount: from_token_balance_expr.clone(),
             }),
             // Log amount transferred + amount
-            TaskAction::Log(Expression::Literal(Value::String(
+            Command::Log(Expression::Literal(Value::String(
                 "Transferred".to_string(),
             ))),
-            TaskAction::Log(to_token_balance_expr),
+            Command::Log(to_token_balance_expr),
         ],
         shared_values: vec![],
         account_groups: vec![],

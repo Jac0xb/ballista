@@ -3,12 +3,12 @@ use ballista_common::{
     types::{
         logical_components::{Condition, Expression, Value},
         task::{
-            action::{
+            command::Command,
+            command::{
                 defined_instruction::{DefinedArgument, DefinedInstruction, SerializationType},
                 set_cache::SetCacheType,
             },
             task_account::TaskAccount,
-            task_action::TaskAction,
         },
     },
 };
@@ -113,14 +113,14 @@ pub fn mint_bubblegum_nft_task_definition(loop_count: u8) -> TaskDefinition {
             preallocated_account_info_cache_size: None,
         },
         actions: vec![
-            TaskAction::SetCache(SetCacheType::Expression {
+            Command::SetCache(SetCacheType::Expression {
                 index: 0,
                 expression: Value::U8(0).expr(),
             }),
-            TaskAction::loop_action(
+            Command::loop_action(
                 Condition::less_than(Expression::cached_value(0), Value::U8(loop_count).expr()),
                 vec![
-                    TaskAction::DefinedInstruction(DefinedInstruction {
+                    Command::InvokeDefinedInstruction(DefinedInstruction {
                         program: TaskAccount::FromInput(0),
                         accounts: defined_accounts.clone(),
                         arguments: vec![
@@ -135,7 +135,7 @@ pub fn mint_bubblegum_nft_task_definition(loop_count: u8) -> TaskDefinition {
                         ],
                         serialization_type: SerializationType::Borsh,
                     }),
-                    TaskAction::SetCache(SetCacheType::Expression {
+                    Command::SetCache(SetCacheType::Expression {
                         index: 0,
                         expression: Expression::cached_value(0).checked_add(&Value::U8(1).expr()),
                     }),

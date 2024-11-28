@@ -1,5 +1,5 @@
 use crate::{error::BallistaError, evaluate::evaluate_task_account, ID};
-use ballista_common::types::task::action::associated_token_program_instruction::AssociatedTokenProgramInstruction;
+use ballista_common::types::task::command::associated_token_program_instruction::AssociatedTokenProgramInstruction;
 use pinocchio::{
     instruction::{Seed, Signer},
     pubkey::find_program_address,
@@ -39,6 +39,7 @@ pub fn evaluate(
                 token_program: token_program_id,
             };
 
+            // TODO clean this up using macro
             if let Some(payer_seed) = payer_seed {
                 let payer_seed_bytes = payer_seed.to_le_bytes();
                 let mut seeds = [
@@ -71,5 +72,3 @@ pub fn evaluate(
 
     Ok(())
 }
-
-// generate bump

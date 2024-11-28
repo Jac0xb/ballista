@@ -19,5 +19,9 @@ pub(crate) enum BallistaInstruction {
     #[account(1, name = "task_definition", desc = "Task definition account")]
     ExecuteTask {
         input_values: Vec<Value>,
-    }
+    },
+
+    #[account(0, name = "payer", desc = "Payer account", signer, writable)]
+    #[account(1, name = "task_definition", desc = "Task definition account")]
+    ExecuteTaskNoInputs {},
 }

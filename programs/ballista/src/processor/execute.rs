@@ -6,17 +6,17 @@ use crate::{
 use ballista_common::types::execution_state::ExecutionState;
 use ballista_common::types::{
     logical_components::Value,
-    task::{action::set_cache::SetCacheType, task_action::TaskAction},
+    task::{command::set_cache::SetCacheType, command::Command},
 };
 use ballista_common::{
     accounts::task_definition::TaskDefinition, types::execution_frame::ExecutionFrame,
 };
 use pinocchio::{account_info::AccountInfo, msg};
 
-/// 
+///
 /// Creates an execution state and creates an execution frame for the task
 /// using the actions defined at the top level of the task definition.
-/// 
+///
 pub fn execute(
     task_definition: &TaskDefinition,
     input_values: &[Value],
@@ -34,14 +34,14 @@ pub fn execute(
                 .execution_settings
                 .preallocated_account_meta_cache_size
                 .map(|size| size as usize)
-                .unwrap_or(remaining_accounts.len() * 2),
+                .unwrap_or(input_accounts.len() * 2),
         ),
         account_info_cache: Vec::with_capacity(
             task_definition
                 .execution_settings
                 .preallocated_account_info_cache_size
                 .map(|size| size as usize)
-                .unwrap_or(remaining_accounts.len() * 2),
+                .unwrap_or(input_accounts.len() * 2),
         ),
     };
 
@@ -49,7 +49,6 @@ pub fn execute(
         &mut execution_state,
         &mut ExecutionFrame {
             current_index: 0,
-            depth: 0,
             actions: &task_definition.actions.as_slice(),
         },
         &mut Vec::with_capacity(
@@ -74,20 +73,20 @@ fn create_execution_frame(
     while execution_frame.get_index() < len as u8 {
         let action = &execution_frame.get_current_action();
 
-        debug_msg!("Processing action");
+        debug_msg!("Execution frame created");
 
         match action {
-            TaskAction::SystemInstruction(program_ix) => {
+            Command::InvokeSystemProgram(program_ix) => {
                 evaluate::instructions::system_program::evaluate(program_ix, execution_state)
                     .unwrap();
                 execution_state.purge_caches();
             }
-            TaskAction::TokenProgramInstruction(program_ix) => {
+            Command::InvokeTokenProgram(program_ix) => {
                 evaluate::instructions::token_program::evaluate(program_ix, execution_state)
                     .unwrap();
                 execution_state.purge_caches();
             }
-            TaskAction::AssociatedTokenProgramInstruction(program_ix) => {
+            Command::InvokeAssociatedTokenProgram(program_ix) => {
                 evaluate::instructions::associated_token_program::evaluate(
                     program_ix,
                     execution_state,
@@ -95,7 +94,7 @@ fn create_execution_frame(
                 .unwrap();
                 execution_state.purge_caches();
             }
-            TaskAction::DefinedInstruction(defined_instruction) => {
+            Command::InvokeDefinedInstruction(defined_instruction) => {
                 evaluate::instructions::defined::evaluate(
                     defined_instruction,
                     execution_state,
@@ -106,11 +105,10 @@ fn create_execution_frame(
                 execution_state.purge_caches();
                 instruction_data_cache.clear();
             }
-            TaskAction::Loop { condition, actions } => {
+            Command::Loop { condition, actions } => {
                 if evaluate_condition(condition, execution_state)? {
                     let action_subcontext = &mut ExecutionFrame {
                         current_index: 0,
-                        depth: execution_frame.depth + 1,
                         actions: &actions.as_slice(),
                     };
 
@@ -127,7 +125,7 @@ fn create_execution_frame(
                     }
                 }
             }
-            TaskAction::Conditional {
+            Command::Conditional {
                 condition,
                 true_action,
             } => {
@@ -136,18 +134,17 @@ fn create_execution_frame(
                         execution_state,
                         &mut ExecutionFrame {
                             current_index: 0,
-                            depth: execution_frame.depth + 1,
                             actions: true_action,
                         },
                         instruction_data_cache,
                     )?;
                 }
             }
-            TaskAction::RawInstruction(_raw_instruction) => {
+            Command::InvokeRawInstruction(_raw_instruction) => {
                 evaluate::instructions::raw::evaluate(_raw_instruction, execution_state).unwrap();
                 execution_state.purge_caches();
             }
-            TaskAction::SetCache(set_cache) => match set_cache {
+            Command::SetCache(set_cache) => match set_cache {
                 SetCacheType::AccountData { .. } => {
                     panic!("Account data not implemented");
                 }
@@ -166,10 +163,7 @@ fn create_execution_frame(
                     execution_state.cached_values[*index as usize] = owned_value;
                 }
             },
-            // TaskAction::Validate(_validation) => {
-            //     panic!("Validation not implemented");
-            // }
-            TaskAction::Log(expression) => {
+            Command::Log(expression) => {
                 let value = evaluate_expression(expression, execution_state)?;
                 msg!("LOG: {:?}", value);
             }

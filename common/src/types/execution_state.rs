@@ -9,7 +9,7 @@ use super::logical_components::Value;
 
 /// 
 /// The state of the execution of a task.
-/// Used to reference task definition, 
+/// Used to reference task definition.
 pub struct ExecutionState<'a> {
     // The definition of the task that is being executed
     pub task_definition: &'a TaskDefinition,

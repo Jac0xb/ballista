@@ -1,35 +1,30 @@
+use crate::utils::process_transaction_assert_success;
+use crate::utils::task_definition::create_system_transfer_task_definition;
+use crate::utils::{context::TestContext, create_user_with_balance};
 use anchor_lang::prelude::AccountMeta;
-use ballista_common::logical_components::{Condition, Expression, Value, ValueType};
-use ballista_common::task::action::record_value::SetCache;
-use ballista_common::task::action::schema_instruction::{
-    SchemaInstruction, TaskAccount, TaskArgument,
-};
-use ballista_common::task::task::{TaskAction, TaskDefinition};
-use ballista_common::task_definition::instruction::{
-    AccountDefinition, ArgumentDefinition, InstructionDefinition, SerializationType,
-};
-use ballista_common::task_definition::task_definition::GlobalSchema;
+use ballista_common::task::action::schema_instruction::TaskAccount;
+use ballista_common::task::action::set_cache::SetCacheType;
+use ballista_common::task::action::system_instruction::SystemInstruction;
+use ballista_common::task::command::Command;
+use ballista_common::task_definition::{Schema, TaskDefinition};
 use ballista_sdk::generated::instructions::{
     CreateSchema, CreateSchemaInstructionArgs, ExecuteTask, ExecuteTaskInstructionArgs,
 };
 use ballista_sdk::{find_task_definition_pda, BALLISTA_ID};
 use bincode::serialize;
-use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_program_test::tokio;
 use solana_sdk::address_lookup_table::instruction::{
-    create_lookup_table, create_lookup_table_signed, extend_lookup_table,
+    create_lookup_table_signed, extend_lookup_table,
 };
 use solana_sdk::address_lookup_table::state::AddressLookupTable;
 use solana_sdk::address_lookup_table::AddressLookupTableAccount;
+use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use solana_sdk::message::{v0, VersionedMessage};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Keypair;
 use solana_sdk::signer::EncodableKeypair;
 use solana_sdk::system_program;
 use solana_sdk::transaction::VersionedTransaction;
-
-use crate::utils::process_transaction_assert_success;
-use crate::utils::{context::TestContext, create_user_with_balance};
 
 async fn create_lut(
     ctx: &mut TestContext,
@@ -69,86 +64,18 @@ async fn create_lut(
     lookup_table
 }
 
-fn system_transfer_ix_schema() -> InstructionDefinition {
-    InstructionDefinition {
-        serialization: SerializationType::Borsh,
-        arguments: vec![
-            ArgumentDefinition::Constant {
-                value: Value::Bytes(vec![2, 0, 0, 0]),
-            },
-            ArgumentDefinition::Input {
-                value_type: ValueType::U64,
-            },
-        ],
-        accounts: vec![
-            AccountDefinition {
-                name: "from".to_string(),
-                signer: true,
-                writable: true,
-                validate: None,
-            },
-            AccountDefinition {
-                name: "to".to_string(),
-                signer: false,
-                writable: true,
-                validate: None,
-            },
-        ],
-    }
-}
-
 #[tokio::test]
 async fn simple() {
-    let account_amount = 29;
+    let batch_size = 29;
+
+    let compute_ix = ComputeBudgetInstruction::set_compute_unit_limit(800_000);
+
+    println!("compute_ix: {:?}", compute_ix);
 
     let context = &mut TestContext::new().await.unwrap();
     let user = create_user_with_balance(context, 10e9 as u64)
         .await
         .unwrap();
-
-    let tasks = vec![TaskDefinition {
-        actions: vec![
-            TaskAction::SetCache(SetCache::Expression {
-                index: 0,
-                expression: Value::U8(0).into(),
-            }),
-            TaskAction::Loop {
-                condition: Condition::LessThan(
-                    Expression::cached_value(0),
-                    Value::U8(account_amount).into(),
-                ),
-                actions: vec![
-                    Box::new(TaskAction::SchemaInstruction(SchemaInstruction {
-                        program: TaskAccount::FromInput(0),
-                        instruction_id: 0,
-                        accounts: vec![
-                            TaskAccount::FromInput(1),
-                            TaskAccount::Evaluated(Expression::checked_add(
-                                Expression::cached_value(0),
-                                Value::U8(2).into(),
-                            )),
-                        ],
-                        arguments: vec![TaskArgument::Expression(
-                            // Expression::checked_multiply(
-                            // Expression::safe_cast_to_u64(
-                            //     Expression::input(0),
-                            // ),
-                            Expression::shared_value(0),
-                            // )
-                        )],
-                    })),
-                    Box::new(TaskAction::SetCache(SetCache::Expression {
-                        index: 0,
-                        expression: Expression::checked_add(
-                            Expression::cached_value(0),
-                            Value::U8(1).into(),
-                        ),
-                    })),
-                ],
-            },
-        ],
-        shared_values: vec![Value::U64(1_000_000)],
-    }];
 
     let tx = VersionedTransaction::try_new(
         VersionedMessage::V0(
@@ -163,9 +90,10 @@ async fn simple() {
                             schema: find_task_definition_pda(user.encodable_pubkey(), 0).0,
                         },
                         CreateSchemaInstructionArgs {
-                            schema_arg: GlobalSchema {
-                                instructions: vec![system_transfer_ix_schema()],
-                                tasks,
+                            schema_arg: Schema {
+                                // instructions: vec![create_system_transfer_task_definition()],
+                                instructions: vec![],
+                                tasks: vec![create_system_transfer_task_definition(batch_size)],
                             },
                         },
                     ),
@@ -218,21 +146,13 @@ async fn simple() {
     }
 
     // add N keypairs to the remaining accounts
-    for _ in 0..account_amount {
+    for _ in 0..batch_size {
         remaining_accounts.push(AccountMeta::new(Keypair::new().encodable_pubkey(), false));
     }
 
     context.warp_to_slot(5).unwrap();
 
     let schema: Pubkey = find_task_definition_pda(user.encodable_pubkey(), 0).0;
-    // let lookup_table = create_lut(context, &user, remaining_accounts.iter().map(|a| a.pubkey).collect()).await;
-    //     vec![
-    //     user.encodable_pubkey(),
-    //     system_program::ID,
-    //     schema,
-    //     BALLISTA_ID,
-    // ]
-    // ).await;
 
     let tx = VersionedTransaction::try_new(
         VersionedMessage::V0(
@@ -272,7 +192,7 @@ async fn simple() {
     context.warp_to_slot(10).unwrap();
 
     remaining_accounts = remaining_accounts.into_iter().skip(2).collect();
-    for i in 0..account_amount as usize {
+    for i in 0..batch_size as usize {
         let meta = remaining_accounts
             .get(i)
             .unwrap_or_else(|| panic!("account {} not found", i));
@@ -292,27 +212,5 @@ async fn simple() {
         );
     }
 
-    panic!("done");
+    // panic!("done");
 }
-
-// let mut ixs = vec![];
-
-// for i in 0..24 {
-//    ixs.push(system_instruction::transfer(&user.encodable_pubkey(), &Keypair::new().encodable_pubkey(), 1_000_000))
-// }
-
-// let tx = VersionedTransaction::try_new(
-//     VersionedMessage::V0(
-//         v0::Message::try_compile(
-//             &user.encodable_pubkey(),
-//             &ixs,
-//             &[],
-//             context.get_blockhash().await,
-//         )
-//         .unwrap(),
-//     ),
-//     &[&user],
-// )
-// .unwrap();
-
-// println!("tx size: {}", serialize(&tx).unwrap().len());

@@ -6,17 +6,17 @@ use crate::{
 use ballista_common::types::execution_state::ExecutionState;
 use ballista_common::{
     types::logical_components::Value,
-    types::task::action::system_instruction::SystemInstructionAction,
+    types::task::command::system_instruction::SystemInstruction,
 };
 use pinocchio::{instruction::AccountMeta, pubkey::find_program_address};
 use pinocchio_system::instructions::{CreateAccount, Transfer};
 
 pub fn evaluate(
-    system_instruction: &SystemInstructionAction,
+    system_instruction: &SystemInstruction,
     execution_state: &mut ExecutionState,
 ) -> Result<(), BallistaError> {
     match system_instruction {
-        SystemInstructionAction::Transfer { from, to, amount } => {
+        SystemInstruction::Transfer { from, to, amount } => {
             let (from_account, seed) = evaluate_task_account(from, execution_state)?;
             let (to_account, _) = evaluate_task_account(to, execution_state)?;
 
@@ -57,7 +57,7 @@ pub fn evaluate(
 
             Ok(())
         }
-        SystemInstructionAction::CreateAccount {
+        SystemInstruction::CreateAccount {
             payer,
             account,
             program_owner,

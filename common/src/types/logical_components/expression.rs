@@ -33,8 +33,6 @@ pub enum Expression {
     InputValue(u8),
     StaticValue(u8),
     CachedValue(u8),
-    // ContextIndex,
-    // ContextDepth,
     ValueFromAccountData {
         // Infinite loop -> TaskAccount -> Expression -> ValueFromAccountData -> TaskAccount -> Expression -> ValueFromAccountData -> ...
         index: Box<TaskAccount>,
@@ -51,7 +49,6 @@ pub enum Expression {
     Divide(Box<Expression>, Box<Expression>, ArithmeticBehavior),
     Add(Box<Expression>, Box<Expression>, ArithmeticBehavior),
     Subtract(Box<Expression>, Box<Expression>, ArithmeticBehavior),
-    // Conditional(Box<Condition>, Box<Expression>, Box<Expression>),
     Rent(Box<Expression>),
 }
 

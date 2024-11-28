@@ -1,28 +1,33 @@
-use anchor_lang::prelude::AccountMeta;
-use anchor_lang::system_program;
-use ballista_common::accounts::task_definition::{ExecutionSettings, TaskDefinition};
-use ballista_common::types::logical_components::{
-    ArithmeticBehavior, Condition, Expression, Validation, Value,
+use ballista_common::{
+    accounts::task_definition::{ExecutionSettings, TaskDefinition},
+    types::{
+        logical_components::{ArithmeticBehavior, Condition, Expression, Validation, Value},
+        task::{
+            command::{
+                associated_token_program_instruction::AssociatedTokenProgramInstruction,
+                token_program_instruction::{TokenProgramInstruction, TokenProgramVersion},
+                Command,
+            },
+            task_account::TaskAccount,
+        },
+    },
 };
-use ballista_common::types::task::action::associated_token_program_instruction::AssociatedTokenProgramInstruction;
-use ballista_common::types::task::action::token_program_instruction::{
-    TokenProgramInstruction, TokenProgramVersion,
-};
-use ballista_common::types::task::task_account::TaskAccount;
-use ballista_common::types::task::task_action::TaskAction;
 use ballista_sdk::generated::instructions::{ExecuteTask, ExecuteTaskInstructionArgs};
 use num_derive::ToPrimitive;
-use solana_sdk::instruction::Instruction;
-use solana_sdk::pubkey::Pubkey;
+use solana_sdk::{
+    instruction::{AccountMeta, Instruction},
+    pubkey::Pubkey,
+    system_program,
+};
 use spl_associated_token_account::get_associated_token_address;
 
 use strum::EnumCount;
 use strum_macros::EnumIter;
 
-use crate::utils::ballista::definitions::instruction_schema::{
-    build_remaining_accounts, InstructionSchema,
+use crate::utils::ballista::definitions::{
+    instruction_schema::{build_remaining_accounts, InstructionSchema},
+    utils::actions_for_loop,
 };
-use crate::utils::ballista::definitions::utils::actions_for_loop;
 
 #[derive(Eq, PartialEq, Debug, Copy, Clone, EnumIter, EnumCount, ToPrimitive)]
 #[repr(u8)]
@@ -109,11 +114,11 @@ pub fn create_batch_token_transfer_def(
         account_groups: vec![],
         actions: actions_for_loop(
             vec![
-                TaskAction::Conditional {
+                Command::Conditional {
                     condition: Condition::Validation(Validation::IsEmpty(
                         current_destination_token_account.clone(),
                     )),
-                    true_action: Box::new(TaskAction::AssociatedTokenProgramInstruction(
+                    true_action: Box::new(Command::InvokeAssociatedTokenProgram(
                         AssociatedTokenProgramInstruction::InitializeAccount {
                             system_program_id,
                             token_program_id,
@@ -124,7 +129,7 @@ pub fn create_batch_token_transfer_def(
                         },
                     )),
                 },
-                TaskAction::TokenProgramInstruction(TokenProgramInstruction::Transfer {
+                Command::InvokeTokenProgram(TokenProgramInstruction::Transfer {
                     program_version: TokenProgramVersion::Legacy,
                     from,
                     from_token_account,
@@ -132,7 +137,7 @@ pub fn create_batch_token_transfer_def(
                     amount: Expression::StaticValue(0),
                     multisig: None,
                 }),
-                TaskAction::Log(Expression::CachedValue(0).divide(
+                Command::Log(Expression::CachedValue(0).divide(
                     Expression::literal(Value::U8(2)),
                     ArithmeticBehavior::Checked,
                 )),

@@ -1,8 +1,7 @@
-use super::task::task_action::TaskAction;
+use super::task::command::Command;
 
 pub struct ExecutionFrame<'a> {
     pub current_index: u8,
-    pub depth: u8,
     pub actions: &'a dyn ActionCollection,
 }
 
@@ -23,12 +22,12 @@ impl<'a> ExecutionFrame<'a> {
     }
 
     #[inline(always)]
-    pub fn get_current_action(&self) -> &TaskAction {
+    pub fn get_current_action(&self) -> &Command {
         self.actions.get(self.current_index as usize)
     }
 
     #[inline(always)]
-    pub fn get_action(&self, index: u8) -> &TaskAction {
+    pub fn get_action(&self, index: u8) -> &Command {
         self.actions.get(index as usize)
     }
 
@@ -41,10 +40,10 @@ impl<'a> ExecutionFrame<'a> {
 pub trait ActionCollection {
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool;
-    fn get(&self, index: usize) -> &TaskAction;
+    fn get(&self, index: usize) -> &Command;
 }
 
-impl ActionCollection for [TaskAction] {
+impl ActionCollection for [Command] {
     fn len(&self) -> usize {
         self.len()
     }
@@ -53,12 +52,12 @@ impl ActionCollection for [TaskAction] {
         self.is_empty()
     }
 
-    fn get(&self, index: usize) -> &TaskAction {
+    fn get(&self, index: usize) -> &Command {
         &self[index]
     }
 }
 
-impl ActionCollection for &[TaskAction] {
+impl ActionCollection for &[Command] {
     fn len(&self) -> usize {
         (*self).len()
     }
@@ -67,12 +66,12 @@ impl ActionCollection for &[TaskAction] {
         (*self).is_empty()
     }
 
-    fn get(&self, index: usize) -> &TaskAction {
+    fn get(&self, index: usize) -> &Command {
         &self[index]
     }
 }
 
-impl ActionCollection for &[&TaskAction] {
+impl ActionCollection for &[&Command] {
     fn len(&self) -> usize {
         (*self).len()
     }
@@ -81,12 +80,12 @@ impl ActionCollection for &[&TaskAction] {
         (*self).is_empty()
     }
 
-    fn get(&self, index: usize) -> &TaskAction {
+    fn get(&self, index: usize) -> &Command {
         self[index]
     }
 }
 
-impl ActionCollection for &[Box<TaskAction>] {
+impl ActionCollection for &[Box<Command>] {
     fn len(&self) -> usize {
         (*self).len()
     }
@@ -95,12 +94,12 @@ impl ActionCollection for &[Box<TaskAction>] {
         (*self).is_empty()
     }
 
-    fn get(&self, index: usize) -> &TaskAction {
+    fn get(&self, index: usize) -> &Command {
         &(*self)[index]
     }
 }
 
-impl ActionCollection for Box<TaskAction> {
+impl ActionCollection for Box<Command> {
     fn len(&self) -> usize {
         1
     }
@@ -109,7 +108,7 @@ impl ActionCollection for Box<TaskAction> {
         false
     }
 
-    fn get(&self, _index: usize) -> &TaskAction {
+    fn get(&self, _index: usize) -> &Command {
         self
     }
 }

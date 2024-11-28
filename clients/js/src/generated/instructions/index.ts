@@ -8,3 +8,4 @@
 
 export * from './createTask';
 export * from './executeTask';
+export * from './executeTaskNoInputs';

@@ -1,13 +1,13 @@
 use std::{fs::File, io::Write, path::PathBuf};
 
 use crate::utils::test_context::TestContext;
-use anchor_lang::prelude::UpgradeableLoaderState;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_program_test::read_file;
 use solana_sdk::{
     account::{AccountSharedData, WritableAccount},
     account_utils::StateMut,
-    bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
+    bpf_loader, bpf_loader_deprecated,
+    bpf_loader_upgradeable::{self, UpgradeableLoaderState},
     commitment_config::CommitmentConfig,
     pubkey::Pubkey,
 };

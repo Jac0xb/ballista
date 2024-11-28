@@ -1,22 +1,22 @@
-use anchor_lang::prelude::AccountMeta;
 use ballista_common::types::{
     logical_components::Value,
-    task::{action::defined_instruction::DefinedAccount, task_account::TaskAccount},
+    task::{command::defined_instruction::DefinedAccount, task_account::TaskAccount},
 };
-// use ballista_common::{
-//     logical_components::Value,
-//     task::{action::defined_instruction::DefinedAccount, shared::TaskAccount},
-// };
 use ballista_sdk::{
     find_task_definition_pda,
     generated::instructions::{
         CreateTask, CreateTaskInstructionArgs, ExecuteTask, ExecuteTaskInstructionArgs,
+        ExecuteTaskNoInputs,
     },
 };
 use num_traits::ToPrimitive;
 use solana_sdk::{
-    instruction::Instruction, pubkey::Pubkey, signature::Keypair, signer::EncodableKeypair,
-    system_program, transaction::VersionedTransaction,
+    instruction::{AccountMeta, Instruction},
+    pubkey::Pubkey,
+    signature::Keypair,
+    signer::EncodableKeypair,
+    system_program,
+    transaction::VersionedTransaction,
 };
 use std::collections::HashMap;
 use strum::{EnumCount, IntoEnumIterator};
@@ -132,6 +132,24 @@ pub fn build_remaining_accounts<S: InstructionSchema>(
     }
 
     remaining_accounts
+}
+
+pub fn execute_task_no_args_with_args_and_fn<T: InstructionSchema>(
+    task_definition: Pubkey,
+    params: &T::InstructionAccountParams,
+    additional_accounts: Vec<AccountMeta>,
+) -> Instruction {
+    let mut remaining_accounts = build_remaining_accounts::<T>(params);
+
+    remaining_accounts.extend(additional_accounts);
+
+    ballista_sdk::generated::instructions::ExecuteTaskNoInputs::instruction_with_remaining_accounts(
+        &ExecuteTaskNoInputs {
+            task_definition,
+            payer: T::get_payer(params),
+        },
+        &remaining_accounts,
+    )
 }
 
 pub fn execute_task_with_args_and_fn<T: InstructionSchema>(

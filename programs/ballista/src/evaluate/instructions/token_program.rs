@@ -6,7 +6,7 @@ use crate::{
 use ballista_common::types::execution_state::ExecutionState;
 use ballista_common::types::{
     logical_components::Value,
-    task::action::token_program_instruction::{TokenProgramInstruction, TokenProgramVersion},
+    task::command::token_program_instruction::{TokenProgramInstruction, TokenProgramVersion},
 };
 use pinocchio_token::instructions::{InitilizeAccount3, Transfer};
 
@@ -24,7 +24,8 @@ pub fn evaluate(
             amount,
         } => {
             let (from_account, _) = evaluate_task_account(from, execution_state)?;
-            let (from_token_account, _) = evaluate_task_account(from_token_account, execution_state)?;
+            let (from_token_account, _) =
+                evaluate_task_account(from_token_account, execution_state)?;
             let (to_token_account, _) = evaluate_task_account(to_token_account, execution_state)?;
 
             let amount = evaluate_expression(amount, execution_state)?;
@@ -33,9 +34,10 @@ pub fn evaluate(
                 _ => return Err(BallistaError::InvalidCast),
             };
 
+            // TODO: Need to implement support for token2022
             let program_id = match program_version {
-                TokenProgramVersion::Legacy => &spl_token::ID,
-                TokenProgramVersion::Token2022 => &spl_token_2022::ID,
+                TokenProgramVersion::Legacy => &pinocchio_token::ID,
+                TokenProgramVersion::Token2022 => &pinocchio_token::ID,
             };
 
             if *from_token_account.try_borrow_lamports().unwrap() == 0 {

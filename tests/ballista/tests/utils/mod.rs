@@ -113,17 +113,14 @@ pub async fn process_transaction_assert_success(
     tx: VersionedTransaction,
     logger: &mut TestLogger,
 ) -> Result<BanksTransactionResultWithMetadata> {
+    let tx_len = serialize(&tx).unwrap().len();
+    assert!(tx_len < 1232, "tx too large {}", tx_len);
+
     let tx_metadata = process_transaction(&mut context.client(), &tx).await;
 
     if let Err(err) = tx_metadata {
         panic!("Transaction failed to process: {:?}", err);
     }
-
-    assert!(
-        serialize(&tx).unwrap().len() < 1232,
-        "tx too large {}",
-        serialize(&tx).unwrap().len()
-    );
 
     let tx_metadata = tx_metadata.unwrap();
 

@@ -106,7 +106,7 @@ pub async fn print_transaction_info(
             let account_data = context.get_account(*account_key).await.unwrap_or_default();
             let owner = account_data.owner;
 
-            let is_writable = tx.message.is_maybe_writable(account_index);
+            let is_writable = tx.message.is_maybe_writable(account_index, None);
             let is_signer = tx.message.is_signer(account_index);
             let is_invoked = tx.message.is_invoked(account_index);
 

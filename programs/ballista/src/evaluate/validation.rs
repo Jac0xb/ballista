@@ -1,5 +1,5 @@
-use ballista_common::types::logical_components::Validation;
 use ballista_common::types::execution_state::ExecutionState;
+use ballista_common::types::logical_components::Validation;
 
 use crate::error::BallistaError;
 
@@ -13,9 +13,7 @@ pub fn evaluate_validation(
         Validation::IsTokenAccount(account) => {
             let (account_info, _) = evaluate_task_account(account, execution_state)?;
 
-            if account_info.owner() != &spl_token::ID.to_bytes()
-                && account_info.owner() != &spl_token_2022::ID.to_bytes()
-            {
+            if account_info.owner() != &pinocchio_token::ID {
                 return Err(BallistaError::InvalidTokenAccount);
             }
 

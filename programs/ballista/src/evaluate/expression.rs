@@ -39,7 +39,7 @@ where
         }
         Expression::StaticValue(index) => {
             let value = execution_state
-                .definition
+                .task_definition
                 .shared_values
                 .get(*index as usize)
                 .ok_or_else(|| {

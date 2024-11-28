@@ -36,7 +36,7 @@ pub fn evaluate_program_task_account<'a>(
             account_index,
         } => {
             let group = execution_state
-                .definition
+                .task_definition
                 .account_groups
                 .get(*group_index as usize)
                 // TODO: Better error handling
@@ -105,7 +105,7 @@ pub fn evaluate_task_account<'info, 'a>(
             account_index,
         } => {
             let group = execution_state
-                .definition
+                .task_definition
                 .account_groups
                 .get(*group_index as usize)
                 .ok_or(BallistaError::TaskNotFound)?;

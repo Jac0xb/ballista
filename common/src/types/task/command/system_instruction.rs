@@ -5,12 +5,7 @@ use crate::types::task::task_account::TaskAccount;
 
 #[derive(Clone, Debug, BorshDeserialize, BorshSerialize, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum SystemInstructionAction {
-    Transfer {
-        from: TaskAccount,
-        to: TaskAccount,
-        amount: Expression,
-    },
+pub enum SystemInstruction {
     CreateAccount {
         payer: TaskAccount,
         account: TaskAccount,
@@ -18,11 +13,12 @@ pub enum SystemInstructionAction {
         space: Expression,
         lamports: Expression,
     },
+    Transfer {
+        from: TaskAccount,
+        to: TaskAccount,
+        amount: Expression,
+    },
     Allocate,
     AllocateWithSeed,
     AssignWithSeed,
-    AdvanceNonceAccount,
-    WithdrawNonceAccount,
-    InitializeNonceAccount,
-    InitializeNonceAccountWithSeed,
 }

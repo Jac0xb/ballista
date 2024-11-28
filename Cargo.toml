@@ -19,3 +19,12 @@ readme = "./README.md"
 keywords = ["solana"]
 
 [workspace.dependencies]
+geppetto = { git = "https://github.com/Jac0xb/geppetto.git", rev = "e3b22d7f5d77f46c02a5f516b2897523e60aabd8", package = "geppetto" }
+pinocchio = "=0.6.0"
+pinocchio-pubkey = "=0.2.1"
+pinocchio-token = "0.2.0"
+pinocchio-system = "0.2.0"
+num_enum = "0.7"
+borsh = "=0.10.3"
+serde = { version = "^1.0", features = ["derive"] }
+serde_with = { version = "^3.0" }

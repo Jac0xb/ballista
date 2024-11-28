@@ -1,22 +1,6 @@
 {
-  "fixed_defined": [
-    7273,
-    3666
-  ],
   "looping_builtin": [
-    19152,
-    82583
-  ],
-  "looping_defined": [
-    13152,
-    82583
-  ],
-  "seeded_transfer": [
-    8054,
-    7620
-  ],
-  "single_builtin": [
-    7273,
-    3666
+    9936,
+    124946
   ]
 }

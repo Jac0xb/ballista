@@ -2,11 +2,8 @@ use crate::utils::ballista::definitions::utils::actions_for_loop;
 use anchor_lang::{prelude::AccountMeta, system_program};
 use ballista_common::{
     logical_components::{Expression, Value},
+    task::{action::system_instruction::SystemInstruction, command::Command, shared::TaskAccount},
     task_definition::{AccountGroupDefinition, ExecutionSettings, TaskDefinition},
-    task::{
-        action::system_instruction::SystemInstructionAction, shared::TaskAccount,
-        task_action::TaskAction,
-    },
 };
 use ballista_sdk::{
     find_seeded_pda,
@@ -32,8 +29,8 @@ impl AmountSourceType {
     }
 }
 
-fn create_builtin_action(from: TaskAccount, to: TaskAccount, amount: Expression) -> TaskAction {
-    TaskAction::SystemInstruction(SystemInstructionAction::Transfer { from, to, amount })
+fn create_builtin_action(from: TaskAccount, to: TaskAccount, amount: Expression) -> Command {
+    Command::InvokeSystemProgram(SystemInstruction::Transfer { from, to, amount })
 }
 
 pub fn create_single_task_definition(

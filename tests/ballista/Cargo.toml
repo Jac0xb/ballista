@@ -9,6 +9,11 @@ edition = "2021"
 readme = "../../README.md"
 
 
+[profile.dev]
+opt-level = 1
+[profile.dev.package."*"]
+opt-level = 3
+
 [features]
 default = [
   "suites_bubblegum",
@@ -23,6 +28,7 @@ suites_token = []
 suites_jup = []
 
 
+
 [lib]
 crate-type = ["cdylib", "lib"]
 path = "src/lib.rs"
@@ -33,8 +39,6 @@ path = "src/lib.rs"
 # ctor = "0.2.8"
 # lazy_static = "1.5.0"
 
-anchor-lang = { version = "0.29.0", features = ["init-if-needed"] }
-anchor-spl = "0.29.0"
 async-trait = "0.1.71"
 base64 = "0.22.0"
 bincode = "1"
@@ -42,28 +46,14 @@ borsh = "^0.10.0"
 bytemuck = "1.13.0"
 ballista-sdk = { path = "../../clients/rust", features = ["sdk"], default-features = false }
 ballista-common = { path = "../../common"}
-# borsh_enum_derive = { path = "../../macros/borsh_enum_derive" }
-mpl-bubblegum = { git = "https://github.com/Jac0xb/mpl-bubblegum.git", rev = "bf9a36d95d4b636c0f9346665cc744c9cf283b54", package = "bubblegum", features = ["test-sbf"] }
-mpl-bubblegum-sdk = { git = "https://github.com/Jac0xb/mpl-bubblegum.git", rev = "bf9a36d95d4b636c0f9346665cc744c9cf283b54", package = "mpl-bubblegum" }
-mpl-token-metadata = "3.2.3"
 rand = "0.8.4"
 regex = "1.5.4"
-solana-banks-interface = "1.18.23"
-solana-client = "1.18.23"
-solana-loader-v4-program = "1.18.23"
-solana-program = "1.18.23"
-solana-program-test = "1.18.23"
-
-
-# marginfi = { git = "https://github.com/mrgnlabs/marginfi-v2", rev = "7b10c51b9934130b029f220c410e517c0ad8c7c4", package = "marginfi-v2-cli" }
-# { git = "https://github.com/Jac0xb/agave-redux.git", rev = "51fe82762cc75b991433226cda55b820db15be5d", package = "solana-program-test" }
-solana-sdk = "1.18.23"
-solana-vote-program = "1.18.23"
-spl-account-compression = { version = "0.3.0", features = ["cpi"] }
-spl-associated-token-account = { version = ">= 1.1.3, < 3.0", features = ["no-entrypoint"] }
-spl-concurrent-merkle-tree = "0.2.0"
-spl-merkle-tree-reference = "0.1.0"
-spl-noop = { version = "0.1.3", features = ["no-entrypoint"] }
+solana-banks-interface = "=2.1.0"
+solana-client = "=2.1.0"
+solana-loader-v4-program = "=2.1.0"
+solana-program = "=2.1.0"
+solana-sdk = "=2.1.0"
+solana-program-test = "=2.1.0"
 
 strum = "0.24.1"
 strum_macros = "0.24.3"
@@ -72,12 +62,10 @@ serde_json = "1.0.128"
 reqwest = { version = "^0.11.27", features = [] }
 num-traits = "0.2"
 num-derive = "0.3"
-# spl-token = { version = ">= 3.5.0, < 5.0", features = ["no-entrypoint"] }
 
 
 
 
-spl-token = "=4.0.0"
-spl-token-2022 = "=1.0.0"
-# test-program = { path = "../../programs/test-program/program", features = ["no-entrypoint"] }
-# blackhat = { path = "../../programs/blackhat/program", features = ["no-entrypoint"] }
+spl-token = "=7.0.0"
+spl-token-2022 = "=6.0.0"
+spl-associated-token-account = "6.0.0"

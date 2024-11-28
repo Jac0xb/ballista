@@ -6,7 +6,7 @@ use crate::{
 use ballista_common::types::execution_state::ExecutionState;
 use ballista_common::types::{
     logical_components::Value,
-    task::{action::raw_instruction::RawInstruction, task_account::TaskAccounts},
+    task::{command::raw_instruction::RawInstruction, task_account::TaskAccounts},
 };
 use pinocchio::{
     instruction::{AccountMeta, Instruction},

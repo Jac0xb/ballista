@@ -1,22 +1,23 @@
 use crate::utils::ballista::definitions::{
     instruction_schema::InstructionSchema, utils::actions_for_loop,
 };
-use anchor_lang::system_program;
 use ballista_common::{
     accounts::task_definition::{ExecutionSettings, TaskDefinition},
     types::{
         logical_components::{Expression, Value},
         task::{
-            action::defined_instruction::{
-                DefinedAccount, DefinedArgument, DefinedInstruction, SerializationType,
+            command::{
+                defined_instruction::{
+                    DefinedAccount, DefinedArgument, DefinedInstruction, SerializationType,
+                },
+                Command,
             },
             task_account::TaskAccount,
-            task_action::TaskAction,
         },
     },
 };
 use num_derive::ToPrimitive;
-use solana_sdk::pubkey::Pubkey;
+use solana_sdk::{pubkey::Pubkey, system_program};
 use strum::EnumIter;
 use strum_macros::EnumCount as EnumCountMacro;
 
@@ -139,7 +140,7 @@ pub fn create_single_task_definition_from_defined(
             preallocated_account_meta_cache_size: None,
             preallocated_account_info_cache_size: None,
         },
-        actions: vec![TaskAction::DefinedInstruction(
+        actions: vec![Command::InvokeDefinedInstruction(
             create_instruction_definition(
                 TaskAccount::FromInput(1),
                 TaskAccount::FromInput(2),
@@ -163,7 +164,7 @@ pub fn create_looping_task_definition_from_defined(
             preallocated_account_info_cache_size: None,
         },
         actions: actions_for_loop(
-            vec![TaskAction::DefinedInstruction(
+            vec![Command::InvokeDefinedInstruction(
                 create_instruction_definition(
                     TaskAccount::FromInput(1),
                     TaskAccount::Evaluated(

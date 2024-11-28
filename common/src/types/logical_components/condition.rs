@@ -1,5 +1,6 @@
-use super::{Expression, Validation};
 use borsh_boxed::{BorshDeserializeBoxed, BorshSerializeBoxed};
+
+use super::{Expression, Validation};
 
 #[derive(Clone, Debug, Eq, PartialEq, BorshDeserializeBoxed, BorshSerializeBoxed)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

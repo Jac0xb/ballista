@@ -1,11 +1,11 @@
-use anchor_spl::{associated_token, token::Mint};
 use solana_sdk::{
-    pubkey::Pubkey, rent::Rent, signature::Keypair, signer::Signer, system_instruction,
-    transaction::Transaction,
+    program_pack::Pack, pubkey::Pubkey, rent::Rent, signature::Keypair, signer::Signer,
+    system_instruction, transaction::Transaction,
 };
+use spl_associated_token_account::get_associated_token_address;
+use spl_token_2022::state::Mint;
 
-use crate::utils::test_context::TestContext;
-use crate::utils::Result;
+use crate::utils::{test_context::TestContext, Result};
 
 pub struct CreateMintParameters {
     pub token_program: Pubkey,
@@ -46,7 +46,7 @@ pub async fn create_mint(
     ixs.push(mint_ix);
 
     if let Some((dest, amount)) = parameters.mint_to {
-        let token_account = associated_token::get_associated_token_address(&dest, &mint.pubkey());
+        let token_account = get_associated_token_address(&dest, &mint.pubkey());
         let create_account_ix =
             spl_associated_token_account::instruction::create_associated_token_account(
                 &payer.pubkey(),

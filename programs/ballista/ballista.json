@@ -81,6 +81,32 @@
         "type": "u8",
         "value": 1
       }
+    },
+    {
+      "name": "ExecuteTaskNoInputs",
+      "accounts": [
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "Payer account"
+          ]
+        },
+        {
+          "name": "taskDefinition",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "Task definition account"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 2
+      }
     }
   ],
   "errors": [

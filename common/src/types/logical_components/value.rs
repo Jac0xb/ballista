@@ -1,7 +1,7 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use borsh_boxed::{BorshDeserializeBoxed, BorshSerializeBoxed};
 
-use crate::types::task::action::defined_instruction::SerializationType;
+use crate::types::task::command::defined_instruction::SerializationType;
 
 use super::Expression;
 
@@ -110,26 +110,6 @@ impl Value {
     }
 
     pub fn as_bytes(&self, serialization_type: SerializationType, output: &mut Vec<u8>) {
-        // match self {
-        //     Value::U8(v) => msg!("evaluating u8"),
-        //     Value::I8(v) => msg!("evaluating i8"),
-        //     Value::U16(v) => msg!("evaluating u16"),
-        //     Value::I16(v) => msg!("evaluating i16"),
-        //     Value::U32(v) => msg!("evaluating u32"),
-        //     Value::I32(v) => msg!("evaluating i32"),
-        //     Value::U64(v) => msg!("evaluating u64"),
-        //     Value::I64(v) => msg!("evaluating i64"),
-        //     Value::I128(v) => msg!("evaluating i128"),
-        //     Value::U128(v) => msg!("evaluating u128"),
-        //     Value::Bytes(v) => msg!("evaluating bytes"),
-        //     Value::Vec(v) => msg!("evaluating vec"),
-        //     Value::Option(v) => msg!("evaluating option"),
-        //     Value::Struct(v) => msg!("evaluating struct"),
-        //     Value::String(v) => msg!("evaluating string"),
-        //     Value::Pubkey(v) => msg!("evaluating pubkey"),
-        //     Value::Bool(v) => msg!("evaluating bool"),
-        // }
-
         match self {
             Value::U8(v) => output.extend_from_slice(&v.to_le_bytes()),
             Value::I8(v) => output.extend_from_slice(&v.to_le_bytes()),
@@ -276,24 +256,6 @@ impl Value {
     pub fn is_integer(&self) -> bool {
         self.is_unsigned() || self.is_signed()
     }
-
-    // pub fn borsh_serialize(&self) -> Result<Vec<u8>, std::io::Error> {
-    //     match self {
-    //         Value::U8(v) => v.try_to_vec(),
-    //         Value::I8(v) => v.try_to_vec(),
-    //         Value::U16(v) => v.try_to_vec(),
-    //         Value::I16(v) => v.try_to_vec(),
-    //         Value::U32(v) => v.try_to_vec(),
-    //         Value::I32(v) => v.try_to_vec(),
-    //         Value::U64(v) => v.try_to_vec(),
-    //         Value::I64(v) => v.try_to_vec(),
-    //         Value::Bytes(v) => Ok(v.clone()),
-    //         Value::Option(v) => match v {
-    //             Some(v) => v.borsh_serialize(),
-    //             None => Ok(vec![]),
-    //         },
-    //     }
-    // }
 }
 
 impl PartialEq for Value {

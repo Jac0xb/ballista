@@ -6,7 +6,7 @@ use crate::{
 };
 
 use ballista_common::types::execution_state::ExecutionState;
-use ballista_common::types::task::action::defined_instruction::DefinedInstruction;
+use ballista_common::types::task::command::defined_instruction::DefinedInstruction;
 use pinocchio::{
     account_info::AccountInfo,
     instruction::{AccountMeta, Instruction},
@@ -55,7 +55,8 @@ pub fn evaluate(
     }
 
     debug_msg!("evaluating program account");
-    let program_account = evaluate_program_task_account(&defined_instruction.program, execution_state)?;
+    let program_account =
+        evaluate_program_task_account(&defined_instruction.program, execution_state)?;
     let instruction = Instruction {
         program_id: program_account.key(),
         accounts: execution_state.account_meta_cache.as_slice(),
@@ -77,18 +78,6 @@ pub fn evaluate(
         }
     }
 
-    // if let Some(signers_seeds) = defined_instruction.signers_seeds.as_slice() {
-    //     debug_msg!("invoking signed instruction");
-    //     unsafe {
-    //         invoke_signed_unchecked(&instruction, execution_state.account_info_cache.as_slice(), signers_seeds);
-    //     }
-    // } else {
-    //     debug_msg!("invoking instruction");
-    // unsafe {
-    //     invoke_unchecked(&instruction, execution_state.account_info_cache.as_slice());
-    // }
-
-    // // For clippy
     #[cfg(not(target_os = "solana"))]
     core::hint::black_box(&(&instruction, &execution_state.account_info_cache));
 

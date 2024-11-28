@@ -1,9 +1,9 @@
 use crate::utils::{test_context::TestContext, Result};
-use anchor_spl::associated_token;
 use solana_sdk::{
     instruction::Instruction, pubkey::Pubkey, signature::Keypair, signer::EncodableKeypair,
     transaction::Transaction,
 };
+use spl_associated_token_account::get_associated_token_address;
 
 pub async fn set_authority_token_account(
     ctx: &mut TestContext,
@@ -42,8 +42,8 @@ pub async fn create_and_transfer_token_account_ix(
     dest: &Pubkey,
     amount: u64,
 ) -> Result<Vec<Instruction>> {
-    let src_token_account = associated_token::get_associated_token_address(sender, mint);
-    let dest_token_account = associated_token::get_associated_token_address(dest, mint);
+    let src_token_account = get_associated_token_address(sender, mint);
+    let dest_token_account = get_associated_token_address(dest, mint);
 
     let mut ixs = Vec::new();
 

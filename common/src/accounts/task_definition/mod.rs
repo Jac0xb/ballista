@@ -1,16 +1,18 @@
-use geppetto::{account, IntoPrimitive, TryFromPrimitive};
+use geppetto::account;
 
 use crate::types::logical_components::{Expression, Value};
-use crate::types::task::task_action::TaskAction;
+use crate::types::task::command::Command;
 
 use borsh::{BorshDeserialize, BorshSerialize};
+
+use super::BallistaAccount;
 
 //
 #[derive(Clone, Debug, BorshDeserialize, BorshSerialize, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TaskDefinition {
     pub execution_settings: ExecutionSettings,
-    pub actions: Vec<TaskAction>,
+    pub actions: Vec<Command>,
     pub shared_values: Vec<Value>,
     pub account_groups: Vec<AccountGroupDefinition>,
 }
@@ -28,12 +30,6 @@ pub struct ExecutionSettings {
 pub struct AccountGroupDefinition {
     pub account_offset: Expression,
     pub length: u8,
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, IntoPrimitive, TryFromPrimitive)]
-pub enum BallistaAccount {
-    TaskDefinition = 0,
 }
 
 account!(BallistaAccount, TaskDefinition);

@@ -4,5 +4,18 @@
     "editor.defaultFormatter": "rust-lang.rust-analyzer",
     "editor.formatOnSave": true
   },
+  // "rust-analyzer.cargo.features": [],
+  // "rust-analyzer.inlayHints": false,
+  // "rust-analyzer.lens.enable": false,
+  "rust-analyzer.server.extraEnv": {
+    "RA_MAX_MEMORY_BYTES": "8589934592"
+  },
+  "rust-analyzer.numThreads": 6,
+  // "rust-analyzer.checkOnSave": false,
+  "files.watcherExclude": {
+    "**/target/**": true,
+    "**/.git/**": true,
+    "**/node_modules/**": true
+  },
   "prettier.requireConfig": true
 }

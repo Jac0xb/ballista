@@ -15,6 +15,7 @@ import {
 import {
   type ParsedCreateTaskInstruction,
   type ParsedExecuteTaskInstruction,
+  type ParsedExecuteTaskNoInputsInstruction,
 } from '../instructions';
 
 export const BALLISTA_PROGRAM_ADDRESS =
@@ -27,6 +28,7 @@ export enum BallistaAccount {
 export enum BallistaInstruction {
   CreateTask,
   ExecuteTask,
+  ExecuteTaskNoInputs,
 }
 
 export function identifyBallistaInstruction(
@@ -38,6 +40,9 @@ export function identifyBallistaInstruction(
   }
   if (containsBytes(data, getU8Encoder().encode(1), 0)) {
     return BallistaInstruction.ExecuteTask;
+  }
+  if (containsBytes(data, getU8Encoder().encode(2), 0)) {
+    return BallistaInstruction.ExecuteTaskNoInputs;
   }
   throw new Error(
     'The provided instruction could not be identified as a ballista instruction.'
@@ -52,4 +57,7 @@ export type ParsedBallistaInstruction<
     } & ParsedCreateTaskInstruction<TProgram>)
   | ({
       instructionType: BallistaInstruction.ExecuteTask;
-    } & ParsedExecuteTaskInstruction<TProgram>);
+    } & ParsedExecuteTaskInstruction<TProgram>)
+  | ({
+      instructionType: BallistaInstruction.ExecuteTaskNoInputs;
+    } & ParsedExecuteTaskNoInputsInstruction<TProgram>);

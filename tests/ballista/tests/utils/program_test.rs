@@ -16,27 +16,14 @@ const OBRiQD1zbpyLz95G5n7nJe6a4DPjpFwa5XYPoNm113y: Pubkey =
 pub fn program_test() -> ProgramTest {
     let mut test = ProgramTest::new("ballista", ballista_sdk::ID, None);
 
-    test.add_program(
-        "spl_account_compression",
-        spl_account_compression::id(),
-        None,
-    );
-    test.add_program("spl_noop", spl_noop::id(), None);
-    test.add_program("mpl_token_metadata", mpl_token_metadata::ID, None);
-    test.add_program("mpl_bubblegum", mpl_bubblegum::ID, None);
-    // test.add_program("jupiter_v4", JUPITER_V4_PUBKEY, None);
-    // test.add_program("dex1", DEX1_PUBKEY, None);
     // test.add_program(
-    //     "DEXYosS6oEGvk8uCDayvwEZz4qEyDJRf9nFgYCaqPMTm",
-    //     DEXYosS6oEGvk8uCDayvwEZz4qEyDJRf9nFgYCaqPMTm,
+    //     "spl_account_compression",
+    //     spl_account_compression::id(),
     //     None,
     // );
-    // test.add_program(
-    //     "obriQD1zbpyLz95G5n7nJe6a4DPjpFwa5XYPoNm113y",
-    //     OBRiQD1zbpyLz95G5n7nJe6a4DPjpFwa5XYPoNm113y,
-    //     None,
-    // );
-    // test.add_program("dex2", DEX2_PUBKEY, None);
+    // test.add_program("spl_noop", spl_noop::id(), None);
+    // test.add_program("mpl_token_metadata", mpl_token_metadata::ID, None);
+    // test.add_program("mpl_bubblegum", mpl_bubblegum::ID, None);
 
     test.set_compute_max_units(1_400_000);
 

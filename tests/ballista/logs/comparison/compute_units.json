@@ -1,0 +1,19 @@
+{
+  "ballista-system_transfer_lut_unique": [
+    12730
+  ],
+  "ballista-system_transfer_self": [
+    9116,
+    142529
+  ],
+  "ballista-system_transfer_unique": [
+    77984
+  ],
+  "native-system_transfer_self": [
+    9300
+  ],
+  "native-system_transfer_unique": [
+    3150,
+    3150
+  ]
+}

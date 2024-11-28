@@ -5,11 +5,10 @@ use crate::utils::{
     jupiter::types::{SwapInstructionsResponse, SwapRequest},
     test_context::TestContext,
 };
-use anchor_lang::prelude::AccountMeta;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
     address_lookup_table::AddressLookupTableAccount,
-    instruction::Instruction,
+    instruction::{AccountMeta, Instruction},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,

@@ -13,7 +13,7 @@ use solana_sdk::{
 use super::{quote::get_jupiter_quote, types::SwapArgs};
 
 pub async fn clone_swap(
-    context: &mut TestContext,
+    context: &mut Box<dyn TestContext>,
     user: &Pubkey,
     client: &reqwest::Client,
     rpc_client: &RpcClient,
@@ -48,7 +48,7 @@ pub async fn clone_swap(
 }
 
 pub async fn print_transaction_info(
-    context: &mut TestContext,
+    context: &mut Box<dyn TestContext>,
     tx: &VersionedTransaction,
     logger: &mut TestLogger,
 ) -> Result<(), Box<dyn std::error::Error>> {

@@ -1,19 +1,34 @@
 {
   "ballista-system_transfer_lut_unique": [
-    12730
+    900,
+    900,
+    900,
+    158801
   ],
-  "ballista-system_transfer_self": [
-    9116,
-    142529
-  ],
-  "ballista-system_transfer_unique": [
-    77984
-  ],
-  "native-system_transfer_self": [
-    9300
+  "ballista-token_transfer_existing_accounts": [
+    20490,
+    20490,
+    20490,
+    20490,
+    20490,
+    20490,
+    20490,
+    20490,
+    20490,
+    20490,
+    20490,
+    20490,
+    222127
   ],
   "native-system_transfer_unique": [
-    3150,
-    3150
+    900,
+    8550
+  ],
+  "native-token_transfer_existing_accounts": [
+    20490,
+    20490,
+    20490,
+    20490,
+    97524
   ]
 }

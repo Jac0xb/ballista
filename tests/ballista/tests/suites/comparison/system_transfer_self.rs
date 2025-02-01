@@ -12,7 +12,7 @@ use crate::utils::{
     process_transaction_assert_success,
     record::TestLogger,
     setup::user::create_user_with_balance,
-    test_context::TestContext,
+    test_context::create_test_context,
     transaction::utils::create_transaction,
 };
 use ballista_common::types::logical_components::{Expression, Value};
@@ -23,11 +23,14 @@ use ballista_sdk::{
 use solana_program_test::tokio;
 use solana_sdk::{signer::EncodableKeypair, system_instruction, system_program};
 
+const BALLISTA_SYSTEM_TRANSFER_COUNT: usize = 63;
+const NATIVE_SYSTEM_TRANSFER_COUNT: usize = 62;
+
 #[tokio::test]
 async fn ballista() {
     let mut logger = TestLogger::new("comparison", "ballista-system_transfer_self").unwrap();
 
-    let context = &mut TestContext::new().await.unwrap();
+    let context = &mut create_test_context().await.unwrap();
     let user = create_user_with_balance(context, 10e9 as u64)
         .await
         .unwrap();
@@ -46,7 +49,7 @@ async fn ballista() {
                     task: create_looping_self_transfer_task_definition(
                         Expression::StaticValue(0),
                         AmountSourceType::Static(Value::U64(100_000_000)),
-                        63,
+                        BALLISTA_SYSTEM_TRANSFER_COUNT as u8,
                     ),
                     task_id: 0,
                 },
@@ -84,14 +87,14 @@ async fn ballista() {
 async fn native() {
     let mut logger = TestLogger::new("comparison", "native-system_transfer_self").unwrap();
 
-    let context = &mut TestContext::new().await.unwrap();
+    let context = &mut create_test_context().await.unwrap();
     let user = create_user_with_balance(context, 10e9 as u64)
         .await
         .unwrap();
 
     let mut ixs = vec![];
 
-    for _ in 0..62 {
+    for _ in 0..NATIVE_SYSTEM_TRANSFER_COUNT {
         ixs.push(system_instruction::transfer(
             &user.encodable_pubkey(),
             &user.encodable_pubkey(),

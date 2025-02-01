@@ -181,7 +181,7 @@ pub fn execute_task_with_args<T: InstructionSchema>(
 }
 
 pub async fn create_task_transaction(
-    context: &mut TestContext,
+    context: &mut Box<dyn TestContext>,
     user: &Keypair,
     args: CreateTaskInstructionArgs,
 ) -> VersionedTransaction {

@@ -3,18 +3,16 @@ use crate::utils::{
         builtin::{
             self,
             system_program::transfer::{
-                build_looping_execute_task_instruction, create_looping_task_definition,
-                AmountSourceType, BatchSystemTransferInstructionAccount,
+                create_looping_task_definition, AmountSourceType,
+                BatchSystemTransferInstructionAccount,
             },
         },
-        instruction_schema::{
-            execute_task_no_args_with_args_and_fn, execute_task_with_args_and_fn,
-        },
+        instruction_schema::execute_task_no_args_with_args_and_fn,
     },
     process_transaction_assert_success,
     record::TestLogger,
     setup::user::create_user_with_balance,
-    test_context::TestContext,
+    test_context::create_test_context,
     transaction::utils::create_transaction,
 };
 use ballista_common::types::logical_components::{Expression, Value};
@@ -35,7 +33,7 @@ const NATIVE_SYSTEM_TRANSFER_COUNT: usize = 21;
 async fn ballista() {
     let mut logger = TestLogger::new("comparison", "ballista-system_transfer_unique").unwrap();
 
-    let context = &mut TestContext::new().await.unwrap();
+    let context = &mut create_test_context().await.unwrap();
     let user = create_user_with_balance(context, 10e9 as u64)
         .await
         .unwrap();
@@ -106,7 +104,7 @@ async fn ballista() {
 async fn native() {
     let mut logger = TestLogger::new("comparison", "native-system_transfer_unique").unwrap();
 
-    let context = &mut TestContext::new().await.unwrap();
+    let context = &mut create_test_context().await.unwrap();
     let user = create_user_with_balance(context, 10e9 as u64)
         .await
         .unwrap();
@@ -119,7 +117,7 @@ async fn native() {
         destinations.push(Keypair::new().encodable_pubkey());
         ixs.push(system_instruction::transfer(
             &user.encodable_pubkey(),
-            &destinations.get(i).unwrap(),
+            destinations.get(i).unwrap(),
             100_000_000,
         ));
     }

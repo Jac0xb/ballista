@@ -2,9 +2,9 @@ pub mod ballista;
 pub mod cloning;
 pub mod error;
 pub mod jupiter;
-pub mod program_test;
 pub mod record;
 pub mod setup;
+pub mod solana;
 pub mod test_context;
 pub mod transaction;
 
@@ -109,14 +109,14 @@ pub async fn process_transaction(
 }
 
 pub async fn process_transaction_assert_success(
-    context: &mut TestContext,
+    context: &mut Box<dyn TestContext>,
     tx: VersionedTransaction,
     logger: &mut TestLogger,
 ) -> Result<BanksTransactionResultWithMetadata> {
     let tx_len = serialize(&tx).unwrap().len();
     assert!(tx_len < 1232, "tx too large {}", tx_len);
 
-    let tx_metadata = process_transaction(&mut context.client(), &tx).await;
+    let tx_metadata = context.process_transaction(&tx).await;
 
     if let Err(err) = tx_metadata {
         panic!("Transaction failed to process: {:?}", err);
@@ -152,15 +152,13 @@ pub async fn process_transaction_assert_success(
 }
 
 pub async fn process_transaction_assert_failure(
-    context: &mut TestContext,
+    context: &mut Box<dyn TestContext>,
     tx: VersionedTransaction,
     expected_tx_error: TransactionError,
     log_match_regex: Option<&[String]>,
     logger: &mut TestLogger,
 ) -> Result<BanksTransactionResultWithMetadata> {
-    let tx_metadata = &mut process_transaction(&mut context.client(), &tx)
-        .await
-        .unwrap();
+    let tx_metadata = context.process_transaction(&tx).await.unwrap();
 
     if tx_metadata.metadata.is_none() {
         logger.write("No metadata found in transaction");

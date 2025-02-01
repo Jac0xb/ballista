@@ -1,6 +1,6 @@
 # Ballista
 
-Ballista is a protocol for building instructions and executing them at runtime.
+Ballista - the programmable transaction engine.
 
 ### Todo
 

@@ -13,7 +13,7 @@ use solana_sdk::{
 };
 
 pub async fn set_accounts_from_rpc(
-    context: &mut TestContext,
+    context: &mut Box<dyn TestContext>,
     connection: &RpcClient,
     account_pubkeys: &[Pubkey],
 ) {
@@ -51,7 +51,7 @@ pub async fn set_accounts_from_rpc(
                 _ => {
                     println!("Found account {:?} owner {:?}", pubkey, account.owner);
                     shared_account.set_data_from_slice(account.data.as_slice());
-                    context.program_context.set_account(pubkey, &shared_account);
+                    context.set_account(pubkey, &shared_account);
                 }
             }
         }
@@ -59,7 +59,7 @@ pub async fn set_accounts_from_rpc(
 }
 
 pub async fn set_account_from_rpc(
-    context: &mut TestContext,
+    context: &mut Box<dyn TestContext>,
     connection: &RpcClient,
     account_pubkey: &Pubkey,
 ) {
@@ -70,9 +70,7 @@ pub async fn set_account_from_rpc(
                 AccountSharedData::new(account.lamports, account.data.len(), &account.owner);
             shared_account.set_data_from_slice(account.data.as_slice());
 
-            context
-                .program_context
-                .set_account(account_pubkey, &shared_account);
+            context.set_account(account_pubkey, &shared_account);
         }
         Err(e) => {
             println!("Error getting account {:?}: {:?}", account_pubkey, e);
@@ -81,7 +79,7 @@ pub async fn set_account_from_rpc(
 }
 
 pub async fn set_account_from_refs(
-    context: &mut TestContext,
+    context: &mut Box<dyn TestContext>,
     account_pubkey: &Pubkey,
     data: &[u8],
     owner: &Pubkey,
@@ -93,13 +91,11 @@ pub async fn set_account_from_refs(
     let mut shared_account = AccountSharedData::new(lamports, data.len(), owner);
     shared_account.set_data_from_slice(data);
 
-    context
-        .program_context
-        .set_account(account_pubkey, &shared_account);
+    context.set_account(account_pubkey, &shared_account);
 }
 
 async fn set_program_account(
-    context: &mut TestContext,
+    context: &mut Box<dyn TestContext>,
     rpc_client: &RpcClient,
     account_pubkey: Pubkey,
 ) {
@@ -122,9 +118,7 @@ async fn set_program_account(
     shared_account.set_data_from_slice(data.as_slice());
     shared_account.set_executable(true);
 
-    context
-        .program_context
-        .set_account(&account_pubkey, &shared_account);
+    context.set_account(&account_pubkey, &shared_account);
 }
 
 async fn save_program_data(rpc_client: &RpcClient, account_pubkey: Pubkey) -> Result<(), String> {

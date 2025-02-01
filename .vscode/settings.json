@@ -1,21 +1,29 @@
 {
-  "lldb.launch.terminal": "integrated",
-  "rust": {
-    "editor.defaultFormatter": "rust-lang.rust-analyzer",
-    "editor.formatOnSave": true
-  },
-  // "rust-analyzer.cargo.features": [],
-  // "rust-analyzer.inlayHints": false,
-  // "rust-analyzer.lens.enable": false,
   "rust-analyzer.server.extraEnv": {
     "RA_MAX_MEMORY_BYTES": "8589934592"
   },
   "rust-analyzer.numThreads": 6,
-  // "rust-analyzer.checkOnSave": false,
   "files.watcherExclude": {
     "**/target/**": true,
     "**/.git/**": true,
-    "**/node_modules/**": true
+    "**/node_modules/**": true,
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/tmp/**": true,
+    "**/dist/**": true
   },
-  "prettier.requireConfig": true
+  "prettier.requireConfig": true,
+  "search.followSymlinks": false,
+  "files.exclude": {
+    "**/tmp/**": true,
+    "**/node_modules/**": true,
+    "**/.git/objects/**": true
+  },
+  "search.exclude": {
+    "**/node_modules/**": true,
+    "**/dist/**": true,
+    "**/tmp/**": true,
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true
+  }
 }

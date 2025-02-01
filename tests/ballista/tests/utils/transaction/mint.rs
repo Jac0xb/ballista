@@ -11,7 +11,7 @@ use solana_sdk::transaction::VersionedTransaction;
 use spl_associated_token_account::get_associated_token_address;
 
 pub async fn mint_tokens(
-    context: &mut TestContext,
+    context: &mut Box<dyn TestContext>,
     user: &Keypair,
     logger: &mut TestLogger,
 ) -> Pubkey {

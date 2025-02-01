@@ -9,7 +9,7 @@ use solana_sdk::{
 use crate::utils::test_context::TestContext;
 
 pub async fn create_transaction(
-    context: &mut TestContext,
+    context: &mut Box<dyn TestContext>,
     instructions: Vec<solana_sdk::instruction::Instruction>,
     keypairs: &[&Keypair],
 ) -> VersionedTransaction {
@@ -29,7 +29,7 @@ pub async fn create_transaction(
 }
 
 pub async fn create_transaction_with_lookup_table(
-    context: &mut TestContext,
+    context: &mut Box<dyn TestContext>,
     instructions: Vec<solana_sdk::instruction::Instruction>,
     lookup_table: AddressLookupTableAccount,
     keypairs: &[&Keypair],

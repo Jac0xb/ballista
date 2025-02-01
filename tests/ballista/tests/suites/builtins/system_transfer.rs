@@ -26,44 +26,6 @@ use solana_sdk::signer::EncodableKeypair;
 use solana_sdk::system_program;
 use solana_sdk::transaction::VersionedTransaction;
 
-async fn create_lut(
-    ctx: &mut TestContext,
-    authority: &Keypair,
-    add_accounts: Vec<Pubkey>,
-) -> Pubkey {
-    let recent_slot = ctx.client().get_root_slot().await.unwrap() - 1;
-
-    let (ix, lookup_table) = create_lookup_table_signed(
-        authority.encodable_pubkey(),
-        authority.encodable_pubkey(),
-        recent_slot,
-    );
-    let add_ix = extend_lookup_table(
-        lookup_table,
-        authority.encodable_pubkey(),
-        Some(authority.encodable_pubkey()),
-        add_accounts,
-    );
-
-    let tx = VersionedTransaction::try_new(
-        VersionedMessage::V0(
-            v0::Message::try_compile(
-                &authority.encodable_pubkey(),
-                &[ix, add_ix],
-                &[],
-                ctx.get_blockhash().await,
-            )
-            .unwrap(),
-        ),
-        &[&authority],
-    )
-    .unwrap();
-
-    process_transaction_assert_success(ctx, tx).await.unwrap();
-
-    lookup_table
-}
-
 #[tokio::test]
 async fn simple() {
     let batch_size = 29;

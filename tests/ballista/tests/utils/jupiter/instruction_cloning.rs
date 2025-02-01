@@ -26,7 +26,7 @@ pub struct SwapInstructions {
 }
 
 pub async fn clone_swap_instructions(
-    context: &mut TestContext,
+    context: &mut Box<dyn TestContext>,
     user: &Pubkey,
     client: &reqwest::Client,
     rpc_client: &RpcClient,

@@ -6,7 +6,7 @@ use solana_sdk::{
 use spl_associated_token_account::get_associated_token_address;
 
 pub async fn set_authority_token_account(
-    ctx: &mut TestContext,
+    ctx: &mut Box<dyn TestContext>,
     token_account: &Pubkey,
     authority: &Keypair,
     new_authority: Option<Pubkey>,
@@ -28,7 +28,7 @@ pub async fn set_authority_token_account(
 
     tx.try_partial_sign(
         &signers.iter().collect::<Vec<_>>(),
-        ctx.client().get_latest_blockhash().await.unwrap(),
+        ctx.get_blockhash().await,
     )
     .unwrap();
 
@@ -36,7 +36,7 @@ pub async fn set_authority_token_account(
 }
 
 pub async fn create_and_transfer_token_account_ix(
-    ctx: &mut TestContext,
+    ctx: &mut Box<dyn TestContext>,
     sender: &Pubkey,
     mint: &Pubkey,
     dest: &Pubkey,

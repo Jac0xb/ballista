@@ -16,18 +16,20 @@ pub fn get_associated_token_address_and_bump_seed_internal(
     )
 }
 
-pub fn generate_max_bump_token_account_user(mint: &Pubkey) -> (Pubkey, u8) {
+pub fn generate_max_bump_token_account_user(mint: &Pubkey) -> (Keypair, Pubkey, u8) {
     loop {
-        let user = Keypair::new().encodable_pubkey();
+        let user = Keypair::new();
         let (_, bump) = get_associated_token_address_and_bump_seed_internal(
-            &user,
+            &user.encodable_pubkey(),
             mint,
             &spl_associated_token_account::ID,
             &spl_token::ID,
         );
 
+        let user_pubkey = user.encodable_pubkey();
+
         if bump == 255 {
-            return (user, bump);
+            return (user, user_pubkey, bump);
         }
     }
 }

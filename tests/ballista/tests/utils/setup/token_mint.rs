@@ -16,7 +16,7 @@ pub struct CreateMintParameters {
 }
 
 pub async fn create_mint(
-    ctx: &mut TestContext,
+    ctx: &mut Box<dyn TestContext>,
     payer: &Keypair,
     parameters: CreateMintParameters,
 ) -> Result<(Transaction, Keypair)> {
@@ -102,7 +102,7 @@ pub async fn create_mint(
 
     tx.try_partial_sign(
         &signers.iter().collect::<Vec<_>>(),
-        ctx.client().get_latest_blockhash().await.unwrap(),
+        ctx.get_blockhash().await,
     )
     .unwrap();
 
@@ -110,7 +110,7 @@ pub async fn create_mint(
 }
 
 pub async fn set_authority_mint(
-    ctx: &mut TestContext,
+    ctx: &mut Box<dyn TestContext>,
     mint: &Pubkey,
     authority: &Keypair,
     new_authority: Option<Pubkey>,
@@ -132,7 +132,7 @@ pub async fn set_authority_mint(
 
     tx.try_partial_sign(
         &signers.iter().collect::<Vec<_>>(),
-        ctx.client().get_latest_blockhash().await.unwrap(),
+        ctx.get_blockhash().await,
     )
     .unwrap();
 

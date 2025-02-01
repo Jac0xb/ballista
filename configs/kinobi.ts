@@ -7,22 +7,18 @@ import {
   variablePdaSeedNode,
   publicKeyTypeNode,
   numberTypeNode,
-  bottomUpTransformerVisitor,
-  definedTypeLinkNode,
-  fillDefaultPdaSeedValuesVisitor,
   updateInstructionsVisitor,
-  publicKeyValueNode,
   pdaValueNode,
   setInstructionAccountDefaultValuesVisitor,
   updateAccountsVisitor,
   pdaLinkNode,
-  structTypeNode,
 } from 'codama';
-import fs from 'fs';
 import { rootNodeFromAnchor } from '@codama/nodes-from-anchor';
 import { renderJavaScriptVisitor, renderRustVisitor } from '@codama/renderers';
 
-// Paths.
+import dotenv from 'dotenv';
+dotenv.config();
+
 const clientDir = path.join(__dirname, '..', 'clients');
 const programDir = path.join(__dirname, '..', 'programs', 'ballista');
 
@@ -86,9 +82,6 @@ codama.update(
         variablePdaSeedNode('payer', publicKeyTypeNode()),
         variablePdaSeedNode('id', numberTypeNode('u8')),
       ],
-      // data: {
-      //   id: numberTypeNode('u8'),
-      // }
     },
   }),
 );
@@ -98,101 +91,19 @@ codama.update(
   updateInstructionsVisitor({
     createTask: {
       accounts: {
-        // systemProgram: {
-        //   defaultValue: publicKeyValueNode('<pubkey>'),
-        // },
         taskDefinition: {
           defaultValue: pdaValueNode('taskDefinition'),
         },
       },
     },
-    // memoryWrite: {
-    //   // accounts: {
-    //   //   systemProgram: {
-    //   //     defaultValue: k.publicKeyValueNode('<pubkey>'),
-    //   //   },
-    //   //   memoryAccount: {
-    //   //     defaultValue: k.pdaValueNode('memory'),
-    //   //   },
-    //   // },
-    //   arguments: {
-    //     memoryId: {
-    //       defaultValue: k.numberValueNode(0),
-    //     },
-    //   },
-    // },
   }),
 );
-
-// codama.update(
-//   k.bottomUpTransformerVisitor([
-//     {
-//       select: '[instructionArgumentNode]logLevel',
-//       transform: (node) => {
-//         return k.instructionArgumentNode({
-//           ...node,
-//           defaultValue: k.enumValueNode('logLevel', 'Silent'),
-//         });
-//       },
-//     },
-//   ])
-// );
-
-// for (const definedType of [
-//   'value',
-//   'expression',
-//   'schema',
-//   'taskDefinition',
-// ]) {
-//   codama.update(
-//     bottomUpTransformerVisitor([
-//       {
-//         select: ['[definedTypeLinkNode]', definedType],
-//         transform: (node) => {
-//           return definedTypeLinkNode(node.kind, 'hooked');
-//         },
-//       },
-//     ]),
-//   );
-// }
-
-// How to log the codama tree
-// codama.accept(k.consoleLogVisitor(k.getDebugStringVisitor({ indent: true })));
-
-//
-// Setting a default value for an instruction arg.
-//
-// codama.update(
-//   k.setStructDefaultValuesVisitor({
-//     memoryWrite: {
-//       memory_id: k.numberValueNode(0),
-//     },
-//   })
-// );
-
-// // Render preview JavaScript.
-// const previewJsDir = path.join(clientDir, 'preview-js', 'src', 'generated');
-// const previewPrettier = require(
-//   path.join(clientDir, 'preview-js', '.prettierrc.json')
-// );
-// codama.accept(
-//   k.renderJavaScriptExperimentalVisitor(previewJsDir, {
-//     prettier: previewPrettier,
-//   })
-// );
-
-// codama.update(fillDefaultPdaSeedValuesVisitor(instructionNode, linkables, strictMode));
 
 console.log(codama.getRoot());
 
-// // Render preview JavaScript.
+// Render preview JavaScript.
 const jsDir = path.join(clientDir, 'js', 'src', 'generated');
-// const prettier = require(path.join(clientDir, 'js', '.prettierrc.json'));
-codama.accept(
-  renderJavaScriptVisitor(jsDir, {
-    // prettier
-  }),
-);
+codama.accept(renderJavaScriptVisitor(jsDir, {}));
 
 // Render Rust.
 const crateDir = path.join(clientDir, 'rust');
@@ -202,9 +113,6 @@ codama.accept(
     formatCode: true,
     crateFolder: crateDir,
     linkOverrides: {
-      // pdas: {
-      //   taskDefinition: 'hooked',
-      // },
       definedTypes: {
         value: 'hooked',
         expression: 'hooked',

@@ -2,6 +2,13 @@ const path = require('path');
 const fs = require('fs');
 const { generateIdl } = require('@metaplex-foundation/shank-js');
 
+const dotenv = require('dotenv');
+dotenv.config();
+
+if (!fs.existsSync(path.join(__dirname, '..', '.env'))) {
+  throw new Error('No .env file found');
+}
+
 const binaryInstallDir = path.join(__dirname, '..', '.crates');
 const programsDir = path.join(__dirname, '..', '');
 

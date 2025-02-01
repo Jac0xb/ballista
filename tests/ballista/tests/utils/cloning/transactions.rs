@@ -8,7 +8,7 @@ use solana_sdk::{
 use super::{set_account_from_refs, set_accounts_from_rpc};
 
 pub async fn copy_accounts_from_transaction(
-    context: &mut TestContext,
+    context: &mut Box<dyn TestContext>,
     tx: &VersionedTransaction,
     rpc_client: &RpcClient,
 ) {

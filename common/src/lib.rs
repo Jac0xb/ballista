@@ -1,2 +1,2 @@
-pub mod accounts;
-pub mod types;
+pub mod instruction;
+pub mod template;

@@ -2,29 +2,32 @@
 resolver = "2"
 members = [
   "programs/ballista",
-  "tests/ballista",
   "clients/rust",
   "common",
-  "macros/borsh_boxed",
+]
+exclude = ["tests/ballista"]
+default-members = [
+  "programs/ballista",
+  "clients/rust",
+  "common",
 ]
 
 [workspace.package]
-version = "2.1.1"
+version = "0.3.0"
 edition = "2021"
-license = "Apache-2.0"
-homepage = "https://steel.new"
-documentation = "https://docs.rs/steel/latest/steel/"
-repository = "https://github.com/regolith-labs/steel"
+license = "MIT"
+homepage = "https://github.com/Jac0xb/ballista"
+repository = "https://github.com/Jac0xb/ballista"
 readme = "./README.md"
-keywords = ["solana"]
+keywords = ["solana", "svm", "transactions"]
 
 [workspace.dependencies]
-geppetto = { git = "https://github.com/Jac0xb/geppetto.git", rev = "e3b22d7f5d77f46c02a5f516b2897523e60aabd8", package = "geppetto" }
-pinocchio = "=0.6.0"
-pinocchio-pubkey = "=0.2.1"
-pinocchio-token = "0.2.0"
-pinocchio-system = "0.2.0"
-num_enum = "0.7"
-borsh = "=0.10.3"
-serde = { version = "^1.0", features = ["derive"] }
-serde_with = { version = "^3.0" }
+pinocchio = { version = "=0.11.2", features = ["cpi"] }
+pinocchio-system = "=0.6.1"
+solana-address = { version = "=2.7.0", features = ["curve25519", "decode"] }
+solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
+zerocopy = { version = "=0.8.56", features = ["derive"] }
+
+[profile.release]
+lto = "fat"
+overflow-checks = true

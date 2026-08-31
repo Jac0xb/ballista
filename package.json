@@ -1,33 +1,20 @@
 {
+  "name": "ballista-workspace",
   "private": true,
   "scripts": {
-    "programs:build": "bash configs/scripts/env-run.sh ./configs/scripts/program/build.sh",
-    "programs:test": "bash configs/scripts/env-run.sh  ./configs/scripts/program/test.sh",
-    "programs:buildtests": "bash configs/scripts/env-run.sh  ./configs/scripts/program/build-test.sh",
-    "programs:clean": "bash configs/scripts/env-run.sh ./configs/scripts/program/clean.sh",
-    "clients:rust:test": "bash configs/scripts/env-run.sh ./configs/scripts/client/test-rust.sh",
-    "clients:js:test": "bash configs/scripts/env-run.sh ./configs/scripts/client/test-js.sh",
-    "generate": "pnpm run generate:shank && pnpm run generate:kinobi",
-    "generate:shank": "node ./configs/shank.cjs",
-    "generate:kinobi": "ts-node ./configs/kinobi.ts",
-    "generate:registry": "bash configs/scripts/env-run.sh ./configs/scripts/generate-registry.sh",
-    "validator": "bash configs/scripts/env-run.sh amman start --config ./configs/validator.cjs",
-    "validator:debug": "bash configs/scripts/env-run.sh amman start --config ./configs/validator.cjs",
-    "validator:logs": "bash configs/scripts/env-run.sh amman logs",
-    "validator:stop": "bash configs/scripts/env-run.sh -- amman stop"
+    "check": "pnpm run check:rust && pnpm run check:sdk",
+    "check:rust": "cargo check",
+    "check:sdk": "pnpm --dir clients/js check",
+    "test": "pnpm run test:core && pnpm run test:sdk",
+    "test:core": "cargo test -p ballista-common -p ballista -p ballista-sdk",
+    "test:sdk": "pnpm --dir clients/js test",
+    "test:integration": "cargo test --manifest-path tests/ballista/Cargo.toml",
+    "build": "pnpm run build:program && pnpm run build:sdk",
+    "build:program": "cargo build-sbf --manifest-path programs/ballista/Cargo.toml",
+    "build:sdk": "pnpm --dir clients/js build"
   },
-  "dependencies": {
-    "@codama/nodes-from-anchor": "^1.0.0",
-    "@codama/renderers": "^1.0.1",
-    "codama": "^1.0.0"
-  },
-  "devDependencies": {
-    "@dotenvx/dotenvx": "^0.20.2",
-    "@metaplex-foundation/amman": "^0.12.1",
-    "@metaplex-foundation/shank-js": "^0.1.7",
-    "@types/node": "^22.7.5",
-    "dotenv": "^16.4.5",
-    "ts-node": "^10.9.2"
-  },
-  "packageManager": "pnpm@8.15.5+sha1.a58c038faac410c947dbdb93eb30994037d0fce2"
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=22"
+  }
 }

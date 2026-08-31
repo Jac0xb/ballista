@@ -1,0 +1,47 @@
+{
+  "name": "@jac0xb/ballista",
+  "version": "0.3.0",
+  "description": "Zod authoring and deterministic bytecode compiler for Ballista",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "files": ["dist"],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./kit": {
+      "types": "./dist/kit.d.ts",
+      "import": "./dist/kit.js",
+      "default": "./dist/kit.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "check": "tsc --noEmit && vitest run",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@noble/hashes": "2.4.0",
+    "zod": "4.5.4"
+  },
+  "peerDependencies": {
+    "@solana/kit": ">=8.2.0 <9"
+  },
+  "devDependencies": {
+    "@solana/kit": "8.2.0",
+    "@types/node": "24.3.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,10 +1,10 @@
-use pinocchio::pubkey::{find_program_address, Pubkey};
+use solana_address::Address;
 
-pub const TASK_DEFINITION_SEED: &[u8] = b"task-definition";
+pub const TEMPLATE_SEED: &[u8] = b"template-v2";
 
-pub fn get_task_definition_address(owner: &Pubkey, id: u16) -> (Pubkey, u8) {
-    let (pubkey, bump) = find_program_address(
-        &[TASK_DEFINITION_SEED, owner.as_ref(), &id.to_le_bytes()],
+pub fn get_template_address(creator: &Address, id: u16) -> (Address, u8) {
+    let (pubkey, bump) = Address::find_program_address(
+        &[TEMPLATE_SEED, creator.as_ref(), &id.to_le_bytes()],
         &crate::ID,
     );
 

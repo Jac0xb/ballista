@@ -1,29 +1,14 @@
 [package]
 name = "ballista-common"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 readme = "README.md"
-license-file = "../../LICENSE"
 description = "Shared common library used in ballista protocol and sdk"
-repository = "https://github.com/Jac0xb/ballista"
-license = "MIT"
 
 [lib]
-crate-type = ["cdylib", "lib"]
-
-[features]
-serde = ["dep:serde", "dep:serde_with"]
-
-default = []
+crate-type = ["lib"]
 
 [dependencies]
-borsh = { workspace = true }
-serde = { workspace = true, optional = true }
-serde_with = { workspace = true, optional = true }
-borsh_boxed = { path = "../macros/borsh_boxed" }
-geppetto = { workspace = true }
-pinocchio = { workspace = true }
-pinocchio-pubkey = { workspace = true }
-pinocchio-token = { workspace = true }
-pinocchio-system = { workspace = true }
-num_enum = { workspace = true }
+zerocopy = { workspace = true }

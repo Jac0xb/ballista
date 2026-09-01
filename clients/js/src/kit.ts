@@ -2,11 +2,14 @@ import {
   AccountRole,
   address,
   appendTransactionMessageInstruction,
+  estimateResourceLimitsFactory,
   getAddressDecoder,
   getAddressEncoder,
   getProgramDerivedAddress,
   getTransactionMessageSize,
   getTransactionMessageSizeLimit,
+  setTransactionMessageComputeUnitLimit,
+  setTransactionMessageLoadedAccountsDataSizeLimit,
   type Address,
   type Instruction,
 } from '@solana/kit';
@@ -50,6 +53,130 @@ export interface KitTemplateUploadPlan {
 }
 
 type SizeableTransactionMessage = Parameters<typeof getTransactionMessageSize>[0];
+type ResourceLimitEstimator = ReturnType<typeof estimateResourceLimitsFactory>;
+type EstimableTransactionMessage = Parameters<ResourceLimitEstimator>[0];
+export type ComputeUnitEstimateConfig = NonNullable<Parameters<ResourceLimitEstimator>[1]>;
+export type ComputeUnitRpc = Parameters<typeof estimateResourceLimitsFactory>[0]['rpc'];
+
+export const MAX_TRANSACTION_COMPUTE_UNITS = 1_400_000;
+
+export interface ComputeUnitMarginConfig {
+  /** Safety margin in basis points. Defaults to the Solana-recommended 10%. */
+  marginBps?: number;
+  /** Cannot exceed the SVM transaction maximum of 1,400,000 CUs. */
+  maxComputeUnitLimit?: number;
+}
+
+export interface ComputeUnitEstimate {
+  simulatedComputeUnits: number;
+  computeUnitLimit: number;
+  marginComputeUnits: number;
+  marginBps: number;
+  capped: boolean;
+  loadedAccountsDataSizeLimit?: number;
+}
+
+export interface ComputeUnitProvider {
+  estimate<TTransactionMessage extends EstimableTransactionMessage>(
+    transactionMessage: TTransactionMessage,
+    config?: ComputeUnitEstimateConfig,
+  ): Promise<ComputeUnitEstimate>;
+  estimateAndSet<TTransactionMessage extends EstimableTransactionMessage>(
+    transactionMessage: TTransactionMessage,
+    config?: ComputeUnitEstimateConfig,
+  ): Promise<{ transactionMessage: TTransactionMessage; estimate: ComputeUnitEstimate }>;
+}
+
+export function getComputeUnitLimitWithMargin(
+  simulatedComputeUnits: number,
+  config: ComputeUnitMarginConfig = {},
+): Omit<ComputeUnitEstimate, 'loadedAccountsDataSizeLimit'> {
+  const marginBps = config.marginBps ?? 1_000;
+  const maximum = config.maxComputeUnitLimit ?? MAX_TRANSACTION_COMPUTE_UNITS;
+  if (!Number.isInteger(simulatedComputeUnits) || simulatedComputeUnits < 0) {
+    throw new RangeError('Simulated compute units must be a non-negative integer');
+  }
+  if (!Number.isInteger(marginBps) || marginBps < 0 || marginBps > 100_000) {
+    throw new RangeError('Compute unit margin must be an integer from 0 to 100,000 basis points');
+  }
+  if (!Number.isInteger(maximum) || maximum < 1 || maximum > MAX_TRANSACTION_COMPUTE_UNITS) {
+    throw new RangeError('Maximum compute unit limit must be from 1 to 1,400,000');
+  }
+  if (simulatedComputeUnits > maximum) {
+    throw new RangeError('Simulated compute units exceed the configured maximum');
+  }
+
+  const requested = Math.ceil((simulatedComputeUnits * (10_000 + marginBps)) / 10_000);
+  const computeUnitLimit = Math.min(requested, maximum);
+  return {
+    simulatedComputeUnits,
+    computeUnitLimit,
+    marginComputeUnits: computeUnitLimit - simulatedComputeUnits,
+    marginBps,
+    capped: requested > maximum,
+  };
+}
+
+/**
+ * Simulates transaction messages with Solana Kit's resource estimator and applies a buffered CU
+ * limit. Version-1 loaded-account data limits are preserved from the same simulation.
+ */
+export function createComputeUnitProvider(input: {
+  rpc: ComputeUnitRpc;
+} & ComputeUnitMarginConfig): ComputeUnitProvider {
+  const estimateResourceLimits = estimateResourceLimitsFactory({ rpc: input.rpc });
+  const marginConfig: ComputeUnitMarginConfig = {
+    ...(input.marginBps === undefined ? {} : { marginBps: input.marginBps }),
+    ...(input.maxComputeUnitLimit === undefined
+      ? {}
+      : { maxComputeUnitLimit: input.maxComputeUnitLimit }),
+  };
+
+  const estimate: ComputeUnitProvider['estimate'] = async (transactionMessage, config) => {
+    const resources = await estimateResourceLimits(transactionMessage, config);
+    return {
+      ...getComputeUnitLimitWithMargin(resources.computeUnitLimit, marginConfig),
+      ...('loadedAccountsDataSizeLimit' in resources &&
+      resources.loadedAccountsDataSizeLimit !== undefined
+        ? { loadedAccountsDataSizeLimit: resources.loadedAccountsDataSizeLimit }
+        : {}),
+    };
+  };
+
+  return {
+    estimate,
+    async estimateAndSet(transactionMessage, config) {
+      const measurement = await estimate(transactionMessage, config);
+      let transactionMessageWithLimits = setTransactionMessageComputeUnitLimit(
+        measurement.computeUnitLimit,
+        transactionMessage,
+      );
+      if (
+        transactionMessage.version === 1 &&
+        measurement.loadedAccountsDataSizeLimit !== undefined
+      ) {
+        transactionMessageWithLimits = setTransactionMessageLoadedAccountsDataSizeLimit(
+          measurement.loadedAccountsDataSizeLimit,
+          transactionMessageWithLimits,
+        );
+      }
+      return { transactionMessage: transactionMessageWithLimits, estimate: measurement };
+    },
+  };
+}
+
+/** Reads the authoritative CU count returned in confirmed transaction metadata. */
+export function getComputeUnitsConsumed(
+  transaction: { meta?: { computeUnitsConsumed?: bigint | number | null } | null } | null,
+): number | undefined {
+  const value = transaction?.meta?.computeUnitsConsumed;
+  if (value === undefined || value === null) return undefined;
+  const units = Number(value);
+  if (!Number.isSafeInteger(units) || units < 0) {
+    throw new RangeError('Transaction compute units are not a safe non-negative integer');
+  }
+  return units;
+}
 
 export async function getTemplateAddress(
   creator: Address,

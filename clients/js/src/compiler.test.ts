@@ -127,6 +127,32 @@ describe('Ballista 0.3 compiler', () => {
     });
   });
 
+  test('composes invoke guards with nested AND and OR expressions', () => {
+    const when = expression.or(
+      expression.and(expression.input('enabled'), expression.input('withinLimit')),
+      expression.input('force'),
+    );
+    const guarded = defineTemplate({
+      inputs: {
+        enabled: { type: 'bool' },
+        withinLimit: { type: 'bool' },
+        force: { type: 'bool' },
+      },
+      accounts: { program: { executable: true } },
+      steps: [
+        step.invoke({
+          program: account.fixed('program'),
+          accounts: [],
+          data: [],
+          when,
+        }),
+      ],
+    });
+
+    expect(() => compileTemplate(guarded)).not.toThrow();
+    expect(guarded.steps[0]).toMatchObject({ kind: 'invoke', when });
+  });
+
   test('plans one-shot, chunked, and resumable uploads', () => {
     const compiled = compileTemplate(transfer);
     expect(planTemplateUpload(compiled, 4).mode).toBe('oneShot');

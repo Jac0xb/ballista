@@ -42,6 +42,7 @@ does not need an RPC existence check or a different transaction shape.
 - Template upload: [`thU1KCqun4ES8V6jgkZsmjJYF9dbr9uUxHAbZpMDWxhFCYuNs5gHiWBSATE4WEvjyzZDG2i2kLsUAN9ycRZmsLL`](https://explorer.solana.com/tx/thU1KCqun4ES8V6jgkZsmjJYF9dbr9uUxHAbZpMDWxhFCYuNs5gHiWBSATE4WEvjyzZDG2i2kLsUAN9ycRZmsLL?cluster=devnet)
 - First run: [`3YYbs2Lv6V4BQNWXmDJ8u9huz5jUra3YX1cQ7SDcEcxYDr77gF6XGrdLWPTFpGZp5baXPSEnT95umhphgFNZ4Kq6`](https://explorer.solana.com/tx/3YYbs2Lv6V4BQNWXmDJ8u9huz5jUra3YX1cQ7SDcEcxYDr77gF6XGrdLWPTFpGZp5baXPSEnT95umhphgFNZ4Kq6?cluster=devnet) created the [USDC ATA](https://explorer.solana.com/address/4dqQVsm8JGmCE2mXpPu74x8Dc7wReuzdcEPjL2P9ZK31?cluster=devnet) in 16,400 CU
 - Second run: [`4upq1cBPYUgTncaJce5TnXuzUyNeMhAiuJghjWPJLncCC2S6uo7D93JcM3kqwZycsYxhotXPxogdLiRw5J195vUV`](https://explorer.solana.com/tx/4upq1cBPYUgTncaJce5TnXuzUyNeMhAiuJghjWPJLncCC2S6uo7D93JcM3kqwZycsYxhotXPxogdLiRw5J195vUV?cluster=devnet) skipped the guarded CPI in 1,163 CU
+- Measured run: [`2CMydKfZQUME1pYtJwtPumqqT4BnBWpz3D6TMVEyhrk1qyuvVk5izj9BknyuABgBoWYZQmxYkUnfZxTCCuvfoahX`](https://explorer.solana.com/tx/2CMydKfZQUME1pYtJwtPumqqT4BnBWpz3D6TMVEyhrk1qyuvVk5izj9BknyuABgBoWYZQmxYkUnfZxTCCuvfoahX?cluster=devnet) simulated and consumed exactly 1,313 CU, with a 1,445-CU buffered limit
 
 Run the example with an explicitly configured devnet keypair and endpoint:
 
@@ -51,6 +52,38 @@ SOLANA_RPC_URL=https://api.devnet.solana.com \
 SOLANA_WS_URL=wss://api.devnet.solana.com \
 pnpm --dir clients/js exec tsx examples/ensure-usdc-ata.ts run
 ```
+
+Guards are ordinary typed boolean expressions and can be nested freely:
+
+```ts
+const when = expression.or(
+  expression.and(expression.input('enabled'), expression.input('withinLimit')),
+  expression.input('force'),
+);
+```
+
+## Compute-unit measurement
+
+The Kit adapter includes a compute-unit provider based on Kit 8.2's
+`estimateResourceLimitsFactory`. It simulates the exact message with the maximum runtime budget,
+adds the [recommended 10% safety margin](https://solana.com/docs/core/fees/compute-budget), caps the
+request at 1,400,000 CUs, and carries the simulated loaded-account data limit into v1 messages.
+
+```ts
+import { createComputeUnitProvider } from '@jac0xb/ballista/kit';
+
+const computeUnits = createComputeUnitProvider({ rpc });
+const { transactionMessage: measuredMessage, estimate } =
+  await computeUnits.estimateAndSet(transactionMessage);
+
+console.log(estimate.simulatedComputeUnits, estimate.computeUnitLimit);
+```
+
+Simulation is a preflight estimate because account state can change before execution. After
+confirmation, use `getComputeUnitsConsumed(transaction)` on the `getTransaction` response for the
+authoritative executed value. Requested CUs—not consumed CUs—determine the legacy/v0 priority fee,
+so callers should avoid a needlessly high limit. For on-program hotspot profiling, use Agave's
+`compute_fn!` instrumentation in development builds; its logging has its own CU cost.
 
 ## Execution model
 

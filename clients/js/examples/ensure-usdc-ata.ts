@@ -31,6 +31,7 @@ import {
   BALLISTA_ADDRESS,
   buildKitRunInstruction,
   buildKitTemplateUploadPlan,
+  createComputeUnitProvider,
   getTemplateAddress,
 } from '../src/kit.js';
 
@@ -144,6 +145,7 @@ async function main(): Promise<void> {
   const rpc = createSolanaRpc(devnet(rpcUrl));
   const rpcSubscriptions = createSolanaRpcSubscriptions(devnet(subscriptionsUrl));
   const sendAndConfirm = sendAndConfirmTransactionFactory({ rpc, rpcSubscriptions });
+  const computeUnits = createComputeUnitProvider({ rpc });
 
   const sendInstruction = async (instruction: Instruction): Promise<string> => {
     const { value: latestBlockhash } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send();
@@ -153,7 +155,11 @@ async function main(): Promise<void> {
       (value) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, value),
       (value) => appendTransactionMessageInstruction(instruction, value),
     );
-    const transaction = await signTransactionMessageWithSigners(message);
+    const estimated = await computeUnits.estimateAndSet(message);
+    console.log(
+      `compute units: simulated ${estimated.estimate.simulatedComputeUnits}, limit ${estimated.estimate.computeUnitLimit}`,
+    );
+    const transaction = await signTransactionMessageWithSigners(estimated.transactionMessage);
     assertIsTransactionWithBlockhashLifetime(transaction);
     await sendAndConfirm(transaction, { commitment: 'confirmed' });
     return getSignatureFromTransaction(transaction);

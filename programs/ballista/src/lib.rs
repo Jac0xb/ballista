@@ -20,7 +20,7 @@ pub mod error;
 pub mod processor;
 pub mod utils;
 
-declare_id!("BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2");
+declare_id!("BLSTACdzR3azpx752S4RXvzEuktmaGdvqArToFQQRxnX");
 
 #[cfg(not(feature = "no-entrypoint"))]
 mod init {

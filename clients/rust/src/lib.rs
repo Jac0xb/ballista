@@ -7,7 +7,7 @@ use solana_program::{
 
 pub use ballista_common;
 
-pub const ID: Pubkey = pubkey!("BLSTACdzR3azpx752S4RXvzEuktmaGdvqArToFQQRxnX");
+pub const ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
 pub const BALLISTA_ID: Pubkey = ID;
 pub const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111");
 pub const TEMPLATE_SEED: &[u8] = b"template-v2";

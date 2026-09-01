@@ -9,6 +9,13 @@ executes directly from borrowed account memory without rebuilding an AST.
 Ballista is a clean break from the legacy Borsh task format. Old task accounts are not executable
 by the 0.3 runtime.
 
+## Devnet deployment
+
+- Program: [`BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD`](https://explorer.solana.com/address/BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD?cluster=devnet)
+- Upgrade authority: `5H4nnKkd9LjrpA9hw6RpxYY9aaEzK5rWNcc8nkagg4Yf`
+- Deployment: [`49m5A7oEj1ZDHLDv6YhthDLzxYvWDM9L6b6uKhaqoVCntTJZ5bHD6YTxxLQgSPMqnt3YfPTFVdQ9ZQ1tF78LdZg1`](https://explorer.solana.com/tx/49m5A7oEj1ZDHLDv6YhthDLzxYvWDM9L6b6uKhaqoVCntTJZ5bHD6YTxxLQgSPMqnt3YfPTFVdQ9ZQ1tF78LdZg1?cluster=devnet)
+- Deployed SBF: 78,192 bytes, SHA-256 `cd13bbf4d5e695ef9b50a2e6eaff749c0c9edd74c847efbc0cd5021ca2123b11`
+
 ## Execution model
 
 - Guarded generic CPIs; protocol helpers exist only in the SDK.

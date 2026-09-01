@@ -24,7 +24,7 @@ mod tests {
     use zerocopy::{Immutable, IntoBytes};
 
     const BALLISTA_ELF: &[u8] = include_bytes!("../../../target/deploy/ballista.so");
-    const ID: Pubkey = pubkey!("BLSTACdzR3azpx752S4RXvzEuktmaGdvqArToFQQRxnX");
+    const ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
     const TEMPLATE_SEED: &[u8] = b"template-v2";
 
     #[test]

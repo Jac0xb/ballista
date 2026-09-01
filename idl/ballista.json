@@ -1,0 +1,354 @@
+{
+  "address": "BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD",
+  "metadata": {
+    "name": "ballista",
+    "version": "0.3.0",
+    "spec": "0.1.0",
+    "description": "Bounded orchestration VM for immutable, reusable SVM transaction templates",
+    "repository": "https://github.com/Jac0xb/ballista",
+    "deployments": {
+      "devnet": "BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD"
+    }
+  },
+  "docs": [
+    "Ballista uses a compact custom wire format rather than Anchor's Borsh argument codec.",
+    "Use @jac0xb/ballista or the Rust client to encode instruction arguments and Run inputs."
+  ],
+  "instructions": [
+    {
+      "name": "create_template",
+      "docs": [
+        "Creates and permanently finalizes a small immutable template in one transaction.",
+        "The payload field is encoded as raw trailing bytes without a Borsh length prefix."
+      ],
+      "discriminator": [0],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "template",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [116, 101, 109, 112, 108, 97, 116, 101, 45, 118, 50]
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              },
+              {
+                "kind": "arg",
+                "path": "template_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "template_id",
+          "type": "u16"
+        },
+        {
+          "name": "payload_hash",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "payload",
+          "docs": ["Raw trailing VM payload; encode with the Ballista SDK."],
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "begin_template",
+      "docs": ["Allocates an uploading template account for resumable chunk writes."],
+      "discriminator": [1],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "template",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [116, 101, 109, 112, 108, 97, 116, 101, 45, 118, 50]
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              },
+              {
+                "kind": "arg",
+                "path": "template_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "template_id",
+          "type": "u16"
+        },
+        {
+          "name": "payload_len",
+          "type": "u32"
+        },
+        {
+          "name": "payload_hash",
+          "type": {
+            "array": ["u8", 32]
+          }
+        }
+      ]
+    },
+    {
+      "name": "write_template_chunk",
+      "docs": [
+        "Appends a chunk at exactly the account's current written length.",
+        "The bytes field is encoded as raw trailing bytes without a Borsh length prefix."
+      ],
+      "discriminator": [2],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "template",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "offset",
+          "type": "u32"
+        },
+        {
+          "name": "bytes",
+          "docs": ["Raw trailing template chunk; encode with the Ballista SDK."],
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "finalize_template",
+      "docs": ["Verifies the complete uploaded VM program and permanently marks it immutable."],
+      "discriminator": [3],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "template",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "cancel_template",
+      "docs": ["Closes an uploading template and returns its rent to the creator."],
+      "discriminator": [4],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "template",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "run",
+      "docs": [
+        "Runs a finalized template with typed input bytes and the template-declared remaining accounts.",
+        "All accounts after template are dynamic and ordered by the compiled template schema.",
+        "The input_bytes field is encoded as raw trailing bytes without a Borsh length prefix."
+      ],
+      "discriminator": [5],
+      "accounts": [
+        {
+          "name": "template"
+        }
+      ],
+      "args": [
+        {
+          "name": "input_bytes",
+          "docs": ["Raw typed execution inputs; encode with the Ballista SDK."],
+          "type": "bytes"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "TemplateAccount",
+      "discriminator": [1, 2]
+    }
+  ],
+  "types": [
+    {
+      "name": "TemplateAccount",
+      "docs": [
+        "The fixed 80-byte template header. Compiled payload bytes follow this header and are decoded by the Ballista SDK."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "state",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "template_id",
+            "type": "u16"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": ["u8", 2]
+            }
+          },
+          {
+            "name": "payload_len",
+            "type": "u32"
+          },
+          {
+            "name": "written_len",
+            "type": "u32"
+          },
+          {
+            "name": "payload_hash",
+            "type": {
+              "array": ["u8", 32]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidInstructionData",
+      "msg": "invalid instruction data"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidTemplateAccount",
+      "msg": "invalid template account"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidTemplateProgram",
+      "msg": "invalid template program"
+    },
+    {
+      "code": 6003,
+      "name": "TemplateNotUploading",
+      "msg": "template is not uploading"
+    },
+    {
+      "code": 6004,
+      "name": "TemplateNotFinalized",
+      "msg": "template is not finalized"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidCreator",
+      "msg": "invalid template creator"
+    },
+    {
+      "code": 6006,
+      "name": "InvalidChunkOffset",
+      "msg": "invalid chunk offset"
+    },
+    {
+      "code": 6007,
+      "name": "HashMismatch",
+      "msg": "template hash mismatch"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidRunInputs",
+      "msg": "invalid run inputs"
+    },
+    {
+      "code": 6009,
+      "name": "InvalidRuntimeAccount",
+      "msg": "invalid runtime account"
+    },
+    {
+      "code": 6010,
+      "name": "InvalidAccountRange",
+      "msg": "invalid account range"
+    },
+    {
+      "code": 6011,
+      "name": "InvalidRegister",
+      "msg": "invalid register"
+    },
+    {
+      "code": 6012,
+      "name": "TypeMismatch",
+      "msg": "register type mismatch"
+    },
+    {
+      "code": 6013,
+      "name": "ArithmeticOverflow",
+      "msg": "arithmetic overflow"
+    },
+    {
+      "code": 6014,
+      "name": "DivisionByZero",
+      "msg": "division by zero"
+    },
+    {
+      "code": 6015,
+      "name": "RequirementFailed",
+      "msg": "template requirement failed"
+    },
+    {
+      "code": 6016,
+      "name": "CpiDataTooLarge",
+      "msg": "CPI data exceeds its declared bound"
+    }
+  ]
+}

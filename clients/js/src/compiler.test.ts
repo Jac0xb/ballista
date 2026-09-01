@@ -7,6 +7,7 @@ import {
   decodeTemplateAccount,
   defineTemplate,
   encodeRun,
+  ensureAssociatedTokenAccount,
   expression,
   inspectTemplate,
   planTemplateUpload,
@@ -87,6 +88,43 @@ describe('Ballista 0.3 compiler', () => {
     });
     expect(instruction.accounts).toHaveLength(33);
     expect(instruction.data).toEqual(Uint8Array.of(5, 232, 3, 0, 0, 0, 0, 0, 0));
+  });
+
+  test('guards idempotent associated-token creation on account emptiness', () => {
+    const ensureUsdcAta = defineTemplate({
+      accounts: {
+        associatedTokenProgram: { executable: true, address: address(1) },
+        tokenProgram: { executable: true, address: address(2) },
+        systemProgram: { executable: true, address: address(3) },
+        mint: { address: address(4), owner: address(2), minDataLength: 82 },
+        payer: { signer: true, writable: true, owner: address(3) },
+        owner: {},
+        associatedTokenAccount: { writable: true },
+      },
+      steps: [
+        ensureAssociatedTokenAccount({
+          associatedTokenProgram: account.fixed('associatedTokenProgram'),
+          payer: account.fixed('payer'),
+          associatedTokenAccount: account.fixed('associatedTokenAccount'),
+          owner: account.fixed('owner'),
+          mint: account.fixed('mint'),
+          systemProgram: account.fixed('systemProgram'),
+          tokenProgram: account.fixed('tokenProgram'),
+        }),
+      ],
+    });
+
+    const compiled = compileTemplate(ensureUsdcAta);
+    expect(compiled.stats).toMatchObject({ instructions: 2, cpis: 1, maxExpandedCpis: 1 });
+    expect(compiled.template.steps[0]).toMatchObject({
+      kind: 'invoke',
+      data: [{ kind: 'literal', bytes: Uint8Array.of(1) }],
+      when: {
+        kind: 'accountField',
+        account: { kind: 'account', name: 'associatedTokenAccount' },
+        field: 'isEmpty',
+      },
+    });
   });
 
   test('plans one-shot, chunked, and resumable uploads', () => {

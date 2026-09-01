@@ -34,20 +34,21 @@ currently creates duplicate signer objects in the uploader.
 ## Conditional devnet USDC ATA
 
 The [runnable TypeScript example](clients/js/examples/ensure-usdc-ata.ts) compiles an immutable
-template that invokes the Associated Token Program's idempotent create instruction only when the
-derived token account is empty. The condition is evaluated by Ballista during `Run`, so the caller
-does not need an RPC existence check or a different transaction shape.
+template that invokes the Associated Token Program's ordinary, non-idempotent `Create` instruction
+only when the derived token account is empty. The condition is evaluated by Ballista during `Run`,
+so the caller does not need an RPC existence check or a different transaction shape. A repeat run
+therefore proves the guard was applied: the same CPI would fail if Ballista invoked it again.
 
-- Template: [`8jfDNcsxTqkWdhDsesg49RRrbRbaXUwUrBmZhE3R2fdS`](https://explorer.solana.com/address/8jfDNcsxTqkWdhDsesg49RRrbRbaXUwUrBmZhE3R2fdS?cluster=devnet), ID `21843`, 273-byte payload
-- Template upload: [`thU1KCqun4ES8V6jgkZsmjJYF9dbr9uUxHAbZpMDWxhFCYuNs5gHiWBSATE4WEvjyzZDG2i2kLsUAN9ycRZmsLL`](https://explorer.solana.com/tx/thU1KCqun4ES8V6jgkZsmjJYF9dbr9uUxHAbZpMDWxhFCYuNs5gHiWBSATE4WEvjyzZDG2i2kLsUAN9ycRZmsLL?cluster=devnet)
-- First run: [`3YYbs2Lv6V4BQNWXmDJ8u9huz5jUra3YX1cQ7SDcEcxYDr77gF6XGrdLWPTFpGZp5baXPSEnT95umhphgFNZ4Kq6`](https://explorer.solana.com/tx/3YYbs2Lv6V4BQNWXmDJ8u9huz5jUra3YX1cQ7SDcEcxYDr77gF6XGrdLWPTFpGZp5baXPSEnT95umhphgFNZ4Kq6?cluster=devnet) created the [USDC ATA](https://explorer.solana.com/address/4dqQVsm8JGmCE2mXpPu74x8Dc7wReuzdcEPjL2P9ZK31?cluster=devnet) in 16,400 CU
-- Second run: [`4upq1cBPYUgTncaJce5TnXuzUyNeMhAiuJghjWPJLncCC2S6uo7D93JcM3kqwZycsYxhotXPxogdLiRw5J195vUV`](https://explorer.solana.com/tx/4upq1cBPYUgTncaJce5TnXuzUyNeMhAiuJghjWPJLncCC2S6uo7D93JcM3kqwZycsYxhotXPxogdLiRw5J195vUV?cluster=devnet) skipped the guarded CPI in 1,163 CU
-- Measured run: [`2CMydKfZQUME1pYtJwtPumqqT4BnBWpz3D6TMVEyhrk1qyuvVk5izj9BknyuABgBoWYZQmxYkUnfZxTCCuvfoahX`](https://explorer.solana.com/tx/2CMydKfZQUME1pYtJwtPumqqT4BnBWpz3D6TMVEyhrk1qyuvVk5izj9BknyuABgBoWYZQmxYkUnfZxTCCuvfoahX?cluster=devnet) simulated and consumed exactly 1,313 CU, with a 1,445-CU buffered limit
+- Template: [`5ttfid6DiryiFiPwoQZBQXaojHiXjf9nTJB93oVELvJB`](https://explorer.solana.com/address/5ttfid6DiryiFiPwoQZBQXaojHiXjf9nTJB93oVELvJB?cluster=devnet), ID `21844`, 264-byte payload
+- Template upload: [`61vW5fapGuwfVJQgMZaHvRqQkYwccjkUiGKXnEBPohw2kb3ut2LEPqFnn5Sa9yZ7iyweoxDn9pVmTeBbn8zUmKgv`](https://explorer.solana.com/tx/61vW5fapGuwfVJQgMZaHvRqQkYwccjkUiGKXnEBPohw2kb3ut2LEPqFnn5Sa9yZ7iyweoxDn9pVmTeBbn8zUmKgv?cluster=devnet)
+- First run: [`4RuKcVTGA6uUpqifbDH5UAGRrVgbCjoFjH6hte4LQq3rKKrVHesja1HWBPZysZyfrEtdxce7aX95JuoEHXw1SVc4`](https://explorer.solana.com/tx/4RuKcVTGA6uUpqifbDH5UAGRrVgbCjoFjH6hte4LQq3rKKrVHesja1HWBPZysZyfrEtdxce7aX95JuoEHXw1SVc4?cluster=devnet) logged ordinary `Create` and created the [USDC ATA](https://explorer.solana.com/address/39mgswt673yjLKFHSstpT9UsQrPpzoimbDsYA1e16XS4?cluster=devnet) in 18,042 CU
+- Repeat run: [`124J8UQzfJpJGpgoWZ3XxWHzH66LsrE66AziHvUumAxhUm2oHyrEcAqZ2W9tUYBXWyd9tKrhFPARPKmKTYm16G4s`](https://explorer.solana.com/tx/124J8UQzfJpJGpgoWZ3XxWHzH66LsrE66AziHvUumAxhUm2oHyrEcAqZ2W9tUYBXWyd9tKrhFPARPKmKTYm16G4s?cluster=devnet) succeeded in 1,318 CU with no inner instructions; without the guard, ordinary `Create` would fail on the existing ATA
 
 Run the example with an explicitly configured devnet keypair and endpoint:
 
 ```bash
 BALLISTA_KEYPAIR=/path/to/keypair.json \
+BALLISTA_TEMPLATE_ADDRESS=5ttfid6DiryiFiPwoQZBQXaojHiXjf9nTJB93oVELvJB \
 SOLANA_RPC_URL=https://api.devnet.solana.com \
 SOLANA_WS_URL=wss://api.devnet.solana.com \
 pnpm --dir clients/js exec tsx examples/ensure-usdc-ata.ts run

@@ -135,7 +135,7 @@ async function main(): Promise<void> {
   const keypairBytes = new Uint8Array(JSON.parse(await readFile(keypairPath, 'utf8')) as number[]);
   const payer = await createKeyPairSignerFromBytes(keypairBytes);
   const wallet = process.env.BALLISTA_WALLET ? address(process.env.BALLISTA_WALLET) : payer.address;
-  const templateId = Number(process.env.BALLISTA_TEMPLATE_ID ?? '21843');
+  const templateId = Number(process.env.BALLISTA_TEMPLATE_ID ?? '21844');
   if (!Number.isInteger(templateId) || templateId < 0 || templateId > 0xffff) {
     throw new RangeError('BALLISTA_TEMPLATE_ID must be a u16');
   }
@@ -165,7 +165,10 @@ async function main(): Promise<void> {
     return getSignatureFromTransaction(transaction);
   };
 
-  const [templateAddress] = await getTemplateAddress(payer.address, templateId);
+  const [derivedTemplateAddress] = await getTemplateAddress(payer.address, templateId);
+  const templateAddress = process.env.BALLISTA_TEMPLATE_ADDRESS
+    ? address(process.env.BALLISTA_TEMPLATE_ADDRESS)
+    : derivedTemplateAddress;
   if (action === 'upload') {
     const upload = await buildKitTemplateUploadPlan({
       compiled: compiledEnsureUsdcAta,

@@ -90,7 +90,7 @@ describe('Ballista 0.3 compiler', () => {
     expect(instruction.data).toEqual(Uint8Array.of(5, 232, 3, 0, 0, 0, 0, 0, 0));
   });
 
-  test('guards idempotent associated-token creation on account emptiness', () => {
+  test('guards non-idempotent associated-token creation on account emptiness', () => {
     const ensureUsdcAta = defineTemplate({
       accounts: {
         associatedTokenProgram: { executable: true, address: address(1) },
@@ -118,7 +118,7 @@ describe('Ballista 0.3 compiler', () => {
     expect(compiled.stats).toMatchObject({ instructions: 2, cpis: 1, maxExpandedCpis: 1 });
     expect(compiled.template.steps[0]).toMatchObject({
       kind: 'invoke',
-      data: [{ kind: 'literal', bytes: Uint8Array.of(1) }],
+      data: [],
       when: {
         kind: 'accountField',
         account: { kind: 'account', name: 'associatedTokenAccount' },

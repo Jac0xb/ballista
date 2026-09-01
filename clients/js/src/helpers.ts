@@ -63,6 +63,7 @@ export function createAssociatedTokenAccount(input: {
   });
 }
 
+/** Uses ordinary ATA Create; Ballista's `isEmpty` guard provides the idempotent behavior. */
 export function ensureAssociatedTokenAccount(input: {
   associatedTokenProgram: AccountReference;
   payer: AccountReference;
@@ -75,19 +76,5 @@ export function ensureAssociatedTokenAccount(input: {
 }): Step {
   const isMissing = expression.accountField(input.associatedTokenAccount, 'isEmpty');
   const when = input.when ? expression.and(isMissing, input.when) : isMissing;
-
-  return step.invoke({
-    program: input.associatedTokenProgram,
-    accounts: [
-      { account: input.payer, signer: true, writable: true },
-      { account: input.associatedTokenAccount, signer: false, writable: true },
-      { account: input.owner, signer: false, writable: false },
-      { account: input.mint, signer: false, writable: false },
-      { account: input.systemProgram, signer: false, writable: false },
-      { account: input.tokenProgram, signer: false, writable: false },
-    ],
-    // SPL Associated Token Account CreateIdempotent.
-    data: [data.literal(Uint8Array.of(1))],
-    when,
-  });
+  return createAssociatedTokenAccount({ ...input, when });
 }

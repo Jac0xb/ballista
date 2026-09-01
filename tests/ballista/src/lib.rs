@@ -380,7 +380,7 @@ mod tests {
     }
 
     #[test]
-    fn stride_two_conditional_ata_creation_then_transfer() {
+    fn stride_two_conditional_non_idempotent_ata_create_then_transfer() {
         let creator = Pubkey::new_unique();
         let authority = Pubkey::new_unique();
         let mint = Pubkey::new_unique();
@@ -416,6 +416,25 @@ mod tests {
         );
         accounts.insert(existing_ata, existing_account);
         let context = context(accounts);
+
+        let unguarded_existing_create = Instruction {
+            program_id: associated_token::ID,
+            accounts: vec![
+                AccountMeta::new(creator, true),
+                AccountMeta::new(existing_ata, false),
+                AccountMeta::new_readonly(owner_existing, false),
+                AccountMeta::new_readonly(mint, false),
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new_readonly(token::ID, false),
+            ],
+            data: Vec::new(),
+        };
+        let unguarded_result = context.process_instruction(&unguarded_existing_create);
+        assert!(
+            unguarded_result.program_result.is_err(),
+            "ordinary ATA Create must fail when the account exists: {unguarded_result:#?}"
+        );
+
         let payload = ata_then_transfer_template(4);
         assert!(context
             .process_instruction(&create_template_instruction(creator, 31, &payload))

@@ -2,16 +2,23 @@
   "name": "ballista-workspace",
   "private": true,
   "scripts": {
-    "check": "pnpm run check:rust && pnpm run check:sdk",
+    "check": "pnpm run check:rust && pnpm run check:sdk && pnpm run check:docs",
     "check:rust": "cargo check",
     "check:sdk": "pnpm --dir clients/js check",
+    "check:docs": "vitepress build docs",
     "test": "pnpm run test:core && pnpm run test:sdk",
     "test:core": "cargo test -p ballista-common -p ballista -p ballista-sdk",
     "test:sdk": "pnpm --dir clients/js test",
     "test:integration": "cargo test --manifest-path tests/ballista/Cargo.toml",
     "build": "pnpm run build:program && pnpm run build:sdk",
     "build:program": "cargo build-sbf --manifest-path programs/ballista/Cargo.toml",
-    "build:sdk": "pnpm --dir clients/js build"
+    "build:sdk": "pnpm --dir clients/js build",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "devDependencies": {
+    "vitepress": "1.6.4"
   },
   "packageManager": "pnpm@11.24.0",
   "engines": {

@@ -1,7 +1,7 @@
 # Ballista 0.3 implementation plan
 
 This plan tracks the clean-break bounded orchestration VM. The 25 workflows in
-[`usecases.md`](../usecases.md) are acceptance scenarios for the language surface, subject to the
+[use-case matrix](/use-cases) are acceptance scenarios for the language surface, subject to the
 external programs, accounts, and authorities listed there.
 
 ## 1. Flat program and verifier

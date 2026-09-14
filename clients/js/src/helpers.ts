@@ -1,5 +1,38 @@
 import { data, expression, step, type AccountReference, type Expression, type Step } from './schema.js';
 
+export function assertPda(input: {
+  account: AccountReference;
+  program: AccountReference;
+  seeds: Expression[];
+}): Step {
+  return step.require(
+    expression.equal(
+      expression.accountField(input.account, 'key'),
+      expression.pda(input.program, input.seeds),
+    ),
+  );
+}
+
+export function assertAta(input: {
+  associatedTokenAccount: AccountReference;
+  owner: AccountReference;
+  mint: AccountReference;
+  tokenProgram: AccountReference;
+  associatedTokenProgram: AccountReference;
+}): Step {
+  return assertPda({
+    account: input.associatedTokenAccount,
+    program: input.associatedTokenProgram,
+    seeds: [
+      expression.accountField(input.owner, 'key'),
+      expression.accountField(input.tokenProgram, 'key'),
+      expression.accountField(input.mint, 'key'),
+    ],
+  });
+}
+
+export const assertAssociatedTokenAccount = assertAta;
+
 export function systemTransfer(input: {
   systemProgram: AccountReference;
   from: AccountReference;

@@ -38,6 +38,8 @@ pub enum BallistaError {
     RequirementFailed,
     #[error("CPI data exceeds its declared bound")]
     CpiDataTooLarge,
+    #[error("PDA derivation failed")]
+    InvalidPdaDerivation,
 }
 
 impl From<BallistaError> for ProgramError {

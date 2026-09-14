@@ -59,6 +59,8 @@ export type ComputeUnitEstimateConfig = NonNullable<Parameters<ResourceLimitEsti
 export type ComputeUnitRpc = Parameters<typeof estimateResourceLimitsFactory>[0]['rpc'];
 
 export const MAX_TRANSACTION_COMPUTE_UNITS = 1_400_000;
+export const MAX_LOADED_ACCOUNTS_DATA_SIZE = 64 * 1_024 * 1_024;
+export const LOADED_ACCOUNTS_DATA_PAGE_SIZE = 32 * 1_024;
 
 export interface ComputeUnitMarginConfig {
   /** Safety margin in basis points. Defaults to the Solana-recommended 10%. */
@@ -73,6 +75,7 @@ export interface ComputeUnitEstimate {
   marginComputeUnits: number;
   marginBps: number;
   capped: boolean;
+  simulatedLoadedAccountsDataSize?: number;
   loadedAccountsDataSizeLimit?: number;
 }
 
@@ -134,11 +137,18 @@ export function createComputeUnitProvider(input: {
 
   const estimate: ComputeUnitProvider['estimate'] = async (transactionMessage, config) => {
     const resources = await estimateResourceLimits(transactionMessage, config);
+    const loadedAccountsDataSize =
+      'loadedAccountsDataSizeLimit' in resources
+        ? resources.loadedAccountsDataSizeLimit
+        : undefined;
     return {
       ...getComputeUnitLimitWithMargin(resources.computeUnitLimit, marginConfig),
-      ...('loadedAccountsDataSizeLimit' in resources &&
-      resources.loadedAccountsDataSizeLimit !== undefined
-        ? { loadedAccountsDataSizeLimit: resources.loadedAccountsDataSizeLimit }
+      ...(loadedAccountsDataSize !== undefined
+        ? {
+            simulatedLoadedAccountsDataSize: loadedAccountsDataSize,
+            loadedAccountsDataSizeLimit:
+              getLoadedAccountsDataSizeLimitWithHeadroom(loadedAccountsDataSize),
+          }
         : {}),
     };
   };
@@ -163,6 +173,23 @@ export function createComputeUnitProvider(input: {
       return { transactionMessage: transactionMessageWithLimits, estimate: measurement };
     },
   };
+}
+
+/** Rounds a simulation result to the next 32 KiB cost-model page for v1 headroom. */
+export function getLoadedAccountsDataSizeLimitWithHeadroom(simulatedBytes: number): number {
+  if (
+    !Number.isInteger(simulatedBytes) ||
+    simulatedBytes < 0 ||
+    simulatedBytes > MAX_LOADED_ACCOUNTS_DATA_SIZE
+  ) {
+    throw new RangeError('Loaded account data size must be from 0 to 64 MiB');
+  }
+  if (simulatedBytes === 0) return LOADED_ACCOUNTS_DATA_PAGE_SIZE;
+  return Math.min(
+    Math.ceil(simulatedBytes / LOADED_ACCOUNTS_DATA_PAGE_SIZE) *
+      LOADED_ACCOUNTS_DATA_PAGE_SIZE,
+    MAX_LOADED_ACCOUNTS_DATA_SIZE,
+  );
 }
 
 /** Reads the authoritative CU count returned in confirmed transaction metadata. */

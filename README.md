@@ -17,6 +17,10 @@ by the 0.3 runtime.
 - Deployed SBF: 78,192 bytes, SHA-256 `cd13bbf4d5e695ef9b50a2e6eaff749c0c9edd74c847efbc0cd5021ca2123b11`
 - Explorer IDL: [`JDQL78RmakzfYKcWzAC56CmUGNhCMtje3HvDCyiH2xCX`](https://explorer.solana.com/address/JDQL78RmakzfYKcWzAC56CmUGNhCMtje3HvDCyiH2xCX?cluster=devnet)
 
+That deployment predates the `derivePda` opcode in this branch. Snapshot templates use existing VM
+records, but templates containing `assertPda` or `assertAta` require the next program upgrade and
+IDL metadata refresh before they can run on devnet.
+
 The checked-in [IDL](idl/ballista.json) is published through Solana's Program Metadata program.
 It describes Ballista's accounts and instructions for Explorer discovery; instruction fields marked
 as raw trailing bytes still need the SDK's custom codecs rather than Anchor's Borsh encoder.
@@ -68,7 +72,8 @@ const when = expression.or(
 The Kit adapter includes a compute-unit provider based on Kit 8.2's
 `estimateResourceLimitsFactory`. It simulates the exact message with the maximum runtime budget,
 adds the [recommended 10% safety margin](https://solana.com/docs/core/fees/compute-budget), caps the
-request at 1,400,000 CUs, and carries the simulated loaded-account data limit into v1 messages.
+request at 1,400,000 CUs, and rounds the simulated loaded-account data limit up to a 32 KiB page
+for v1 messages.
 
 ```ts
 import { createComputeUnitProvider } from '@jac0xb/ballista/kit';
@@ -86,18 +91,27 @@ authoritative executed value. Requested CUs—not consumed CUs—determine the l
 so callers should avoid a needlessly high limit. For on-program hotspot profiling, use Agave's
 `compute_fn!` instrumentation in development builds; its logging has its own CU cost.
 
+The 4,096-byte ceiling is opt-in through transaction v1; legacy and v0 remain limited to 1,232
+bytes. V1 has no address lookup tables and permits at most 64 inline account addresses. It also
+requires explicit compute-unit and loaded-account-data limits, both of which
+`estimateAndSet` writes into the v1 message config. Compute Budget instructions are no-ops in v1,
+and RPC readers must pass `maxSupportedTransactionVersion: 1` when fetching transactions or
+blocks. See Solana's [larger transaction migration guide](https://solana.com/upgrades/larger-transaction-sizes).
+
 ## Execution model
 
 - Guarded generic CPIs; protocol helpers exist only in the SDK.
 - Typed values: `bool`, `u64`, `i64`, `u128`, `pubkey`, and bounded `bytes`.
 - Checked arithmetic, comparisons, casts, account/clock reads, `select`, and `require`.
+- Lexical `let`/`snapshot` bindings for pre/post-CPI delta assertions without persistent state.
+- Canonical PDA derivation and SDK-level `assertPda` / `assertAta` relationship guards.
 - One optional bounded tail-account iterator with stride `1..=8` and at most 64 expanded CPIs.
 - Public, repeatable execution. CPI signers must already be outer transaction signers.
 - No PDA custody, mutable instance state, scheduler, replay policy, or unbounded control flow.
 
 ## Quick start
 
-Requirements: Node.js 22+, pnpm 11.24, Rust, and Solana CLI 4.1+.
+Requirements: Node.js 22+, pnpm 11.24, Rust, and Solana CLI 4.2+ for local transaction-v1 tests.
 
 ```bash
 pnpm install

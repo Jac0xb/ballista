@@ -349,6 +349,11 @@
       "code": 6016,
       "name": "CpiDataTooLarge",
       "msg": "CPI data exceeds its declared bound"
+    },
+    {
+      "code": 6017,
+      "name": "InvalidPdaDerivation",
+      "msg": "PDA derivation failed"
     }
   ]
 }

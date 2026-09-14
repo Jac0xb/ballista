@@ -69,6 +69,7 @@ export type AccountConstraint = z.infer<typeof AccountConstraintSchema>;
 
 export type Expression =
   | { kind: 'input'; name: string }
+  | { kind: 'variable'; name: string }
   | { kind: 'literal'; value: Literal }
   | {
       kind: 'accountField';
@@ -83,6 +84,7 @@ export type Expression =
     }
   | { kind: 'clock'; field: 'slot' | 'unixTimestamp' }
   | { kind: 'loopIndex' }
+  | { kind: 'pda'; program: AccountReference; seeds: Expression[] }
   | {
       kind: 'binary';
       op:
@@ -110,6 +112,7 @@ export type Expression =
 export const ExpressionSchema: z.ZodType<Expression> = z.lazy(() =>
   z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('input'), name: identifier }).strict(),
+    z.object({ kind: z.literal('variable'), name: identifier }).strict(),
     z.object({ kind: z.literal('literal'), value: LiteralSchema }).strict(),
     z
       .object({
@@ -128,6 +131,13 @@ export const ExpressionSchema: z.ZodType<Expression> = z.lazy(() =>
       .strict(),
     z.object({ kind: z.literal('clock'), field: z.enum(['slot', 'unixTimestamp']) }).strict(),
     z.object({ kind: z.literal('loopIndex') }).strict(),
+    z
+      .object({
+        kind: z.literal('pda'),
+        program: AccountReferenceSchema,
+        seeds: z.array(ExpressionSchema).min(1).max(15),
+      })
+      .strict(),
     z
       .object({
         kind: z.literal('binary'),
@@ -199,6 +209,7 @@ export const InvokeAccountSchema = z
 
 export type Step =
   | { kind: 'require'; condition: Expression }
+  | { kind: 'let'; name: string; value: Expression }
   | {
       kind: 'invoke';
       program: AccountReference;
@@ -211,6 +222,7 @@ export type Step =
 export const StepSchema: z.ZodType<Step> = z.lazy(() =>
   z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('require'), condition: ExpressionSchema }).strict(),
+    z.object({ kind: z.literal('let'), name: identifier, value: ExpressionSchema }).strict(),
     z
       .object({
         kind: z.literal('invoke'),
@@ -288,6 +300,8 @@ const binary = (op: Extract<Expression, { kind: 'binary' }>['op']) =>
 
 export const expression = {
   input: (name: string): Expression => ({ kind: 'input', name }),
+  variable: (name: string): Expression => ({ kind: 'variable', name }),
+  snapshot: (name: string): Expression => ({ kind: 'variable', name }),
   bool: (value: boolean): Expression => literal({ type: 'bool', value }),
   u64: (value: bigint | number): Expression => literal({ type: 'u64', value: BigInt(value) }),
   i64: (value: bigint | number): Expression => literal({ type: 'i64', value: BigInt(value) }),
@@ -306,6 +320,7 @@ export const expression = {
   clockSlot: (): Expression => ({ kind: 'clock', field: 'slot' }),
   clockUnixTimestamp: (): Expression => ({ kind: 'clock', field: 'unixTimestamp' }),
   loopIndex: (): Expression => ({ kind: 'loopIndex' }),
+  pda: (program: AccountReference, seeds: Expression[]): Expression => ({ kind: 'pda', program, seeds }),
   add: binary('add'),
   subtract: binary('subtract'),
   multiply: binary('multiply'),
@@ -341,6 +356,8 @@ export const data = {
 
 export const step = {
   require: (condition: Expression): Step => ({ kind: 'require', condition }),
+  let: (name: string, value: Expression): Step => ({ kind: 'let', name, value }),
+  snapshot: (name: string, value: Expression): Step => ({ kind: 'let', name, value }),
   invoke: (input: Omit<Extract<Step, { kind: 'invoke' }>, 'kind'>): Step => ({ kind: 'invoke', ...input }),
   forEach: (steps: Step[]): Step => ({ kind: 'forEach', steps }),
 };

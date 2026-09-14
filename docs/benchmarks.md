@@ -24,4 +24,5 @@ vectors; the latter is statically capped at 4,096 bytes.
 
 Program and account record tables are borrowed directly from immutable template data. `Run` does
 not allocate or deserialize an AST. The heap above is execution working state, not a copy of the
-stored bytecode.
+stored bytecode. Canonical PDA derivation allocates at most 15 bounded seed buffers of 32 bytes plus
+their slice references; the curve search itself has variable compute cost based on the bump found.

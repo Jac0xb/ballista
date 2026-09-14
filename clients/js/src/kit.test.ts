@@ -19,6 +19,7 @@ import {
   createComputeUnitProvider,
   getComputeUnitLimitWithMargin,
   getComputeUnitsConsumed,
+  getLoadedAccountsDataSizeLimitWithHeadroom,
   getTemplateAddress,
   measureTransactionMessage,
   type ComputeUnitRpc,
@@ -122,9 +123,11 @@ describe('Solana Kit adapter', () => {
       marginComputeUnits: 10_000,
       marginBps: 1_000,
       capped: false,
+      simulatedLoadedAccountsDataSize: 4_096,
+      loadedAccountsDataSizeLimit: 32_768,
     });
     expect(getTransactionMessageComputeUnitLimit(result.transactionMessage)).toBe(110_000);
-    expect(getTransactionMessageLoadedAccountsDataSizeLimit(result.transactionMessage)).toBe(4_096);
+    expect(getTransactionMessageLoadedAccountsDataSizeLimit(result.transactionMessage)).toBe(32_768);
   });
 
   test('caps margins and reads authoritative confirmed CU metadata', () => {
@@ -135,6 +138,7 @@ describe('Solana Kit adapter', () => {
     });
     expect(getComputeUnitsConsumed({ meta: { computeUnitsConsumed: 16_400n } })).toBe(16_400);
     expect(getComputeUnitsConsumed({ meta: null })).toBeUndefined();
+    expect(getLoadedAccountsDataSizeLimitWithHeadroom(32_769)).toBe(65_536);
   });
 });
 

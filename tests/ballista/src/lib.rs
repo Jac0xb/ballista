@@ -9,9 +9,10 @@ mod tests {
     use ballista_common::template::{
         AccountConstraint, CpiAccountRecord, CpiDescriptor, DataSegment, InputDescriptor,
         InstructionRecord, ProgramHeader, ProgramView, PubkeyRecord, TemplateAccount,
-        ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_LITERAL, DATA_REG_U64,
-        ITERATION_ACCOUNT_BIT, NO_INDEX, OP_FOREACH, OP_INVOKE, OP_LOAD_INPUT, OP_REQUIRE,
-        VALUE_BOOL, VALUE_U64,
+        ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_LITERAL, DATA_REG_PUBKEY,
+        DATA_REG_U64, ITERATION_ACCOUNT_BIT, NO_INDEX, OP_ACCOUNT_IS_EMPTY, OP_ACCOUNT_KEY,
+        OP_ACCOUNT_LAMPORTS, OP_DERIVE_PDA, OP_EQ, OP_FOREACH, OP_INVOKE, OP_LOAD_INPUT,
+        OP_REQUIRE, OP_SUB, VALUE_BOOL, VALUE_U64,
     };
     use mollusk_svm::{program::loader_keys::LOADER_V3, Mollusk, MolluskContext};
     use mollusk_svm_programs_token::{associated_token, token};
@@ -463,6 +464,25 @@ mod tests {
         assert_eq!(token_amount(&context, missing_ata), amount);
         assert_eq!(token_amount(&context, existing_ata), amount);
         assert_eq!(token_amount(&context, source), 1_000_000 - amount * 2);
+
+        let source_before_mismatch = token_amount(&context, source);
+        let mismatched_owner_and_ata = context.process_instruction(&run_instruction(
+            template,
+            vec![
+                AccountMeta::new_readonly(associated_token::ID, false),
+                AccountMeta::new_readonly(token::ID, false),
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(creator, true),
+                AccountMeta::new(source, false),
+                AccountMeta::new_readonly(authority, true),
+                AccountMeta::new_readonly(mint, false),
+                AccountMeta::new_readonly(owner_existing, false),
+                AccountMeta::new(missing_ata, false),
+            ],
+            &amount.to_le_bytes(),
+        ));
+        assert!(mismatched_owner_and_ata.program_result.is_err());
+        assert_eq!(token_amount(&context, source), source_before_mismatch);
     }
 
     fn context(accounts: HashMap<Pubkey, Account>) -> MolluskContext<HashMap<Pubkey, Account>> {
@@ -508,9 +528,10 @@ mod tests {
 
     fn system_transfer_template(batch_max: Option<u8>, require_guard: bool) -> Vec<u8> {
         let batch = batch_max.is_some();
+        let assert_delta = !batch && require_guard;
         let fixed_accounts = if batch { 2 } else { 3 };
         let input_count = if require_guard { 2 } else { 1 };
-        let register_count = input_count;
+        let register_count = if assert_delta { 6 } else { input_count };
         let mut instructions = Vec::new();
         if require_guard {
             instructions.push(record(OP_LOAD_INPUT, 0, 0, 0, 0, 0));
@@ -520,10 +541,20 @@ mod tests {
             instructions.push(record(OP_LOAD_INPUT, 0, 0, 0, 0, 0));
         }
         let amount_register = if require_guard { 1 } else { 0 };
+        if assert_delta {
+            // This register is the runtime representation of `step.snapshot("before", ...)`.
+            instructions.push(record(OP_ACCOUNT_LAMPORTS, 2, 1, 0, 0, 0));
+        }
         if batch {
             instructions.push(record(OP_FOREACH, NO_INDEX, 1, 0, 0, 0));
         }
         instructions.push(record(OP_INVOKE, NO_INDEX, 0, NO_INDEX, 0, 0));
+        if assert_delta {
+            instructions.push(record(OP_ACCOUNT_LAMPORTS, 3, 1, 0, 0, 0));
+            instructions.push(record(OP_SUB, 4, 2, amount_register, 0, 0));
+            instructions.push(record(OP_EQ, 5, 3, 4, 0, 0));
+            instructions.push(record(OP_REQUIRE, NO_INDEX, 5, 0, 0, 0));
+        }
 
         let header = ProgramHeader::new(
             fixed_accounts,
@@ -692,7 +723,7 @@ mod tests {
     }
 
     fn ata_then_transfer_template(batch_max: u8) -> Vec<u8> {
-        let header = ProgramHeader::new(7, 2, batch_max, 1, 2, 5, 2, 9, 2, 3, 1);
+        let header = ProgramHeader::new(7, 2, batch_max, 1, 8, 12, 2, 9, 5, 3, 1);
         let account_constraints = [
             account_constraint(ACCOUNT_EXECUTABLE, 0),
             account_constraint(ACCOUNT_EXECUTABLE, 1),
@@ -711,16 +742,16 @@ mod tests {
         }];
         let instructions = [
             record(OP_LOAD_INPUT, 0, 0, 0, 0, 0),
-            record(OP_FOREACH, NO_INDEX, 3, 0, 0, 0),
-            record(
-                ballista_common::template::OP_ACCOUNT_IS_EMPTY,
-                1,
-                0x81,
-                0,
-                0,
-                0,
-            ),
-            record(OP_INVOKE, NO_INDEX, 0, 1, 0, 0),
+            record(OP_FOREACH, NO_INDEX, 10, 0, 0, 0),
+            record(OP_ACCOUNT_KEY, 1, 0x80, 0, 0, 0),
+            record(OP_ACCOUNT_KEY, 2, 1, 0, 0, 0),
+            record(OP_ACCOUNT_KEY, 3, 6, 0, 0, 0),
+            record(OP_DERIVE_PDA, 4, 0, 0, 0, 3u64 << 32),
+            record(OP_ACCOUNT_KEY, 5, 0x81, 0, 0, 0),
+            record(OP_EQ, 6, 4, 5, 0, 0),
+            record(OP_REQUIRE, NO_INDEX, 6, 0, 0, 0),
+            record(OP_ACCOUNT_IS_EMPTY, 7, 0x81, 0, 0, 0),
+            record(OP_INVOKE, NO_INDEX, 0, 7, 0, 0),
             record(OP_INVOKE, NO_INDEX, 1, NO_INDEX, 0, 0),
         ];
         let cpis = [
@@ -740,7 +771,7 @@ mod tests {
                 account_start_le: 6u16.to_le_bytes(),
                 account_len: 3,
                 segment_len: 2,
-                segment_start_le: [0; 2],
+                segment_start_le: 3u16.to_le_bytes(),
                 max_data_len_le: 9u16.to_le_bytes(),
                 reserved1: [0; 2],
             },
@@ -784,6 +815,27 @@ mod tests {
             },
         ];
         let segments = [
+            DataSegment {
+                kind: DATA_REG_PUBKEY,
+                register: 1,
+                offset_le: [0; 2],
+                len_le: [0; 2],
+                reserved: [0; 2],
+            },
+            DataSegment {
+                kind: DATA_REG_PUBKEY,
+                register: 2,
+                offset_le: [0; 2],
+                len_le: [0; 2],
+                reserved: [0; 2],
+            },
+            DataSegment {
+                kind: DATA_REG_PUBKEY,
+                register: 3,
+                offset_le: [0; 2],
+                len_le: [0; 2],
+                reserved: [0; 2],
+            },
             DataSegment {
                 kind: DATA_LITERAL,
                 register: NO_INDEX,

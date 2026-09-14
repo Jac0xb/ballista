@@ -150,7 +150,7 @@ async function main(): Promise<void> {
   const sendInstruction = async (instruction: Instruction): Promise<string> => {
     const { value: latestBlockhash } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send();
     const message = pipe(
-      createTransactionMessage({ version: 0 }),
+      createTransactionMessage({ version: 1 }),
       (value) => setTransactionMessageFeePayerSigner(payer, value),
       (value) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, value),
       (value) => appendTransactionMessageInstruction(instruction, value),

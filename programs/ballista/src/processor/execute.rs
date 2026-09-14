@@ -6,6 +6,7 @@ use pinocchio::{
     sysvars::{clock::Clock, Sysvar},
     AccountView, ProgramResult,
 };
+use solana_address::Address;
 
 use crate::error::BallistaError;
 
@@ -383,6 +384,26 @@ fn execute_instruction<'data>(
         OP_LOOP_INDEX => {
             let (iteration, _) = loop_context.ok_or(BallistaError::InvalidTemplateProgram)?;
             set(registers, dst, RuntimeValue::U64(iteration as u64))?;
+        }
+        OP_DERIVE_PDA => {
+            let program_account = resolve_account(program, accounts, instruction.a, loop_context)?;
+            let (segment_start, segment_len) = instruction.blob_range();
+            let mut seeds = Vec::with_capacity(segment_len);
+            for segment in &program.data_segments[segment_start..segment_start + segment_len] {
+                let mut seed = Vec::with_capacity(MAX_PDA_SEED_LEN);
+                append_segment(program, registers, segment, &mut seed)?;
+                if seed.len() > MAX_PDA_SEED_LEN {
+                    return Err(BallistaError::InvalidPdaDerivation.into());
+                }
+                seeds.push(seed);
+            }
+            let seed_slices: Vec<&[u8]> = seeds.iter().map(Vec::as_slice).collect();
+            let (derived, _) = Address::try_find_program_address(
+                seed_slices.as_slice(),
+                program_account.address(),
+            )
+            .ok_or(BallistaError::InvalidPdaDerivation)?;
+            set(registers, dst, RuntimeValue::Pubkey(derived.to_bytes()))?;
         }
         OP_REQUIRE => {
             if !as_bool(get(registers, instruction.a)?)? {

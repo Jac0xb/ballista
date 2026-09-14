@@ -7,7 +7,7 @@ import {
 } from './compiler.js';
 import type { AccountConstraint, InputDefinition } from './schema.js';
 
-export const BALLISTA_PROGRAM_ADDRESS = 'BLSTAxxzuLZzFQpwDGMMXERLCGw36u3Au3XeZNyRHpe2';
+export const BALLISTA_PROGRAM_ADDRESS = 'BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD';
 export const TEMPLATE_ACCOUNT_VERSION = 2;
 export const TEMPLATE_ACCOUNT_HEADER_LENGTH = 80;
 export const TEMPLATE_STATE_UPLOADING = 0;

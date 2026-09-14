@@ -14,6 +14,8 @@ pub const MAX_VM_INSTRUCTIONS: usize = 128;
 pub const MAX_EXPANDED_CPIS: usize = 64;
 pub const MAX_CPI_DATA_LEN: usize = 4_096;
 pub const MAX_BATCH_STRIDE: usize = 8;
+pub const MAX_PDA_SEEDS: usize = 15;
+pub const MAX_PDA_SEED_LEN: usize = 32;
 
 pub const NO_INDEX: u8 = u8::MAX;
 pub const ITERATION_ACCOUNT_BIT: u8 = 0x80;
@@ -75,6 +77,7 @@ pub const OP_READ_U8: u8 = 43;
 pub const OP_READ_U16: u8 = 44;
 pub const OP_READ_U32: u8 = 45;
 pub const OP_READ_BOOL: u8 = 46;
+pub const OP_DERIVE_PDA: u8 = 47;
 
 pub const DATA_LITERAL: u8 = 0;
 pub const DATA_REG_U8: u8 = 1;

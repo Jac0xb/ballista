@@ -4,6 +4,8 @@ import {
   blockhash,
   createTransactionMessage,
   getAddressDecoder,
+  getTransactionMessageComputeUnitLimit,
+  getTransactionMessageLoadedAccountsDataSizeLimit,
   pipe,
   setTransactionMessageFeePayer,
   setTransactionMessageLifetimeUsingBlockhash,
@@ -14,8 +16,13 @@ import { compileTemplate } from './compiler.js';
 import {
   buildKitRunInstruction,
   buildKitTemplateUploadPlan,
+  createComputeUnitProvider,
+  getComputeUnitLimitWithMargin,
+  getComputeUnitsConsumed,
+  getLoadedAccountsDataSizeLimitWithHeadroom,
   getTemplateAddress,
   measureTransactionMessage,
+  type ComputeUnitRpc,
 } from './kit.js';
 import { account, defineTemplate, expression, step } from './schema.js';
 import { systemTransfer } from './helpers.js';
@@ -27,8 +34,8 @@ const systemAddress = address('11111111111111111111111111111111');
 describe('Solana Kit adapter', () => {
   test('derives the template-v2 PDA identically to Rust', async () => {
     await expect(getTemplateAddress(systemAddress, 7)).resolves.toEqual([
-      address('12SkBLXuh45D2mchGAmYCqnRFYnCpwkve39cLKtMkLyN'),
-      254,
+      address('HJhruxADGAkstBRu5Kj77XG6tGmkVHUQZ5JmgNd6xm2f'),
+      255,
     ]);
   });
 
@@ -87,6 +94,51 @@ describe('Solana Kit adapter', () => {
       appendTransactionMessageInstruction(plan.instructions[0]!.instruction, baseMessage),
     );
     expect(measured.fits).toBe(true);
+  });
+
+  test('simulates and applies a buffered compute unit limit', async () => {
+    const rpc = {
+      simulateTransaction: () => ({
+        send: async () => ({
+          value: { err: null, unitsConsumed: 100_000n, loadedAccountsDataSize: 4_096 },
+        }),
+      }),
+    } as unknown as ComputeUnitRpc;
+    const payer = byteAddress(4);
+    const message = pipe(
+      createTransactionMessage({ version: 1 }),
+      (value) => setTransactionMessageFeePayer(payer, value),
+      (value) =>
+        setTransactionMessageLifetimeUsingBlockhash(
+          { blockhash: blockhash('11111111111111111111111111111111'), lastValidBlockHeight: 1n },
+          value,
+        ),
+    );
+
+    const provider = createComputeUnitProvider({ rpc });
+    const result = await provider.estimateAndSet(message);
+    expect(result.estimate).toMatchObject({
+      simulatedComputeUnits: 100_000,
+      computeUnitLimit: 110_000,
+      marginComputeUnits: 10_000,
+      marginBps: 1_000,
+      capped: false,
+      simulatedLoadedAccountsDataSize: 4_096,
+      loadedAccountsDataSizeLimit: 32_768,
+    });
+    expect(getTransactionMessageComputeUnitLimit(result.transactionMessage)).toBe(110_000);
+    expect(getTransactionMessageLoadedAccountsDataSizeLimit(result.transactionMessage)).toBe(32_768);
+  });
+
+  test('caps margins and reads authoritative confirmed CU metadata', () => {
+    expect(getComputeUnitLimitWithMargin(1_390_000)).toMatchObject({
+      computeUnitLimit: 1_400_000,
+      marginComputeUnits: 10_000,
+      capped: true,
+    });
+    expect(getComputeUnitsConsumed({ meta: { computeUnitsConsumed: 16_400n } })).toBe(16_400);
+    expect(getComputeUnitsConsumed({ meta: null })).toBeUndefined();
+    expect(getLoadedAccountsDataSizeLimitWithHeadroom(32_769)).toBe(65_536);
   });
 });
 

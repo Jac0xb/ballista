@@ -2,11 +2,13 @@ import { describe, expect, test } from 'vitest';
 
 import {
   account,
+  assertAta,
   buildRunInstruction,
   compileTemplate,
   decodeTemplateAccount,
   defineTemplate,
   encodeRun,
+  ensureAssociatedTokenAccount,
   expression,
   inspectTemplate,
   planTemplateUpload,
@@ -87,6 +89,174 @@ describe('Ballista 0.3 compiler', () => {
     });
     expect(instruction.accounts).toHaveLength(33);
     expect(instruction.data).toEqual(Uint8Array.of(5, 232, 3, 0, 0, 0, 0, 0, 0));
+  });
+
+  test('guards non-idempotent associated-token creation on account emptiness', () => {
+    const ensureUsdcAta = defineTemplate({
+      accounts: {
+        associatedTokenProgram: { executable: true, address: address(1) },
+        tokenProgram: { executable: true, address: address(2) },
+        systemProgram: { executable: true, address: address(3) },
+        mint: { address: address(4), owner: address(2), minDataLength: 82 },
+        payer: { signer: true, writable: true, owner: address(3) },
+        owner: {},
+        associatedTokenAccount: { writable: true },
+      },
+      steps: [
+        ensureAssociatedTokenAccount({
+          associatedTokenProgram: account.fixed('associatedTokenProgram'),
+          payer: account.fixed('payer'),
+          associatedTokenAccount: account.fixed('associatedTokenAccount'),
+          owner: account.fixed('owner'),
+          mint: account.fixed('mint'),
+          systemProgram: account.fixed('systemProgram'),
+          tokenProgram: account.fixed('tokenProgram'),
+        }),
+      ],
+    });
+
+    const compiled = compileTemplate(ensureUsdcAta);
+    expect(compiled.stats).toMatchObject({ instructions: 2, cpis: 1, maxExpandedCpis: 1 });
+    expect(compiled.template.steps[0]).toMatchObject({
+      kind: 'invoke',
+      data: [],
+      when: {
+        kind: 'accountField',
+        account: { kind: 'account', name: 'associatedTokenAccount' },
+        field: 'isEmpty',
+      },
+    });
+  });
+
+  test('composes invoke guards with nested AND and OR expressions', () => {
+    const when = expression.or(
+      expression.and(expression.input('enabled'), expression.input('withinLimit')),
+      expression.input('force'),
+    );
+    const guarded = defineTemplate({
+      inputs: {
+        enabled: { type: 'bool' },
+        withinLimit: { type: 'bool' },
+        force: { type: 'bool' },
+      },
+      accounts: { program: { executable: true } },
+      steps: [
+        step.invoke({
+          program: account.fixed('program'),
+          accounts: [],
+          data: [],
+          when,
+        }),
+      ],
+    });
+
+    expect(() => compileTemplate(guarded)).not.toThrow();
+    expect(guarded.steps[0]).toMatchObject({ kind: 'invoke', when });
+  });
+
+  test('keeps named snapshots in registers for post-CPI delta assertions', () => {
+    const checkedTransfer = defineTemplate({
+      inputs: { amount: { type: 'u64' } },
+      accounts: {
+        systemProgram: { executable: true, address: address(1) },
+        source: { signer: true, writable: true },
+        destination: { writable: true },
+      },
+      steps: [
+        step.snapshot('before', expression.accountField(account.fixed('source'), 'lamports')),
+        systemTransfer({
+          systemProgram: account.fixed('systemProgram'),
+          from: account.fixed('source'),
+          to: account.fixed('destination'),
+          lamports: expression.input('amount'),
+        }),
+        step.snapshot('after', expression.accountField(account.fixed('source'), 'lamports')),
+        step.require(
+          expression.equal(
+            expression.snapshot('after'),
+            expression.subtract(expression.snapshot('before'), expression.input('amount')),
+          ),
+        ),
+      ],
+    });
+
+    expect(compileTemplate(checkedTransfer).stats).toMatchObject({ instructions: 8, registers: 6 });
+    expect(() =>
+      compileTemplate(
+        defineTemplate({
+          accounts: {},
+          steps: [step.require(expression.snapshot('missing'))],
+        }),
+      ),
+    ).toThrow('Unknown variable: missing');
+    expect(() =>
+      compileTemplate(
+        defineTemplate({
+          accounts: {},
+          steps: [
+            step.let('value', expression.bool(true)),
+            step.let('value', expression.bool(false)),
+            step.require(expression.variable('value')),
+          ],
+        }),
+      ),
+    ).toThrow('Variable already defined: value');
+  });
+
+  test('compiles canonical PDA and ATA relationship assertions', () => {
+    const assertedAta = defineTemplate({
+      accounts: {
+        associatedTokenProgram: { executable: true },
+        tokenProgram: { executable: true },
+        owner: {},
+        mint: {},
+        associatedTokenAccount: {},
+      },
+      steps: [
+        assertAta({
+          associatedTokenAccount: account.fixed('associatedTokenAccount'),
+          owner: account.fixed('owner'),
+          mint: account.fixed('mint'),
+          tokenProgram: account.fixed('tokenProgram'),
+          associatedTokenProgram: account.fixed('associatedTokenProgram'),
+        }),
+      ],
+    });
+    const compiled = compileTemplate(assertedAta);
+    expect(hex(compiled.bytes)).toBe(
+      '42564d32020500000006070000000300000000000000000004ffff000000000004ffff000000000000ffff000000000000ffff000000000000ffff0000000000080004ffff0000000000000000000000080102ffff0000000000000000000000080201ffff0000000000000000000000080303ffff00000000000000000000002f0400ffff000000000003000000000017050004ff000000000000000000000028ff05ffff0000000000000000000000070100000000000007020000000000000703000000000000',
+    );
+    expect(compiled.stats).toMatchObject({ instructions: 7, registers: 6, cpis: 0 });
+    expect(new DataView(compiled.bytes.buffer, compiled.bytes.byteOffset).getUint16(14, true)).toBe(3);
+    const instructionStart = 24 + 5 * 8;
+    expect(compiled.bytes[instructionStart + 4 * 16]).toBe(47);
+
+    const oversizedSeed = defineTemplate({
+      inputs: { seed: { type: 'bytes', maxLength: 33 } },
+      accounts: { program: { executable: true }, candidate: {} },
+      steps: [
+        step.require(
+          expression.equal(
+            expression.accountField(account.fixed('candidate'), 'key'),
+            expression.pda(account.fixed('program'), [expression.input('seed')]),
+          ),
+        ),
+      ],
+    });
+    expect(() => compileTemplate(oversizedSeed)).toThrow('PDA seed can exceed 32 bytes');
+
+    const nonExecutableProgram = defineTemplate({
+      accounts: { program: {}, candidate: {} },
+      steps: [
+        step.require(
+          expression.equal(
+            expression.accountField(account.fixed('candidate'), 'key'),
+            expression.pda(account.fixed('program'), [expression.bytes(Uint8Array.of(1))]),
+          ),
+        ),
+      ],
+    });
+    expect(() => compileTemplate(nonExecutableProgram)).toThrow('PDA program account must require executable=true');
   });
 
   test('plans one-shot, chunked, and resumable uploads', () => {

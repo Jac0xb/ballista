@@ -22,7 +22,7 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
-    "check": "tsc --noEmit && vitest run",
+    "check": "tsc --noEmit && tsc --project tsconfig.examples.json && vitest run",
     "test": "vitest run"
   },
   "dependencies": {

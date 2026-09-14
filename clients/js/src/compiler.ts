@@ -21,6 +21,8 @@ export const MAX_REGISTERS = 64;
 export const MAX_VM_INSTRUCTIONS = 128;
 export const MAX_EXPANDED_CPIS = 64;
 export const MAX_CPI_DATA_LENGTH = 4_096;
+export const MAX_PDA_SEEDS = 15;
+export const MAX_PDA_SEED_LENGTH = 32;
 
 const NO_INDEX = 0xff;
 const ITERATION_ACCOUNT_BIT = 0x80;
@@ -77,6 +79,7 @@ const opcode = {
   readU16: 44,
   readU32: 45,
   readBool: 46,
+  derivePda: 47,
 } as const;
 
 const dataKind = {
@@ -131,6 +134,8 @@ interface ExpressionResult {
   type: ValueType;
   maxLength: number;
 }
+
+type Bindings = Map<string, ExpressionResult>;
 
 export interface CompileStats {
   payloadBytes: number;
@@ -190,7 +195,7 @@ class Compiler {
       this.accountRecords.push(this.compileAccountConstraint(constraint));
     }
     for (const [, input] of this.inputEntries) this.inputRecords.push(this.compileInput(input));
-    this.compileSteps(this.template.steps, false);
+    this.compileSteps(this.template.steps, false, new Map());
 
     if (this.nextRegister > MAX_REGISTERS) throw new RangeError('Template uses more than 64 registers');
     if (this.instructions.length > MAX_VM_INSTRUCTIONS) {
@@ -291,28 +296,31 @@ class Compiler {
     return writer.finish();
   }
 
-  compileSteps(steps: Step[], inLoop: boolean): void {
+  compileSteps(steps: Step[], inLoop: boolean, bindings: Bindings): void {
     for (const current of steps) {
       if (current.kind === 'forEach') {
         if (inLoop) throw new TypeError('Nested forEach is not supported');
         const index = this.instructions.length;
         this.instructions.push(instructionRecord(opcode.forEach, NO_INDEX, 0));
         const bodyStart = this.instructions.length;
-        this.compileSteps(current.steps, true);
+        this.compileSteps(current.steps, true, new Map(bindings));
         const bodyLength = this.instructions.length - bodyStart;
         if (bodyLength === 0 || bodyLength > 0xff) throw new RangeError('Invalid forEach body length');
         this.instructions[index] = instructionRecord(opcode.forEach, NO_INDEX, bodyLength);
+      } else if (current.kind === 'let') {
+        if (bindings.has(current.name)) throw new TypeError(`Variable already defined: ${current.name}`);
+        bindings.set(current.name, this.compileExpression(current.value, inLoop, bindings));
       } else if (current.kind === 'require') {
-        const condition = this.compileExpression(current.condition, inLoop);
+        const condition = this.compileExpression(current.condition, inLoop, bindings);
         requireType(condition, 'bool', 'require condition');
         this.instructions.push(instructionRecord(opcode.require, NO_INDEX, condition.register));
       } else {
-        this.compileInvoke(current, inLoop);
+        this.compileInvoke(current, inLoop, bindings);
       }
     }
   }
 
-  compileInvoke(current: Extract<Step, { kind: 'invoke' }>, inLoop: boolean): void {
+  compileInvoke(current: Extract<Step, { kind: 'invoke' }>, inLoop: boolean, bindings: Bindings): void {
     const programAccount = this.encodeAccountReference(current.program, inLoop);
     const programConstraint = this.constraintFor(current.program, inLoop);
     if (!programConstraint.executable) throw new TypeError('Invoke program account must require executable=true');
@@ -329,7 +337,7 @@ class Compiler {
     const segmentStart = this.dataSegments.length;
     let maxDataLength = 0;
     for (const part of current.data) {
-      const result = this.compileDataPart(part, inLoop);
+      const result = this.compileDataPart(part, inLoop, bindings);
       this.dataSegments.push(result.record);
       maxDataLength += result.maxLength;
     }
@@ -350,14 +358,14 @@ class Compiler {
 
     let guard = NO_INDEX;
     if (current.when) {
-      const result = this.compileExpression(current.when, inLoop);
+      const result = this.compileExpression(current.when, inLoop, bindings);
       requireType(result, 'bool', 'invoke guard');
       guard = result.register;
     }
     this.instructions.push(instructionRecord(opcode.invoke, NO_INDEX, cpiIndex, guard));
   }
 
-  compileDataPart(part: DataPart, inLoop: boolean): { record: Uint8Array; maxLength: number } {
+  compileDataPart(part: DataPart, inLoop: boolean, bindings: Bindings): { record: Uint8Array; maxLength: number } {
     const writer = new Writer();
     if (part.kind === 'literal') {
       const offset = this.addBlob(part.bytes);
@@ -369,7 +377,7 @@ class Compiler {
       return { record: writer.finish(), maxLength: part.bytes.length };
     }
 
-    const value = this.compileExpression(part.value, inLoop);
+    const value = this.compileExpression(part.value, inLoop, bindings);
     const expected: Record<typeof part.encoding, ValueType | 'unsigned'> = {
       u8: 'unsigned',
       u16: 'unsigned',
@@ -395,12 +403,17 @@ class Compiler {
     return { record: writer.finish(), maxLength };
   }
 
-  compileExpression(current: Expression, inLoop: boolean): ExpressionResult {
+  compileExpression(current: Expression, inLoop: boolean, bindings: Bindings): ExpressionResult {
     if (current.kind === 'input') {
       const index = this.inputIndices.get(current.name);
       if (index === undefined) throw new TypeError(`Unknown input: ${current.name}`);
       const definition = this.inputEntries[index]![1];
       return this.emit(opcode.loadInput, definition.type, definition.type === 'bytes' ? definition.maxLength : 0, index);
+    }
+    if (current.kind === 'variable') {
+      const value = bindings.get(current.name);
+      if (value === undefined) throw new TypeError(`Unknown variable: ${current.name}`);
+      return value;
     }
     if (current.kind === 'literal') {
       switch (current.value.type) {
@@ -459,28 +472,54 @@ class Compiler {
       if (!inLoop) throw new TypeError('loopIndex is only valid inside forEach');
       return this.emit(opcode.loopIndex, 'u64');
     }
+    if (current.kind === 'pda') {
+      const programAccount = this.encodeAccountReference(current.program, inLoop);
+      const programConstraint = this.constraintFor(current.program, inLoop);
+      if (!programConstraint.executable) throw new TypeError('PDA program account must require executable=true');
+      if (current.seeds.length < 1 || current.seeds.length > MAX_PDA_SEEDS) {
+        throw new RangeError(`PDA derivation requires 1 to ${MAX_PDA_SEEDS} seeds`);
+      }
+      const segmentStart = this.dataSegments.length;
+      for (const seed of current.seeds) {
+        const value = this.compileExpression(seed, inLoop, bindings);
+        const seedLength = value.type === 'bytes' ? value.maxLength : fixedValueLength(value.type);
+        if (seedLength > MAX_PDA_SEED_LENGTH) {
+          throw new RangeError(`PDA seed can exceed ${MAX_PDA_SEED_LENGTH} bytes`);
+        }
+        this.dataSegments.push(this.compileSeedSegment(value));
+      }
+      return this.emit(
+        opcode.derivePda,
+        'pubkey',
+        0,
+        programAccount,
+        NO_INDEX,
+        NO_INDEX,
+        rangeImmediate(segmentStart, current.seeds.length),
+      );
+    }
     if (current.kind === 'not') {
-      const value = this.compileExpression(current.value, inLoop);
+      const value = this.compileExpression(current.value, inLoop, bindings);
       requireType(value, 'bool', 'not');
       return this.emit(opcode.not, 'bool', 0, value.register);
     }
     if (current.kind === 'cast') {
-      const value = this.compileExpression(current.value, inLoop);
+      const value = this.compileExpression(current.value, inLoop, bindings);
       if (!isNumeric(value.type)) throw new TypeError('cast requires a numeric expression');
       const operation = { u64: opcode.castU64, i64: opcode.castI64, u128: opcode.castU128 }[current.to];
       return this.emit(operation, current.to, 0, value.register);
     }
     if (current.kind === 'select') {
-      const condition = this.compileExpression(current.condition, inLoop);
-      const ifTrue = this.compileExpression(current.ifTrue, inLoop);
-      const ifFalse = this.compileExpression(current.ifFalse, inLoop);
+      const condition = this.compileExpression(current.condition, inLoop, bindings);
+      const ifTrue = this.compileExpression(current.ifTrue, inLoop, bindings);
+      const ifFalse = this.compileExpression(current.ifFalse, inLoop, bindings);
       requireType(condition, 'bool', 'select condition');
       requireType(ifFalse, ifTrue.type, 'select branches');
       return this.emit(opcode.select, ifTrue.type, Math.max(ifTrue.maxLength, ifFalse.maxLength), condition.register, ifTrue.register, ifFalse.register);
     }
 
-    const left = this.compileExpression(current.left, inLoop);
-    const right = this.compileExpression(current.right, inLoop);
+    const left = this.compileExpression(current.left, inLoop, bindings);
+    const right = this.compileExpression(current.right, inLoop, bindings);
     const operation = opcode[current.op];
     if (['add', 'subtract', 'multiply', 'divide', 'min', 'max'].includes(current.op)) {
       if (left.type !== right.type || !isNumeric(left.type)) throw new TypeError(`${current.op} requires matching numeric types`);
@@ -496,6 +535,24 @@ class Compiler {
       throw new TypeError(`${current.op} requires numeric operands`);
     }
     return this.emit(operation, 'bool', 0, left.register, right.register);
+  }
+
+  compileSeedSegment(value: ExpressionResult): Uint8Array {
+    const kind: Record<ValueType, number> = {
+      bool: dataKind.bool,
+      u64: dataKind.u64,
+      i64: dataKind.i64,
+      u128: dataKind.u128,
+      pubkey: dataKind.pubkey,
+      bytes: dataKind.bytes,
+    };
+    const writer = new Writer();
+    writer.u8(kind[value.type]);
+    writer.u8(value.register);
+    writer.u16(0);
+    writer.u16(0);
+    writer.raw([0, 0]);
+    return writer.finish();
   }
 
   emit(
@@ -590,9 +647,15 @@ function isNumeric(type: ValueType): boolean {
   return type === 'u64' || type === 'i64' || type === 'u128';
 }
 
-function blobImmediate(offset: number, length: number): bigint {
+function fixedValueLength(type: Exclude<ValueType, 'bytes'>): number {
+  return { bool: 1, u64: 8, i64: 8, u128: 16, pubkey: 32 }[type];
+}
+
+function rangeImmediate(offset: number, length: number): bigint {
   return BigInt(offset) | (BigInt(length) << 32n);
 }
+
+const blobImmediate = rangeImmediate;
 
 function encodeBigint(value: bigint, byteLength: number): Uint8Array {
   const writer = new Writer();

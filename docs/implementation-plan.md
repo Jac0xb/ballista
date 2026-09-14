@@ -24,6 +24,8 @@ external programs, accounts, and authorities listed there.
 
 - [x] Implement typed inputs, constants, account/clock reads, checked math/casts, comparisons,
   booleans, `min`, `max`, `select`, and `require`.
+- [x] Add lexical snapshot bindings for readable pre/post-CPI invariants and canonical PDA/ATA
+  relationship assertions with statically bounded seed tables.
 - [x] Implement guarded protocol-neutral CPI with literal and register-encoded data segments.
 - [x] Enforce that CPI privileges are a subset of the outer transaction privileges.
 - [x] Implement one top-level bounded tail-account iterator with inferred row count and no nesting.
@@ -37,6 +39,8 @@ external programs, accounts, and authorities listed there.
 - [x] Keep System, legacy Token, and ATA helpers in the SDK as generic-CPI compilers.
 - [x] Add a Solana Kit adapter for PDA derivation, native instructions, exact message sizing, and
   v1-aware upload chunk planning.
+- [x] Apply v1 compute and loaded-account-data limits from one simulation, including 32 KiB data
+  page headroom.
 - [x] Replace generated Rust clients with small lifecycle/run codecs and shared account parsing.
 
 ## 5. Verification and release cleanup

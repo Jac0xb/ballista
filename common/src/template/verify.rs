@@ -336,6 +336,35 @@ impl ProgramView<'_> {
                 }
                 self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
             }
+            OP_DERIVE_PDA => {
+                let program = self
+                    .account_constraint(instruction.a, in_loop)
+                    .ok_or(TemplateError::InvalidInstruction(instruction_index))?;
+                if program.flags & ACCOUNT_EXECUTABLE == 0 {
+                    return Err(TemplateError::InvalidInstruction(instruction_index));
+                }
+                let (segment_start, segment_len) = instruction.blob_range();
+                let segment_end = segment_start
+                    .checked_add(segment_len)
+                    .ok_or(TemplateError::CountOverflow)?;
+                if segment_len == 0
+                    || segment_len > MAX_PDA_SEEDS
+                    || segment_end > self.data_segments.len()
+                {
+                    return Err(TemplateError::InvalidInstruction(instruction_index));
+                }
+                for (offset, segment) in self.data_segments[segment_start..segment_end]
+                    .iter()
+                    .enumerate()
+                {
+                    let seed_len =
+                        self.verify_pda_seed_segment(segment_start + offset, segment, registers)?;
+                    if seed_len > MAX_PDA_SEED_LEN {
+                        return Err(TemplateError::InvalidDataSegment(segment_start + offset));
+                    }
+                }
+                self.write_register(registers, instruction.dst, scalar(VALUE_PUBKEY))?;
+            }
             OP_REQUIRE => self.require_type(registers, instruction.a, VALUE_BOOL)?,
             OP_INVOKE => {
                 if instruction.b != NO_INDEX {
@@ -348,6 +377,67 @@ impl ProgramView<'_> {
             _ => return Err(TemplateError::InvalidInstruction(instruction_index)),
         }
         Ok((0, 0))
+    }
+
+    fn verify_pda_seed_segment(
+        &self,
+        index: usize,
+        segment: &DataSegment,
+        registers: &[Option<RegisterInfo>; MAX_REGISTERS],
+    ) -> Result<usize, TemplateError> {
+        if segment.reserved != [0; 2] {
+            return Err(TemplateError::InvalidDataSegment(index));
+        }
+        if segment.kind == DATA_LITERAL {
+            if segment.register != NO_INDEX
+                || !valid_range(self.blob.len(), segment.offset(), segment.len())
+            {
+                return Err(TemplateError::InvalidDataSegment(index));
+            }
+            return Ok(segment.len());
+        }
+        if segment.offset() != 0 || segment.len() != 0 {
+            return Err(TemplateError::InvalidDataSegment(index));
+        }
+        let len = match segment.kind {
+            DATA_REG_U8 | DATA_REG_U16 | DATA_REG_U32 | DATA_REG_U64 => {
+                let register = self.read_register(registers, segment.register)?;
+                if !matches!(register.value_type, VALUE_U64 | VALUE_U128) {
+                    return Err(TemplateError::TypeMismatch);
+                }
+                match segment.kind {
+                    DATA_REG_U8 => 1,
+                    DATA_REG_U16 => 2,
+                    DATA_REG_U32 => 4,
+                    _ => 8,
+                }
+            }
+            DATA_REG_I64 => {
+                self.require_type(registers, segment.register, VALUE_I64)?;
+                8
+            }
+            DATA_REG_U128 => {
+                self.require_type(registers, segment.register, VALUE_U128)?;
+                16
+            }
+            DATA_REG_PUBKEY => {
+                self.require_type(registers, segment.register, VALUE_PUBKEY)?;
+                32
+            }
+            DATA_REG_BOOL => {
+                self.require_type(registers, segment.register, VALUE_BOOL)?;
+                1
+            }
+            DATA_REG_BYTES => {
+                let register = self.read_register(registers, segment.register)?;
+                if register.value_type != VALUE_BYTES {
+                    return Err(TemplateError::TypeMismatch);
+                }
+                register.bytes_max_len
+            }
+            _ => return Err(TemplateError::InvalidDataSegment(index)),
+        };
+        Ok(len)
     }
 
     fn verify_cpi(
@@ -518,6 +608,7 @@ mod tests {
     use super::*;
 
     const SYSTEM_TRANSFER_HEX: &str = "42564d3202030000010102010200020001000400000000000400ff000000000003ffff000000000002ffff000000000002000000010000ffff000000000000000000000029ff00ffff000000000000000000000000000000020200000c0000000103020200ff0000040000000400000000000000010101010101010101010101010101010101010101010101010101010101010102000000";
+    const ATA_ASSERTION_HEX: &str = "42564d32020500000006070000000300000000000000000004ffff000000000004ffff000000000000ffff000000000000ffff000000000000ffff0000000000080004ffff0000000000000000000000080102ffff0000000000000000000000080201ffff0000000000000000000000080303ffff00000000000000000000002f0400ffff000000000003000000000017050004ff000000000000000000000028ff05ffff0000000000000000000000070100000000000007020000000000000703000000000000";
 
     #[test]
     fn typescript_system_transfer_fixture_is_zero_copy_and_valid() {
@@ -578,6 +669,43 @@ mod tests {
         wrong_type[48] = VALUE_BOOL;
         assert_eq!(
             ProgramView::parse(&wrong_type).unwrap().verify(),
+            Err(TemplateError::TypeMismatch)
+        );
+    }
+
+    #[test]
+    fn typescript_ata_assertion_fixture_verifies_pda_seeds() {
+        let bytes = decode_hex(ATA_ASSERTION_HEX);
+        let program = ProgramView::parse(&bytes).unwrap();
+        assert_eq!(program.data_segments.len(), 3);
+        assert_eq!(
+            program.verify().unwrap(),
+            VerificationStats {
+                fixed_accounts: 5,
+                batch_stride: 0,
+                batch_max_iterations: 0,
+                inputs: 0,
+                registers: 6,
+                instructions: 7,
+                cpis: 0,
+                max_expanded_cpis: 0,
+                max_cpi_data_len: 0,
+            }
+        );
+
+        let mut excessive_seeds = bytes.clone();
+        // Header (24), five accounts (40), instruction four, then the high u32 of immediate.
+        excessive_seeds[138] = 16;
+        assert_eq!(
+            ProgramView::parse(&excessive_seeds).unwrap().verify(),
+            Err(TemplateError::InvalidInstruction(4))
+        );
+
+        let mut wrong_seed_type = bytes;
+        // Data segments begin after the 24-byte header, five accounts, and seven instructions.
+        wrong_seed_type[176] = DATA_REG_BYTES;
+        assert_eq!(
+            ProgramView::parse(&wrong_seed_type).unwrap().verify(),
             Err(TemplateError::TypeMismatch)
         );
     }

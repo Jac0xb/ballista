@@ -1,4 +1,37 @@
-import { data, step, type AccountReference, type Expression, type Step } from './schema.js';
+import { data, expression, step, type AccountReference, type Expression, type Step } from './schema.js';
+
+export function assertPda(input: {
+  account: AccountReference;
+  program: AccountReference;
+  seeds: Expression[];
+}): Step {
+  return step.require(
+    expression.equal(
+      expression.accountField(input.account, 'key'),
+      expression.pda(input.program, input.seeds),
+    ),
+  );
+}
+
+export function assertAta(input: {
+  associatedTokenAccount: AccountReference;
+  owner: AccountReference;
+  mint: AccountReference;
+  tokenProgram: AccountReference;
+  associatedTokenProgram: AccountReference;
+}): Step {
+  return assertPda({
+    account: input.associatedTokenAccount,
+    program: input.associatedTokenProgram,
+    seeds: [
+      expression.accountField(input.owner, 'key'),
+      expression.accountField(input.tokenProgram, 'key'),
+      expression.accountField(input.mint, 'key'),
+    ],
+  });
+}
+
+export const assertAssociatedTokenAccount = assertAta;
 
 export function systemTransfer(input: {
   systemProgram: AccountReference;
@@ -61,4 +94,20 @@ export function createAssociatedTokenAccount(input: {
     data: [],
     ...(input.when ? { when: input.when } : {}),
   });
+}
+
+/** Uses ordinary ATA Create; Ballista's `isEmpty` guard provides the idempotent behavior. */
+export function ensureAssociatedTokenAccount(input: {
+  associatedTokenProgram: AccountReference;
+  payer: AccountReference;
+  associatedTokenAccount: AccountReference;
+  owner: AccountReference;
+  mint: AccountReference;
+  systemProgram: AccountReference;
+  tokenProgram: AccountReference;
+  when?: Expression;
+}): Step {
+  const isMissing = expression.accountField(input.associatedTokenAccount, 'isEmpty');
+  const when = input.when ? expression.and(isMissing, input.when) : isMissing;
+  return createAssociatedTokenAccount({ ...input, when });
 }

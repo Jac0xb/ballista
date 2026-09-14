@@ -98,7 +98,7 @@ ensureAssociatedTokenAccount({
 ```
 
 ```rust [Rust · run]
-use solana_instruction::AccountMeta;
+use solana_program::instruction::AccountMeta;
 
 let run = ballista_sdk::run_instruction(
     template,

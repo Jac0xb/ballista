@@ -7,8 +7,10 @@ export default defineConfig({
   base: process.env.BALLISTA_DOCS_BASE ?? '/ballista/',
   cleanUrls: true,
   lastUpdated: true,
+  appearance: false,
   head: [
-    ['meta', { name: 'theme-color', content: '#090d14' }],
+    ['meta', { name: 'theme-color', content: '#f7f6f2' }],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: `${process.env.BALLISTA_DOCS_BASE ?? '/ballista/'}ballista-mark.svg` }],
     ['meta', { property: 'og:title', content: 'Ballista · Bounded on-chain orchestration' }],
     [
       'meta',
@@ -20,7 +22,7 @@ export default defineConfig({
   ],
   markdown: {
     lineNumbers: true,
-    theme: { light: 'github-light', dark: 'vesper' },
+    theme: { light: 'github-light', dark: 'github-light' },
   },
   themeConfig: {
     logo: '/ballista-mark.svg',
@@ -102,8 +104,8 @@ export default defineConfig({
     },
     socialLinks: [{ icon: 'github', link: 'https://github.com/Jac0xb/ballista' }],
     footer: {
-      message: 'Bounded by design. Generic by composition.',
-      copyright: 'Released under the MIT License.',
+      message: 'BALLISTA / A SMALL MACHINE FOR COMPLEX TRANSACTIONS',
+      copyright: 'OPEN SOURCE · MIT LICENSE · v0.3',
     },
   },
 });

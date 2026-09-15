@@ -68,6 +68,6 @@ valid bump; these assertions establish address relationships but never grant PDA
 
 ## Product boundary for use cases
 
-The [use-case matrix](../usecases.md) says what the language can express when a suitable downstream
+The [use-case matrix](/use-cases) says what the language can express when a suitable downstream
 instruction and authority model already exist. It does not mean Ballista can invent a protocol
 operation, source a swap route, keep oracle data fresh, sign for a user, or execute itself later.

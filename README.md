@@ -1,10 +1,20 @@
 # Ballista 0.3
 
-Ballista is a bounded orchestration VM for reusable SVM transaction templates.
+Ballista is an on-chain transaction-template engine for Solana. Define a multi-program workflow
+once, compile it into bounded bytecode, store it in an immutable account, and let any caller execute
+it with fresh inputs and accounts—without deploying another custom program.
 
-A creator compiles a template, stores it in an immutable PDA, and anyone can run it with typed
-inputs and transaction accounts. The program validates flat bytecode before finalization, then
-executes directly from borrowed account memory without rebuilding an AST.
+It is designed for the space between a one-off transaction and a bespoke smart contract: payroll
+batches, guarded token operations, account setup, treasury flows, post-CPI invariants, and other
+complex but finite orchestration. Templates can read accounts and the clock, perform checked typed
+math, require conditions, invoke arbitrary programs, and iterate one statically bounded account
+range. They cannot keep mutable state, run unbounded loops, custody PDAs, or invent signer authority.
+
+The runtime validates the complete flat program before finalization and then executes fixed-size
+records directly from borrowed account memory. Developer names and `let` bindings disappear during
+compilation; there is no Borsh AST to allocate or deserialize during `Run`.
+
+Explore the [documentation and dual TypeScript/Rust examples](https://jac0xb.github.io/ballista/).
 
 Ballista is a clean break from the legacy Borsh task format. Old task accounts are not executable
 by the 0.3 runtime.
@@ -158,10 +168,11 @@ derivation, and run/upload instruction conversion.
 
 ```bash
 pnpm test               # fast Rust core tests + TypeScript SDK tests
-pnpm check              # supported Rust crates + SDK typecheck
+pnpm check              # Rust, SDK typecheck, and docs build
 pnpm build:sdk          # ESM and declarations
 pnpm build:program      # Solana SBF program
 pnpm test:integration   # Agave-aligned SBF lifecycle/CPI suite (build program first)
+pnpm docs:dev           # local documentation server
 ```
 
 ## Template lifecycle
@@ -173,7 +184,7 @@ Only uploading templates can be cancelled. Finalized bytes are immutable and can
 The 80-byte account header records creator, ID, upload state, lengths, bump, and SHA-256 payload
 hash. The payload is a canonical series of fixed-size Zerocopy record tables followed by constant
 pubkeys and literal bytes. See [the scope and limits](docs/scope.md) and the
-[25-use-case capability matrix](usecases.md). Current packet, compute, and heap observations are in
+[25-use-case capability matrix](docs/use-cases.md). Current packet, compute, and heap observations are in
 [the measurements note](docs/benchmarks.md).
 
 ## Repository layout

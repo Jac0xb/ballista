@@ -100,7 +100,7 @@ export default defineConfig({
           items: [
             { text: 'TypeScript', link: '/reference/typescript' },
             { text: 'Rust', link: '/reference/rust' },
-            { text: 'Language surface', link: '/reference/language' },
+            { text: 'Template language', link: '/reference/language' },
             { text: 'Wire format', link: '/reference/wire-format' },
             { text: 'Limits', link: '/reference/limits' },
           ],

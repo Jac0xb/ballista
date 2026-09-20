@@ -4,6 +4,23 @@
 Conditions can combine account reads, inputs, time, checked math, comparisons, `AND`, `OR`, and
 `NOT`.
 
+## Why snapshots exist
+
+An expression is re-evaluated everywhere it appears. A read of an account balance compiles to a
+fresh read at each use site, so the same expression written before and after a CPI yields two
+different values, and there is no way to hold on to the first one. Comparing the balance after a
+transfer against a second read of the balance after that transfer proves nothing.
+
+`step.snapshot(name, value)` evaluates its expression once, at that position in the step list, and
+keeps the result in a register for the rest of the run. That is what makes a before-and-after check
+expressible. The snapshot is the old value, and a later read of the same account is the new one.
+
+`step.let` is the identical operation under a name that reads better away from pre/post checks, and
+either can be read back with `expression.snapshot` or `expression.variable`. Both are immutable and
+lexically scoped. Neither allocates an account, costs rent, or survives the transaction: the name
+is resolved by the compiler and never reaches the wire format. Bindings created inside a loop body
+are rebuilt on each iteration and cannot be read after the loop ends.
+
 ## Exact lamport delta
 
 ::: code-group
@@ -77,10 +94,3 @@ const canExecute = expression.and(
 
 step.require(expression.or(canExecute, expression.input('emergencyOverride')));
 ```
-
-## What `let` means
-
-`let` evaluates once and assigns a compiler-visible name to the result register. It is immutable,
-lexically scoped, and creates no account or persistent state. `snapshot` is an alias chosen to make
-pre/post checks read naturally. Loop-local bindings are rebuilt each iteration and cannot escape
-the loop body.

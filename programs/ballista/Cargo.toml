@@ -15,6 +15,9 @@ crate-type = ["cdylib"]
 [features]
 default = []
 no-entrypoint = []
+# Exposes the executor's pure functions for formal specifications (see certora/). No effect on
+# generated code; the module stays private in every other build.
+spec-api = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }

@@ -18,3 +18,5 @@ pkg
 docs/.vitepress/cache
 docs/.vitepress/dist
 .tmp
+.certora_internal
+certora_out

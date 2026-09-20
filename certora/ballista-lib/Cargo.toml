@@ -1,0 +1,31 @@
+# A library view of the on-chain program for the specifications. The program's own crate is a
+# `cdylib` only, and adding `lib` to it changes the release binary under fat LTO, so this package
+# compiles the same source files as an `rlib` instead. Dependencies must match
+# programs/ballista/Cargo.toml.
+[package]
+name = "ballista"
+version = "0.3.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+name = "ballista"
+path = "../../programs/ballista/src/lib.rs"
+crate-type = ["lib"]
+
+[features]
+default = []
+no-entrypoint = []
+spec-api = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
+
+[dependencies]
+thiserror = "=1.0.69"
+ballista-common = { workspace = true }
+pinocchio = { workspace = true }
+pinocchio-system = { workspace = true }
+solana-address = { workspace = true }
+solana-sha256-hasher = { workspace = true }

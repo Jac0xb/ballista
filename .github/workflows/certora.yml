@@ -1,0 +1,51 @@
+name: Formal verification
+
+# Runs the Certora Solana Prover over certora/ballista-specs. The job needs a CERTORAKEY secret,
+# so it is skipped on forks and pull requests from them; the host typecheck of the specifications
+# always runs.
+
+on:
+  pull_request:
+    paths:
+      - 'certora/**'
+      - 'programs/ballista/src/**'
+      - 'common/src/**'
+      - '.github/workflows/certora.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  typecheck:
+    name: Specifications typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: certora -> certora/target
+      - run: cargo check -p ballista-specs --features rt
+        working-directory: certora
+      - run: cargo test -p cvlr-pinocchio --features rt
+        working-directory: certora
+
+  prove:
+    name: Certora Solana Prover
+    needs: typecheck
+    if: ${{ secrets.CERTORAKEY != '' }}
+    runs-on: ubuntu-latest
+    env:
+      CERTORAKEY: ${{ secrets.CERTORAKEY }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install certora-cli
+      - run: cargo install cargo-certora-sbf
+      - run: cargo certora-sbf --tools-version v1.53 --no-build
+        working-directory: certora/ballista-specs
+      - run: certoraSolanaProver run.conf --wait_for_results all
+        working-directory: certora/ballista-specs

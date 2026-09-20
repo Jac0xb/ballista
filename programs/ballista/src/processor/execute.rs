@@ -10,8 +10,9 @@ use solana_address::Address;
 
 use crate::error::{vm_error, BallistaError};
 
+/// A typed register value. Public for formal specifications; the module is private otherwise.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RuntimeValue<'data> {
+pub enum RuntimeValue<'data> {
     Unset,
     Bool(bool),
     U64(u64),
@@ -27,7 +28,7 @@ enum RuntimeValue<'data> {
 /// instruction or account failed. Failures returned by the runtime or by an invoked program pass
 /// through untouched so their codes are never confused with Ballista's.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum RunError {
+pub enum RunError {
     /// A VM failure whose context (the program counter) is attached by the dispatch loop.
     Vm(BallistaError),
     /// A VM failure that already knows its context: an account or input index.
@@ -48,7 +49,7 @@ impl From<ProgramError> for RunError {
     }
 }
 
-type RunResult<T> = Result<T, RunError>;
+pub type RunResult<T> = Result<T, RunError>;
 
 impl RunError {
     /// Maps a failure raised while executing `instruction` at `pc`, logging the location.
@@ -111,7 +112,7 @@ fn log_failure(a: u64, b: u64, c: u64, d: u64, e: u64) {
 
 /// Per-run state: buffers allocated once and reused by every CPI, so heap use does not grow with
 /// the number of invocations (the default SBF allocator never frees), plus the invoke trace.
-struct Scratch<'data> {
+pub struct Scratch<'data> {
     metas: Vec<InstructionAccount<'data>>,
     views: Vec<&'data AccountView>,
     data: Vec<u8>,
@@ -124,7 +125,7 @@ struct Scratch<'data> {
 }
 
 impl<'data> Scratch<'data> {
-    fn new(program: &ProgramView<'data>) -> Self {
+    pub fn new(program: &ProgramView<'data>) -> Self {
         let max_data = program
             .cpis
             .iter()
@@ -208,7 +209,7 @@ fn emit_event(event: &[u8]) {
     let _ = event;
 }
 
-fn parse_inputs<'data>(
+pub fn parse_inputs<'data>(
     descriptors: &[InputDescriptor],
     mut data: &'data [u8],
 ) -> RunResult<Vec<RuntimeValue<'data>>> {
@@ -268,7 +269,7 @@ fn parse_inputs<'data>(
     Ok(inputs)
 }
 
-fn validate_runtime_accounts(
+pub fn validate_runtime_accounts(
     program: &ProgramView<'_>,
     accounts: &[AccountView],
 ) -> RunResult<usize> {
@@ -321,7 +322,7 @@ fn validate_runtime_accounts(
     Ok(iterations)
 }
 
-fn validate_account(
+pub fn validate_account(
     program: &ProgramView<'_>,
     account: &AccountView,
     constraint: &AccountConstraint,
@@ -454,7 +455,7 @@ fn execute_range<'data>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn execute_instruction<'data>(
+pub fn execute_instruction<'data>(
     program: &ProgramView<'data>,
     inputs: &[RuntimeValue<'data>],
     accounts: &'data [AccountView],
@@ -698,7 +699,7 @@ fn blob_range<'data>(
         .ok_or_else(|| BallistaError::InvalidTemplateProgram.into())
 }
 
-fn read_value<'data>(opcode: u8, data: &[u8], offset: usize) -> RunResult<RuntimeValue<'data>> {
+pub fn read_value<'data>(opcode: u8, data: &[u8], offset: usize) -> RunResult<RuntimeValue<'data>> {
     Ok(match opcode {
         OP_READ_U8 => RuntimeValue::U64(read_array::<1>(data, offset)?[0] as u64),
         OP_READ_U16 => RuntimeValue::U64(u16::from_le_bytes(*read_array(data, offset)?) as u64),
@@ -782,7 +783,7 @@ fn invoke_cpi<'data>(
 
 /// Destination for encoded segment bytes: a reusable `Vec` for CPI data, or a fixed stack buffer
 /// for PDA seeds.
-trait ByteSink {
+pub trait ByteSink {
     fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()>;
 }
 
@@ -793,13 +794,13 @@ impl ByteSink for Vec<u8> {
     }
 }
 
-struct FixedSink<'buffer> {
+pub struct FixedSink<'buffer> {
     buffer: &'buffer mut [u8],
-    len: usize,
+    pub len: usize,
 }
 
 impl<'buffer> FixedSink<'buffer> {
-    fn new(buffer: &'buffer mut [u8]) -> Self {
+    pub fn new(buffer: &'buffer mut [u8]) -> Self {
         Self { buffer, len: 0 }
     }
 }
@@ -818,7 +819,7 @@ impl ByteSink for FixedSink<'_> {
 }
 
 /// Encodes one CPI data segment or PDA seed into `sink`.
-fn encode_segment<'data, S: ByteSink>(
+pub fn encode_segment<'data, S: ByteSink>(
     program: &ProgramView<'data>,
     registers: &[RuntimeValue<'data>],
     segment: &DataSegment,
@@ -839,7 +840,7 @@ fn encode_segment<'data, S: ByteSink>(
 }
 
 /// Encodes a register-backed data segment. Literal segments are handled by `encode_segment`.
-fn encode_register_segment<'data, S: ByteSink>(
+pub fn encode_register_segment<'data, S: ByteSink>(
     registers: &[RuntimeValue<'data>],
     segment: &DataSegment,
     sink: &mut S,
@@ -889,7 +890,7 @@ fn encode_register_segment<'data, S: ByteSink>(
     }
 }
 
-fn resolve_account<'data>(
+pub fn resolve_account<'data>(
     program: &ProgramView<'_>,
     accounts: &'data [AccountView],
     reference: u8,
@@ -914,7 +915,7 @@ fn resolve_account<'data>(
         .ok_or_else(|| BallistaError::InvalidRuntimeAccount.into())
 }
 
-fn arithmetic<'data>(
+pub fn arithmetic<'data>(
     opcode: u8,
     left: RuntimeValue<'data>,
     right: RuntimeValue<'data>,
@@ -955,7 +956,7 @@ fn arithmetic<'data>(
     })
 }
 
-fn compare(opcode: u8, left: RuntimeValue<'_>, right: RuntimeValue<'_>) -> RunResult<bool> {
+pub fn compare(opcode: u8, left: RuntimeValue<'_>, right: RuntimeValue<'_>) -> RunResult<bool> {
     macro_rules! compare_values {
         ($left:expr, $right:expr) => {
             match opcode {
@@ -997,7 +998,7 @@ fn compare(opcode: u8, left: RuntimeValue<'_>, right: RuntimeValue<'_>) -> RunRe
     })
 }
 
-fn cast(opcode: u8, value: RuntimeValue<'_>) -> RunResult<RuntimeValue<'_>> {
+pub fn cast(opcode: u8, value: RuntimeValue<'_>) -> RunResult<RuntimeValue<'_>> {
     match opcode {
         OP_CAST_U64 => Ok(RuntimeValue::U64(match value {
             RuntimeValue::U64(value) => value,
@@ -1029,7 +1030,7 @@ fn cast(opcode: u8, value: RuntimeValue<'_>) -> RunResult<RuntimeValue<'_>> {
     }
 }
 
-fn set<'data>(
+pub fn set<'data>(
     registers: &mut [RuntimeValue<'data>],
     index: usize,
     value: RuntimeValue<'data>,
@@ -1041,21 +1042,21 @@ fn set<'data>(
     Ok(())
 }
 
-fn get<'data>(registers: &[RuntimeValue<'data>], index: u8) -> RunResult<RuntimeValue<'data>> {
+pub fn get<'data>(registers: &[RuntimeValue<'data>], index: u8) -> RunResult<RuntimeValue<'data>> {
     match registers.get(index as usize).copied() {
         Some(RuntimeValue::Unset) | None => Err(BallistaError::InvalidRegister.into()),
         Some(value) => Ok(value),
     }
 }
 
-fn as_bool(value: RuntimeValue<'_>) -> RunResult<bool> {
+pub fn as_bool(value: RuntimeValue<'_>) -> RunResult<bool> {
     match value {
         RuntimeValue::Bool(value) => Ok(value),
         _ => Err(BallistaError::TypeMismatch.into()),
     }
 }
 
-fn as_u128(value: RuntimeValue<'_>) -> RunResult<u128> {
+pub fn as_u128(value: RuntimeValue<'_>) -> RunResult<u128> {
     match value {
         RuntimeValue::U64(value) => Ok(value as u128),
         RuntimeValue::U128(value) => Ok(u128::from_le_bytes(value)),
@@ -1063,7 +1064,7 @@ fn as_u128(value: RuntimeValue<'_>) -> RunResult<u128> {
     }
 }
 
-fn read_array<const N: usize>(data: &[u8], offset: usize) -> RunResult<&[u8; N]> {
+pub fn read_array<const N: usize>(data: &[u8], offset: usize) -> RunResult<&[u8; N]> {
     offset
         .checked_add(N)
         .and_then(|end| data.get(offset..end))

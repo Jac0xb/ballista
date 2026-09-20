@@ -68,6 +68,7 @@ export default defineConfig({
             { text: 'PDA and ATA assertions', link: '/guide/pda-assertions' },
             { text: 'Trust model', link: '/guide/trust-model' },
             { text: 'Errors and events', link: '/guide/errors-and-events' },
+            { text: 'Formal verification', link: '/guide/formal-verification' },
           ],
         },
         {

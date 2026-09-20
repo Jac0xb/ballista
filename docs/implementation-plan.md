@@ -75,6 +75,8 @@ external programs, accounts, and authorities listed there.
   does.
 - [x] Run the TypeScript-compiled fixtures end to end under Mollusk.
 - [x] Run host and integration suites in CI on every pull request.
+- [x] Specify the executor, verifier, parser, account constraints, and lifecycle for the Certora
+  Solana Prover, with a pinocchio account adapter.
 - [ ] Deploy version 3 immutably under a new address and refresh the IDL.
 
 ## Supported workflow scenarios

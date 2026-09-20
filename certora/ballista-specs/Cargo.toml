@@ -1,0 +1,37 @@
+[package]
+name = "ballista-specs"
+version = "0.3.0"
+edition = "2021"
+license = "MIT"
+description = "Certora Solana Prover specifications for the Ballista program"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = []
+## Required by `cargo certora-sbf`, which always enables it. Rules are unconditional.
+certora = []
+## Host runtime for typechecking and adapter tests; see cvlr-pinocchio.
+rt = ["cvlr/rt", "cvlr-pinocchio/rt"]
+
+[dependencies]
+ballista = { workspace = true }
+ballista-common = { workspace = true }
+cvlr = { workspace = true }
+cvlr-pinocchio = { workspace = true }
+pinocchio = { workspace = true }
+solana-address = { workspace = true }
+
+[package.metadata.certora]
+sources = [
+    "Cargo.toml",
+    "src/**/*.rs",
+    "../ballista-lib/Cargo.toml",
+    "../cvlr-pinocchio/src/**/*.rs",
+    "../../programs/ballista/src/**/*.rs",
+    "../../common/src/**/*.rs",
+]
+solana_inlining = ["envs/cvlr_inlining.txt"]
+solana_summaries = ["envs/cvlr_summaries.txt"]

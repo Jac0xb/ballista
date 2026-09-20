@@ -13,28 +13,30 @@ pub struct VerificationStats {
     pub max_cpi_data_len: u16,
 }
 
+/// The verifier's static knowledge about one register: its value type and, for `bytes`, the
+/// maximum length it can hold. Public so formal specifications can state typing invariants.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct RegisterInfo {
-    value_type: u8,
-    bytes_max_len: usize,
+pub struct RegisterInfo {
+    pub value_type: u8,
+    pub bytes_max_len: usize,
 }
 
 impl RegisterInfo {
-    const fn scalar(value_type: u8) -> Self {
+    pub const fn scalar(value_type: u8) -> Self {
         Self {
             value_type,
             bytes_max_len: 0,
         }
     }
 
-    const fn bytes(max_len: usize) -> Self {
+    pub const fn bytes(max_len: usize) -> Self {
         Self {
             value_type: VALUE_BYTES,
             bytes_max_len: max_len,
         }
     }
 
-    const fn is_numeric(self) -> bool {
+    pub const fn is_numeric(self) -> bool {
         matches!(self.value_type, VALUE_U64 | VALUE_I64 | VALUE_U128)
     }
 }
@@ -176,6 +178,25 @@ impl ProgramView<'_> {
             max_expanded_cpis: root_cpis as u8,
             max_cpi_data_len: max_cpi_data_len as u16,
         })
+    }
+
+    /// Verifies one instruction record against a register typing state, exactly as the full
+    /// verifier does inside `verify`. Exposed for formal specifications that state the
+    /// per-instruction soundness property: whatever this accepts, the executor runs without a
+    /// structural error and leaves `dst` holding the type recorded here.
+    pub fn verify_single_instruction(
+        &self,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
+        in_loop: bool,
+        previous: Option<&InstructionRecord>,
+        registers: &mut [Option<RegisterInfo>; MAX_REGISTERS],
+    ) -> Result<(usize, usize), TemplateError> {
+        self.verify_record_header(instruction, instruction_index)?;
+        if instruction.opcode == OP_FOREACH {
+            return Err(TemplateError::InvalidBatch);
+        }
+        self.verify_instruction(instruction, instruction_index, in_loop, previous, registers)
     }
 
     fn verify_range(

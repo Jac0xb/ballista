@@ -210,5 +210,7 @@ pubkeys and literal bytes. See [the scope and limits](docs/scope.md) and the
 - `clients/rust`: Rust authoring, instruction codecs, typed inputs, and error decoding.
 - `fixtures`: compiler output and error-name tables shared by the Rust and TypeScript suites.
 - `tests/ballista`: Mollusk integration suite against the compiled SBF program.
+- `certora`: Certora Solana Prover specifications and the `cvlr-pinocchio` adapter; see the
+  [formal verification guide](https://jac0xb.github.io/ballista/guide/formal-verification).
 
 Licensed under MIT.

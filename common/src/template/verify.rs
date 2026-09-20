@@ -74,6 +74,28 @@ impl ProgramView<'_> {
         if header.batch_min_iterations() > header.batch_max_iterations() {
             return Err(TemplateError::InvalidMinIterations);
         }
+        if header.row_input_count() > MAX_ROW_INPUTS || header.total_input_count() > MAX_INPUTS {
+            return Err(TemplateError::TooManyInputs);
+        }
+        // Row inputs are carried once per iteration, so they need a batch to iterate over.
+        if header.row_input_count() != 0 && header.batch_stride() == 0 {
+            return Err(TemplateError::InvalidBatch);
+        }
+        let input_values = header
+            .input_count()
+            .checked_add(
+                header
+                    .row_input_count()
+                    .checked_mul(header.batch_max_iterations())
+                    .ok_or(TemplateError::CountOverflow)?,
+            )
+            .ok_or(TemplateError::CountOverflow)?;
+        if input_values > MAX_INPUT_VALUES {
+            return Err(TemplateError::TooManyInputs);
+        }
+        if header.account_group_count() > MAX_ACCOUNT_GROUPS {
+            return Err(TemplateError::TooManyAccountGroups);
+        }
 
         for (index, constraint) in self.accounts.iter().enumerate() {
             if constraint.flags & !ACCOUNT_FLAGS_MASK != 0
@@ -277,8 +299,7 @@ impl ProgramView<'_> {
         match instruction.opcode {
             OP_LOAD_INPUT => {
                 let input = self
-                    .inputs
-                    .get(instruction.a as usize)
+                    .input_descriptor(instruction.a, in_loop)
                     .ok_or(TemplateError::InvalidInstruction(instruction_index))?;
                 let info = if input.value_type == VALUE_BYTES {
                     RegisterInfo::bytes(input.max_len())
@@ -984,6 +1005,123 @@ mod tests {
             let result = verify_builder(&builder).map(|_| ());
             assert_eq!(&result, expected, "opcode {opcode} with a={a:?} b={b:?}");
         }
+    }
+
+    #[test]
+    fn row_inputs_and_account_groups_are_verified() {
+        // A row input loaded inside the loop takes the row descriptor's type.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        let amount = builder.row_input(VALUE_U64, 0);
+        builder.for_each(0, |body| {
+            let value = body.load_input(amount);
+            let floor = body.const_u64(0);
+            let non_negative = body.binary(OP_LTE, floor, value);
+            body.require(non_negative);
+        });
+        assert!(verify_builder(&builder).is_ok(), "row input inside the loop verifies");
+
+        // Outside the loop the same reference is rejected.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        let amount = builder.row_input(VALUE_U64, 0);
+        builder.load_input(amount);
+        let condition = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(condition));
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidInstruction(0))
+        );
+
+        // An offset past the declared row is rejected.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        builder.row_input(VALUE_U64, 0);
+        builder.for_each(0, |body| {
+            body.load_input(ITERATION_INPUT_BIT | 1);
+        });
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidInstruction(1))
+        );
+
+        // Row inputs need a batch to iterate over.
+        let mut builder = ProgramBuilder::new();
+        builder.row_input(VALUE_U64, 0);
+        builder.const_bool(true);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
+
+        // More than eight row inputs, or more than 32 descriptors in total, are rejected.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(1, 0);
+        for _ in 0..MAX_ROW_INPUTS + 1 {
+            builder.row_input(VALUE_BOOL, 0);
+        }
+        let condition = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(condition));
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TooManyInputs));
+
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(1, 0);
+        for _ in 0..MAX_INPUTS - 4 {
+            builder.input(VALUE_BOOL, 0);
+        }
+        for _ in 0..5 {
+            builder.row_input(VALUE_BOOL, 0);
+        }
+        let condition = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(condition));
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TooManyInputs));
+
+        // Fixed values plus iterations times row values are capped at 256.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(60, 0);
+        for _ in 0..4 {
+            builder.input(VALUE_BOOL, 0);
+        }
+        for _ in 0..MAX_ROW_INPUTS {
+            builder.row_input(VALUE_BOOL, 0);
+        }
+        let condition = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(condition));
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::TooManyInputs),
+            "4 + 60 * 8 values"
+        );
+        builder.batch(31, 0);
+        assert!(verify_builder(&builder).is_ok(), "4 + 31 * 8 values fit");
+
+        // Nine account groups are too many.
+        let mut builder = ProgramBuilder::new();
+        builder.account_groups(MAX_ACCOUNT_GROUPS as u8 + 1);
+        builder.const_bool(true);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::TooManyAccountGroups)
+        );
+
+        // A CPI may forward a declared group and nothing beyond it.
+        let mut builder = ProgramBuilder::new();
+        builder.account_groups(1);
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([9; 32]), None, 0);
+        let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let cpi = builder.cpi_with_group(
+            program,
+            &[(payer, ACCOUNT_SIGNER | ACCOUNT_WRITABLE)],
+            &[],
+            0,
+        );
+        builder.invoke(cpi, None);
+        assert!(verify_builder(&builder).is_ok(), "group 0 of 1 is valid");
+        builder.cpis_mut()[0].account_group = 1;
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
     }
 
     #[test]

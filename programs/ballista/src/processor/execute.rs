@@ -473,9 +473,25 @@ fn append_segment<'data>(
     segment: &DataSegment,
     output: &mut Vec<u8>,
 ) -> ProgramResult {
+    if segment.kind == DATA_LITERAL {
+        let end = segment.offset() + segment.len();
+        let bytes = program
+            .blob
+            .get(segment.offset()..end)
+            .ok_or(BallistaError::InvalidTemplateProgram)?;
+        output.extend_from_slice(bytes);
+        return Ok(());
+    }
+    append_segment_registers(registers, segment, output)
+}
+
+/// Encodes a register-backed data segment. Literal segments are handled by `append_segment`.
+fn append_segment_registers<'data>(
+    registers: &[RuntimeValue<'data>],
+    segment: &DataSegment,
+    output: &mut Vec<u8>,
+) -> ProgramResult {
     match segment.kind {
-        DATA_LITERAL => output
-            .extend_from_slice(&program.blob[segment.offset()..segment.offset() + segment.len()]),
         DATA_REG_U8 => {
             let value = as_u128(get(registers, segment.register)?)?;
             output.push(u8::try_from(value).map_err(|_| BallistaError::ArithmeticOverflow)?);
@@ -721,15 +737,347 @@ fn take<const N: usize>(data: &[u8]) -> Result<(&[u8; N], &[u8]), ProgramError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use RuntimeValue::*;
+
+    fn err(kind: BallistaError) -> ProgramError {
+        kind.into()
+    }
+
+    fn segment(kind: u8, register: u8) -> DataSegment {
+        DataSegment {
+            kind,
+            register,
+            offset_le: [0; 2],
+            len_le: [0; 2],
+            reserved: [0; 2],
+        }
+    }
+
+    fn descriptor(value_type: u8, max_len: u16) -> InputDescriptor {
+        InputDescriptor {
+            value_type,
+            reserved: 0,
+            max_len_le: max_len.to_le_bytes(),
+        }
+    }
 
     #[test]
     fn runtime_value_storage_is_bounded() {
         let value_size = core::mem::size_of::<RuntimeValue<'static>>();
         assert!(value_size <= 40);
-        eprintln!(
-            "runtime value: {value_size} bytes; register file: {} bytes; loop snapshot: {} bytes",
-            value_size * MAX_REGISTERS,
-            value_size * MAX_REGISTERS,
+    }
+
+    #[test]
+    fn arithmetic_checks_every_numeric_type() {
+        assert_eq!(arithmetic(OP_ADD, U64(1), U64(2)), Ok(U64(3)));
+        assert_eq!(
+            arithmetic(OP_ADD, U64(u64::MAX), U64(1)),
+            Err(err(BallistaError::ArithmeticOverflow))
         );
+        assert_eq!(
+            arithmetic(OP_SUB, U64(1), U64(2)),
+            Err(err(BallistaError::ArithmeticOverflow))
+        );
+        assert_eq!(arithmetic(OP_MUL, I64(-3), I64(4)), Ok(I64(-12)));
+        assert_eq!(
+            arithmetic(OP_MUL, I64(i64::MIN), I64(-1)),
+            Err(err(BallistaError::ArithmeticOverflow))
+        );
+        assert_eq!(arithmetic(OP_DIV, I64(7), I64(-2)), Ok(I64(-3)));
+        assert_eq!(
+            arithmetic(OP_DIV, U64(7), U64(0)),
+            Err(err(BallistaError::DivisionByZero))
+        );
+        assert_eq!(
+            arithmetic(OP_DIV, I64(i64::MIN), I64(-1)),
+            Err(err(BallistaError::ArithmeticOverflow))
+        );
+        assert_eq!(arithmetic(OP_MIN, I64(-1), I64(1)), Ok(I64(-1)));
+        assert_eq!(arithmetic(OP_MAX, U64(1), U64(9)), Ok(U64(9)));
+        let max = U128(u128::MAX.to_le_bytes());
+        let one = U128(1u128.to_le_bytes());
+        assert_eq!(
+            arithmetic(OP_ADD, max, one),
+            Err(err(BallistaError::ArithmeticOverflow))
+        );
+        assert_eq!(arithmetic(OP_SUB, max, one), Ok(U128((u128::MAX - 1).to_le_bytes())));
+        assert_eq!(
+            arithmetic(OP_ADD, U64(1), I64(1)),
+            Err(err(BallistaError::TypeMismatch))
+        );
+        assert_eq!(
+            arithmetic(OP_ADD, Bool(true), Bool(true)),
+            Err(err(BallistaError::TypeMismatch))
+        );
+        assert_eq!(
+            arithmetic(OP_ADD, Pubkey([1; 32]), Pubkey([1; 32])),
+            Err(err(BallistaError::TypeMismatch))
+        );
+        assert_eq!(
+            arithmetic(OP_EQ, U64(1), U64(1)),
+            Err(err(BallistaError::ArithmeticOverflow)),
+            "a non-arithmetic opcode falls through the checked macro as overflow"
+        );
+    }
+
+    #[test]
+    fn comparisons_restrict_ordering_to_numbers() {
+        assert_eq!(compare(OP_LT, I64(-5), I64(3)), Ok(true));
+        assert_eq!(compare(OP_GTE, U64(3), U64(3)), Ok(true));
+        assert_eq!(compare(OP_GT, U64(3), U64(3)), Ok(false));
+        assert_eq!(
+            compare(OP_LTE, U128(2u128.to_le_bytes()), U128(3u128.to_le_bytes())),
+            Ok(true)
+        );
+        assert_eq!(compare(OP_NE, Bool(true), Bool(false)), Ok(true));
+        assert_eq!(
+            compare(OP_LT, Bool(false), Bool(true)),
+            Err(err(BallistaError::TypeMismatch))
+        );
+        assert_eq!(compare(OP_EQ, Pubkey([1; 32]), Pubkey([1; 32])), Ok(true));
+        assert_eq!(
+            compare(OP_GT, Pubkey([2; 32]), Pubkey([1; 32])),
+            Err(err(BallistaError::TypeMismatch))
+        );
+        assert_eq!(compare(OP_EQ, Bytes(&[1, 2]), Bytes(&[1, 2])), Ok(true));
+        assert_eq!(compare(OP_NE, Bytes(&[1, 2]), Bytes(&[1, 2, 3])), Ok(true));
+        assert_eq!(
+            compare(OP_LTE, Bytes(&[1]), Bytes(&[2])),
+            Err(err(BallistaError::TypeMismatch))
+        );
+        assert_eq!(
+            compare(OP_EQ, U64(1), U128(1u128.to_le_bytes())),
+            Err(err(BallistaError::TypeMismatch))
+        );
+        assert_eq!(
+            compare(OP_ADD, U64(1), U64(1)),
+            Err(err(BallistaError::InvalidTemplateProgram))
+        );
+    }
+
+    #[test]
+    fn casts_cover_every_pair_and_reject_out_of_range() {
+        assert_eq!(
+            cast(OP_CAST_U64, I64(-1)),
+            Err(err(BallistaError::ArithmeticOverflow))
+        );
+        assert_eq!(cast(OP_CAST_U64, I64(5)), Ok(U64(5)));
+        assert_eq!(cast(OP_CAST_U64, U64(5)), Ok(U64(5)));
+        assert_eq!(
+            cast(OP_CAST_U64, U128((u64::MAX as u128 + 1).to_le_bytes())),
+            Err(err(BallistaError::ArithmeticOverflow))
+        );
+        assert_eq!(
+            cast(OP_CAST_U64, U128((u64::MAX as u128).to_le_bytes())),
+            Ok(U64(u64::MAX))
+        );
+        assert_eq!(
+            cast(OP_CAST_I64, U64(u64::MAX)),
+            Err(err(BallistaError::ArithmeticOverflow))
+        );
+        assert_eq!(cast(OP_CAST_I64, U64(7)), Ok(I64(7)));
+        assert_eq!(cast(OP_CAST_I64, I64(-7)), Ok(I64(-7)));
+        assert_eq!(cast(OP_CAST_I64, U128(7u128.to_le_bytes())), Ok(I64(7)));
+        assert_eq!(
+            cast(OP_CAST_U128, I64(-1)),
+            Err(err(BallistaError::ArithmeticOverflow))
+        );
+        assert_eq!(cast(OP_CAST_U128, I64(1)), Ok(U128(1u128.to_le_bytes())));
+        assert_eq!(cast(OP_CAST_U128, U64(9)), Ok(U128(9u128.to_le_bytes())));
+        assert_eq!(cast(OP_CAST_U128, U128([3; 16])), Ok(U128([3; 16])));
+        assert_eq!(
+            cast(OP_CAST_U64, Bool(true)),
+            Err(err(BallistaError::TypeMismatch))
+        );
+        assert_eq!(
+            cast(OP_CAST_I64, Pubkey([0; 32])),
+            Err(err(BallistaError::TypeMismatch))
+        );
+        assert_eq!(
+            cast(OP_CAST_U128, Bytes(&[1])),
+            Err(err(BallistaError::TypeMismatch))
+        );
+        assert_eq!(
+            cast(OP_ADD, U64(1)),
+            Err(err(BallistaError::InvalidTemplateProgram))
+        );
+    }
+
+    #[test]
+    fn data_segments_encode_each_kind_and_reject_narrowing_overflow() {
+        let registers = [
+            U64(300),
+            U128(1u128.to_le_bytes()),
+            I64(-2),
+            Pubkey([7; 32]),
+            Bool(true),
+            Bytes(&[9, 9]),
+            U64(5),
+            U128((u64::MAX as u128 + 1).to_le_bytes()),
+        ];
+        let encode = |kind: u8, register: u8| {
+            let mut output = Vec::new();
+            append_segment_registers(&registers, &segment(kind, register), &mut output)
+                .map(|_| output)
+        };
+        assert_eq!(
+            encode(DATA_REG_U8, 0),
+            Err(err(BallistaError::ArithmeticOverflow))
+        );
+        assert_eq!(encode(DATA_REG_U8, 6), Ok(vec![5]));
+        assert_eq!(encode(DATA_REG_U16, 0), Ok(vec![44, 1]));
+        assert_eq!(encode(DATA_REG_U32, 6), Ok(vec![5, 0, 0, 0]));
+        assert_eq!(encode(DATA_REG_U64, 1), Ok(1u64.to_le_bytes().to_vec()));
+        assert_eq!(
+            encode(DATA_REG_U64, 7),
+            Err(err(BallistaError::ArithmeticOverflow)),
+            "a u128 above u64::MAX cannot narrow to a u64 segment"
+        );
+        assert_eq!(encode(DATA_REG_I64, 2), Ok((-2i64).to_le_bytes().to_vec()));
+        assert_eq!(encode(DATA_REG_PUBKEY, 3), Ok(vec![7; 32]));
+        assert_eq!(encode(DATA_REG_BOOL, 4), Ok(vec![1]));
+        assert_eq!(encode(DATA_REG_BYTES, 5), Ok(vec![9, 9]));
+        assert_eq!(
+            encode(DATA_REG_U128, 1),
+            Ok(1u128.to_le_bytes().to_vec())
+        );
+        assert_eq!(
+            encode(DATA_REG_I64, 0),
+            Err(err(BallistaError::TypeMismatch))
+        );
+        assert_eq!(
+            encode(DATA_REG_U64, 2),
+            Err(err(BallistaError::TypeMismatch)),
+            "signed registers never encode as unsigned"
+        );
+        assert_eq!(
+            encode(DATA_REG_U128, 0),
+            Err(err(BallistaError::TypeMismatch))
+        );
+        assert_eq!(
+            encode(DATA_REG_PUBKEY, 5),
+            Err(err(BallistaError::TypeMismatch))
+        );
+        assert_eq!(
+            encode(DATA_REG_BOOL, 0),
+            Err(err(BallistaError::TypeMismatch))
+        );
+        assert_eq!(
+            encode(DATA_REG_BYTES, 0),
+            Err(err(BallistaError::TypeMismatch))
+        );
+        assert_eq!(
+            encode(DATA_REG_U8, 9),
+            Err(err(BallistaError::InvalidRegister)),
+            "out-of-range register"
+        );
+        assert_eq!(
+            encode(0xfe, 0),
+            Err(err(BallistaError::InvalidTemplateProgram))
+        );
+    }
+
+    #[test]
+    fn input_parsing_covers_each_type_and_rejects_malformed_bytes() {
+        assert_eq!(
+            parse_inputs(&[descriptor(VALUE_BOOL, 0)], &[1]).unwrap()[0],
+            Bool(true)
+        );
+        assert_eq!(
+            parse_inputs(&[descriptor(VALUE_BOOL, 0)], &[0]).unwrap()[0],
+            Bool(false)
+        );
+        assert_eq!(
+            parse_inputs(&[descriptor(VALUE_BOOL, 0)], &[2]),
+            Err(err(BallistaError::InvalidRunInputs))
+        );
+        assert_eq!(
+            parse_inputs(&[descriptor(VALUE_U64, 0)], &7u64.to_le_bytes()).unwrap()[0],
+            U64(7)
+        );
+        assert_eq!(
+            parse_inputs(&[descriptor(VALUE_I64, 0)], &(-7i64).to_le_bytes()).unwrap()[0],
+            I64(-7)
+        );
+        assert_eq!(
+            parse_inputs(&[descriptor(VALUE_U128, 0)], &[4; 16]).unwrap()[0],
+            U128([4; 16])
+        );
+        assert_eq!(
+            parse_inputs(&[descriptor(VALUE_PUBKEY, 0)], &[5; 32]).unwrap()[0],
+            Pubkey([5; 32])
+        );
+        assert_eq!(
+            parse_inputs(&[descriptor(VALUE_BYTES, 4)], &[2, 0, 8, 9]).unwrap()[0],
+            Bytes(&[8, 9])
+        );
+        assert_eq!(
+            parse_inputs(&[descriptor(VALUE_BYTES, 4)], &[0, 0]).unwrap()[0],
+            Bytes(&[])
+        );
+        assert_eq!(
+            parse_inputs(&[descriptor(VALUE_BYTES, 1)], &[2, 0, 8, 9]),
+            Err(err(BallistaError::InvalidRunInputs)),
+            "longer than the declared maximum"
+        );
+        assert_eq!(
+            parse_inputs(&[descriptor(VALUE_BYTES, 4)], &[5, 0, 8, 9]),
+            Err(err(BallistaError::InvalidRunInputs)),
+            "length prefix past the end"
+        );
+        assert_eq!(
+            parse_inputs(&[descriptor(VALUE_U64, 0)], &[1, 2, 3]),
+            Err(err(BallistaError::InvalidRunInputs)),
+            "truncated"
+        );
+        assert_eq!(
+            parse_inputs(&[descriptor(VALUE_U64, 0)], &[0; 9]),
+            Err(err(BallistaError::InvalidRunInputs)),
+            "trailing byte"
+        );
+        assert_eq!(
+            parse_inputs(&[descriptor(0xfe, 0)], &[0]),
+            Err(err(BallistaError::InvalidRunInputs))
+        );
+        let two = parse_inputs(
+            &[descriptor(VALUE_BOOL, 0), descriptor(VALUE_U64, 0)],
+            &[1, 9, 0, 0, 0, 0, 0, 0, 0],
+        )
+        .unwrap();
+        assert_eq!(two, vec![Bool(true), U64(9)]);
+        assert!(parse_inputs(&[], &[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn register_and_byte_access_reject_unset_and_out_of_range() {
+        let mut registers = vec![Unset; 2];
+        assert_eq!(get(&registers, 0), Err(err(BallistaError::InvalidRegister)));
+        assert_eq!(get(&registers, 2), Err(err(BallistaError::InvalidRegister)));
+        set(&mut registers, 1, U64(1)).unwrap();
+        assert_eq!(get(&registers, 1), Ok(U64(1)));
+        assert_eq!(
+            set(&mut registers, 2, U64(1)),
+            Err(err(BallistaError::InvalidRegister))
+        );
+        assert_eq!(as_bool(Bool(true)), Ok(true));
+        assert_eq!(as_bool(U64(1)), Err(err(BallistaError::TypeMismatch)));
+        assert_eq!(as_u128(U64(3)), Ok(3));
+        assert_eq!(as_u128(U128(4u128.to_le_bytes())), Ok(4));
+        assert_eq!(as_u128(I64(1)), Err(err(BallistaError::TypeMismatch)));
+        assert_eq!(
+            read_array::<4>(&[1, 2, 3], 0),
+            Err(err(BallistaError::InvalidRuntimeAccount))
+        );
+        assert_eq!(
+            read_array::<2>(&[1, 2, 3], usize::MAX),
+            Err(err(BallistaError::InvalidRuntimeAccount)),
+            "offset overflow is not a panic"
+        );
+        assert_eq!(read_array::<2>(&[1, 2, 3], 1), Ok(&[2, 3]));
+        assert_eq!(
+            take::<2>(&[1]),
+            Err(err(BallistaError::InvalidRunInputs))
+        );
+        assert_eq!(take::<1>(&[1, 2]), Ok((&[1], &[2][..])));
     }
 }

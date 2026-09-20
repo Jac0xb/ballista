@@ -9,9 +9,10 @@ use error::{verifier_error, BallistaError};
 use pinocchio::{
     cpi::{Seed, Signer},
     error::ProgramError,
+    sysvars::{rent::Rent, Sysvar},
     AccountView, Address, ProgramResult,
 };
-use pinocchio_system::instructions::CreateAccount;
+use pinocchio_system::instructions::{Allocate, Assign, CreateAccount, Transfer};
 use solana_address::declare_id;
 use solana_sha256_hasher::hash;
 use utils::pda::{get_template_address, TEMPLATE_SEED};
@@ -296,14 +297,35 @@ fn create_template_account(
         Seed::from(bump_bytes.as_ref()),
     ];
     let signer = Signer::from(seeds.as_slice());
-    CreateAccount::with_minimum_balance(
-        creator,
-        template,
-        (TEMPLATE_ACCOUNT_HEADER_LEN + payload_len) as u64,
-        &crate::ID,
-        None,
-    )?
-    .invoke_signed(&[signer])?;
+    let space = TEMPLATE_ACCOUNT_HEADER_LEN + payload_len;
+    if template.lamports() == 0 {
+        CreateAccount::with_minimum_balance(creator, template, space as u64, &crate::ID, None)?
+            .invoke_signed(&[signer])?;
+    } else {
+        // Someone already sent lamports to this address. `CreateAccount` would reject it, which
+        // lets anyone block a template ID with dust. Top up to rent exemption if needed, then
+        // allocate and assign under the PDA signature exactly as the ATA program does.
+        let required = Rent::get()?.try_minimum_balance(space)?;
+        let shortfall = required.saturating_sub(template.lamports());
+        if shortfall > 0 {
+            Transfer {
+                from: creator,
+                to: template,
+                lamports: shortfall,
+            }
+            .invoke()?;
+        }
+        Allocate {
+            account: template,
+            space: space as u64,
+        }
+        .invoke_signed(&[signer.clone()])?;
+        Assign {
+            account: template,
+            owner: &crate::ID,
+        }
+        .invoke_signed(&[signer])?;
+    }
 
     let mut data = template.try_borrow_mut()?;
     data[..TEMPLATE_ACCOUNT_HEADER_LEN].copy_from_slice(header.as_bytes());

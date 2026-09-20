@@ -486,6 +486,57 @@ mod tests {
         assert_eq!(token_amount(&context, source), source_before_mismatch);
     }
 
+    /// Anyone can send lamports to a predictable template address before it is created. Creation
+    /// must tolerate that instead of letting dust block the ID forever.
+    #[test]
+    fn create_template_succeeds_on_a_prefunded_pda() {
+        let creator = Pubkey::new_unique();
+        let (dusted, _) = find_template_pda(&creator, 77);
+        let (overfunded, _) = find_template_pda(&creator, 78);
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        accounts.insert(dusted, Account::new(1, 0, &system_program::id()));
+        accounts.insert(overfunded, Account::new(5_000_000_000, 0, &system_program::id()));
+        let context = context(accounts);
+        let payload = system_transfer_template(None, false);
+
+        let result = context.process_instruction(&create_template_instruction(creator, 77, &payload));
+        assert!(result.program_result.is_ok(), "{result:#?}");
+        {
+            let store = context.account_store.borrow();
+            let account = store.get(&dusted).expect("template account");
+            assert_eq!(account.owner(), &ID);
+            let decoded = TemplateAccount::parse(account.data()).expect("template parses");
+            assert!(decoded.finalized_program().is_ok());
+        }
+
+        // An address already holding more than rent exemption costs the creator nothing.
+        let before = lamports(&context, creator);
+        let result = context.process_instruction(&create_template_instruction(creator, 78, &payload));
+        assert!(result.program_result.is_ok(), "{result:#?}");
+        assert_eq!(lamports(&context, creator), before);
+        assert_eq!(lamports(&context, overfunded), 5_000_000_000);
+
+        // The chunked path takes the same route.
+        let (chunked, _) = find_template_pda(&creator, 79);
+        context
+            .account_store
+            .borrow_mut()
+            .insert(chunked, Account::new(1, 0, &system_program::id()));
+        let hash = template_hash(&payload);
+        assert!(context
+            .process_instruction(&begin_template_instruction(creator, 79, payload.len() as u32, hash))
+            .program_result
+            .is_ok());
+        assert!(context
+            .process_instruction(&write_template_chunk_instruction(creator, chunked, 0, &payload))
+            .program_result
+            .is_ok());
+        assert!(context
+            .process_instruction(&finalize_template_instruction(creator, chunked))
+            .program_result
+            .is_ok());
+    }
+
     /// Fifty-eight system transfers each carrying 1,000 bytes of instruction data. The system
     /// program's bincode decoder tolerates trailing bytes, so the padding is accepted. Per-CPI
     /// allocation with a bump allocator would need about 60 KB against a 32 KB heap; scratch

@@ -6,6 +6,11 @@
 //! memory with havoced contents and hands out views over it, so rules can call pinocchio handlers
 //! with fully symbolic accounts.
 //!
+//! Everything lives on the heap. The prover tracks stack memory slot by slot and treats a stack
+//! array indexed by a nondeterministic value as an analysis error, while heap memory supports
+//! symbolic offsets. The `heap_*` helpers exist so rules can move the few values a program indexes
+//! symbolically (account arrays, instruction data, constant payloads) off the stack.
+//!
 //! Everything here is independent of any particular program and could live upstream next to
 //! `cvlr-solana`.
 
@@ -57,6 +62,24 @@ pub fn nondet_slice<const N: usize>() -> &'static mut [u8] {
     &mut bytes[..len]
 }
 
+/// A heap copy of `bytes`. Use it for constant payloads and instruction data that the program
+/// under analysis will index with offsets it computes at run time.
+pub fn heap_bytes<const N: usize>(bytes: &[u8; N]) -> &'static mut [u8; N] {
+    let heap = alloc_mut_ref_havoced::<[u8; N]>();
+    heap.copy_from_slice(bytes);
+    heap
+}
+
+/// Moves account views to the heap, where a program may index them by a nondeterministic
+/// account number.
+pub fn heap_views<const N: usize>(views: [AccountView; N]) -> &'static mut [AccountView; N] {
+    let heap = alloc_mut_ref_havoced::<[AccountView; N]>();
+    // SAFETY: `heap` is a fresh, properly aligned allocation for exactly this type, and writing
+    // through it consumes `views` without dropping the havoced bytes it replaces.
+    unsafe { core::ptr::write(heap, views) };
+    heap
+}
+
 /// One account exactly as the Solana runtime lays it out for pinocchio: the header, then `DATA`
 /// bytes of account data. `data_len` in the header never exceeds `DATA`.
 #[repr(C)]
@@ -104,9 +127,15 @@ pub fn nondet_account_view<const DATA: usize>() -> AccountView {
     AccountSlot::<DATA>::nondet().view()
 }
 
-/// `N` independent nondeterministic account views.
-pub fn nondet_account_views<const N: usize, const DATA: usize>() -> [AccountView; N] {
-    core::array::from_fn(|_| nondet_account_view::<DATA>())
+/// `N` independent nondeterministic account views, on the heap.
+pub fn nondet_account_views<const N: usize, const DATA: usize>() -> &'static mut [AccountView; N] {
+    let views = alloc_mut_ref_havoced::<[AccountView; N]>();
+    for view in views.iter_mut() {
+        // SAFETY: each element is overwritten exactly once before any read; the havoced bytes it
+        // replaces are not a valid `AccountView` and must not be dropped.
+        unsafe { core::ptr::write(view, nondet_account_view::<DATA>()) };
+    }
+    views
 }
 
 #[cfg(all(test, feature = "rt"))]
@@ -131,5 +160,25 @@ mod tests {
             core::mem::size_of::<AccountSlot<64>>(),
             core::mem::size_of::<RuntimeAccount>() + 64
         );
+    }
+
+    #[test]
+    fn heap_copies_preserve_contents_and_views() {
+        let bytes = heap_bytes(&[1u8, 2, 3, 4]);
+        assert_eq!(bytes, &[1, 2, 3, 4]);
+        bytes[0] = 9;
+        assert_eq!(bytes[0], 9);
+
+        let first = AccountSlot::<0>::nondet();
+        first.header.lamports = 1;
+        let second = AccountSlot::<0>::nondet();
+        second.header.lamports = 2;
+        let views = heap_views([first.view(), second.view()]);
+        assert_eq!(views[0].lamports(), 1);
+        assert_eq!(views[1].lamports(), 2);
+
+        let many = nondet_account_views::<3, 8>();
+        assert_eq!(many.len(), 3);
+        assert!(many.iter().all(|view| view.data_len() <= 8));
     }
 }

@@ -154,5 +154,11 @@
 
 
 ;;;; Ballista-specific inlining
-;; Never inline the nondet account constructors: the prover treats their memory as havoced.
-#[inline(never)] ^cvlr_pinocchio::.*nondet.*$
+;; Cross-program invocations are opaque. What a callee does is outside every property here, and
+;; pinocchio's bounded CPI helper fills a stack array at a data-dependent index that the pointer
+;; analysis cannot resolve. The executor's CPI and the template account creation each go through
+;; one out-of-line function; both stay external and return a nondeterministic ProgramResult (see
+;; the summaries file). The cvlr-pinocchio constructors are inlined so the prover sees their heap
+;; allocations directly.
+#[inline(never)] ^ballista::processor::execute::bounded_invoke$
+#[inline(never)] ^ballista::create_template_account$

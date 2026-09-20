@@ -121,3 +121,10 @@
 #[type((*i64)(r1+24):num)]
 #[type((*i8)(r1+32):num)]
 ^solana_address::Address::find_program_address$
+
+;; ProgramResult is Result<(), ProgramError>: eight bytes, returned in r0. Both opaque CPI paths
+;; (see the inlining file) produce a nondeterministic result and touch no memory.
+#[type(r0:num)]
+^ballista::processor::execute::bounded_invoke$
+#[type(r0:num)]
+^ballista::create_template_account$

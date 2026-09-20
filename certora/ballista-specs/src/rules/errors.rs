@@ -27,16 +27,18 @@ pub fn rule_decoded_errors_partition_by_range() {
                 ErrorSource::Runtime => {
                     cvlr_assert!(kind >= RUNTIME_ERROR_BASE);
                     cvlr_assert!(kind < RUNTIME_ERROR_BASE + RUNTIME_ERROR_NAMES.len() as u32);
-                    cvlr_assert!(
-                        decoded.name == RUNTIME_ERROR_NAMES[(kind - RUNTIME_ERROR_BASE) as usize]
-                    );
+                    cvlr_assert!(core::ptr::eq(
+                        decoded.name,
+                        RUNTIME_ERROR_NAMES[(kind - RUNTIME_ERROR_BASE) as usize]
+                    ));
                 }
                 ErrorSource::Verifier => {
                     cvlr_assert!(kind >= VERIFIER_ERROR_BASE);
                     cvlr_assert!(kind < VERIFIER_ERROR_BASE + VERIFIER_ERROR_NAMES.len() as u32);
-                    cvlr_assert!(
-                        decoded.name == VERIFIER_ERROR_NAMES[(kind - VERIFIER_ERROR_BASE) as usize]
-                    );
+                    cvlr_assert!(core::ptr::eq(
+                        decoded.name,
+                        VERIFIER_ERROR_NAMES[(kind - VERIFIER_ERROR_BASE) as usize]
+                    ));
                 }
             }
         }

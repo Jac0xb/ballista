@@ -1,5 +1,10 @@
 //! The parser rejects foreign payloads before anything else and never returns a view whose
 //! sections disagree with its header or overrun the payload.
+//!
+//! Whole-program `verify` has no rule here. It keeps its register table in a stack array and
+//! indexes it by register numbers read from the payload, which the prover's pointer analysis does
+//! not follow; moving the table would be a change to the program for the prover's sake. The
+//! verifier is covered one instruction at a time in `rules::typing` instead.
 
 use ballista_common::template::*;
 use cvlr::prelude::*;
@@ -61,27 +66,3 @@ pub fn rule_parsed_sections_exactly_consume_the_payload() {
     }
 }
 
-#[rule]
-pub fn rule_verified_programs_respect_every_static_limit() {
-    let bytes: &[u8] = nondet_slice::<PAYLOAD>();
-    let Ok(program) = ProgramView::parse(bytes) else {
-        cvlr_satisfy!(true);
-        return;
-    };
-    if let Ok(stats) = program.verify() {
-        cvlr_assert!(stats.registers as usize <= MAX_REGISTERS);
-        cvlr_assert!(stats.instructions as usize <= MAX_VM_INSTRUCTIONS);
-        cvlr_assert!(stats.instructions >= 1);
-        cvlr_assert!(stats.max_expanded_cpis as usize <= MAX_EXPANDED_CPIS);
-        cvlr_assert!(stats.max_cpi_data_len as usize <= MAX_CPI_DATA_LEN);
-        cvlr_assert!(stats.batch_stride as usize <= MAX_BATCH_STRIDE);
-        cvlr_assert!(
-            program.header.batch_min_iterations() <= program.header.batch_max_iterations()
-        );
-        cvlr_assert!(
-            stats.fixed_accounts as usize
-                + stats.batch_stride as usize * stats.batch_max_iterations as usize
-                <= MAX_RUNTIME_ACCOUNTS
-        );
-    }
-}

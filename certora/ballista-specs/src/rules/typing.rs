@@ -10,7 +10,9 @@
 use ballista::error::BallistaError;
 use ballista::processor::execute::{execute_instruction, RunError, RuntimeValue, Scratch};
 use ballista_common::template::*;
+use cvlr::nondet::havoc::alloc_mut_ref_havoced;
 use cvlr::prelude::*;
+use cvlr_pinocchio::nondet_account_views;
 use pinocchio::AccountView;
 
 use super::util::{
@@ -30,10 +32,13 @@ fn value_dependent(kind: BallistaError) -> bool {
 }
 
 fn check_typing_preservation(with_account: bool, accounts: &[AccountView]) {
-    let bytes = spec_program(with_account);
-    let program = ProgramView::parse(&bytes).expect("spec program parses");
+    let program = ProgramView::parse(spec_program(with_account)).expect("spec program parses");
 
-    let mut typing = [None; MAX_REGISTERS];
+    // The verifier's register table lives on the heap so the prover can follow its symbolic
+    // indexes. Only the first `REGISTERS` entries are initialized: the verifier bounds-checks every
+    // register number against the declared count before touching the table, so the rest is never
+    // read.
+    let typing = alloc_mut_ref_havoced::<[Option<RegisterInfo>; MAX_REGISTERS]>();
     let mut registers: Vec<RuntimeValue> = Vec::with_capacity(REGISTERS);
     for register in 0..REGISTERS {
         let info = nondet_register_info();
@@ -46,7 +51,7 @@ fn check_typing_preservation(with_account: bool, accounts: &[AccountView]) {
     clog!(instruction.opcode, instruction.dst, instruction.a, instruction.b, instruction.c);
 
     // Only instructions the verifier accepts are of interest.
-    let verdict = program.verify_single_instruction(&instruction, 0, in_loop, None, &mut typing);
+    let verdict = program.verify_single_instruction(&instruction, 0, in_loop, None, typing);
     cvlr_assume!(verdict.is_ok());
 
     let mut scratch = Scratch::new(&program);
@@ -110,6 +115,6 @@ pub fn rule_verified_pure_instructions_preserve_register_typing() {
 /// reads: key, owner, lamports, data length, and emptiness.
 #[rule]
 pub fn rule_verified_account_reads_preserve_register_typing() {
-    let account = cvlr_pinocchio::nondet_account_view::<64>();
-    check_typing_preservation(true, core::slice::from_ref(&account));
+    let accounts = nondet_account_views::<1, 64>();
+    check_typing_preservation(true, &accounts[..]);
 }

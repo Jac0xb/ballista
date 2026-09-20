@@ -7,8 +7,15 @@ use cvlr::prelude::*;
 
 use super::util::pick;
 
-const ARITHMETIC: [u8; 6] = [OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MIN, OP_MAX];
-const ORDERED: [u8; 6] = [OP_EQ, OP_NE, OP_LT, OP_LTE, OP_GT, OP_GTE];
+/// One of the six arithmetic opcodes.
+fn arithmetic_opcode() -> u8 {
+    pick!(OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MIN, OP_MAX)
+}
+
+/// One of the six comparison opcodes.
+fn comparison_opcode() -> u8 {
+    pick!(OP_EQ, OP_NE, OP_LT, OP_LTE, OP_GT, OP_GTE)
+}
 
 /// The result Rust's checked operators give, or `None` on overflow or division by zero.
 macro_rules! checked_result {
@@ -26,7 +33,7 @@ macro_rules! checked_result {
 
 #[rule]
 pub fn rule_u64_arithmetic_is_checked() {
-    let op = pick(&ARITHMETIC);
+    let op = arithmetic_opcode();
     let a: u64 = nondet();
     let b: u64 = nondet();
     let expected = checked_result!(op, a, b);
@@ -44,7 +51,7 @@ pub fn rule_u64_arithmetic_is_checked() {
 
 #[rule]
 pub fn rule_i64_arithmetic_is_checked() {
-    let op = pick(&ARITHMETIC);
+    let op = arithmetic_opcode();
     let a: i64 = nondet();
     let b: i64 = nondet();
     let expected = checked_result!(op, a, b);
@@ -63,7 +70,7 @@ pub fn rule_i64_arithmetic_is_checked() {
 
 #[rule]
 pub fn rule_u128_arithmetic_is_checked() {
-    let op = pick(&ARITHMETIC);
+    let op = arithmetic_opcode();
     let a: u128 = nondet();
     let b: u128 = nondet();
     let expected = checked_result!(op, a, b);
@@ -84,26 +91,26 @@ pub fn rule_u128_arithmetic_is_checked() {
 
 #[rule]
 pub fn rule_arithmetic_rejects_mixed_and_non_numeric_operands() {
-    let op = pick(&ARITHMETIC);
-    let left = pick(&[
+    let op = arithmetic_opcode();
+    let left = pick!(
         RuntimeValue::U64(1),
         RuntimeValue::I64(1),
         RuntimeValue::Bool(true),
         RuntimeValue::Pubkey([1; 32]),
         RuntimeValue::Bytes(&[1]),
-    ]);
-    let right = pick(&[
+    );
+    let right = pick!(
         RuntimeValue::U128([0; 16]),
         RuntimeValue::Bool(false),
         RuntimeValue::Pubkey([2; 32]),
         RuntimeValue::Unset,
-    ]);
+    );
     cvlr_assert!(arithmetic(op, left, right) == Err(RunError::Vm(BallistaError::TypeMismatch)));
 }
 
 #[rule]
 pub fn rule_u64_comparisons_match_rust() {
-    let op = pick(&ORDERED);
+    let op = comparison_opcode();
     let a: u64 = nondet();
     let b: u64 = nondet();
     let expected = match op {
@@ -119,7 +126,7 @@ pub fn rule_u64_comparisons_match_rust() {
 
 #[rule]
 pub fn rule_i64_comparisons_match_rust() {
-    let op = pick(&ORDERED);
+    let op = comparison_opcode();
     let a: i64 = nondet();
     let b: i64 = nondet();
     let expected = match op {
@@ -135,13 +142,13 @@ pub fn rule_i64_comparisons_match_rust() {
 
 #[rule]
 pub fn rule_ordering_is_numeric_only() {
-    let op = pick(&[OP_LT, OP_LTE, OP_GT, OP_GTE]);
-    let pair = pick(&[
+    let op = pick!(OP_LT, OP_LTE, OP_GT, OP_GTE);
+    let pair = pick!(
         (RuntimeValue::Bool(nondet()), RuntimeValue::Bool(nondet())),
         (RuntimeValue::Pubkey([1; 32]), RuntimeValue::Pubkey([1; 32])),
         (RuntimeValue::Bytes(&[1, 2]), RuntimeValue::Bytes(&[1, 2])),
         (RuntimeValue::U64(1), RuntimeValue::I64(1)),
-    ]);
+    );
     cvlr_assert!(compare(op, pair.0, pair.1) == Err(RunError::Vm(BallistaError::TypeMismatch)));
 }
 

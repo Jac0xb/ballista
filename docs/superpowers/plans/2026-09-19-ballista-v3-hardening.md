@@ -1,6 +1,6 @@
 # Ballista v3 Hardening and Test Suite Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Ship bytecode version 3 of the Ballista VM with a defensive executor, constant heap, attributable errors, a griefing-proof create path, loop accumulation, and a test suite that proves verifier and executor agree.
 
@@ -11,6 +11,34 @@
 **Policy assumption (from design review):** each program update is a fresh immutable deploy under a new program ID. Templates are bound to the program that finalized them. The SDK already takes `programAddress` everywhere; the constant `BALLISTA_PROGRAM_ADDRESS` remains the devnet v2 address until v3 is deployed.
 
 **Branch:** `claude/v3-hardening`, based on `codex/ballista-docs` so the docs site config is present.
+
+---
+
+## Execution record (2026-09-19)
+
+All tasks below are complete on branch `claude/v3-hardening` except deployment. Deviations from
+the written plan:
+
+- Task 5 (wire format) ran before Task 1 so the builder was written once against the v3 header.
+- Tasks 6 and 7 landed in one executor rewrite; both heap-stress tests were confirmed failing first
+  (access violation in the heap section at 32 KiB) and pass after.
+- The heap-stress callee is a padded System transfer rather than the memo program, whose per-byte
+  logging cost exceeded the compute budget before the heap was reached.
+- Account-validation failures got their own kind, `AccountConstraintFailed` (6020), so decoders can
+  tell an account index from a program counter.
+- Task 11 has a positive on-chain test after all: SPL Token's `GetAccountDataSize` sets return
+  data. Mollusk exposes no program logs, so the run event layout is covered by a host unit test.
+- Task 17 did not migrate the three legacy hand-built harness templates to the builder; every new
+  scenario uses the builder or a TypeScript-compiled fixture. No tolerance-based compute budget
+  test was added; measured figures are recorded in `docs/benchmarks.md`.
+- Runtime error names moved into `ballista-common` so the Rust SDK decodes codes without depending
+  on the program crate.
+- Added on request: Rust authoring and run examples, a TypeScript run example, a test that compiles
+  every shipped example, and a byte-identity test between the Rust builder and the TypeScript
+  compiler.
+
+Remaining: deploy version 3 immutably under a new program address, refresh the IDL, and update
+the SDK default address.
 
 ---
 
@@ -50,7 +78,7 @@
 - Modify: `common/src/template/mod.rs`
 - Test: inline `#[cfg(test)]` in `builder.rs`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```rust
 #[cfg(test)]
@@ -81,12 +109,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p ballista-common builder`
 Expected: FAIL with "cannot find `ProgramBuilder`"
 
-- [ ] **Step 3: Write the builder**
+- [x] **Step 3: Write the builder**
 
 ```rust
 //! Typed assembler for Ballista programs. Used by tests, the fuzz generator, and Rust authors.
@@ -295,14 +323,14 @@ fn segment_width(kind: u8) -> u16 {
 
 Note: `ProgramHeader::new` gains `batch_min_iterations` and `flags` parameters in Task 5. Until then the builder passes through the v2 signature; Task 5 updates both together. `Segment::Register(DATA_REG_BYTES, r)` contributes width 0 to the builder's declared max length, so bytes segments in tests must set the CPI max length explicitly with `set_cpi_max_data_len`.
 
-- [ ] **Step 4: Export and run**
+- [x] **Step 4: Export and run**
 
 Add `pub mod builder;` and `pub use builder::{record, ProgramBuilder, Segment};` to `common/src/template/mod.rs`.
 
 Run: `cargo test -p ballista-common builder`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add common/src/template/builder.rs common/src/template/mod.rs
@@ -314,7 +342,7 @@ git commit -m "Add typed ProgramBuilder for Ballista bytecode"
 **Files:**
 - Modify: `programs/ballista/src/processor/execute.rs` (test module only)
 
-- [ ] **Step 1: Write the tests**
+- [x] **Step 1: Write the tests**
 
 Add to the existing `mod tests` in `execute.rs`. Every case is a one-line assertion so failures name the case.
 
@@ -440,12 +468,12 @@ fn register_access_rejects_unset_and_out_of_range() {
 
 `append_segment_registers` is a small refactor introduced in Step 3: the register-encoding arms of `append_segment` move into a function that takes only `registers`, so the literal arm (which needs `program.blob`) stays in `append_segment`. Account-resolution tests come in Task 7 under Mollusk because `AccountView` cannot be constructed on the host.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cargo test -p ballista`
 Expected: compile error on `append_segment_registers`.
 
-- [ ] **Step 3: Refactor `append_segment` into literal and register halves**
+- [x] **Step 3: Refactor `append_segment` into literal and register halves**
 
 ```rust
 fn append_segment<'data>(program: &ProgramView<'data>, registers: &[RuntimeValue<'data>], segment: &DataSegment, output: &mut Vec<u8>) -> Result<(), RunError> {
@@ -462,12 +490,12 @@ fn append_segment_registers<'data>(registers: &[RuntimeValue<'data>], segment: &
 
 (`RunError` arrives in Task 6; until then the return type is `ProgramResult`.)
 
-- [ ] **Step 4: Run tests; fix any executor bug they expose**
+- [x] **Step 4: Run tests; fix any executor bug they expose**
 
 Run: `cargo test -p ballista`
 Expected: PASS. If an assertion fails, the executor is wrong, not the test. Fix the executor and note the bug in the commit message.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add programs/ballista/src/processor/execute.rs
@@ -479,7 +507,7 @@ git commit -m "Unit test the executor's pure VM core"
 **Files:**
 - Modify: `common/src/template/verify.rs` (test module)
 
-- [ ] **Step 1: Replace the hex-poking tests with builder-driven tables**
+- [x] **Step 1: Replace the hex-poking tests with builder-driven tables**
 
 Keep the two fixture round-trip tests (they move to Task 16's fixture files). Add:
 
@@ -589,12 +617,12 @@ Then add these named tests, each built the same way:
 | | account `address_index` past table | `InvalidAccountConstraint` |
 | `reserved_bytes_must_be_zero` | instruction flags non-zero on non-read opcode, header flags non-zero (pre Task 5), input reserved, account reserved | corresponding error |
 
-- [ ] **Step 2: Run; fix verifier bugs the tables expose**
+- [x] **Step 2: Run; fix verifier bugs the tables expose**
 
 Run: `cargo test -p ballista-common verify`
 Expected: PASS after any verifier fixes.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add common/src/template/verify.rs
@@ -607,14 +635,14 @@ git commit -m "Table-test the verifier with the ProgramBuilder"
 - Modify: `common/Cargo.toml`
 - Create: `common/tests/no_panic.rs`
 
-- [ ] **Step 1: Add proptest**
+- [x] **Step 1: Add proptest**
 
 ```toml
 [dev-dependencies]
 proptest = "1.11"
 ```
 
-- [ ] **Step 2: Write the properties**
+- [x] **Step 2: Write the properties**
 
 ```rust
 use ballista_common::template::{ProgramBuilder, ProgramView, ACCOUNT_EXECUTABLE, VALUE_U64};
@@ -647,12 +675,12 @@ proptest! {
 }
 ```
 
-- [ ] **Step 3: Run**
+- [x] **Step 3: Run**
 
 Run: `cargo test -p ballista-common --test no_panic`
 Expected: PASS. A panic here is a parser or verifier bug; fix it and add the shrunken input as a named regression test.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add common/Cargo.toml common/tests/no_panic.rs Cargo.lock
@@ -670,7 +698,7 @@ git commit -m "Property-test that parse and verify never panic"
 - Modify: `common/src/template/builder.rs` (header call)
 - Modify: `clients/js/src/compiler.ts` (`TEMPLATE_PROGRAM_VERSION = 3`, header bytes) and `instructions.ts` (`inspectTemplate`), so `pnpm check` keeps passing
 
-- [ ] **Step 1: Failing test in `wire.rs`**
+- [x] **Step 1: Failing test in `wire.rs`**
 
 ```rust
 #[test]
@@ -683,7 +711,7 @@ fn v3_header_round_trips_min_iterations_and_flags() {
 }
 ```
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 ```rust
 pub const TEMPLATE_PROGRAM_VERSION: u8 = 3;
@@ -751,12 +779,12 @@ impl TemplateError {
 pub const fn encode_error(kind: u32, context: u16) -> u32 { kind | ((context as u32) << 16) }
 ```
 
-- [ ] **Step 3: Update builder, compiler header emission, `inspectTemplate`, and all `ProgramHeader::new` callers; run the full check**
+- [x] **Step 3: Update builder, compiler header emission, `inspectTemplate`, and all `ProgramHeader::new` callers; run the full check**
 
 Run: `pnpm check && pnpm test`
 Expected: PASS. The TS fixture assertions in `compiler.test.ts` change (version byte); update the two hex strings for now, Task 16 replaces them with files.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A common clients/js/src
@@ -770,7 +798,7 @@ git commit -m "Introduce bytecode version 3 header, flags, and error codes"
 - Modify: `programs/ballista/src/processor/execute.rs`
 - Modify: `programs/ballista/src/lib.rs`
 
-- [ ] **Step 1: Error type**
+- [x] **Step 1: Error type**
 
 ```rust
 // error.rs additions
@@ -796,7 +824,7 @@ impl From<ballista_common::template::TemplateError> for ProgramError {
 }
 ```
 
-- [ ] **Step 2: `RunError` in the executor**
+- [x] **Step 2: `RunError` in the executor**
 
 ```rust
 #[derive(Debug, PartialEq, Eq)]
@@ -825,7 +853,7 @@ Every helper (`arithmetic`, `compare`, `cast`, `set`, `get`, `as_bool`, `as_u128
 
 Checked lookups: replace `inputs[instruction.a as usize]`, `program.pubkeys[..]`, `program.blob[..]`, `program.cpis[..]`, `program.cpi_accounts[..]`, `program.data_segments[..]`, `program.accounts[..]` with `.get(..).ok_or(BallistaError::InvalidTemplateProgram)?`, and the `unreachable!()` arm with `return Err(BallistaError::InvalidTemplateProgram.into())`.
 
-- [ ] **Step 3: Host test for context encoding**
+- [x] **Step 3: Host test for context encoding**
 
 ```rust
 #[test]
@@ -840,7 +868,7 @@ fn vm_errors_carry_the_program_counter() {
 
 `sol_log_64` is a no-op off-chain in pinocchio's host build; confirm by running the test.
 
-- [ ] **Step 4: Run, then commit**
+- [x] **Step 4: Run, then commit**
 
 Run: `cargo test -p ballista -p ballista-common`
 Expected: PASS
@@ -856,7 +884,7 @@ git commit -m "Attribute VM errors to the program counter and check every lookup
 - Modify: `programs/ballista/src/processor/execute.rs`
 - Modify: `tests/ballista/Cargo.toml`, `tests/ballista/src/lib.rs`
 
-- [ ] **Step 1: Failing Mollusk tests (write before the fix, confirm they fail)**
+- [x] **Step 1: Failing Mollusk tests (write before the fix, confirm they fail)**
 
 Add `mollusk-svm-programs-memo = "=0.14.0"` to `tests/ballista/Cargo.toml` and `memo::add_program(&mut mollusk)` in `context`.
 
@@ -884,7 +912,7 @@ fn pda_derivation_in_every_row_fits_in_the_default_heap() {
 Run: `pnpm build:program && pnpm test:integration`
 Expected: both new tests FAIL with a memory allocation failure in the program logs.
 
-- [ ] **Step 2: Scratch buffers**
+- [x] **Step 2: Scratch buffers**
 
 ```rust
 struct Scratch<'data> {
@@ -930,9 +958,9 @@ OP_DERIVE_PDA => {
 
 Registers: `vec![RuntimeValue::Unset; program.header.register_count()]` and the loop snapshot sized the same.
 
-- [ ] **Step 3: Rebuild, run integration; both heap tests pass. Record CU in `docs/benchmarks.md` later (Task 22).**
+- [x] **Step 3: Rebuild, run integration; both heap tests pass. Record CU in `docs/benchmarks.md` later (Task 22).**
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add programs/ballista/src tests/ballista
@@ -944,13 +972,13 @@ git commit -m "Allocate CPI and PDA scratch once per run"
 **Files:**
 - Modify: `common/src/template/verify.rs`
 
-- [ ] **Step 1: Tests** (add to Task 3's tables)
+- [x] **Step 1: Tests** (add to Task 3's tables)
 
 - 65 CPI accounts → `TooManyCpiAccounts(cpi_index)`.
 - `OP_READ_U64` at offset 60 on an account with `min_data_len 64` → `ReadOutOfBounds(instruction_index)`; at offset 56 → ok.
 - Dynamic-offset read (Task 10) skips the static check.
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 In `verify_cpi`: `if descriptor.account_len as usize > MAX_CPI_ACCOUNTS { return Err(TemplateError::TooManyCpiAccounts(index)); }`
 
@@ -963,7 +991,7 @@ let end = (instruction.immediate() as usize).checked_add(width).ok_or(TemplateEr
 if end > constraint.min_data_len() { return Err(TemplateError::ReadOutOfBounds(instruction_index)); }
 ```
 
-- [ ] **Step 3: Run, commit**
+- [x] **Step 3: Run, commit**
 
 ```bash
 git commit -am "Bound CPI account counts and static reads in the verifier"
@@ -975,7 +1003,7 @@ git commit -am "Bound CPI account counts and static reads in the verifier"
 - Modify: `programs/ballista/src/lib.rs`
 - Modify: `tests/ballista/src/lib.rs`
 
-- [ ] **Step 1: Failing Mollusk test**
+- [x] **Step 1: Failing Mollusk test**
 
 ```rust
 #[test]
@@ -994,7 +1022,7 @@ fn create_template_succeeds_on_a_prefunded_pda() {
 
 Expected before fix: FAIL (`AccountAlreadyInUse` from the system program).
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 ```rust
 fn create_template_account(...) -> ProgramResult {
@@ -1017,7 +1045,7 @@ fn create_template_account(...) -> ProgramResult {
 
 `Signer` in pinocchio is `Clone`; if not, build two `Signer` values from the same seeds.
 
-- [ ] **Step 3: Rebuild, run integration, commit**
+- [x] **Step 3: Rebuild, run integration, commit**
 
 ```bash
 git commit -am "Create templates on prefunded PDAs with allocate and assign"
@@ -1044,11 +1072,11 @@ Executor:
 
 Builder: `pub fn mov(&mut self, dst: u8, src: u8)`, `pub fn read_dynamic(&mut self, opcode: u8, account: u8, offset_register: u8) -> u8`.
 
-- [ ] **Step 1: Verifier tests** (carry: uninitialized carried register, carried register retyped in body, bit above register count, valid sum-in-loop program; min iterations: min > max, stride 0 with min 1; flags: dynamic flag on `OP_ADD`, dynamic read with `b` of type bool, dynamic read with non-zero immediate).
-- [ ] **Step 2: Implement verifier; run `cargo test -p ballista-common`.**
-- [ ] **Step 3: Mollusk tests**: a 3-row batch summing row lamports into a carried register and requiring `total <= budget` after the loop, both passing and failing budgets; zero rows against `min_iterations 1` fails with `InvalidAccountRange` and context 0; a dynamic-offset read of a token balance where the offset comes from an input.
-- [ ] **Step 4: Implement executor; rebuild; run integration.**
-- [ ] **Step 5: Commit**
+- [x] **Step 1: Verifier tests** (carry: uninitialized carried register, carried register retyped in body, bit above register count, valid sum-in-loop program; min iterations: min > max, stride 0 with min 1; flags: dynamic flag on `OP_ADD`, dynamic read with `b` of type bool, dynamic read with non-zero immediate).
+- [x] **Step 2: Implement verifier; run `cargo test -p ballista-common`.**
+- [x] **Step 3: Mollusk tests**: a 3-row batch summing row lamports into a carried register and requiring `total <= budget` after the loop, both passing and failing budgets; zero rows against `min_iterations 1` fails with `InvalidAccountRange` and context 0; a dynamic-offset read of a token balance where the offset comes from an input.
+- [x] **Step 4: Implement executor; rebuild; run integration.**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "Add loop-carried registers, minimum iterations, move, and dynamic-offset reads"
@@ -1064,7 +1092,7 @@ Executor: track `last_program: Option<[u8; 32]>` set by every executed `OP_INVOK
 
 Mollusk test: a CPI to a program that sets return data. The token program sets none; use Ballista itself: a nested template that runs and sets no return data → `MissingReturnData`. For a positive test, the memo program sets no return data either, so the positive path is covered by a host-level unit test of the read logic plus the verifier rules; note this gap in the test summary. (If time permits, add a 30-line SBF fixture program that echoes its instruction data as return data.)
 
-- [ ] Commit: `git commit -am "Add a guarded return-data opcode"`
+- [x] Commit: `git commit -am "Add a guarded return-data opcode"`
 
 ### Task 12: Opt-in run event
 
@@ -1085,7 +1113,7 @@ pinocchio::log::sol_log_data(&[&event]);
 
 Mollusk test: run the ATA template with the flag set and assert the emitted data (Mollusk exposes program logs; the `Program data:` line base64-decodes to the event) shows 1 expanded CPI with bit 0 set on first run and clear on the repeat.
 
-- [ ] Commit: `git commit -am "Emit an opt-in run event"`
+- [x] Commit: `git commit -am "Emit an opt-in run event"`
 
 ---
 
@@ -1138,8 +1166,8 @@ Compiler changes:
 
 `instructions.ts`: `buildRunInstruction` rejects `rows.length < batch.minIterations`; `inspectTemplate` reads the v3 header.
 
-- [ ] Tests: each lint fires and each opt-out silences it; carry compiles a sum-and-require template with the expected instruction sequence; `assign` outside a loop and `assign` to a non-carried name throw; min iterations round-trips; source map maps the `require` in a batch body to `steps[1].steps[2]`.
-- [ ] Commit: `git commit -am "Compile bytecode version 3 with pin lints, carry, and source maps"`
+- [x] Tests: each lint fires and each opt-out silences it; carry compiles a sum-and-require template with the expected instruction sequence; `assign` outside a loop and `assign` to a non-carried name throw; min iterations round-trips; source map maps the `require` in a batch body to `steps[1].steps[2]`.
+- [x] Commit: `git commit -am "Compile bytecode version 3 with pin lints, carry, and source maps"`
 
 ### Task 14: Error decoding
 
@@ -1160,7 +1188,7 @@ export function explainRunError(code: number, compiled: CompiledTemplate): { err
 
 A Rust test in `programs/ballista/src/error.rs` and a TS test both assert the same ordered name list, guarded by a shared `fixtures/error-names.json` written by the fixture script and read by both (Task 16).
 
-- [ ] Commit: `git commit -am "Decode and explain Ballista error codes in the SDK"`
+- [x] Commit: `git commit -am "Decode and explain Ballista error codes in the SDK"`
 
 ### Task 15: Free template ID probing in the Kit adapter
 
@@ -1172,7 +1200,7 @@ export async function findFreeTemplateId(input: { rpc: { getMultipleAccounts(add
 
 Derives `batchSize` (default 16) candidate addresses from `start` upward, fetches them in one `getMultipleAccounts` call, returns the first null slot, and keeps scanning until 65,536. Test with a fake RPC that reports the first two occupied.
 
-- [ ] Commit: `git commit -am "Probe for a free template ID before uploading"`
+- [x] Commit: `git commit -am "Probe for a free template ID before uploading"`
 
 ### Task 16: Shared fixtures
 
@@ -1184,7 +1212,7 @@ Fixtures: `system-transfer`, `batch-transfer-30`, `ensure-ata`, `assert-ata`, `c
 
 TS test: compiling each fixture template equals the file (fails when the compiler changes until `pnpm fixtures` is rerun). Rust test: every `.hex` parses and verifies, and `VerificationStats` match the manifest's numbers (parse the small JSON by hand or add `serde_json` as a dev-dependency).
 
-- [ ] Commit: `git commit -am "Share compiler fixtures between the Rust and TypeScript suites"`
+- [x] Commit: `git commit -am "Share compiler fixtures between the Rust and TypeScript suites"`
 
 ---
 
@@ -1202,7 +1230,7 @@ Rewrite `system_transfer_template`, `token_transfer_template`, and `ata_then_tra
 - `zero_rows_and_min_iterations`, `sixty_runtime_accounts`, `data_len_after_realloc` (ATA create then `dataLength` read equals 165), `clock_reads_are_typed`.
 - `compute_units_stay_within_budget`: table of fixture → recorded CU from Mollusk with 5% tolerance; update `docs/benchmarks.md` from the same numbers.
 
-- [ ] Commit per scenario group.
+- [x] Commit per scenario group.
 
 ### Task 18: Generated programs never split verifier and executor (Track C, part 2)
 
@@ -1215,7 +1243,7 @@ Strategy: a program with 0 to 3 plain accounts (no CPIs), 0 to 4 inputs of rando
 
 Cases: 256 locally, 2,048 nightly via `PROPTEST_CASES`.
 
-- [ ] Commit: `git commit -am "Generate valid programs and prove the executor accepts them"`
+- [x] Commit: `git commit -am "Generate valid programs and prove the executor accepts them"`
 
 ---
 
@@ -1268,7 +1296,7 @@ jobs:
 
 Add `schedule: [{ cron: '17 6 * * *' }]` to `on`. Pin the Anza installer version to the one matching the local `solana-cli` (check `solana --version` at execution time; the local machine has 4.1.0 and the README asks for 4.2+).
 
-- [ ] Commit: `git commit -am "Run host and integration suites in CI"`
+- [x] Commit: `git commit -am "Run host and integration suites in CI"`
 
 ### Task 20: Documentation
 
@@ -1280,15 +1308,15 @@ Add `schedule: [{ cron: '17 6 * * *' }]` to `on`. Pin the Anza installer version
 - `docs/benchmarks.md`: refreshed CU table including the heap-stress templates.
 - `docs/scope.md`: update the limits list.
 
-- [ ] Run `pnpm docs:build`; commit: `git commit -am "Document bytecode version 3 and the trust model"`
+- [x] Run `pnpm docs:build`; commit: `git commit -am "Document bytecode version 3 and the trust model"`
 
 ### Task 21: Final verification
 
-- [ ] `pnpm fixtures && git diff --exit-code fixtures`
-- [ ] `pnpm check && pnpm test`
-- [ ] `pnpm build:program && pnpm test:integration`
-- [ ] `git diff --check`
-- [ ] Update this plan's checkboxes; open the pull request against `main` (stacked on PR #3 until it merges).
+- [x] `pnpm fixtures && git diff --exit-code fixtures`
+- [x] `pnpm check && pnpm test`
+- [x] `pnpm build:program && pnpm test:integration`
+- [x] `git diff --check`
+- [x] Update this plan's checkboxes; open the pull request against `main` (stacked on PR #3 until it merges).
 
 ---
 

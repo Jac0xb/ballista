@@ -109,12 +109,18 @@ fn log_failure(a: u64, b: u64, c: u64, d: u64, e: u64) {
     let _ = (a, b, c, d, e);
 }
 
-/// Buffers allocated once per run and reused by every CPI, so heap use does not grow with the
-/// number of invocations. The default SBF allocator never frees.
+/// Per-run state: buffers allocated once and reused by every CPI, so heap use does not grow with
+/// the number of invocations (the default SBF allocator never frees), plus the invoke trace.
 struct Scratch<'data> {
     metas: Vec<InstructionAccount<'data>>,
     views: Vec<&'data AccountView>,
     data: Vec<u8>,
+    /// Program invoked by the most recent executed CPI, for return-data provenance checks.
+    last_invoked: Option<[u8; 32]>,
+    /// Invoke instructions reached so far, counted across loop iterations.
+    expanded: u8,
+    /// Bit `n` is set when the `n`th reached invoke actually ran (its guard was true).
+    executed: u64,
 }
 
 impl<'data> Scratch<'data> {
@@ -130,6 +136,9 @@ impl<'data> Scratch<'data> {
             metas: Vec::with_capacity(MAX_CPI_ACCOUNTS),
             views: Vec::with_capacity(MAX_CPI_ACCOUNTS),
             data: Vec::with_capacity(max_data),
+            last_invoked: None,
+            expanded: 0,
+            executed: 0,
         }
     }
 }
@@ -138,6 +147,7 @@ pub fn run<'data>(
     program: &ProgramView<'data>,
     input_bytes: &'data [u8],
     runtime_accounts: &'data [AccountView],
+    template_address: &Address,
 ) -> ProgramResult {
     let inputs =
         parse_inputs(program.inputs, input_bytes).map_err(RunError::before_execution)?;
@@ -152,7 +162,50 @@ pub fn run<'data>(
         iterations,
         &mut registers,
         &mut scratch,
-    )
+    )?;
+    if program.header.flags() & PROGRAM_FLAG_EMIT_EVENT != 0 {
+        emit_event(&encode_event(
+            iterations,
+            scratch.expanded,
+            scratch.executed,
+            template_address,
+        ));
+    }
+    Ok(())
+}
+
+/// Magic prefix of the run event emitted through `sol_log_data` when the template opts in.
+pub const EVENT_MAGIC: [u8; 4] = *b"BEV1";
+/// Size of the run event: magic, bytecode version, iterations, expanded invokes, executed mask,
+/// template address.
+pub const EVENT_LEN: usize = 4 + 1 + 1 + 1 + 8 + 32;
+
+/// Encodes the run event. Indexers decode it from the `Program data:` log line.
+pub fn encode_event(
+    iterations: usize,
+    expanded: u8,
+    executed: u64,
+    template_address: &Address,
+) -> [u8; EVENT_LEN] {
+    let mut event = [0u8; EVENT_LEN];
+    event[..4].copy_from_slice(&EVENT_MAGIC);
+    event[4] = TEMPLATE_PROGRAM_VERSION;
+    event[5] = u8::try_from(iterations).unwrap_or(u8::MAX);
+    event[6] = expanded;
+    event[7..15].copy_from_slice(&executed.to_le_bytes());
+    event[15..].copy_from_slice(template_address.as_ref());
+    event
+}
+
+#[inline(always)]
+fn emit_event(event: &[u8]) {
+    #[cfg(target_os = "solana")]
+    unsafe {
+        let slices: [&[u8]; 1] = [event];
+        pinocchio::syscalls::sol_log_data(slices.as_ptr() as *const u8, 1);
+    }
+    #[cfg(not(target_os = "solana"))]
+    let _ = event;
 }
 
 fn parse_inputs<'data>(
@@ -239,7 +292,9 @@ fn validate_runtime_accounts(
             return Err(range_error(accounts.len()));
         }
         let iterations = tail / stride;
-        if iterations > program.header.batch_max_iterations() {
+        if iterations > program.header.batch_max_iterations()
+            || iterations < program.header.batch_min_iterations()
+        {
             return Err(range_error(iterations));
         }
         iterations
@@ -320,7 +375,10 @@ fn execute_root<'data>(
                 .ok_or_else(|| {
                     RunError::from(BallistaError::InvalidTemplateProgram).at(pc, instruction)
                 })?;
-            let base_registers = registers.to_vec();
+            // Registers written inside the body are discarded after each iteration, except the
+            // ones named in the carry mask, which flow into the next iteration and out of the loop.
+            let carry = instruction.immediate();
+            let mut base_registers = registers.to_vec();
             for iteration in 0..iterations {
                 registers.copy_from_slice(&base_registers);
                 let row_base = program.header.fixed_account_count()
@@ -335,6 +393,13 @@ fn execute_root<'data>(
                     body_end,
                     Some((iteration, row_base)),
                 )?;
+                if carry != 0 {
+                    for (register, slot) in base_registers.iter_mut().enumerate() {
+                        if register < 64 && carry & (1u64 << register) != 0 {
+                            *slot = registers[register];
+                        }
+                    }
+                }
             }
             registers.copy_from_slice(&base_registers);
             pc = body_end;
@@ -458,8 +523,16 @@ fn execute_instruction<'data>(
         OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_U128
         | OP_READ_PUBKEY | OP_READ_BOOL => {
             let account = resolve_account(program, accounts, instruction.a, loop_context)?;
+            let offset = if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
+                match get(registers, instruction.b)? {
+                    RuntimeValue::U64(value) => usize::try_from(value)
+                        .map_err(|_| BallistaError::InvalidRuntimeAccount)?,
+                    _ => return Err(BallistaError::TypeMismatch.into()),
+                }
+            } else {
+                instruction.immediate() as usize
+            };
             let data = account.try_borrow()?;
-            let offset = instruction.immediate() as usize;
             let value = read_value(instruction.opcode, &data, offset)?;
             set(registers, dst, value)?;
         }
@@ -515,6 +588,10 @@ fn execute_instruction<'data>(
             let (iteration, _) = loop_context.ok_or(BallistaError::InvalidTemplateProgram)?;
             set(registers, dst, RuntimeValue::U64(iteration as u64))?;
         }
+        OP_MOVE => {
+            let value = get(registers, instruction.a)?;
+            set(registers, dst, value)?;
+        }
         OP_DERIVE_PDA => {
             let program_account = resolve_account(program, accounts, instruction.a, loop_context)?;
             let (start, count) = instruction.blob_range();
@@ -549,7 +626,11 @@ fn execute_instruction<'data>(
                 return Err(BallistaError::RequirementFailed.into());
             }
         }
+        OP_RETURN_DATA => read_return_data(scratch, instruction, registers)?,
         OP_INVOKE => {
+            let slot = scratch.expanded;
+            scratch.expanded = scratch.expanded.saturating_add(1);
+            scratch.last_invoked = None;
             if instruction.b != NO_INDEX && !as_bool(get(registers, instruction.b)?)? {
                 return Ok(());
             }
@@ -561,10 +642,42 @@ fn execute_instruction<'data>(
                 loop_context,
                 scratch,
             )?;
+            if slot < 64 {
+                scratch.executed |= 1u64 << slot;
+            }
         }
         _ => return Err(BallistaError::InvalidTemplateProgram.into()),
     }
     Ok(())
+}
+
+/// Reads a typed value from the return data of the CPI that just ran. Kept out of line because
+/// the runtime's return-data buffer is a kilobyte of stack.
+#[inline(never)]
+fn read_return_data<'data>(
+    scratch: &Scratch<'data>,
+    instruction: &InstructionRecord,
+    registers: &mut [RuntimeValue<'data>],
+) -> RunResult<()> {
+    let expected_program = scratch
+        .last_invoked
+        .ok_or(BallistaError::MissingReturnData)?;
+    let data = pinocchio::cpi::get_return_data().ok_or(BallistaError::MissingReturnData)?;
+    if data.program_id().to_bytes() != expected_program {
+        return Err(BallistaError::ReturnDataMismatch.into());
+    }
+    let bytes = data.as_slice();
+    let offset = instruction.immediate() as usize;
+    let width = read_width(instruction.a);
+    if width == 0
+        || offset
+            .checked_add(width)
+            .is_none_or(|end| end > bytes.len())
+    {
+        return Err(BallistaError::MissingReturnData.into());
+    }
+    let value = read_value(instruction.a, bytes, offset)?;
+    set(registers, instruction.dst as usize, value)
 }
 
 /// The blob slice addressed by an instruction's packed `(offset, len)` immediate.
@@ -660,6 +773,7 @@ fn invoke_cpi<'data>(
         data: scratch.data.as_slice(),
     };
     invoke_with_bounds::<MAX_CPI_ACCOUNTS, _>(&instruction, scratch.views.as_slice())?;
+    scratch.last_invoked = Some(program_account.address().to_bytes());
     Ok(())
 }
 
@@ -1005,6 +1119,20 @@ mod tests {
     fn runtime_value_storage_is_bounded() {
         let value_size = core::mem::size_of::<RuntimeValue<'static>>();
         assert!(value_size <= 40);
+    }
+
+    #[test]
+    fn run_events_have_a_fixed_documented_layout() {
+        let template = Address::new_from_array([7; 32]);
+        let event = encode_event(3, 5, 0b10110, &template);
+        assert_eq!(event.len(), EVENT_LEN);
+        assert_eq!(&event[..4], b"BEV1");
+        assert_eq!(event[4], TEMPLATE_PROGRAM_VERSION);
+        assert_eq!(event[5], 3, "iterations");
+        assert_eq!(event[6], 5, "expanded invokes");
+        assert_eq!(&event[7..15], &0b10110u64.to_le_bytes(), "executed mask");
+        assert_eq!(&event[15..], &[7; 32]);
+        assert_eq!(encode_event(300, 0, 0, &template)[5], u8::MAX, "iterations clamp");
     }
 
     #[test]

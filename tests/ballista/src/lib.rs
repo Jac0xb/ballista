@@ -627,6 +627,157 @@ mod tests {
         assert_eq!(custom_code(&past_the_end), Some((2 << 16) | 6009), "{past_the_end:#?}");
     }
 
+    /// SPL Token's GetAccountDataSize sets the account size as return data. The template reads it
+    /// straight after the CPI; a callee that sets nothing leaves nothing to read.
+    #[test]
+    fn return_data_is_readable_right_after_the_invoke_that_set_it() {
+        let creator = Pubkey::new_unique();
+        let authority = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let recipient = Pubkey::new_unique();
+        let mut accounts = funded_accounts([creator, payer, recipient], 10_000_000_000);
+        accounts.insert(
+            mint,
+            token::create_account_for_mint(Mint {
+                mint_authority: COption::Some(authority),
+                supply: 0,
+                decimals: 6,
+                is_initialized: true,
+                freeze_authority: COption::None,
+            }),
+        );
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        let token_program = builder.account(ACCOUNT_EXECUTABLE, Some(token::ID.to_bytes()), None, 0);
+        let mint_account = builder.account(0, None, Some(token::ID.to_bytes()), 82);
+        let literal = builder.blob(&[21]);
+        let cpi = builder.cpi(token_program, &[(mint_account, 0)], &[Segment::Literal(literal)]);
+        builder.invoke(cpi, None);
+        let size = builder.return_data(OP_READ_U64, 0);
+        let expected = builder.const_u64(165);
+        let same = builder.binary(OP_EQ, size, expected);
+        builder.require(same);
+        let payload = builder.build().expect("builds");
+        ProgramView::parse(&payload)
+            .and_then(|program| program.verify())
+            .expect("verifies");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 60, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 60);
+        let result = context.process_instruction(&run_instruction(
+            template,
+            vec![
+                AccountMeta::new_readonly(token::ID, false),
+                AccountMeta::new_readonly(mint, false),
+            ],
+            &[],
+        ));
+        assert!(result.program_result.is_ok(), "{result:#?}");
+
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(
+            ACCOUNT_EXECUTABLE,
+            Some(system_program::id().to_bytes()),
+            None,
+            0,
+        );
+        let source = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let destination = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let mut data = vec![2, 0, 0, 0];
+        data.extend_from_slice(&1u64.to_le_bytes());
+        let literal = builder.blob(&data);
+        let cpi = builder.cpi(
+            system,
+            &[
+                (source, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                (destination, ACCOUNT_WRITABLE),
+            ],
+            &[Segment::Literal(literal)],
+        );
+        builder.invoke(cpi, None);
+        let value = builder.return_data(OP_READ_U64, 0);
+        let same = builder.binary(OP_EQ, value, value);
+        builder.require(same);
+        let payload = builder.build().expect("builds");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 61, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 61);
+        let result = context.process_instruction(&run_instruction(
+            template,
+            vec![
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new(recipient, false),
+            ],
+            &[],
+        ));
+        // Instruction 1 is the return-data read; 6018 is MissingReturnData.
+        assert_eq!(custom_code(&result), Some((1 << 16) | 6018), "{result:#?}");
+    }
+
+    /// The event flag adds one data log after a successful run and changes nothing else. Mollusk
+    /// does not expose program logs, so the layout is covered by a host unit test.
+    #[test]
+    fn event_flag_does_not_change_run_semantics() {
+        let creator = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let recipient = Pubkey::new_unique();
+        let context = context(funded_accounts([creator, payer, recipient], 10_000_000_000));
+
+        let mut builder = ProgramBuilder::new();
+        builder.flags(ballista_common::template::PROGRAM_FLAG_EMIT_EVENT);
+        let system = builder.account(
+            ACCOUNT_EXECUTABLE,
+            Some(system_program::id().to_bytes()),
+            None,
+            0,
+        );
+        let source = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let destination = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let amount = builder.const_u64(1_000);
+        let literal = builder.blob(&[2, 0, 0, 0]);
+        let cpi = builder.cpi(
+            system,
+            &[
+                (source, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                (destination, ACCOUNT_WRITABLE),
+            ],
+            &[
+                Segment::Literal(literal),
+                Segment::Register(DATA_REG_U64, amount),
+            ],
+        );
+        builder.invoke(cpi, None);
+        let payload = builder.build().expect("builds");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 62, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 62);
+        let before = lamports(&context, recipient);
+        let result = context.process_instruction(&run_instruction(
+            template,
+            vec![
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new(recipient, false),
+            ],
+            &[],
+        ));
+        assert!(result.program_result.is_ok(), "{result:#?}");
+        assert_eq!(lamports(&context, recipient), before + 1_000);
+        eprintln!(
+            "transfer with event compute units: {}",
+            result.compute_units_consumed
+        );
+    }
+
     /// Anyone can send lamports to a predictable template address before it is created. Creation
     /// must tolerate that instead of letting dust block the ID forever.
     #[test]

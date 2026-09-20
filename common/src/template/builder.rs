@@ -224,6 +224,12 @@ impl ProgramBuilder {
         self.emit(record(OP_MOVE, dst, source, NO_INDEX, NO_INDEX, 0, 0));
     }
 
+    /// Emits a typed read of the preceding unconditional invoke's return data. `read_opcode` is
+    /// one of the `OP_READ_*` opcodes and selects the width and result type.
+    pub fn return_data(&mut self, read_opcode: u8, offset: u64) -> u8 {
+        self.op(OP_RETURN_DATA, read_opcode, NO_INDEX, NO_INDEX, offset)
+    }
+
     /// Emits an account data read whose offset comes from a `u64` register.
     pub fn read_dynamic(&mut self, opcode: u8, account: u8, offset_register: u8) -> u8 {
         let dst = self.register();

@@ -219,7 +219,7 @@ fn run_template(accounts: &mut [AccountView], input_bytes: &[u8]) -> ProgramResu
     let program = account
         .finalized_program()
         .map_err(|_| BallistaError::TemplateNotFinalized)?;
-    processor::run(&program, input_bytes, runtime_accounts)
+    processor::run(&program, input_bytes, runtime_accounts, template.address())
 }
 
 fn validate_create_accounts(

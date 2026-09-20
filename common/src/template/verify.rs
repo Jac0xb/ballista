@@ -101,6 +101,8 @@ impl ProgramView<'_> {
         let mut root_cpis = 0usize;
         let mut foreach_count = 0usize;
         let mut max_cpi_data_len = 0usize;
+        // The previous root-level instruction, if the previous instruction was not a loop body.
+        let mut previous: Option<&InstructionRecord> = None;
 
         while program_counter < self.instructions.len() {
             let instruction = &self.instructions[program_counter];
@@ -133,13 +135,20 @@ impl ProgramView<'_> {
                     .ok_or(TemplateError::CountOverflow)?;
                 max_cpi_data_len = max_cpi_data_len.max(body_max_data);
                 program_counter = body_end;
+                previous = None;
                 continue;
             }
 
-            let (cpis, data_len) =
-                self.verify_instruction(instruction, program_counter, false, &mut registers)?;
+            let (cpis, data_len) = self.verify_instruction(
+                instruction,
+                program_counter,
+                false,
+                previous,
+                &mut registers,
+            )?;
             root_cpis += cpis;
             max_cpi_data_len = max_cpi_data_len.max(data_len);
+            previous = Some(instruction);
             program_counter += 1;
         }
 
@@ -178,6 +187,7 @@ impl ProgramView<'_> {
     ) -> Result<(usize, usize), TemplateError> {
         let mut cpis = 0usize;
         let mut max_data_len = 0usize;
+        let mut previous: Option<&InstructionRecord> = None;
         for index in start..end {
             let instruction = &self.instructions[index];
             self.verify_record_header(instruction, index)?;
@@ -185,9 +195,10 @@ impl ProgramView<'_> {
                 return Err(TemplateError::InvalidBatch);
             }
             let (instruction_cpis, data_len) =
-                self.verify_instruction(instruction, index, in_loop, registers)?;
+                self.verify_instruction(instruction, index, in_loop, previous, registers)?;
             cpis += instruction_cpis;
             max_data_len = max_data_len.max(data_len);
+            previous = Some(instruction);
         }
         Ok((cpis, max_data_len))
     }
@@ -231,11 +242,14 @@ impl ProgramView<'_> {
         Ok(())
     }
 
+    /// `previous` is the instruction immediately before this one within the same range (root or
+    /// loop body), or `None` at a range boundary.
     fn verify_instruction(
         &self,
         instruction: &InstructionRecord,
         instruction_index: usize,
         in_loop: bool,
+        previous: Option<&InstructionRecord>,
         registers: &mut [Option<RegisterInfo>; MAX_REGISTERS],
     ) -> Result<(usize, usize), TemplateError> {
         let scalar = |value_type| RegisterInfo::scalar(value_type);
@@ -384,6 +398,28 @@ impl ProgramView<'_> {
             OP_MOVE => {
                 let source = self.read_register(registers, instruction.a)?;
                 self.write_register(registers, instruction.dst, source)?;
+            }
+            OP_RETURN_DATA => {
+                // Return data is only meaningful straight after the CPI that produced it, and only
+                // when that CPI always runs.
+                let follows_invoke = previous
+                    .is_some_and(|record| record.opcode == OP_INVOKE && record.b == NO_INDEX);
+                let width = read_width(instruction.a);
+                let end = usize::try_from(instruction.immediate())
+                    .ok()
+                    .and_then(|offset| offset.checked_add(width));
+                if !follows_invoke || width == 0 || end.is_none_or(|end| end > MAX_RETURN_DATA_LEN)
+                {
+                    return Err(TemplateError::InvalidReturnData(instruction_index));
+                }
+                let value_type = match instruction.a {
+                    OP_READ_I64 => VALUE_I64,
+                    OP_READ_U128 => VALUE_U128,
+                    OP_READ_PUBKEY => VALUE_PUBKEY,
+                    OP_READ_BOOL => VALUE_BOOL,
+                    _ => VALUE_U64,
+                };
+                self.write_register(registers, instruction.dst, scalar(value_type))?;
             }
             OP_DERIVE_PDA => {
                 let program = self
@@ -1659,6 +1695,132 @@ mod tests {
         builder.read(OP_READ_U64, account, 0);
         builder.instructions_mut()[0].flags = 2;
         assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidFlags(0)));
+    }
+
+    #[test]
+    fn return_data_reads_must_directly_follow_an_unconditional_invoke() {
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.invoke(cpi, None);
+        let size = builder.return_data(OP_READ_U64, 0);
+        let expected = builder.const_u64(165);
+        let same = builder.binary(OP_EQ, size, expected);
+        builder.require(same);
+        assert!(verify_builder(&builder).is_ok());
+
+        // Every read width is accepted and typed like the matching account read.
+        for (opcode, width) in [
+            (OP_READ_BOOL, 1u64),
+            (OP_READ_U8, 1),
+            (OP_READ_U16, 2),
+            (OP_READ_U32, 4),
+            (OP_READ_U64, 8),
+            (OP_READ_I64, 8),
+            (OP_READ_U128, 16),
+            (OP_READ_PUBKEY, 32),
+        ] {
+            let mut builder = ProgramBuilder::new();
+            let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+            let cpi = builder.cpi(program, &[], &[]);
+            builder.invoke(cpi, None);
+            let value = builder.return_data(opcode, MAX_RETURN_DATA_LEN as u64 - width);
+            let same = builder.binary(OP_EQ, value, value);
+            builder.require(same);
+            assert!(verify_builder(&builder).is_ok(), "opcode {opcode} at the end");
+            let mut builder = ProgramBuilder::new();
+            let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+            let cpi = builder.cpi(program, &[], &[]);
+            builder.invoke(cpi, None);
+            builder.return_data(opcode, MAX_RETURN_DATA_LEN as u64 - width + 1);
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidReturnData(1)),
+                "opcode {opcode} past the end"
+            );
+        }
+
+        // Not a read opcode.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.invoke(cpi, None);
+        builder.return_data(OP_ADD, 0);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidReturnData(1))
+        );
+
+        // Preceded by a guarded invoke.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        let guard = builder.const_bool(true);
+        builder.invoke(cpi, Some(guard));
+        builder.return_data(OP_READ_U64, 0);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidReturnData(2))
+        );
+
+        // Preceded by something other than an invoke, or by nothing at all.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.invoke(cpi, None);
+        builder.const_bool(true);
+        builder.return_data(OP_READ_U64, 0);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidReturnData(2))
+        );
+        let mut builder = ProgramBuilder::new();
+        builder.return_data(OP_READ_U64, 0);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidReturnData(0))
+        );
+
+        // The invoke must be in the same range: first instruction of a loop body, or the first
+        // root instruction after a loop whose body ends with an invoke.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.invoke(cpi, None);
+        builder.for_each(0, |body| {
+            body.return_data(OP_READ_U64, 0);
+        });
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidReturnData(2))
+        );
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.for_each(0, |body| body.invoke(cpi, None));
+        builder.return_data(OP_READ_U64, 0);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidReturnData(2))
+        );
+
+        // Inside a loop body right after an unconditional invoke is fine.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.for_each(0, |body| {
+            body.invoke(cpi, None);
+            let value = body.return_data(OP_READ_U64, 0);
+            let same = body.binary(OP_EQ, value, value);
+            body.require(same);
+        });
+        assert!(verify_builder(&builder).is_ok());
     }
 
     #[test]

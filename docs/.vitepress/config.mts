@@ -39,7 +39,7 @@ export default defineConfig({
       { text: 'Use cases', link: '/use-cases' },
       { text: 'Reference', link: '/reference/typescript' },
       {
-        text: '0.3',
+        text: '1.0',
         items: [
           { text: 'Scope and limits', link: '/scope' },
           { text: 'Benchmarks', link: '/benchmarks' },

@@ -13,7 +13,7 @@ use ballista::processor::execute::RuntimeValue;
 use ballista_common::template::*;
 use cvlr::asserts::cvlr_assume;
 use cvlr::nondet::nondet;
-use cvlr_pinocchio::{heap_bytes, nondet_address, nondet_bytes};
+use cvlr_pinocchio::{nondet_address, nondet_bytes};
 
 /// Registers each spec program declares. Small enough for the prover, large enough for every
 /// operand shape (two sources, a condition, and a destination).
@@ -46,80 +46,117 @@ pub(crate) use pick;
 /// Offset of the first account constraint record: it follows the program header directly.
 const FIRST_ACCOUNT: usize = PROGRAM_HEADER_LEN;
 
-/// `REGISTERS` registers, two constant pubkeys, and a 32-byte blob. No accounts, inputs, CPIs, or
+/// A constant program and a function that materializes it on the heap.
+///
+/// The heap copy is written one byte at a time with volatile stores. A plain copy would read the
+/// constant from the binary's data section, and the prover does not model that memory, so the
+/// program under analysis would see arbitrary bytes. Volatile stores keep every byte as an
+/// immediate in the code.
+macro_rules! heap_constant {
+    ($(#[$meta:meta])* $name:ident, $heap:ident, [$($byte:literal),* $(,)?]) => {
+        $(#[$meta])*
+        pub const $name: [u8; [$($byte),*].len()] = [$($byte),*];
+
+        #[doc = concat!("[`", stringify!($name), "`] on the heap.")]
+        pub fn $heap() -> &'static mut [u8; $name.len()] {
+            let heap = cvlr::nondet::havoc::alloc_mut_ref_havoced::<[u8; $name.len()]>();
+            let base = heap.as_mut_ptr();
+            let mut index = 0usize;
+            $(
+                // SAFETY: `index` counts the literals, so it stays below the array length.
+                unsafe { core::ptr::write_volatile(base.add(index), $byte) };
+                index += 1;
+            )*
+            let _ = index;
+            heap
+        }
+    };
+}
+
+heap_constant! {
+    /// `REGISTERS` registers, two constant pubkeys, and a 32-byte blob. No accounts, inputs, CPIs, or
 /// data segments, so the verifier accepts only the pure instruction subset against it.
-pub const SPEC_PROGRAM_PURE: [u8; 120] = [
-    66, 86, 77, 50, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0,
-    2, 0, 32, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2,
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-    2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
-    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
-    3, 3, 3, 3, 3, 3, 3, 3,
-];
+    SPEC_PROGRAM_PURE, heap_spec_program_pure, [
+        66, 86, 77, 49, 1, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0,
+        2, 0, 32, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2,
+        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+        2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
+        3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+        3, 3, 3, 3, 3, 3, 3, 3,
+    ]
+}
 
-/// [`SPEC_PROGRAM_PURE`] plus one unconstrained fixed account, which admits the account header
+heap_constant! {
+    /// [`SPEC_PROGRAM_PURE`] plus one unconstrained fixed account, which admits the account header
 /// reads.
-pub const SPEC_PROGRAM_WITH_ACCOUNT: [u8; 128] = [
-    66, 86, 77, 50, 3, 1, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0,
-    2, 0, 32, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
-    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
-];
+    SPEC_PROGRAM_WITH_ACCOUNT, heap_spec_program_with_account, [
+        66, 86, 77, 49, 1, 1, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0,
+        2, 0, 32, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+        3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+        3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    ]
+}
 
-/// One fixed account with no flags, no pinned address or owner, and no minimum length, followed by
+heap_constant! {
+    /// One fixed account with no flags, no pinned address or owner, and no minimum length, followed by
 /// one trivial instruction. [`constrained_program`] patches the flags and minimum length in place.
-pub const CONSTRAINED_PLAIN: [u8; 48] = [
-    66, 86, 77, 50, 3, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0,
-    2, 0, 1, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-];
+    CONSTRAINED_PLAIN, heap_constrained_plain, [
+        66, 86, 77, 49, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0,
+        2, 0, 1, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ]
+}
 
-/// One fixed account pinned to [`PINNED_ADDRESS`] and [`PINNED_OWNER`], and one trivial
+heap_constant! {
+    /// One fixed account pinned to [`PINNED_ADDRESS`] and [`PINNED_OWNER`], and one trivial
 /// instruction.
-pub const CONSTRAINED_PINNED: [u8; 112] = [
-    66, 86, 77, 50, 3, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0,
-    2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
-    2, 0, 1, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-];
+    CONSTRAINED_PINNED, heap_constrained_pinned, [
+        66, 86, 77, 49, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0,
+        2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+        2, 0, 1, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    ]
+}
 
-/// The canonical SOL transfer template: System Program, signer, recipient, one `u64` input, and
+heap_constant! {
+    /// The canonical SOL transfer template: System Program, signer, recipient, one `u64` input, and
 /// one CPI. Identical to `fixtures/system-transfer.hex`.
-pub const TRANSFER_PAYLOAD: [u8; 152] = [
-    66, 86, 77, 50, 3, 3, 0, 0, 1, 1, 2, 1, 2, 0, 2, 0,
-    1, 0, 4, 0, 0, 0, 0, 0, 4, 0, 255, 0, 0, 0, 0, 0,
-    3, 255, 255, 0, 0, 0, 0, 0, 2, 255, 255, 0, 0, 0, 0, 0,
-    2, 0, 0, 0, 1, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 41, 255, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 0, 12, 0, 0, 0,
-    1, 3, 2, 2, 0, 255, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 2, 0, 0, 0,
-];
+    TRANSFER_PAYLOAD, heap_transfer_payload, [
+        66, 86, 77, 49, 1, 3, 0, 0, 1, 1, 2, 1, 2, 0, 2, 0,
+        1, 0, 4, 0, 0, 0, 0, 0, 4, 0, 255, 0, 0, 0, 0, 0,
+        3, 255, 255, 0, 0, 0, 0, 0, 2, 255, 255, 0, 0, 0, 0, 0,
+        2, 0, 0, 0, 1, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 41, 255, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 255, 0, 0, 2, 2, 0, 0, 12, 0, 0, 0,
+        1, 3, 2, 2, 0, 255, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 2, 0, 0, 0,
+    ]
+}
 
 /// The pure spec program, or the one with an account, on the heap.
 pub fn spec_program(with_account: bool) -> &'static [u8] {
     if with_account {
-        heap_bytes(&SPEC_PROGRAM_WITH_ACCOUNT)
+        heap_spec_program_with_account()
     } else {
-        heap_bytes(&SPEC_PROGRAM_PURE)
+        heap_spec_program_pure()
     }
 }
 
 /// A program whose single fixed account carries exactly `flags` and `min_data_len`, with no
 /// pinned address or owner.
 pub fn constrained_program(flags: u8, min_data_len: u32) -> &'static [u8] {
-    let bytes = heap_bytes(&CONSTRAINED_PLAIN);
+    let bytes = heap_constrained_plain();
     bytes[FIRST_ACCOUNT] = flags;
     bytes[FIRST_ACCOUNT + 4..FIRST_ACCOUNT + 8].copy_from_slice(&min_data_len.to_le_bytes());
     bytes
@@ -127,16 +164,13 @@ pub fn constrained_program(flags: u8, min_data_len: u32) -> &'static [u8] {
 
 /// A program whose single fixed account is pinned to [`PINNED_ADDRESS`] and [`PINNED_OWNER`].
 pub fn pinned_program() -> &'static [u8] {
-    heap_bytes(&CONSTRAINED_PINNED)
+    heap_constrained_pinned()
 }
 
-/// `REGISTERS` unset runtime registers.
+/// `REGISTERS` unset runtime registers. `vec!` rather than a push loop: the compiler turns the
+/// loop into a store loop over the whole buffer, which exceeds the prover's unrolling bound.
 pub fn unset_registers() -> Vec<RuntimeValue<'static>> {
-    let mut registers = Vec::with_capacity(REGISTERS);
-    for _ in 0..REGISTERS {
-        registers.push(RuntimeValue::Unset);
-    }
-    registers
+    vec![RuntimeValue::Unset; REGISTERS]
 }
 
 /// A fully nondeterministic instruction record. Every field is symbolic, including reserved bytes
@@ -286,6 +320,7 @@ mod tests {
             .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).unwrap(), 16).unwrap())
             .collect();
         same("TRANSFER_PAYLOAD", &TRANSFER_PAYLOAD, &fixture);
+        same("heap_transfer_payload", heap_transfer_payload(), &fixture);
     }
 
     #[test]

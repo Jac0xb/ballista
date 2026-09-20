@@ -1,7 +1,7 @@
 //! Checked arithmetic, comparisons, and casts behave exactly as specified for every input.
 
 use ballista::error::BallistaError;
-use ballista::processor::execute::{arithmetic, cast, compare, RunError, RuntimeValue};
+use ballista::processor::execute::{arithmetic, cast, compare, RunError, RunResult, RuntimeValue};
 use ballista_common::template::*;
 use cvlr::prelude::*;
 
@@ -15,6 +15,22 @@ fn arithmetic_opcode() -> u8 {
 /// One of the six comparison opcodes.
 fn comparison_opcode() -> u8 {
     pick!(OP_EQ, OP_NE, OP_LT, OP_LTE, OP_GT, OP_GTE)
+}
+
+/// Records which way an arithmetic call went, so a counterexample shows the outcome next to the
+/// inputs: 1 = numeric result, 2 = result of another type, 3 = division by zero, 4 = overflow,
+/// 5 = any other error. The low 64 bits of the returned value follow when there is one.
+fn log_outcome(outcome: &RunResult<RuntimeValue<'_>>, expected_some: bool, expected_low: u64) {
+    let (outcome_tag, result_low): (u64, u64) = match outcome {
+        Ok(RuntimeValue::U64(value)) => (1, *value),
+        Ok(RuntimeValue::I64(value)) => (1, *value as u64),
+        Ok(RuntimeValue::U128(bytes)) => (1, u128::from_le_bytes(*bytes) as u64),
+        Ok(_) => (2, 0),
+        Err(RunError::Vm(BallistaError::DivisionByZero)) => (3, 0),
+        Err(RunError::Vm(BallistaError::ArithmeticOverflow)) => (4, 0),
+        Err(_) => (5, 0),
+    };
+    clog!(outcome_tag, result_low, expected_some, expected_low);
 }
 
 /// The result Rust's checked operators give, or `None` on overflow or division by zero.
@@ -56,7 +72,9 @@ pub fn rule_i64_arithmetic_is_checked() {
     let b: i64 = nondet();
     let expected = checked_result!(op, a, b);
     clog!(op, a, b);
-    match arithmetic(op, RuntimeValue::I64(a), RuntimeValue::I64(b)) {
+    let outcome = arithmetic(op, RuntimeValue::I64(a), RuntimeValue::I64(b));
+    log_outcome(&outcome, expected.is_some(), expected.unwrap_or(0) as u64);
+    match outcome {
         Ok(RuntimeValue::I64(result)) => cvlr_assert!(expected == Some(result)),
         Ok(_) => cvlr_assert!(false),
         Err(RunError::Vm(BallistaError::DivisionByZero)) => cvlr_assert!(op == OP_DIV && b == 0),
@@ -74,11 +92,14 @@ pub fn rule_u128_arithmetic_is_checked() {
     let a: u128 = nondet();
     let b: u128 = nondet();
     let expected = checked_result!(op, a, b);
-    match arithmetic(
+    clog!(op, a, b);
+    let outcome = arithmetic(
         op,
         RuntimeValue::U128(a.to_le_bytes()),
         RuntimeValue::U128(b.to_le_bytes()),
-    ) {
+    );
+    log_outcome(&outcome, expected.is_some(), expected.unwrap_or(0) as u64);
+    match outcome {
         Ok(RuntimeValue::U128(result)) => cvlr_assert!(expected == Some(u128::from_le_bytes(result))),
         Ok(_) => cvlr_assert!(false),
         Err(RunError::Vm(BallistaError::DivisionByZero)) => cvlr_assert!(op == OP_DIV && b == 0),

@@ -12,7 +12,7 @@ use cvlr::prelude::*;
 use cvlr_pinocchio::{heap_bytes, heap_views, nondet_address, AccountSlot};
 use pinocchio::Address;
 
-use super::util::TRANSFER_PAYLOAD;
+use super::util::{heap_transfer_payload, TRANSFER_PAYLOAD};
 
 /// Payload of the canonical SOL transfer template.
 const PAYLOAD: usize = TRANSFER_PAYLOAD.len();
@@ -44,7 +44,7 @@ fn template_slot(state: u8) -> (&'static mut AccountSlot<TEMPLATE_DATA>, [u8; 32
     slot.header.owner = ballista::ID;
     slot.header.data_len = TEMPLATE_DATA as u64;
     slot.data[..TEMPLATE_ACCOUNT_HEADER_LEN].copy_from_slice(header.as_bytes());
-    slot.data[TEMPLATE_ACCOUNT_HEADER_LEN..].copy_from_slice(&TRANSFER_PAYLOAD);
+    slot.data[TEMPLATE_ACCOUNT_HEADER_LEN..].copy_from_slice(heap_transfer_payload());
     (slot, creator)
 }
 

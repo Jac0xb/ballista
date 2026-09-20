@@ -139,3 +139,7 @@
 #[type((*i32)(r1+4):num)]
 #[type((*i32)(r1+8):num)]
 ^<ballista::processor::execute::FixedSink as ballista::processor::execute::ByteSink>::push_bytes$
+#[type((*i32)(r1+0):num)]
+#[type((*i32)(r1+4):num)]
+#[type((*i32)(r1+8):num)]
+^<alloc::vec::Vec<u8> as ballista::processor::execute::ByteSink>::push_bytes$

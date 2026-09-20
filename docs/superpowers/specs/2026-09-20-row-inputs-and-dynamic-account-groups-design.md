@@ -41,19 +41,25 @@ A template with a batch may declare a row of inputs alongside its row of account
 A template may declare up to eight named groups of accounts whose members and count are chosen by
 the caller at run time. A CPI may forward one group after its declared accounts.
 
-- **Header.** `reserved[1]` becomes `dynamic_group_count` (0 to 8).
-- **Run data prefix.** Run data begins with `dynamic_group_count` bytes, one per group, giving the
+- **Header.** `reserved[1]` becomes `account_group_count` (0 to 8).
+- **Run data prefix.** Run data begins with `account_group_count` bytes, one per group, giving the
   number of accounts in that group. A group may be empty.
 - **Runtime accounts.** Fixed accounts, then batch rows, then the groups in declaration order. The
   batch iteration count is `(total − fixed − Σ group lengths) / stride`, so batches and groups
   coexist without ambiguity.
-- **CPI descriptor.** `reserved0` becomes `dynamic_group`: `NO_INDEX` for none, otherwise a group
-  index. The CPI's accounts are its declared records followed by every account of the group, each
-  passed with the signer and writable flags the transaction gave it. The runtime already caps a CPI
-  at the caller's privileges, so a template cannot escalate through a group.
+- **CPI descriptor.** `reserved0` becomes `account_group`: `NO_INDEX` for none, otherwise a group
+  index. The CPI's accounts are its declared records followed by every account of the group. The
+  runtime already caps a CPI at the caller's privileges, so a template cannot escalate through a
+  group.
 - **Group accounts are opaque.** They have no constraints, cannot be read, and cannot be named by
   any instruction. Anything a template must check about a swap (balances, owners, mints) is read
   from declared accounts; a swap's user token accounts are declared, unpinned slots.
+- **Group accounts never sign.** They are forwarded with the transaction's writable flag and with
+  signer cleared, so a template can only delegate a signature through a slot its author declared.
+  The accounts a route needs beyond the user's own are pools and vaults, which never sign.
+- **Groups are per CPI, not per row.** An invoke inside `forEach` forwards the same group on every
+  iteration. A group per row is a possible follow-on (a length byte per row and an iteration bit on
+  the reference) and is not part of this design.
 - **Limits.** Declared accounts plus the group must fit `MAX_CPI_ACCOUNTS` (64), checked at run time
   and reported as runtime error 6021 `CpiAccountLimitExceeded` with the total as context.
   `MAX_RUNTIME_ACCOUNTS` rises from 60 to 120 and the entrypoint's account capacity to 128, so three
@@ -62,8 +68,8 @@ the caller at run time. A CPI may forward one group after its declared accounts.
 - **Errors.** A truncated prefix reports `InvalidRunInputs` with context 0. Group lengths that exceed
   the supplied accounts, or leave a remainder that is not a whole number of rows, report
   `InvalidAccountRange` with the account count as context, as today.
-- **Verifier.** `dynamic_group_count ≤ 8`; every descriptor's `dynamic_group` is `NO_INDEX` or below
-  the count. Static capacity (`fixed + stride × max_iterations ≤ MAX_RUNTIME_ACCOUNTS`) is unchanged;
+- **Verifier.** `account_group_count ≤ 8` (`TooManyAccountGroups` otherwise); every descriptor's
+  `account_group` is `NO_INDEX` or below the count. Static capacity (`fixed + stride × max_iterations ≤ MAX_RUNTIME_ACCOUNTS`) is unchanged;
   groups are bounded at run time by the same total.
 
 ## The three-swap template

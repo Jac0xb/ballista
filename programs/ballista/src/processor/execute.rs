@@ -122,6 +122,8 @@ pub struct Scratch<'data> {
     expanded: u8,
     /// Bit `n` is set when the `n`th reached invoke actually ran (its guard was true).
     executed: u64,
+    /// `(start, len)` of each account group within the runtime accounts, from the run layout.
+    groups: [(u8, u8); MAX_ACCOUNT_GROUPS],
 }
 
 impl<'data> Scratch<'data> {
@@ -140,8 +142,35 @@ impl<'data> Scratch<'data> {
             last_invoked: None,
             expanded: 0,
             executed: 0,
+            groups: [(0, 0); MAX_ACCOUNT_GROUPS],
         }
     }
+
+    /// Records where each account group starts, so CPIs can forward them.
+    pub fn set_groups(&mut self, layout: &RunLayout) {
+        self.groups = layout.groups;
+    }
+}
+
+/// Where one run's runtime accounts fall: the fixed accounts, `iterations` batch rows, then the
+/// account groups in declaration order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RunLayout {
+    pub iterations: usize,
+    /// Fixed accounts plus batch rows; the first group starts here.
+    pub declared: usize,
+    /// `(start, len)` of each declared group; unused slots are `(0, 0)`.
+    pub groups: [(u8, u8); MAX_ACCOUNT_GROUPS],
+}
+
+/// Splits the account-group length prefix off the run data. Templates without groups have an
+/// empty prefix.
+pub fn split_group_prefix<'data>(
+    program: &ProgramView<'_>,
+    data: &'data [u8],
+) -> RunResult<(&'data [u8], &'data [u8])> {
+    data.split_at_checked(program.header.account_group_count())
+        .ok_or(RunError::VmAt(BallistaError::InvalidRunInputs, 0))
 }
 
 pub fn run<'data>(
@@ -150,23 +179,26 @@ pub fn run<'data>(
     runtime_accounts: &'data [AccountView],
     template_address: &Address,
 ) -> ProgramResult {
-    let inputs =
-        parse_inputs(program.inputs, input_bytes).map_err(RunError::before_execution)?;
-    let iterations = validate_runtime_accounts(program, runtime_accounts)
+    let (group_lengths, input_bytes) =
+        split_group_prefix(program, input_bytes).map_err(RunError::before_execution)?;
+    let layout = validate_runtime_accounts(program, runtime_accounts, group_lengths)
+        .map_err(RunError::before_execution)?;
+    let inputs = parse_run_inputs(program, input_bytes, layout.iterations)
         .map_err(RunError::before_execution)?;
     let mut registers = vec![RuntimeValue::Unset; program.header.register_count()];
     let mut scratch = Scratch::new(program);
+    scratch.set_groups(&layout);
     execute_root(
         program,
         &inputs,
         runtime_accounts,
-        iterations,
+        layout.iterations,
         &mut registers,
         &mut scratch,
     )?;
     if program.header.flags() & PROGRAM_FLAG_EMIT_EVENT != 0 {
         emit_event(&encode_event(
-            iterations,
+            layout.iterations,
             scratch.expanded,
             scratch.executed,
             template_address,
@@ -209,12 +241,37 @@ fn emit_event(event: &[u8]) {
     let _ = event;
 }
 
+/// Decodes the fixed inputs followed by `iterations` copies of the row inputs.
+pub fn parse_run_inputs<'data>(
+    program: &ProgramView<'_>,
+    data: &'data [u8],
+    iterations: usize,
+) -> RunResult<Vec<RuntimeValue<'data>>> {
+    let fixed = program.header.input_count();
+    let row = program.inputs.get(fixed..).unwrap_or(&[]);
+    let descriptors = program.inputs[..fixed.min(program.inputs.len())]
+        .iter()
+        .chain((0..iterations).flat_map(|_| row.iter()));
+    let count = fixed + iterations * row.len();
+    parse_sequence(descriptors, count, data)
+}
+
+/// Decodes a flat sequence of input values.
+#[cfg(any(test, feature = "spec-api"))]
 pub fn parse_inputs<'data>(
     descriptors: &[InputDescriptor],
+    data: &'data [u8],
+) -> RunResult<Vec<RuntimeValue<'data>>> {
+    parse_sequence(descriptors.iter(), descriptors.len(), data)
+}
+
+fn parse_sequence<'data, 'd>(
+    descriptors: impl Iterator<Item = &'d InputDescriptor>,
+    count: usize,
     mut data: &'data [u8],
 ) -> RunResult<Vec<RuntimeValue<'data>>> {
-    let mut inputs = vec![RuntimeValue::Unset; descriptors.len()];
-    for (index, descriptor) in descriptors.iter().enumerate() {
+    let mut inputs = vec![RuntimeValue::Unset; count];
+    for (index, descriptor) in descriptors.enumerate() {
         let fail = || RunError::VmAt(BallistaError::InvalidRunInputs, clamp(index));
         let value = match descriptor.value_type {
             VALUE_BOOL => {
@@ -261,38 +318,45 @@ pub fn parse_inputs<'data>(
         inputs[index] = value;
     }
     if !data.is_empty() {
-        return Err(RunError::VmAt(
-            BallistaError::InvalidRunInputs,
-            clamp(descriptors.len()),
-        ));
+        return Err(RunError::VmAt(BallistaError::InvalidRunInputs, clamp(count)));
     }
     Ok(inputs)
 }
 
+/// Checks the runtime accounts against the schema and returns where everything falls.
+///
+/// `group_lengths` is the run data prefix: one byte per declared account group. Group accounts sit
+/// after the batch rows and carry no constraints; everything before them must match the schema.
 pub fn validate_runtime_accounts(
     program: &ProgramView<'_>,
     accounts: &[AccountView],
-) -> RunResult<usize> {
+    group_lengths: &[u8],
+) -> RunResult<RunLayout> {
     let range_error = |context: usize| RunError::VmAt(BallistaError::InvalidAccountRange, clamp(context));
     if accounts.len() > MAX_RUNTIME_ACCOUNTS {
         return Err(range_error(accounts.len()));
     }
+    if group_lengths.len() != program.header.account_group_count() {
+        return Err(RunError::VmAt(BallistaError::InvalidRunInputs, 0));
+    }
+    let group_total: usize = group_lengths.iter().map(|len| *len as usize).sum();
     let fixed = program.header.fixed_account_count();
     let stride = program.header.batch_stride();
+    let rows = accounts
+        .len()
+        .checked_sub(fixed)
+        .and_then(|rest| rest.checked_sub(group_total))
+        .ok_or_else(|| range_error(accounts.len()))?;
     let iterations = if stride == 0 {
-        if accounts.len() != fixed {
+        if rows != 0 {
             return Err(range_error(accounts.len()));
         }
         0
     } else {
-        let tail = accounts
-            .len()
-            .checked_sub(fixed)
-            .ok_or_else(|| range_error(accounts.len()))?;
-        if tail % stride != 0 {
+        if rows % stride != 0 {
             return Err(range_error(accounts.len()));
         }
-        let iterations = tail / stride;
+        let iterations = rows / stride;
         if iterations > program.header.batch_max_iterations()
             || iterations < program.header.batch_min_iterations()
         {
@@ -300,8 +364,15 @@ pub fn validate_runtime_accounts(
         }
         iterations
     };
+    let declared = fixed + rows;
+    let mut groups = [(0u8, 0u8); MAX_ACCOUNT_GROUPS];
+    let mut start = declared;
+    for (slot, len) in groups.iter_mut().zip(group_lengths) {
+        *slot = (clamp(start) as u8, *len);
+        start += *len as usize;
+    }
 
-    for (index, account) in accounts.iter().enumerate() {
+    for (index, account) in accounts[..declared].iter().enumerate() {
         let constraint_index = if index < fixed {
             index
         } else {
@@ -319,7 +390,11 @@ pub fn validate_runtime_accounts(
             other => other,
         })?;
     }
-    Ok(iterations)
+    Ok(RunLayout {
+        iterations,
+        declared,
+        groups,
+    })
 }
 
 pub fn validate_account(
@@ -467,8 +542,18 @@ pub fn execute_instruction<'data>(
     let dst = instruction.dst as usize;
     match instruction.opcode {
         OP_LOAD_INPUT => {
+            let index = if instruction.a & ITERATION_INPUT_BIT == 0 {
+                instruction.a as usize
+            } else {
+                let (iteration, _) = loop_context.ok_or(BallistaError::InvalidTemplateProgram)?;
+                let offset = (instruction.a & !ITERATION_INPUT_BIT) as usize;
+                if offset >= program.header.row_input_count() {
+                    return Err(BallistaError::InvalidTemplateProgram.into());
+                }
+                program.header.input_count() + iteration * program.header.row_input_count() + offset
+            };
             let value = *inputs
-                .get(instruction.a as usize)
+                .get(index)
                 .ok_or(BallistaError::InvalidTemplateProgram)?;
             set(registers, dst, value)?;
         }
@@ -793,6 +878,33 @@ fn invoke_cpi<'data>(
         ));
         scratch.views.push(account);
     }
+    if let Some(group) = descriptor.account_group() {
+        // Group accounts are forwarded with the transaction's writable flag and never as
+        // signers: a template delegates signatures only through declared slots.
+        let (start, len) = *scratch
+            .groups
+            .get(group)
+            .ok_or(BallistaError::InvalidTemplateProgram)?;
+        let total = account_len + len as usize;
+        if total > MAX_CPI_ACCOUNTS {
+            return Err(RunError::VmAt(
+                BallistaError::CpiAccountLimitExceeded,
+                clamp(total),
+            ));
+        }
+        let range = start as usize..start as usize + len as usize;
+        let group_accounts = accounts
+            .get(range)
+            .ok_or(BallistaError::InvalidRuntimeAccount)?;
+        for account in group_accounts {
+            scratch.metas.push(InstructionAccount::new(
+                account.address(),
+                account.is_writable(),
+                false,
+            ));
+            scratch.views.push(account);
+        }
+    }
     for segment in segments {
         encode_segment(program, registers, segment, &mut scratch.data)?;
     }
@@ -820,14 +932,14 @@ fn bounded_invoke(instruction: &InstructionView, views: &[&AccountView]) -> Prog
     invoke_with_bounds::<MAX_CPI_ACCOUNTS, _>(instruction, views)
 }
 
-/// Destination for encoded segment bytes: a reusable `Vec` for CPI data, or a fixed stack buffer
-/// for PDA seeds.
+/// Destination for encoded segment bytes: a `Vec` for CPI data or a fixed stack buffer for PDA
+/// seeds. Spec builds keep `push_bytes` out of line so the prover can summarize the copy inside.
 pub trait ByteSink {
     fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()>;
 }
 
 impl ByteSink for Vec<u8> {
-    fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()> {
+    #[cfg_attr(feature = "spec-api", inline(never))] fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()> {
         self.extend_from_slice(bytes);
         Ok(())
     }
@@ -845,7 +957,7 @@ impl<'buffer> FixedSink<'buffer> {
 }
 
 impl ByteSink for FixedSink<'_> {
-    fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()> {
+    #[cfg_attr(feature = "spec-api", inline(never))] fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()> {
         let end = self
             .len
             .checked_add(bytes.len())
@@ -1519,6 +1631,89 @@ mod tests {
         .unwrap();
         assert_eq!(two, vec![Bool(true), U64(9)]);
         assert!(parse_inputs(&[], &[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn run_inputs_carry_a_row_per_iteration() {
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(4, 0);
+        let fee = builder.input(VALUE_U64, 0);
+        let amount = builder.row_input(VALUE_U64, 0);
+        let memo = builder.row_input(VALUE_BYTES, 4);
+        builder.for_each(0, |body| {
+            body.load_input(fee);
+            body.load_input(amount);
+            body.load_input(memo);
+        });
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+
+        let mut data = 7u64.to_le_bytes().to_vec();
+        data.extend_from_slice(&10u64.to_le_bytes());
+        data.extend_from_slice(&[1, 0, 0xaa]);
+        data.extend_from_slice(&20u64.to_le_bytes());
+        data.extend_from_slice(&[0, 0]);
+        let inputs = parse_run_inputs(&program, &data, 2).unwrap();
+        assert_eq!(
+            inputs,
+            vec![U64(7), U64(10), Bytes(&[0xaa]), U64(20), Bytes(&[])]
+        );
+        assert_eq!(parse_run_inputs(&program, &7u64.to_le_bytes(), 0).unwrap(), vec![U64(7)]);
+        assert_eq!(
+            parse_run_inputs(&program, &data[..8 + 8 + 3 + 8], 2),
+            Err(input_err(4)),
+            "the missing value is named by its running index"
+        );
+        assert_eq!(
+            parse_run_inputs(&program, &data, 1),
+            Err(input_err(3)),
+            "a spare row is trailing data"
+        );
+
+        // Inside the loop a row reference resolves against the current iteration; outside it is a
+        // structural error, as is an offset past the row.
+        let mut registers = vec![Unset; 3];
+        let mut scratch = Scratch::new(&program);
+        let load = record(OP_LOAD_INPUT, 0, amount, NO_INDEX, NO_INDEX, 0, 0);
+        execute_instruction(&program, &inputs, &[], &mut registers, &mut scratch, &load, Some((1, 0)))
+            .unwrap();
+        assert_eq!(registers[0], U64(20));
+        assert_eq!(
+            execute_instruction(&program, &inputs, &[], &mut registers, &mut scratch, &load, None),
+            Err(err(BallistaError::InvalidTemplateProgram))
+        );
+        let past = record(OP_LOAD_INPUT, 0, ITERATION_INPUT_BIT | 2, NO_INDEX, NO_INDEX, 0, 0);
+        assert_eq!(
+            execute_instruction(&program, &inputs, &[], &mut registers, &mut scratch, &past, Some((0, 0))),
+            Err(err(BallistaError::InvalidTemplateProgram))
+        );
+        let fixed = record(OP_LOAD_INPUT, 1, fee, NO_INDEX, NO_INDEX, 0, 0);
+        execute_instruction(&program, &inputs, &[], &mut registers, &mut scratch, &fixed, None).unwrap();
+        assert_eq!(registers[1], U64(7));
+    }
+
+    #[test]
+    fn group_prefix_is_one_byte_per_declared_group() {
+        let mut builder = ProgramBuilder::new();
+        builder.account_groups(2);
+        builder.const_bool(true);
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        assert_eq!(
+            split_group_prefix(&program, &[3, 0, 9]).unwrap(),
+            (&[3u8, 0][..], &[9u8][..])
+        );
+        assert_eq!(split_group_prefix(&program, &[3]), Err(input_err(0)));
+
+        let mut builder = ProgramBuilder::new();
+        builder.const_bool(true);
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        assert_eq!(
+            split_group_prefix(&program, &[9]).unwrap(),
+            (&[][..], &[9u8][..])
+        );
     }
 
     #[test]

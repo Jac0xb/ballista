@@ -69,6 +69,9 @@ impl ProgramView<'_> {
         {
             return Err(TemplateError::InvalidBatch);
         }
+        if header.batch_min_iterations() > header.batch_max_iterations() {
+            return Err(TemplateError::InvalidMinIterations);
+        }
 
         for (index, constraint) in self.accounts.iter().enumerate() {
             if constraint.flags & !ACCOUNT_FLAGS_MASK != 0
@@ -115,9 +118,12 @@ impl ProgramView<'_> {
                     return Err(TemplateError::InvalidInstruction(program_counter));
                 }
 
+                let carry = instruction.immediate();
+                self.verify_carry_before(carry, &registers)?;
                 let mut body_registers = registers;
                 let (body_cpis, body_max_data) =
                     self.verify_range(body_start, body_end, true, &mut body_registers)?;
+                verify_carry_after(carry, &registers, &body_registers)?;
                 root_cpis = root_cpis
                     .checked_add(
                         body_cpis
@@ -191,8 +197,36 @@ impl ProgramView<'_> {
         instruction: &InstructionRecord,
         index: usize,
     ) -> Result<(), TemplateError> {
-        if instruction.flags != 0 || instruction.reserved != [0; 2] {
+        if instruction.reserved != [0; 2] {
             return Err(TemplateError::InvalidInstruction(index));
+        }
+        let allowed_flags = if read_width(instruction.opcode) != 0 {
+            INSTRUCTION_FLAG_DYNAMIC_OFFSET
+        } else {
+            0
+        };
+        if instruction.flags & !allowed_flags != 0 {
+            return Err(TemplateError::InvalidFlags(index));
+        }
+        Ok(())
+    }
+
+    /// Every carried register must exist and hold a value before the loop starts, so a run with
+    /// zero iterations still leaves it readable afterwards.
+    fn verify_carry_before(
+        &self,
+        carry: u64,
+        registers: &[Option<RegisterInfo>; MAX_REGISTERS],
+    ) -> Result<(), TemplateError> {
+        for register in 0..MAX_REGISTERS as u8 {
+            if carry & (1u64 << register) == 0 {
+                continue;
+            }
+            if register as usize >= self.header.register_count()
+                || registers[register as usize].is_none()
+            {
+                return Err(TemplateError::InvalidCarry(register));
+            }
         }
         Ok(())
     }
@@ -260,7 +294,15 @@ impl ProgramView<'_> {
             }
             OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_U128
             | OP_READ_PUBKEY | OP_READ_BOOL => {
-                self.verify_read_bounds(instruction, instruction_index, in_loop)?;
+                if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
+                    self.require_account(instruction.a, in_loop)?;
+                    self.require_type(registers, instruction.b, VALUE_U64)?;
+                    if instruction.immediate() != 0 {
+                        return Err(TemplateError::InvalidFlags(instruction_index));
+                    }
+                } else {
+                    self.verify_read_bounds(instruction, instruction_index, in_loop)?;
+                }
                 let value_type = match instruction.opcode {
                     OP_READ_I64 => VALUE_I64,
                     OP_READ_U128 => VALUE_U128,
@@ -338,6 +380,10 @@ impl ProgramView<'_> {
                     return Err(TemplateError::InvalidInstruction(instruction_index));
                 }
                 self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
+            }
+            OP_MOVE => {
+                let source = self.read_register(registers, instruction.a)?;
+                self.write_register(registers, instruction.dst, source)?;
             }
             OP_DERIVE_PDA => {
                 let program = self
@@ -640,6 +686,21 @@ const fn is_value_type(value_type: u8) -> bool {
 
 fn valid_range(total: usize, offset: usize, len: usize) -> bool {
     offset.checked_add(len).is_some_and(|end| end <= total)
+}
+
+/// A carried register must leave the loop body with exactly the type it entered with.
+fn verify_carry_after(
+    carry: u64,
+    before: &[Option<RegisterInfo>; MAX_REGISTERS],
+    after: &[Option<RegisterInfo>; MAX_REGISTERS],
+) -> Result<(), TemplateError> {
+    for register in 0..MAX_REGISTERS as u8 {
+        if carry & (1u64 << register) != 0 && before[register as usize] != after[register as usize]
+        {
+            return Err(TemplateError::InvalidCarry(register));
+        }
+    }
+    Ok(())
 }
 
 /// Bytes read from account data by each `OP_READ_*` opcode.
@@ -1455,6 +1516,152 @@ mod tests {
     }
 
     #[test]
+    fn loop_carried_registers_must_be_initialized_and_keep_their_type() {
+        // Sum each row's lamports into a carried register, then enforce a budget after the loop.
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        let total = builder.const_u64(0);
+        let budget = builder.const_u64(1_000);
+        builder.for_each(1 << total, |body| {
+            let lamports = body.account_lamports(row);
+            let sum = body.binary(OP_ADD, total, lamports);
+            body.mov(total, sum);
+        });
+        let within = builder.binary(OP_LTE, total, budget);
+        builder.require(within);
+        assert!(verify_builder(&builder).is_ok());
+
+        // Never initialized before the loop.
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        let total = builder.register();
+        builder.for_each(1 << total, |body| {
+            let lamports = body.account_lamports(row);
+            body.mov(total, lamports);
+        });
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidCarry(total))
+        );
+
+        // Retyped inside the body.
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        let total = builder.const_u64(0);
+        builder.for_each(1 << total, |body| {
+            let key = body.account_key(row);
+            body.mov(total, key);
+        });
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidCarry(total))
+        );
+
+        // Bytes must keep the same maximum length.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        let short = builder.const_bytes(&[1, 2]);
+        builder.for_each(1 << short, |body| {
+            let long = body.const_bytes(&[1, 2, 3]);
+            body.mov(short, long);
+        });
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidCarry(short))
+        );
+
+        // A carry bit above the register count.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        let flag = builder.const_bool(true);
+        builder.for_each(1 << 63, |body| body.require(flag));
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidCarry(63))
+        );
+
+        // Move follows ordinary register typing.
+        let mut builder = ProgramBuilder::new();
+        let value = builder.const_u64(1);
+        let target = builder.register();
+        builder.mov(target, value);
+        let same = builder.binary(OP_EQ, target, value);
+        builder.require(same);
+        assert!(verify_builder(&builder).is_ok());
+        let mut builder = ProgramBuilder::new();
+        let target = builder.register();
+        builder.mov(target, 5);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidRegister(5))
+        );
+    }
+
+    #[test]
+    fn minimum_iterations_are_bounded_by_the_maximum() {
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(3, 3);
+        let flag = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(flag));
+        assert!(verify_builder(&builder).is_ok());
+        builder.batch(3, 4);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidMinIterations)
+        );
+
+        let mut builder = ProgramBuilder::new();
+        builder.batch(0, 1);
+        builder.const_bool(true);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidMinIterations)
+        );
+    }
+
+    #[test]
+    fn dynamic_offset_reads_take_a_u64_register_and_skip_the_static_bound() {
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 0);
+        let offset = builder.const_u64(64);
+        let value = builder.read_dynamic(OP_READ_U64, account, offset);
+        let same = builder.binary(OP_EQ, value, value);
+        builder.require(same);
+        assert!(verify_builder(&builder).is_ok());
+
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 0);
+        let offset = builder.const_i64(64);
+        builder.read_dynamic(OP_READ_U64, account, offset);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TypeMismatch));
+
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 0);
+        let offset = builder.const_u64(64);
+        builder.read_dynamic(OP_READ_U64, account, offset);
+        builder.instructions_mut()[1].immediate_le = 8u64.to_le_bytes();
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidFlags(1)));
+
+        let mut builder = ProgramBuilder::new();
+        let value = builder.const_u64(1);
+        builder.binary(OP_ADD, value, value);
+        builder.instructions_mut()[1].flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET;
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidFlags(1)));
+
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 8);
+        builder.read(OP_READ_U64, account, 0);
+        builder.instructions_mut()[0].flags = 2;
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidFlags(0)));
+    }
+
+    #[test]
     fn instruction_reserved_bytes_must_be_zero() {
         let mut builder = ProgramBuilder::new();
         builder.const_bool(true);
@@ -1467,10 +1674,7 @@ mod tests {
         let mut builder = ProgramBuilder::new();
         builder.const_bool(true);
         builder.instructions_mut()[0].flags = 1;
-        assert_eq!(
-            verify_builder(&builder),
-            Err(TemplateError::InvalidInstruction(0))
-        );
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidFlags(0)));
 
         let mut builder = ProgramBuilder::new();
         builder.op(OP_CONST_BOOL, 2, NO_INDEX, NO_INDEX, 0);

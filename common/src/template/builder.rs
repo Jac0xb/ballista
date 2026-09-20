@@ -219,6 +219,26 @@ impl ProgramBuilder {
         self.emit(record(OP_REQUIRE, NO_INDEX, condition, NO_INDEX, NO_INDEX, 0, 0));
     }
 
+    /// Copies `source` into an existing register, typically a loop-carried one.
+    pub fn mov(&mut self, dst: u8, source: u8) {
+        self.emit(record(OP_MOVE, dst, source, NO_INDEX, NO_INDEX, 0, 0));
+    }
+
+    /// Emits an account data read whose offset comes from a `u64` register.
+    pub fn read_dynamic(&mut self, opcode: u8, account: u8, offset_register: u8) -> u8 {
+        let dst = self.register();
+        self.emit(record(
+            opcode,
+            dst,
+            account,
+            offset_register,
+            NO_INDEX,
+            INSTRUCTION_FLAG_DYNAMIC_OFFSET,
+            0,
+        ));
+        dst
+    }
+
     /// Declares a CPI and returns its descriptor index. The declared maximum data length is the
     /// sum of the segment widths; bytes segments contribute zero and need
     /// [`ProgramBuilder::set_cpi_max_data_len`].

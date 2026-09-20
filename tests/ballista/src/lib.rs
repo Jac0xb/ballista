@@ -11,8 +11,9 @@ mod tests {
         InstructionRecord, ProgramBuilder, ProgramHeader, ProgramView, PubkeyRecord, Segment,
         TemplateAccount, ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_LITERAL,
         DATA_REG_PUBKEY, DATA_REG_U64, ITERATION_ACCOUNT_BIT, MAX_PDA_SEEDS, NO_INDEX,
-        OP_ACCOUNT_IS_EMPTY, OP_ACCOUNT_KEY, OP_ACCOUNT_LAMPORTS, OP_DERIVE_PDA, OP_EQ,
-        OP_FOREACH, OP_INVOKE, OP_LOAD_INPUT, OP_NE, OP_REQUIRE, OP_SUB, VALUE_BOOL, VALUE_U64,
+        OP_ACCOUNT_IS_EMPTY, OP_ACCOUNT_KEY, OP_ACCOUNT_LAMPORTS, OP_ADD, OP_DERIVE_PDA, OP_EQ,
+        OP_FOREACH, OP_INVOKE, OP_LOAD_INPUT, OP_LTE, OP_NE, OP_READ_U64, OP_REQUIRE, OP_SUB,
+        VALUE_BOOL, VALUE_U64,
     };
     use mollusk_svm::{program::loader_keys::LOADER_V3, Mollusk, MolluskContext};
     use mollusk_svm_programs_memo::memo;
@@ -326,12 +327,12 @@ mod tests {
         let mut accounts = funded_accounts([creator, authority], 10_000_000_000);
         accounts.insert(
             source,
-            token::create_account_for_token_account(token_account(mint, authority, 1_000_000)),
+            token::create_account_for_token_account(token_account_state(mint, authority, 1_000_000)),
         );
         for destination in &destinations {
             accounts.insert(
                 *destination,
-                token::create_account_for_token_account(token_account(mint, *destination, 0)),
+                token::create_account_for_token_account(token_account_state(mint, *destination, 0)),
             );
         }
         let context = context(accounts);
@@ -390,10 +391,10 @@ mod tests {
         let owner_missing = Pubkey::new_unique();
         let owner_existing = Pubkey::new_unique();
         let (missing_ata, _) = associated_token::create_account_for_associated_token_account(
-            token_account(mint, owner_missing, 0),
+            token_account_state(mint, owner_missing, 0),
         );
         let (existing_ata, existing_account) =
-            associated_token::create_account_for_associated_token_account(token_account(
+            associated_token::create_account_for_associated_token_account(token_account_state(
                 mint,
                 owner_existing,
                 0,
@@ -414,7 +415,7 @@ mod tests {
         );
         accounts.insert(
             source,
-            token::create_account_for_token_account(token_account(mint, authority, 1_000_000)),
+            token::create_account_for_token_account(token_account_state(mint, authority, 1_000_000)),
         );
         accounts.insert(existing_ata, existing_account);
         let context = context(accounts);
@@ -484,6 +485,146 @@ mod tests {
         ));
         assert!(mismatched_owner_and_ata.program_result.is_err());
         assert_eq!(token_amount(&context, source), source_before_mismatch);
+    }
+
+    /// A carried register accumulates across rows and is readable after the loop, so a template
+    /// can enforce a budget over a whole batch. Zero rows are rejected once a minimum is declared.
+    #[test]
+    fn carried_sum_enforces_a_budget_across_rows() {
+        let creator = Pubkey::new_unique();
+        let rows: Vec<Pubkey> = (0..3).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        for (index, row) in rows.iter().enumerate() {
+            accounts.insert(*row, Account::new((index as u64 + 1) * 100, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        let build = |min_iterations: u8| {
+            let mut builder = ProgramBuilder::new();
+            let row = builder.row_account(0, None, None, 0);
+            builder.batch(3, min_iterations);
+            let budget_input = builder.input(VALUE_U64, 0);
+            let budget = builder.load_input(budget_input);
+            let total = builder.const_u64(0);
+            builder.for_each(1 << total, |body| {
+                let lamports = body.account_lamports(row);
+                let sum = body.binary(OP_ADD, total, lamports);
+                body.mov(total, sum);
+            });
+            let within = builder.binary(OP_LTE, total, budget);
+            builder.require(within);
+            let payload = builder.build().expect("builds");
+            ProgramView::parse(&payload)
+                .and_then(|program| program.verify())
+                .expect("verifies");
+            payload
+        };
+
+        let payload = build(0);
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 50, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 50);
+        let metas: Vec<AccountMeta> = rows
+            .iter()
+            .map(|row| AccountMeta::new_readonly(*row, false))
+            .collect();
+
+        let exact = context.process_instruction(&run_instruction(
+            template,
+            metas.clone(),
+            &600u64.to_le_bytes(),
+        ));
+        assert!(exact.program_result.is_ok(), "{exact:#?}");
+
+        let short = context.process_instruction(&run_instruction(
+            template,
+            metas.clone(),
+            &599u64.to_le_bytes(),
+        ));
+        // Instruction 7 is the `require`; 6015 is RequirementFailed.
+        assert_eq!(custom_code(&short), Some((7 << 16) | 6015), "{short:#?}");
+
+        let empty = context.process_instruction(&run_instruction(
+            template,
+            Vec::new(),
+            &0u64.to_le_bytes(),
+        ));
+        assert!(empty.program_result.is_ok(), "zero rows leave the total at zero");
+
+        let payload = build(1);
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 51, &payload))
+            .program_result
+            .is_ok());
+        let (strict, _) = find_template_pda(&creator, 51);
+        let rejected = context.process_instruction(&run_instruction(
+            strict,
+            Vec::new(),
+            &0u64.to_le_bytes(),
+        ));
+        // 6010 is InvalidAccountRange; the context is the iteration count that was rejected.
+        assert_eq!(custom_code(&rejected), Some(6010), "{rejected:#?}");
+        let one_row = context.process_instruction(&run_instruction(
+            strict,
+            metas[..1].to_vec(),
+            &100u64.to_le_bytes(),
+        ));
+        assert!(one_row.program_result.is_ok(), "{one_row:#?}");
+    }
+
+    /// A dynamic-offset read takes its offset from a register, so one template can read a field
+    /// whose position the caller supplies at run time.
+    #[test]
+    fn dynamic_offset_reads_use_the_register_value() {
+        let creator = Pubkey::new_unique();
+        let authority = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let token_account = Pubkey::new_unique();
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        accounts.insert(
+            token_account,
+            token::create_account_for_token_account(token_account_state(mint, authority, 4_242)),
+        );
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        let holder = builder.account(0, None, Some(token::ID.to_bytes()), 0);
+        let offset_input = builder.input(VALUE_U64, 0);
+        let expected_input = builder.input(VALUE_U64, 0);
+        let offset = builder.load_input(offset_input);
+        let expected = builder.load_input(expected_input);
+        let value = builder.read_dynamic(OP_READ_U64, holder, offset);
+        let matches = builder.binary(OP_EQ, value, expected);
+        builder.require(matches);
+        let payload = builder.build().expect("builds");
+        ProgramView::parse(&payload)
+            .and_then(|program| program.verify())
+            .expect("verifies");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 52, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 52);
+        let metas = vec![AccountMeta::new_readonly(token_account, false)];
+        let inputs = |offset: u64, expected: u64| {
+            let mut bytes = offset.to_le_bytes().to_vec();
+            bytes.extend_from_slice(&expected.to_le_bytes());
+            bytes
+        };
+
+        let amount_at_64 =
+            context.process_instruction(&run_instruction(template, metas.clone(), &inputs(64, 4_242)));
+        assert!(amount_at_64.program_result.is_ok(), "{amount_at_64:#?}");
+
+        let misaligned =
+            context.process_instruction(&run_instruction(template, metas.clone(), &inputs(65, 4_242)));
+        assert_eq!(custom_code(&misaligned), Some((4 << 16) | 6015), "{misaligned:#?}");
+
+        let past_the_end =
+            context.process_instruction(&run_instruction(template, metas, &inputs(200, 0)));
+        assert_eq!(custom_code(&past_the_end), Some((2 << 16) | 6009), "{past_the_end:#?}");
     }
 
     /// Anyone can send lamports to a predictable template address before it is created. Creation
@@ -649,6 +790,16 @@ mod tests {
         );
     }
 
+    /// The custom error code a run failed with, if it failed with one.
+    fn custom_code(result: &mollusk_svm::result::InstructionResult) -> Option<u32> {
+        match &result.program_result {
+            mollusk_svm::result::ProgramResult::Failure(
+                solana_program_error::ProgramError::Custom(code),
+            ) => Some(*code),
+            _ => None,
+        }
+    }
+
     fn context(accounts: HashMap<Pubkey, Account>) -> MolluskContext<HashMap<Pubkey, Account>> {
         let mut mollusk = Mollusk::default();
         mollusk.add_program_with_loader_and_elf(&ID, &LOADER_V3, BALLISTA_ELF);
@@ -678,7 +829,7 @@ mod tests {
         u64::from_le_bytes(data[64..72].try_into().expect("token amount"))
     }
 
-    fn token_account(mint: Pubkey, owner: Pubkey, amount: u64) -> TokenAccount {
+    fn token_account_state(mint: Pubkey, owner: Pubkey, amount: u64) -> TokenAccount {
         TokenAccount {
             mint,
             owner,

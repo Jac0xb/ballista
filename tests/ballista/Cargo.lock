@@ -357,6 +357,7 @@ version = "0.3.0"
 dependencies = [
  "ballista-common",
  "mollusk-svm",
+ "mollusk-svm-programs-memo",
  "mollusk-svm-programs-token",
  "solana-account",
  "solana-address 2.6.1",
@@ -365,6 +366,7 @@ dependencies = [
  "solana-instruction",
  "solana-message",
  "solana-nonce",
+ "solana-program-error",
  "solana-program-option",
  "solana-pubkey 4.2.0",
  "solana-reward-info",
@@ -1376,6 +1378,17 @@ checksum = "1523cf5f9900fabea3ac9f722172be6b5306110ec9cad36a53c451c9cdf42193"
 dependencies = [
  "solana-pubkey 4.2.0",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "mollusk-svm-programs-memo"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10bec7fc1ebc48fe208e5bd39cd03eac935afd91bed61477894f3e815dacad34"
+dependencies = [
+ "mollusk-svm",
+ "solana-account",
+ "solana-pubkey 4.2.0",
 ]
 
 [[package]]

@@ -45,8 +45,9 @@ jobs:
             . -> target
             tests/ballista -> tests/ballista/target
       - name: Install Solana platform tools
+        # Agave 4.1 ships platform tools v1.54 (rustc 1.89), which pinocchio 0.11 requires.
         run: |
-          sh -c "$(curl -sSfL https://release.anza.xyz/v3.0.0/install)"
+          sh -c "$(curl -sSfL https://release.anza.xyz/v4.1.0/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
       - run: cargo build-sbf --manifest-path programs/ballista/Cargo.toml
       - run: cargo test --manifest-path tests/ballista/Cargo.toml

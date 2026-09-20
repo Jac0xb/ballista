@@ -162,3 +162,19 @@
 ;; allocations directly.
 #[inline(never)] ^ballista::processor::execute::bounded_invoke$
 #[inline(never)] ^ballista::create_template_account$
+
+;; Whole-program verification runs at create and finalize. It keeps its register table in a stack
+;; array indexed by register numbers read from the payload, which the pointer analysis cannot
+;; follow, so for rules that enter through the entrypoint it is an external call with a
+;; nondeterministic result. The verifier itself is covered one instruction at a time by the
+;; typing rules, which call verify_single_instruction with a heap-resident table.
+#[inline(never)] ^ballista_common::template::verify::<impl ballista_common::template::wire::ProgramView>::verify$
+
+;; PDA seeds are encoded into a fixed stack buffer with a memcpy whose length is the register's
+;; byte length, which the prover only supports when it is static. The sink is external; the PDA
+;; search that consumes the seeds is summarized anyway, so nothing observable depends on it.
+#[inline(never)] ^<ballista::processor::execute::FixedSink as ballista::processor::execute::ByteSink>::push_bytes$
+
+;; The default rules treat every `alloc::` symbol as external, which catches this trait impl on
+;; Vec<u8> by its type path. It is program code and must be inlined.
+#[inline] ^<alloc::vec::Vec<u8> as ballista::processor::execute::ByteSink>::push_bytes$

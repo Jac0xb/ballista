@@ -1,8 +1,16 @@
-//! Error codes round-trip through their encoding and partition cleanly into runtime, verifier,
-//! and foreign codes.
+//! Error codes round-trip through their encoding, and runtime and verifier codes occupy disjoint
+//! ranges with their context in the high half.
+//!
+//! `decode_ballista_error` itself has no rule: it reads the name table in the binary's data
+//! section at a symbolic index, which the prover's pointer analysis does not follow. Its behaviour
+//! is covered by the host tests in `ballista-common`; the range facts it relies on are proved here.
 
+use ballista::error::{vm_error, BallistaError};
 use ballista_common::template::*;
 use cvlr::prelude::*;
+use pinocchio::error::ProgramError;
+
+use super::util::pick;
 
 #[rule]
 pub fn rule_error_codes_round_trip() {
@@ -15,41 +23,43 @@ pub fn rule_error_codes_round_trip() {
 }
 
 #[rule]
-pub fn rule_decoded_errors_partition_by_range() {
-    let code: u32 = nondet();
-    let (kind, context) = decode_error(code);
-    match decode_ballista_error(code) {
-        Some(decoded) => {
-            cvlr_assert!(decoded.code == code);
-            cvlr_assert!(decoded.kind == kind);
-            cvlr_assert!(decoded.context == context);
-            match decoded.source {
-                ErrorSource::Runtime => {
-                    cvlr_assert!(kind >= RUNTIME_ERROR_BASE);
-                    cvlr_assert!(kind < RUNTIME_ERROR_BASE + RUNTIME_ERROR_NAMES.len() as u32);
-                    cvlr_assert!(core::ptr::eq(
-                        decoded.name,
-                        RUNTIME_ERROR_NAMES[(kind - RUNTIME_ERROR_BASE) as usize]
-                    ));
-                }
-                ErrorSource::Verifier => {
-                    cvlr_assert!(kind >= VERIFIER_ERROR_BASE);
-                    cvlr_assert!(kind < VERIFIER_ERROR_BASE + VERIFIER_ERROR_NAMES.len() as u32);
-                    cvlr_assert!(core::ptr::eq(
-                        decoded.name,
-                        VERIFIER_ERROR_NAMES[(kind - VERIFIER_ERROR_BASE) as usize]
-                    ));
-                }
-            }
-        }
-        None => {
-            let runtime = kind >= RUNTIME_ERROR_BASE
-                && kind < RUNTIME_ERROR_BASE + RUNTIME_ERROR_NAMES.len() as u32;
-            let verifier = kind >= VERIFIER_ERROR_BASE
-                && kind < VERIFIER_ERROR_BASE + VERIFIER_ERROR_NAMES.len() as u32;
-            cvlr_assert!(!runtime && !verifier);
-        }
-    }
+pub fn rule_runtime_error_codes_carry_context_and_stay_in_range() {
+    let kind = pick!(
+        BallistaError::InvalidInstructionData,
+        BallistaError::InvalidTemplateAccount,
+        BallistaError::InvalidTemplateProgram,
+        BallistaError::TemplateNotUploading,
+        BallistaError::TemplateNotFinalized,
+        BallistaError::InvalidCreator,
+        BallistaError::InvalidChunkOffset,
+        BallistaError::HashMismatch,
+        BallistaError::InvalidRunInputs,
+        BallistaError::InvalidRuntimeAccount,
+        BallistaError::InvalidAccountRange,
+        BallistaError::InvalidRegister,
+        BallistaError::TypeMismatch,
+        BallistaError::ArithmeticOverflow,
+        BallistaError::DivisionByZero,
+        BallistaError::RequirementFailed,
+        BallistaError::CpiDataTooLarge,
+        BallistaError::InvalidPdaDerivation,
+        BallistaError::MissingReturnData,
+        BallistaError::ReturnDataMismatch,
+        BallistaError::AccountConstraintFailed,
+    );
+    let context: u16 = nondet();
+    let ProgramError::Custom(code) = vm_error(kind, context) else {
+        cvlr_assert!(false);
+        return;
+    };
+    let (decoded_kind, decoded_context) = decode_error(code);
+    clog!(code, decoded_kind, decoded_context);
+    cvlr_assert!(decoded_kind == kind.code());
+    cvlr_assert!(decoded_context == context);
+    cvlr_assert!(decoded_kind >= RUNTIME_ERROR_BASE);
+    cvlr_assert!(decoded_kind < RUNTIME_ERROR_BASE + RUNTIME_ERROR_NAMES.len() as u32);
+    // Runtime codes never reach the verifier range, so a decoder can tell them apart.
+    cvlr_assert!(decoded_kind < VERIFIER_ERROR_BASE);
 }
 
 #[rule]
@@ -89,4 +99,6 @@ pub fn rule_verifier_error_codes_are_distinct_and_in_range() {
     let (code, _) = error.code();
     cvlr_assert!(code == VERIFIER_ERROR_BASE + index as u32);
     cvlr_assert!(code < VERIFIER_ERROR_BASE + VERIFIER_ERROR_NAMES.len() as u32);
+    // Verifier codes never reach down into the runtime range.
+    cvlr_assert!(code >= RUNTIME_ERROR_BASE + RUNTIME_ERROR_NAMES.len() as u32);
 }

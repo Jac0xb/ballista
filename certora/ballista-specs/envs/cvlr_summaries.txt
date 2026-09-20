@@ -128,3 +128,14 @@
 ^ballista::processor::execute::bounded_invoke$
 #[type(r0:num)]
 ^ballista::create_template_account$
+
+;; Result<VerificationStats, TemplateError> is sixteen bytes, returned through the slot in r1.
+#[type((*i64)(r1+0):num)]
+#[type((*i64)(r1+8):num)]
+^ballista_common::template::verify::<impl ballista_common::template::wire::ProgramView>::verify$
+
+;; RunResult<()> is twelve bytes (tag, error kind, context), returned through the slot in r1.
+#[type((*i32)(r1+0):num)]
+#[type((*i32)(r1+4):num)]
+#[type((*i32)(r1+8):num)]
+^<ballista::processor::execute::FixedSink as ballista::processor::execute::ByteSink>::push_bytes$

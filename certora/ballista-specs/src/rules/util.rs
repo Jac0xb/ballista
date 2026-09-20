@@ -294,3 +294,27 @@ mod tests {
         assert_eq!(pick!(7u8, 8, 9), 7);
     }
 }
+
+/// The summaries file types the results of the functions the prover treats as external, and each
+/// entry assumes a size: values of eight bytes or fewer return in `r0`, larger ones through the
+/// caller's slot in `r1`. These assertions pin those sizes.
+#[cfg(test)]
+mod abi_sizes {
+    use core::mem::size_of;
+
+    #[test]
+    fn summarized_functions_return_the_sizes_the_summaries_assume() {
+        // bounded_invoke and create_template_account: one word in r0.
+        assert_eq!(size_of::<pinocchio::ProgramResult>(), 8);
+        // FixedSink::push_bytes: three 32-bit words through r1.
+        assert_eq!(size_of::<ballista::processor::execute::RunResult<()>>(), 12);
+        // ProgramView::verify: two 64-bit words through r1.
+        assert_eq!(
+            size_of::<Result<
+                ballista_common::template::VerificationStats,
+                ballista_common::template::TemplateError,
+            >>(),
+            16
+        );
+    }
+}

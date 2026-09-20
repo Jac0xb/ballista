@@ -19,8 +19,13 @@ jobs:
   typecheck:
     name: Specifications typecheck
     runs-on: ubuntu-latest
+    outputs:
+      has_key: ${{ steps.key.outputs.has_key }}
     steps:
       - uses: actions/checkout@v5
+      # Job-level `if` cannot read secrets, so the gate is computed in a step and exported.
+      - id: key
+        run: echo "has_key=${{ secrets.CERTORAKEY != '' }}" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -33,7 +38,7 @@ jobs:
   prove:
     name: Certora Solana Prover
     needs: typecheck
-    if: ${{ secrets.CERTORAKEY != '' }}
+    if: needs.typecheck.outputs.has_key == 'true'
     runs-on: ubuntu-latest
     env:
       CERTORAKEY: ${{ secrets.CERTORAKEY }}

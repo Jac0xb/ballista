@@ -10,10 +10,10 @@ Pay up to 30 recipients the same amount while sending only one Ballista instruct
 const payroll = defineTemplate({
   inputs: { amount: { type: 'u64' } },
   accounts: {
-    systemProgram: { executable: true, address: SYSTEM_PROGRAM_BYTES },
+    systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
     treasury: { signer: true, writable: true },
   },
-  batch: { maxIterations: 30, row: { recipient: { writable: true } } },
+  batch: { maxIterations: 30, minIterations: 1, row: { recipient: { writable: true } } },
   steps: [step.forEach([
     systemTransfer({
       systemProgram: account.fixed('systemProgram'),
@@ -25,13 +25,45 @@ const payroll = defineTemplate({
 });
 ```
 
-```rust [Rust · run]
+```ts [TypeScript · run]
+const instruction = buildKitRunInstruction({
+  compiled: compileTemplate(payroll),
+  templateAddress,
+  inputs: { amount: 10_000n },
+  accounts: {
+    systemProgram: { address: SYSTEM_PROGRAM_ADDRESS },
+    treasury: { address: treasury },
+  },
+  batchRows: recipients.map((recipient) => ({ recipient: { address: recipient } })),
+});
+```
+
+```rust [Rust · template]
+let mut builder = ProgramBuilder::new();
+let system = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ID.to_bytes()), None, 0);
+let treasury = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+let recipient = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
+builder.batch(30, 1);
+let amount_input = builder.input(VALUE_U64, 0);
+let amount = builder.load_input(amount_input);
+let discriminator = builder.blob(&[2, 0, 0, 0]);
+let transfer = builder.cpi(
+    system,
+    &[(treasury, ACCOUNT_SIGNER | ACCOUNT_WRITABLE), (recipient, ACCOUNT_WRITABLE)],
+    &[Segment::Literal(discriminator), Segment::Register(DATA_REG_U64, amount)],
+);
+builder.for_each(0, |body| body.invoke(transfer, None));
+let payload = builder.build()?;
+```
+
+```rust [Rust · inputs and run]
+let inputs = RunInputs::new().u64(amount).finish();
 let mut metas = vec![
-    AccountMeta::new_readonly(system_program, false),
+    AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
     AccountMeta::new(treasury, true),
 ];
 metas.extend(recipients.iter().map(|key| AccountMeta::new(*key, false)));
-let run = ballista_sdk::run_instruction(template, metas, &amount.to_le_bytes());
+let run = ballista_sdk::run_instruction(template, metas, &inputs);
 ```
 
 :::
@@ -69,9 +101,7 @@ steps: [
 ```
 
 ```rust [Rust · inputs]
-let mut inputs = Vec::new();
-inputs.extend_from_slice(&total.to_le_bytes());
-inputs.extend_from_slice(&partner_bps.to_le_bytes());
+let inputs = RunInputs::new().u64(total).u64(partner_bps).finish();
 let run = ballista_sdk::run_instruction(template, metas, &inputs);
 ```
 
@@ -125,9 +155,7 @@ systemTransfer({
 ```
 
 ```rust [Rust · inputs]
-let mut inputs = Vec::new();
-inputs.extend_from_slice(&refund_amount.to_le_bytes());
-inputs.extend_from_slice(&deadline.to_le_bytes());
+let inputs = RunInputs::new().u64(refund_amount).i64(deadline).finish();
 let run = ballista_sdk::run_instruction(template, metas, &inputs);
 ```
 
@@ -164,9 +192,7 @@ steps: [
 ```
 
 ```rust [Rust · inputs]
-let mut inputs = Vec::new();
-inputs.extend_from_slice(&reserve.to_le_bytes());
-inputs.extend_from_slice(&cap.to_le_bytes());
+let inputs = RunInputs::new().u64(reserve).u64(cap).finish();
 let run = ballista_sdk::run_instruction(template, metas, &inputs);
 ```
 

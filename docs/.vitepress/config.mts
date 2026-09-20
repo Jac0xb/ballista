@@ -66,6 +66,8 @@ export default defineConfig({
             { text: 'Batch execution', link: '/guide/batching' },
             { text: 'Assertions and snapshots', link: '/guide/assertions' },
             { text: 'PDA and ATA assertions', link: '/guide/pda-assertions' },
+            { text: 'Trust model', link: '/guide/trust-model' },
+            { text: 'Errors and events', link: '/guide/errors-and-events' },
           ],
         },
         {
@@ -81,6 +83,7 @@ export default defineConfig({
           text: 'Example cookbook',
           items: [
             { text: 'All examples', link: '/examples/' },
+            { text: 'Author and run in both languages', link: '/examples/end-to-end' },
             { text: 'Payments', link: '/examples/payments' },
             { text: 'Token accounts', link: '/examples/token-accounts' },
             { text: 'Safety guardrails', link: '/examples/guardrails' },

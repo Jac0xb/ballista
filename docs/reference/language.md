@@ -15,7 +15,10 @@
 
 - Typed execution inputs and literals.
 - Account key, owner, lamports, data length, and emptiness.
-- Fixed-width account data reads: bool, u8, u16, u32, u64, i64, u128, and pubkey.
+- Fixed-offset account data reads: bool, u8, u16, u32, u64, i64, u128, and pubkey. The account
+  must pin an owner or address, and the read must fit the declared minimum data length.
+- Dynamic-offset account data reads, where a `u64` expression supplies the offset at run time.
+- Return data of the invoke immediately before the current step, read as any fixed width.
 - Clock slot and Unix timestamp.
 - Current loop index.
 - Canonical PDA derivation.
@@ -27,12 +30,15 @@
 - Equality/inequality plus ordered numeric comparisons.
 - Boolean `AND`, `OR`, and `NOT`.
 - Lexical `let` and `snapshot` bindings.
+- Loop-carried variables: a variable defined before the loop and listed in `carry` can be
+  reassigned inside the body with `assign`, keeps its type, and is readable after the loop.
 
 ## Effects
 
 - `require(bool)`.
-- Guarded generic CPI.
-- One top-level bounded `forEach` over inferred account rows.
+- Guarded generic CPI, targeting a pinned program.
+- One top-level bounded `forEach` over inferred account rows, with a minimum row count.
+- An opt-in run event logged after success.
 
 ## Deliberately absent
 

@@ -2,8 +2,12 @@
 
 These examples are finite orchestration patterns, not protocol promises. Each assumes the named
 downstream program exposes the relevant instruction and that the caller supplies every required
-signer. TypeScript tabs author templates; Rust tabs demonstrate how a Rust service binds inputs and
-accounts to the same compiled artifact.
+signer.
+
+Start with [Author and run in both languages](/examples/end-to-end), which shows one template four
+ways: authored in TypeScript, run from TypeScript, authored in Rust with the shared builder, and
+run from Rust with typed inputs. The patterns below use the same four tabs where the Rust side
+differs, and template plus run tabs where it does not.
 
 ## Payments
 
@@ -45,8 +49,9 @@ accounts to the same compiled artifact.
 | [Time-gated governance execution](/examples/composition#time-gated-governance-execution) | clock and state reads |
 | [Bounded keeper crank](/examples/composition#bounded-keeper-crank) | repeated generic CPI |
 
-::: tip Why the Rust examples look different
-The Rust SDK intentionally focuses on PDA, lifecycle, account decoding, and run instruction codecs.
-The deterministic authoring compiler currently lives in TypeScript. Export its bytes as a build
-artifact, then upload or invoke that same artifact from Rust.
+::: tip Two authoring surfaces, one bytecode
+The TypeScript compiler and the Rust `ProgramBuilder` emit identical bytes for the same template;
+the repository checks this against shared fixtures. The compiler adds pin lints, inferred data
+lengths, and a source map; the builder is lower level and leaves those decisions to you. Either
+artifact can be uploaded and run from either language.
 :::

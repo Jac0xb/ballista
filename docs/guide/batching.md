@@ -1,7 +1,8 @@
 # Batch execution
 
-A template may declare one repeated tail-account row. The caller supplies zero or more rows after
-the fixed accounts, and the VM infers the iteration count from the remaining account count.
+A template may declare one repeated tail-account row. The caller supplies rows after the fixed
+accounts, and the VM infers the iteration count from the remaining account count. A template can
+require a minimum number of rows so a batch cannot succeed vacuously with none.
 
 ## Thirty-recipient payroll
 
@@ -11,11 +12,12 @@ the fixed accounts, and the VM infers the iteration count from the remaining acc
 const payroll = defineTemplate({
   inputs: { lamportsPerRecipient: { type: 'u64' } },
   accounts: {
-    systemProgram: { executable: true, address: SYSTEM_PROGRAM_BYTES },
+    systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
     treasury: { signer: true, writable: true },
   },
   batch: {
     maxIterations: 30,
+    minIterations: 1,
     row: { recipient: { writable: true } },
   },
   steps: [
@@ -31,23 +33,116 @@ const payroll = defineTemplate({
 });
 ```
 
-```rust [Rust · account rows]
-let mut runtime_accounts = vec![
-    AccountMeta::new_readonly(system_program, false),
+```ts [TypeScript · run]
+const instruction = buildKitRunInstruction({
+  compiled,
+  templateAddress,
+  inputs: { lamportsPerRecipient: 10_000n },
+  accounts: {
+    systemProgram: { address: SYSTEM_PROGRAM_ADDRESS },
+    treasury: { address: treasury },
+  },
+  batchRows: recipients.map((recipient) => ({ recipient: { address: recipient } })),
+});
+// Throws before sending if there are more than 30 rows or fewer than 1.
+```
+
+```rust [Rust · template]
+let mut builder = ProgramBuilder::new();
+let system = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ID.to_bytes()), None, 0);
+let treasury = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+let recipient = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
+builder.batch(30, 1);
+let lamports_input = builder.input(VALUE_U64, 0);
+let lamports = builder.load_input(lamports_input);
+let discriminator = builder.blob(&[2, 0, 0, 0]);
+let transfer = builder.cpi(
+    system,
+    &[(treasury, ACCOUNT_SIGNER | ACCOUNT_WRITABLE), (recipient, ACCOUNT_WRITABLE)],
+    &[Segment::Literal(discriminator), Segment::Register(DATA_REG_U64, lamports)],
+);
+builder.for_each(0, |body| body.invoke(transfer, None));
+let payload = builder.build()?;
+```
+
+```rust [Rust · inputs and run]
+let inputs = RunInputs::new().u64(lamports_per_recipient).finish();
+let mut accounts = vec![
+    AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
     AccountMeta::new(treasury, true),
 ];
-runtime_accounts.extend(
-    recipients.iter().map(|key| AccountMeta::new(*key, false)),
-);
-
-let run = ballista_sdk::run_instruction(
-    template,
-    runtime_accounts,
-    &lamports_per_recipient.to_le_bytes(),
-);
+accounts.extend(recipients.iter().map(|key| AccountMeta::new(*key, false)));
+let run = ballista_sdk::run_instruction(template, accounts, &inputs);
 ```
 
 :::
+
+## Carry a total across rows
+
+Registers written inside the loop body are discarded after each iteration, except the ones the
+loop carries. A carried variable is defined before the loop, reassigned inside it, and readable
+after it, so a template can enforce a bound over the whole batch.
+
+::: code-group
+
+```ts [TypeScript · template]
+steps: [
+  step.let('total', expression.u64(0)),
+  step.forEach(
+    [
+      systemTransfer({ /* row transfer as above */ }),
+      step.assign(
+        'total',
+        expression.add(expression.variable('total'), expression.input('lamportsPerRecipient')),
+      ),
+    ],
+    { carry: ['total'] },
+  ),
+  step.require(
+    expression.lessThanOrEqual(expression.variable('total'), expression.input('budget')),
+    'withinBudget',
+  ),
+]
+```
+
+```ts [TypeScript · run]
+const instruction = buildKitRunInstruction({
+  compiled,
+  templateAddress,
+  inputs: { lamportsPerRecipient: 10_000n, budget: 250_000n },
+  accounts: { systemProgram: { address: SYSTEM_PROGRAM_ADDRESS }, treasury: { address: treasury } },
+  batchRows: recipients.map((recipient) => ({ recipient: { address: recipient } })),
+});
+
+// A breach fails the labelled require; the code's high bits name the instruction:
+explainRunError(code, compiled)?.message; // 'RequirementFailed at steps[2] (withinBudget)'
+```
+
+```rust [Rust · template]
+let amount_input = builder.input(VALUE_U64, 0);
+let budget_input = builder.input(VALUE_U64, 0);
+let amount = builder.load_input(amount_input);
+let budget = builder.load_input(budget_input);
+let total = builder.const_u64(0);
+builder.for_each(1 << total, |body| {
+    body.invoke(transfer, None);
+    let sum = body.binary(OP_ADD, total, amount);
+    body.mov(total, sum);
+});
+let within = builder.binary(OP_LTE, total, budget);
+builder.require(within);
+```
+
+```rust [Rust · inputs and run]
+let inputs = RunInputs::new().u64(lamports_per_recipient).u64(budget).finish();
+let run = ballista_sdk::run_instruction(template, accounts, &inputs);
+```
+
+:::
+
+The carry mask lives in the `forEach` instruction's immediate. The verifier requires every carried
+register to be initialized before the loop and to keep its type through the body; a carried `bytes`
+value must also keep its maximum length.
 
 ## Stride-two rows
 
@@ -75,8 +170,8 @@ steps: [
 ```
 
 The row stride must be `1..=8`, the tail count must divide evenly by the stride, and rows cannot
-exceed `maxIterations`. There is no nested loop, backward jump, or condition-controlled `while`.
-Root steps may execute before and after the loop.
+exceed `maxIterations` or fall below `minIterations`. There is no nested loop, backward jump, or
+condition-controlled `while`. Root steps may execute before and after the loop.
 
 ::: warning Count CPIs, not just rows
 The hard ceiling is 64 expanded CPIs. A 30-row body with two CPIs expands to 60; a third CPI would

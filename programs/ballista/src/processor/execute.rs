@@ -8,7 +8,7 @@ use pinocchio::{
 };
 use solana_address::Address;
 
-use crate::error::BallistaError;
+use crate::error::{vm_error, BallistaError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RuntimeValue<'data> {
@@ -21,77 +21,196 @@ enum RuntimeValue<'data> {
     Bytes(&'data [u8]),
 }
 
+/// A failure raised while running a template, before it is mapped to a program error.
+///
+/// VM failures carry their location into the custom error code so callers can tell which
+/// instruction or account failed. Failures returned by the runtime or by an invoked program pass
+/// through untouched so their codes are never confused with Ballista's.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum RunError {
+    /// A VM failure whose context (the program counter) is attached by the dispatch loop.
+    Vm(BallistaError),
+    /// A VM failure that already knows its context: an account or input index.
+    VmAt(BallistaError, u16),
+    /// A runtime or invoked-program failure.
+    Program(ProgramError),
+}
+
+impl From<BallistaError> for RunError {
+    fn from(kind: BallistaError) -> Self {
+        RunError::Vm(kind)
+    }
+}
+
+impl From<ProgramError> for RunError {
+    fn from(error: ProgramError) -> Self {
+        RunError::Program(error)
+    }
+}
+
+type RunResult<T> = Result<T, RunError>;
+
+impl RunError {
+    /// Maps a failure raised while executing `instruction` at `pc`, logging the location.
+    fn at(self, pc: usize, instruction: &InstructionRecord) -> ProgramError {
+        match self {
+            RunError::Program(error) => error,
+            RunError::Vm(kind) => {
+                log_failure(
+                    pc as u64,
+                    instruction.opcode as u64,
+                    instruction.a as u64,
+                    instruction.b as u64,
+                    instruction.dst as u64,
+                );
+                vm_error(kind, clamp(pc))
+            }
+            RunError::VmAt(kind, context) => {
+                log_failure(
+                    pc as u64,
+                    instruction.opcode as u64,
+                    kind.code() as u64,
+                    context as u64,
+                    0,
+                );
+                vm_error(kind, context)
+            }
+        }
+    }
+
+    /// Maps a failure raised before the first instruction runs (input or account validation).
+    fn before_execution(self) -> ProgramError {
+        match self {
+            RunError::Program(error) => error,
+            RunError::Vm(kind) => {
+                log_failure(u64::MAX, kind.code() as u64, 0, 0, 0);
+                vm_error(kind, 0)
+            }
+            RunError::VmAt(kind, context) => {
+                log_failure(u64::MAX, kind.code() as u64, context as u64, 0, 0);
+                vm_error(kind, context)
+            }
+        }
+    }
+}
+
+fn clamp(value: usize) -> u16 {
+    u16::try_from(value).unwrap_or(u16::MAX)
+}
+
+/// Logs five words on the failure path only. Off-chain this is a no-op.
+#[inline(always)]
+fn log_failure(a: u64, b: u64, c: u64, d: u64, e: u64) {
+    #[cfg(target_os = "solana")]
+    unsafe {
+        pinocchio::syscalls::sol_log_64_(a, b, c, d, e);
+    }
+    #[cfg(not(target_os = "solana"))]
+    let _ = (a, b, c, d, e);
+}
+
+/// Buffers allocated once per run and reused by every CPI, so heap use does not grow with the
+/// number of invocations. The default SBF allocator never frees.
+struct Scratch<'data> {
+    metas: Vec<InstructionAccount<'data>>,
+    views: Vec<&'data AccountView>,
+    data: Vec<u8>,
+}
+
+impl<'data> Scratch<'data> {
+    fn new(program: &ProgramView<'data>) -> Self {
+        let max_data = program
+            .cpis
+            .iter()
+            .map(CpiDescriptor::max_data_len)
+            .max()
+            .unwrap_or(0)
+            .min(MAX_CPI_DATA_LEN);
+        Self {
+            metas: Vec::with_capacity(MAX_CPI_ACCOUNTS),
+            views: Vec::with_capacity(MAX_CPI_ACCOUNTS),
+            data: Vec::with_capacity(max_data),
+        }
+    }
+}
+
 pub fn run<'data>(
     program: &ProgramView<'data>,
     input_bytes: &'data [u8],
-    runtime_accounts: &'data mut [AccountView],
+    runtime_accounts: &'data [AccountView],
 ) -> ProgramResult {
-    let inputs = parse_inputs(program.inputs, input_bytes)?;
-    let iterations = validate_runtime_accounts(program, runtime_accounts)?;
-    let mut registers = vec![RuntimeValue::Unset; MAX_REGISTERS];
+    let inputs =
+        parse_inputs(program.inputs, input_bytes).map_err(RunError::before_execution)?;
+    let iterations = validate_runtime_accounts(program, runtime_accounts)
+        .map_err(RunError::before_execution)?;
+    let mut registers = vec![RuntimeValue::Unset; program.header.register_count()];
+    let mut scratch = Scratch::new(program);
     execute_root(
         program,
         &inputs,
         runtime_accounts,
         iterations,
         &mut registers,
+        &mut scratch,
     )
 }
 
 fn parse_inputs<'data>(
     descriptors: &[InputDescriptor],
     mut data: &'data [u8],
-) -> Result<Vec<RuntimeValue<'data>>, ProgramError> {
+) -> RunResult<Vec<RuntimeValue<'data>>> {
     let mut inputs = vec![RuntimeValue::Unset; descriptors.len()];
     for (index, descriptor) in descriptors.iter().enumerate() {
+        let fail = || RunError::VmAt(BallistaError::InvalidRunInputs, clamp(index));
         let value = match descriptor.value_type {
             VALUE_BOOL => {
-                let (value, remaining) = take::<1>(data)?;
+                let (value, remaining) = take::<1>(data).map_err(|_| fail())?;
                 data = remaining;
                 match value[0] {
                     0 => RuntimeValue::Bool(false),
                     1 => RuntimeValue::Bool(true),
-                    _ => return Err(BallistaError::InvalidRunInputs.into()),
+                    _ => return Err(fail()),
                 }
             }
             VALUE_U64 => {
-                let (value, remaining) = take::<8>(data)?;
+                let (value, remaining) = take::<8>(data).map_err(|_| fail())?;
                 data = remaining;
                 RuntimeValue::U64(u64::from_le_bytes(*value))
             }
             VALUE_I64 => {
-                let (value, remaining) = take::<8>(data)?;
+                let (value, remaining) = take::<8>(data).map_err(|_| fail())?;
                 data = remaining;
                 RuntimeValue::I64(i64::from_le_bytes(*value))
             }
             VALUE_U128 => {
-                let (value, remaining) = take::<16>(data)?;
+                let (value, remaining) = take::<16>(data).map_err(|_| fail())?;
                 data = remaining;
                 RuntimeValue::U128(*value)
             }
             VALUE_PUBKEY => {
-                let (value, remaining) = take::<32>(data)?;
+                let (value, remaining) = take::<32>(data).map_err(|_| fail())?;
                 data = remaining;
                 RuntimeValue::Pubkey(*value)
             }
             VALUE_BYTES => {
-                let (len, remaining) = take::<2>(data)?;
+                let (len, remaining) = take::<2>(data).map_err(|_| fail())?;
                 let len = u16::from_le_bytes(*len) as usize;
-                let (bytes, remaining) = remaining
-                    .split_at_checked(len)
-                    .ok_or(BallistaError::InvalidRunInputs)?;
+                let (bytes, remaining) = remaining.split_at_checked(len).ok_or_else(fail)?;
                 if len > descriptor.max_len() {
-                    return Err(BallistaError::InvalidRunInputs.into());
+                    return Err(fail());
                 }
                 data = remaining;
                 RuntimeValue::Bytes(bytes)
             }
-            _ => return Err(BallistaError::InvalidRunInputs.into()),
+            _ => return Err(fail()),
         };
         inputs[index] = value;
     }
     if !data.is_empty() {
-        return Err(BallistaError::InvalidRunInputs.into());
+        return Err(RunError::VmAt(
+            BallistaError::InvalidRunInputs,
+            clamp(descriptors.len()),
+        ));
     }
     Ok(inputs)
 }
@@ -99,44 +218,47 @@ fn parse_inputs<'data>(
 fn validate_runtime_accounts(
     program: &ProgramView<'_>,
     accounts: &[AccountView],
-) -> Result<usize, ProgramError> {
+) -> RunResult<usize> {
+    let range_error = |context: usize| RunError::VmAt(BallistaError::InvalidAccountRange, clamp(context));
     if accounts.len() > MAX_RUNTIME_ACCOUNTS {
-        return Err(BallistaError::InvalidAccountRange.into());
+        return Err(range_error(accounts.len()));
     }
     let fixed = program.header.fixed_account_count();
     let stride = program.header.batch_stride();
     let iterations = if stride == 0 {
         if accounts.len() != fixed {
-            return Err(BallistaError::InvalidAccountRange.into());
+            return Err(range_error(accounts.len()));
         }
         0
     } else {
         let tail = accounts
             .len()
             .checked_sub(fixed)
-            .ok_or(BallistaError::InvalidAccountRange)?;
+            .ok_or_else(|| range_error(accounts.len()))?;
         if tail % stride != 0 {
-            return Err(BallistaError::InvalidAccountRange.into());
+            return Err(range_error(accounts.len()));
         }
         let iterations = tail / stride;
         if iterations > program.header.batch_max_iterations() {
-            return Err(BallistaError::InvalidAccountRange.into());
+            return Err(range_error(iterations));
         }
         iterations
     };
 
-    for (index, account) in accounts.iter().take(fixed).enumerate() {
-        validate_account(program, account, &program.accounts[index])?;
-    }
-    for iteration in 0..iterations {
-        for offset in 0..stride {
-            let account_index = fixed + iteration * stride + offset;
-            validate_account(
-                program,
-                &accounts[account_index],
-                &program.accounts[fixed + offset],
-            )?;
-        }
+    for (index, account) in accounts.iter().enumerate() {
+        let constraint_index = if index < fixed {
+            index
+        } else {
+            fixed + (index - fixed) % stride
+        };
+        let constraint = program
+            .accounts
+            .get(constraint_index)
+            .ok_or(BallistaError::InvalidTemplateProgram)?;
+        validate_account(program, account, constraint).map_err(|error| match error {
+            RunError::Vm(kind) => RunError::VmAt(kind, clamp(index)),
+            other => other,
+        })?;
     }
     Ok(iterations)
 }
@@ -145,9 +267,9 @@ fn validate_account(
     program: &ProgramView<'_>,
     account: &AccountView,
     constraint: &AccountConstraint,
-) -> ProgramResult {
+) -> RunResult<()> {
     if constraint.flags & ACCOUNT_SIGNER != 0 && !account.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
+        return Err(ProgramError::MissingRequiredSignature.into());
     }
     if constraint.flags & ACCOUNT_WRITABLE != 0 && !account.is_writable() {
         return Err(BallistaError::InvalidRuntimeAccount.into());
@@ -155,21 +277,23 @@ fn validate_account(
     if constraint.flags & ACCOUNT_EXECUTABLE != 0 && !account.executable() {
         return Err(BallistaError::InvalidRuntimeAccount.into());
     }
-    if constraint.address_index != NO_INDEX
-        && account.address().as_ref()
-            != program.pubkeys[constraint.address_index as usize]
-                .bytes
-                .as_slice()
-    {
-        return Err(BallistaError::InvalidRuntimeAccount.into());
+    if constraint.address_index != NO_INDEX {
+        let expected = program
+            .pubkeys
+            .get(constraint.address_index as usize)
+            .ok_or(BallistaError::InvalidTemplateProgram)?;
+        if account.address().as_ref() != expected.bytes.as_slice() {
+            return Err(BallistaError::InvalidRuntimeAccount.into());
+        }
     }
-    if constraint.owner_index != NO_INDEX
-        && account.owner().as_ref()
-            != program.pubkeys[constraint.owner_index as usize]
-                .bytes
-                .as_slice()
-    {
-        return Err(BallistaError::InvalidRuntimeAccount.into());
+    if constraint.owner_index != NO_INDEX {
+        let expected = program
+            .pubkeys
+            .get(constraint.owner_index as usize)
+            .ok_or(BallistaError::InvalidTemplateProgram)?;
+        if account.owner().as_ref() != expected.bytes.as_slice() {
+            return Err(BallistaError::InvalidRuntimeAccount.into());
+        }
     }
     if account.data_len() < constraint.min_data_len() {
         return Err(BallistaError::InvalidRuntimeAccount.into());
@@ -183,13 +307,19 @@ fn execute_root<'data>(
     accounts: &'data [AccountView],
     iterations: usize,
     registers: &mut [RuntimeValue<'data>],
+    scratch: &mut Scratch<'data>,
 ) -> ProgramResult {
     let mut pc = 0usize;
     while pc < program.instructions.len() {
         let instruction = &program.instructions[pc];
         if instruction.opcode == OP_FOREACH {
             let body_start = pc + 1;
-            let body_end = body_start + instruction.a as usize;
+            let body_end = body_start
+                .checked_add(instruction.a as usize)
+                .filter(|end| *end <= program.instructions.len())
+                .ok_or_else(|| {
+                    RunError::from(BallistaError::InvalidTemplateProgram).at(pc, instruction)
+                })?;
             let base_registers = registers.to_vec();
             for iteration in 0..iterations {
                 registers.copy_from_slice(&base_registers);
@@ -200,6 +330,7 @@ fn execute_root<'data>(
                     inputs,
                     accounts,
                     registers,
+                    scratch,
                     body_start,
                     body_end,
                     Some((iteration, row_base)),
@@ -209,7 +340,16 @@ fn execute_root<'data>(
             pc = body_end;
             continue;
         }
-        execute_instruction(program, inputs, accounts, registers, instruction, None)?;
+        execute_instruction(
+            program,
+            inputs,
+            accounts,
+            registers,
+            scratch,
+            instruction,
+            None,
+        )
+        .map_err(|error| error.at(pc, instruction))?;
         pc += 1;
     }
     Ok(())
@@ -221,37 +361,48 @@ fn execute_range<'data>(
     inputs: &[RuntimeValue<'data>],
     accounts: &'data [AccountView],
     registers: &mut [RuntimeValue<'data>],
+    scratch: &mut Scratch<'data>,
     start: usize,
     end: usize,
     loop_context: Option<(usize, usize)>,
 ) -> ProgramResult {
-    for instruction in &program.instructions[start..end] {
+    for pc in start..end {
+        let instruction = &program.instructions[pc];
         if instruction.opcode == OP_FOREACH {
-            return Err(BallistaError::InvalidTemplateProgram.into());
+            return Err(RunError::from(BallistaError::InvalidTemplateProgram).at(pc, instruction));
         }
         execute_instruction(
             program,
             inputs,
             accounts,
             registers,
+            scratch,
             instruction,
             loop_context,
-        )?;
+        )
+        .map_err(|error| error.at(pc, instruction))?;
     }
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_instruction<'data>(
     program: &ProgramView<'data>,
     inputs: &[RuntimeValue<'data>],
     accounts: &'data [AccountView],
     registers: &mut [RuntimeValue<'data>],
+    scratch: &mut Scratch<'data>,
     instruction: &InstructionRecord,
     loop_context: Option<(usize, usize)>,
-) -> ProgramResult {
+) -> RunResult<()> {
     let dst = instruction.dst as usize;
     match instruction.opcode {
-        OP_LOAD_INPUT => set(registers, dst, inputs[instruction.a as usize])?,
+        OP_LOAD_INPUT => {
+            let value = *inputs
+                .get(instruction.a as usize)
+                .ok_or(BallistaError::InvalidTemplateProgram)?;
+            set(registers, dst, value)?;
+        }
         OP_CONST_BOOL => set(registers, dst, RuntimeValue::Bool(instruction.a != 0))?,
         OP_CONST_U64 => set(registers, dst, RuntimeValue::U64(instruction.immediate()))?,
         OP_CONST_I64 => set(
@@ -260,24 +411,21 @@ fn execute_instruction<'data>(
             RuntimeValue::I64(i64::from_le_bytes(instruction.immediate_le)),
         )?,
         OP_CONST_U128 => {
-            let (offset, len) = instruction.blob_range();
-            let bytes: &[u8; 16] = program.blob[offset..offset + len]
+            let bytes: &[u8; 16] = blob_range(program, instruction)?
                 .try_into()
                 .map_err(|_| BallistaError::InvalidTemplateProgram)?;
             set(registers, dst, RuntimeValue::U128(*bytes))?;
         }
-        OP_CONST_PUBKEY => set(
-            registers,
-            dst,
-            RuntimeValue::Pubkey(program.pubkeys[instruction.a as usize].bytes),
-        )?,
+        OP_CONST_PUBKEY => {
+            let pubkey = program
+                .pubkeys
+                .get(instruction.a as usize)
+                .ok_or(BallistaError::InvalidTemplateProgram)?;
+            set(registers, dst, RuntimeValue::Pubkey(pubkey.bytes))?;
+        }
         OP_CONST_BYTES => {
-            let (offset, len) = instruction.blob_range();
-            set(
-                registers,
-                dst,
-                RuntimeValue::Bytes(&program.blob[offset..offset + len]),
-            )?;
+            let bytes = blob_range(program, instruction)?;
+            set(registers, dst, RuntimeValue::Bytes(bytes))?;
         }
         OP_ACCOUNT_KEY => {
             let account = resolve_account(program, accounts, instruction.a, loop_context)?;
@@ -312,25 +460,7 @@ fn execute_instruction<'data>(
             let account = resolve_account(program, accounts, instruction.a, loop_context)?;
             let data = account.try_borrow()?;
             let offset = instruction.immediate() as usize;
-            let value = match instruction.opcode {
-                OP_READ_U8 => RuntimeValue::U64(read_array::<1>(&data, offset)?[0] as u64),
-                OP_READ_U16 => {
-                    RuntimeValue::U64(u16::from_le_bytes(*read_array(&data, offset)?) as u64)
-                }
-                OP_READ_U32 => {
-                    RuntimeValue::U64(u32::from_le_bytes(*read_array(&data, offset)?) as u64)
-                }
-                OP_READ_U64 => RuntimeValue::U64(u64::from_le_bytes(*read_array(&data, offset)?)),
-                OP_READ_I64 => RuntimeValue::I64(i64::from_le_bytes(*read_array(&data, offset)?)),
-                OP_READ_U128 => RuntimeValue::U128(*read_array(&data, offset)?),
-                OP_READ_PUBKEY => RuntimeValue::Pubkey(*read_array(&data, offset)?),
-                OP_READ_BOOL => match read_array::<1>(&data, offset)?[0] {
-                    0 => RuntimeValue::Bool(false),
-                    1 => RuntimeValue::Bool(true),
-                    _ => return Err(BallistaError::TypeMismatch.into()),
-                },
-                _ => unreachable!(),
-            };
+            let value = read_value(instruction.opcode, &data, offset)?;
             set(registers, dst, value)?;
         }
         OP_CLOCK_SLOT => set(registers, dst, RuntimeValue::U64(Clock::get()?.slot))?,
@@ -387,22 +517,31 @@ fn execute_instruction<'data>(
         }
         OP_DERIVE_PDA => {
             let program_account = resolve_account(program, accounts, instruction.a, loop_context)?;
-            let (segment_start, segment_len) = instruction.blob_range();
-            let mut seeds = Vec::with_capacity(segment_len);
-            for segment in &program.data_segments[segment_start..segment_start + segment_len] {
-                let mut seed = Vec::with_capacity(MAX_PDA_SEED_LEN);
-                append_segment(program, registers, segment, &mut seed)?;
-                if seed.len() > MAX_PDA_SEED_LEN {
-                    return Err(BallistaError::InvalidPdaDerivation.into());
-                }
-                seeds.push(seed);
+            let (start, count) = instruction.blob_range();
+            if count == 0 || count > MAX_PDA_SEEDS {
+                return Err(BallistaError::InvalidTemplateProgram.into());
             }
-            let seed_slices: Vec<&[u8]> = seeds.iter().map(Vec::as_slice).collect();
-            let (derived, _) = Address::try_find_program_address(
-                seed_slices.as_slice(),
-                program_account.address(),
-            )
-            .ok_or(BallistaError::InvalidPdaDerivation)?;
+            let end = start
+                .checked_add(count)
+                .ok_or(BallistaError::InvalidTemplateProgram)?;
+            let segments = program
+                .data_segments
+                .get(start..end)
+                .ok_or(BallistaError::InvalidTemplateProgram)?;
+            let mut storage = [[0u8; MAX_PDA_SEED_LEN]; MAX_PDA_SEEDS];
+            let mut lengths = [0usize; MAX_PDA_SEEDS];
+            for (slot, segment) in segments.iter().enumerate() {
+                let mut sink = FixedSink::new(&mut storage[slot]);
+                encode_segment(program, registers, segment, &mut sink)?;
+                lengths[slot] = sink.len;
+            }
+            let mut seeds: [&[u8]; MAX_PDA_SEEDS] = [&[]; MAX_PDA_SEEDS];
+            for slot in 0..count {
+                seeds[slot] = &storage[slot][..lengths[slot]];
+            }
+            let (derived, _) =
+                Address::try_find_program_address(&seeds[..count], program_account.address())
+                    .ok_or(BallistaError::InvalidPdaDerivation)?;
             set(registers, dst, RuntimeValue::Pubkey(derived.to_bytes()))?;
         }
         OP_REQUIRE => {
@@ -420,11 +559,45 @@ fn execute_instruction<'data>(
                 registers,
                 instruction.a as usize,
                 loop_context,
+                scratch,
             )?;
         }
         _ => return Err(BallistaError::InvalidTemplateProgram.into()),
     }
     Ok(())
+}
+
+/// The blob slice addressed by an instruction's packed `(offset, len)` immediate.
+fn blob_range<'data>(
+    program: &ProgramView<'data>,
+    instruction: &InstructionRecord,
+) -> RunResult<&'data [u8]> {
+    let (offset, len) = instruction.blob_range();
+    let end = offset
+        .checked_add(len)
+        .ok_or(BallistaError::InvalidTemplateProgram)?;
+    program
+        .blob
+        .get(offset..end)
+        .ok_or_else(|| BallistaError::InvalidTemplateProgram.into())
+}
+
+fn read_value<'data>(opcode: u8, data: &[u8], offset: usize) -> RunResult<RuntimeValue<'data>> {
+    Ok(match opcode {
+        OP_READ_U8 => RuntimeValue::U64(read_array::<1>(data, offset)?[0] as u64),
+        OP_READ_U16 => RuntimeValue::U64(u16::from_le_bytes(*read_array(data, offset)?) as u64),
+        OP_READ_U32 => RuntimeValue::U64(u32::from_le_bytes(*read_array(data, offset)?) as u64),
+        OP_READ_U64 => RuntimeValue::U64(u64::from_le_bytes(*read_array(data, offset)?)),
+        OP_READ_I64 => RuntimeValue::I64(i64::from_le_bytes(*read_array(data, offset)?)),
+        OP_READ_U128 => RuntimeValue::U128(*read_array(data, offset)?),
+        OP_READ_PUBKEY => RuntimeValue::Pubkey(*read_array(data, offset)?),
+        OP_READ_BOOL => match read_array::<1>(data, offset)?[0] {
+            0 => RuntimeValue::Bool(false),
+            1 => RuntimeValue::Bool(true),
+            _ => return Err(BallistaError::TypeMismatch.into()),
+        },
+        _ => return Err(BallistaError::InvalidTemplateProgram.into()),
+    })
 }
 
 fn invoke_cpi<'data>(
@@ -433,27 +606,49 @@ fn invoke_cpi<'data>(
     registers: &[RuntimeValue<'data>],
     cpi_index: usize,
     loop_context: Option<(usize, usize)>,
-) -> ProgramResult {
-    let descriptor = &program.cpis[cpi_index];
-    let account_end = descriptor.account_start() + descriptor.account_len as usize;
-    let segment_end = descriptor.segment_start() + descriptor.segment_len as usize;
-    let mut instruction_accounts = Vec::with_capacity(descriptor.account_len as usize);
-    let mut account_views = Vec::with_capacity(descriptor.account_len as usize);
-    for record in &program.cpi_accounts[descriptor.account_start()..account_end] {
+    scratch: &mut Scratch<'data>,
+) -> RunResult<()> {
+    let descriptor = program
+        .cpis
+        .get(cpi_index)
+        .ok_or(BallistaError::InvalidTemplateProgram)?;
+    let account_len = descriptor.account_len as usize;
+    if account_len > MAX_CPI_ACCOUNTS {
+        return Err(BallistaError::InvalidTemplateProgram.into());
+    }
+    let account_end = descriptor
+        .account_start()
+        .checked_add(account_len)
+        .ok_or(BallistaError::InvalidTemplateProgram)?;
+    let records = program
+        .cpi_accounts
+        .get(descriptor.account_start()..account_end)
+        .ok_or(BallistaError::InvalidTemplateProgram)?;
+    let segment_end = descriptor
+        .segment_start()
+        .checked_add(descriptor.segment_len as usize)
+        .ok_or(BallistaError::InvalidTemplateProgram)?;
+    let segments = program
+        .data_segments
+        .get(descriptor.segment_start()..segment_end)
+        .ok_or(BallistaError::InvalidTemplateProgram)?;
+
+    scratch.metas.clear();
+    scratch.views.clear();
+    scratch.data.clear();
+    for record in records {
         let account = resolve_account(program, accounts, record.account, loop_context)?;
-        instruction_accounts.push(InstructionAccount::new(
+        scratch.metas.push(InstructionAccount::new(
             account.address(),
             record.flags & ACCOUNT_WRITABLE != 0,
             record.flags & ACCOUNT_SIGNER != 0,
         ));
-        account_views.push(account);
+        scratch.views.push(account);
     }
-
-    let mut data = Vec::with_capacity(descriptor.max_data_len());
-    for segment in &program.data_segments[descriptor.segment_start()..segment_end] {
-        append_segment(program, registers, segment, &mut data)?;
+    for segment in segments {
+        encode_segment(program, registers, segment, &mut scratch.data)?;
     }
-    if data.len() > descriptor.max_data_len() || data.len() > MAX_CPI_DATA_LEN {
+    if scratch.data.len() > descriptor.max_data_len() || scratch.data.len() > MAX_CPI_DATA_LEN {
         return Err(BallistaError::CpiDataTooLarge.into());
     }
 
@@ -461,76 +656,120 @@ fn invoke_cpi<'data>(
         resolve_account(program, accounts, descriptor.program_account, loop_context)?;
     let instruction = InstructionView {
         program_id: program_account.address(),
-        accounts: instruction_accounts.as_slice(),
-        data: data.as_slice(),
+        accounts: scratch.metas.as_slice(),
+        data: scratch.data.as_slice(),
     };
-    invoke_with_bounds::<64, _>(&instruction, account_views.as_slice())
+    invoke_with_bounds::<MAX_CPI_ACCOUNTS, _>(&instruction, scratch.views.as_slice())?;
+    Ok(())
 }
 
-fn append_segment<'data>(
+/// Destination for encoded segment bytes: a reusable `Vec` for CPI data, or a fixed stack buffer
+/// for PDA seeds.
+trait ByteSink {
+    fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()>;
+}
+
+impl ByteSink for Vec<u8> {
+    fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()> {
+        self.extend_from_slice(bytes);
+        Ok(())
+    }
+}
+
+struct FixedSink<'buffer> {
+    buffer: &'buffer mut [u8],
+    len: usize,
+}
+
+impl<'buffer> FixedSink<'buffer> {
+    fn new(buffer: &'buffer mut [u8]) -> Self {
+        Self { buffer, len: 0 }
+    }
+}
+
+impl ByteSink for FixedSink<'_> {
+    fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()> {
+        let end = self
+            .len
+            .checked_add(bytes.len())
+            .filter(|end| *end <= self.buffer.len())
+            .ok_or(BallistaError::InvalidPdaDerivation)?;
+        self.buffer[self.len..end].copy_from_slice(bytes);
+        self.len = end;
+        Ok(())
+    }
+}
+
+/// Encodes one CPI data segment or PDA seed into `sink`.
+fn encode_segment<'data, S: ByteSink>(
     program: &ProgramView<'data>,
     registers: &[RuntimeValue<'data>],
     segment: &DataSegment,
-    output: &mut Vec<u8>,
-) -> ProgramResult {
+    sink: &mut S,
+) -> RunResult<()> {
     if segment.kind == DATA_LITERAL {
-        let end = segment.offset() + segment.len();
+        let end = segment
+            .offset()
+            .checked_add(segment.len())
+            .ok_or(BallistaError::InvalidTemplateProgram)?;
         let bytes = program
             .blob
             .get(segment.offset()..end)
             .ok_or(BallistaError::InvalidTemplateProgram)?;
-        output.extend_from_slice(bytes);
-        return Ok(());
+        return sink.push_bytes(bytes);
     }
-    append_segment_registers(registers, segment, output)
+    encode_register_segment(registers, segment, sink)
 }
 
-/// Encodes a register-backed data segment. Literal segments are handled by `append_segment`.
-fn append_segment_registers<'data>(
+/// Encodes a register-backed data segment. Literal segments are handled by `encode_segment`.
+fn encode_register_segment<'data, S: ByteSink>(
     registers: &[RuntimeValue<'data>],
     segment: &DataSegment,
-    output: &mut Vec<u8>,
-) -> ProgramResult {
+    sink: &mut S,
+) -> RunResult<()> {
     match segment.kind {
         DATA_REG_U8 => {
             let value = as_u128(get(registers, segment.register)?)?;
-            output.push(u8::try_from(value).map_err(|_| BallistaError::ArithmeticOverflow)?);
+            let byte = u8::try_from(value).map_err(|_| BallistaError::ArithmeticOverflow)?;
+            sink.push_bytes(&[byte])
         }
         DATA_REG_U16 => {
             let value = u16::try_from(as_u128(get(registers, segment.register)?)?)
                 .map_err(|_| BallistaError::ArithmeticOverflow)?;
-            output.extend_from_slice(&value.to_le_bytes());
+            sink.push_bytes(&value.to_le_bytes())
         }
         DATA_REG_U32 => {
             let value = u32::try_from(as_u128(get(registers, segment.register)?)?)
                 .map_err(|_| BallistaError::ArithmeticOverflow)?;
-            output.extend_from_slice(&value.to_le_bytes());
+            sink.push_bytes(&value.to_le_bytes())
         }
         DATA_REG_U64 => {
             let value = u64::try_from(as_u128(get(registers, segment.register)?)?)
                 .map_err(|_| BallistaError::ArithmeticOverflow)?;
-            output.extend_from_slice(&value.to_le_bytes());
+            sink.push_bytes(&value.to_le_bytes())
         }
         DATA_REG_I64 => match get(registers, segment.register)? {
-            RuntimeValue::I64(value) => output.extend_from_slice(&value.to_le_bytes()),
-            _ => return Err(BallistaError::TypeMismatch.into()),
+            RuntimeValue::I64(value) => sink.push_bytes(&value.to_le_bytes()),
+            _ => Err(BallistaError::TypeMismatch.into()),
         },
         DATA_REG_U128 => match get(registers, segment.register)? {
-            RuntimeValue::U128(value) => output.extend_from_slice(&value),
-            _ => return Err(BallistaError::TypeMismatch.into()),
+            RuntimeValue::U128(value) => sink.push_bytes(&value),
+            _ => Err(BallistaError::TypeMismatch.into()),
         },
         DATA_REG_PUBKEY => match get(registers, segment.register)? {
-            RuntimeValue::Pubkey(value) => output.extend_from_slice(&value),
-            _ => return Err(BallistaError::TypeMismatch.into()),
+            RuntimeValue::Pubkey(value) => sink.push_bytes(&value),
+            _ => Err(BallistaError::TypeMismatch.into()),
         },
-        DATA_REG_BOOL => output.push(u8::from(as_bool(get(registers, segment.register)?)?)),
+        DATA_REG_BOOL => {
+            let flag = as_bool(get(registers, segment.register)?)?;
+            sink.push_bytes(&[u8::from(flag)])
+        }
         DATA_REG_BYTES => match get(registers, segment.register)? {
-            RuntimeValue::Bytes(value) => output.extend_from_slice(value),
-            _ => return Err(BallistaError::TypeMismatch.into()),
+            RuntimeValue::Bytes(value) => sink.push_bytes(value),
+            _ => Err(BallistaError::TypeMismatch.into()),
         },
-        _ => return Err(BallistaError::InvalidTemplateProgram.into()),
+        _ => Err(BallistaError::InvalidTemplateProgram.into()),
     }
-    Ok(())
 }
 
 fn resolve_account<'data>(
@@ -538,7 +777,7 @@ fn resolve_account<'data>(
     accounts: &'data [AccountView],
     reference: u8,
     loop_context: Option<(usize, usize)>,
-) -> Result<&'data AccountView, ProgramError> {
+) -> RunResult<&'data AccountView> {
     let index = if reference & ITERATION_ACCOUNT_BIT == 0 {
         let index = reference as usize;
         if index >= program.header.fixed_account_count() {
@@ -562,7 +801,7 @@ fn arithmetic<'data>(
     opcode: u8,
     left: RuntimeValue<'data>,
     right: RuntimeValue<'data>,
-) -> Result<RuntimeValue<'data>, ProgramError> {
+) -> RunResult<RuntimeValue<'data>> {
     macro_rules! checked {
         ($left:expr, $right:expr) => {{
             let value = match opcode {
@@ -575,7 +814,7 @@ fn arithmetic<'data>(
                 _ => None,
             };
             value.ok_or_else(|| {
-                ProgramError::from(if opcode == OP_DIV && $right == 0 {
+                RunError::from(if opcode == OP_DIV && $right == 0 {
                     BallistaError::DivisionByZero
                 } else {
                     BallistaError::ArithmeticOverflow
@@ -599,11 +838,7 @@ fn arithmetic<'data>(
     })
 }
 
-fn compare(
-    opcode: u8,
-    left: RuntimeValue<'_>,
-    right: RuntimeValue<'_>,
-) -> Result<bool, ProgramError> {
+fn compare(opcode: u8, left: RuntimeValue<'_>, right: RuntimeValue<'_>) -> RunResult<bool> {
     macro_rules! compare_values {
         ($left:expr, $right:expr) => {
             match opcode {
@@ -645,7 +880,7 @@ fn compare(
     })
 }
 
-fn cast(opcode: u8, value: RuntimeValue<'_>) -> Result<RuntimeValue<'_>, ProgramError> {
+fn cast(opcode: u8, value: RuntimeValue<'_>) -> RunResult<RuntimeValue<'_>> {
     match opcode {
         OP_CAST_U64 => Ok(RuntimeValue::U64(match value {
             RuntimeValue::U64(value) => value,
@@ -681,7 +916,7 @@ fn set<'data>(
     registers: &mut [RuntimeValue<'data>],
     index: usize,
     value: RuntimeValue<'data>,
-) -> ProgramResult {
+) -> RunResult<()> {
     let register = registers
         .get_mut(index)
         .ok_or(BallistaError::InvalidRegister)?;
@@ -689,24 +924,21 @@ fn set<'data>(
     Ok(())
 }
 
-fn get<'data>(
-    registers: &[RuntimeValue<'data>],
-    index: u8,
-) -> Result<RuntimeValue<'data>, ProgramError> {
+fn get<'data>(registers: &[RuntimeValue<'data>], index: u8) -> RunResult<RuntimeValue<'data>> {
     match registers.get(index as usize).copied() {
         Some(RuntimeValue::Unset) | None => Err(BallistaError::InvalidRegister.into()),
         Some(value) => Ok(value),
     }
 }
 
-fn as_bool(value: RuntimeValue<'_>) -> Result<bool, ProgramError> {
+fn as_bool(value: RuntimeValue<'_>) -> RunResult<bool> {
     match value {
         RuntimeValue::Bool(value) => Ok(value),
         _ => Err(BallistaError::TypeMismatch.into()),
     }
 }
 
-fn as_u128(value: RuntimeValue<'_>) -> Result<u128, ProgramError> {
+fn as_u128(value: RuntimeValue<'_>) -> RunResult<u128> {
     match value {
         RuntimeValue::U64(value) => Ok(value as u128),
         RuntimeValue::U128(value) => Ok(u128::from_le_bytes(value)),
@@ -714,7 +946,7 @@ fn as_u128(value: RuntimeValue<'_>) -> Result<u128, ProgramError> {
     }
 }
 
-fn read_array<const N: usize>(data: &[u8], offset: usize) -> Result<&[u8; N], ProgramError> {
+fn read_array<const N: usize>(data: &[u8], offset: usize) -> RunResult<&[u8; N]> {
     offset
         .checked_add(N)
         .and_then(|end| data.get(offset..end))
@@ -722,7 +954,7 @@ fn read_array<const N: usize>(data: &[u8], offset: usize) -> Result<&[u8; N], Pr
         .ok_or_else(|| BallistaError::InvalidRuntimeAccount.into())
 }
 
-fn take<const N: usize>(data: &[u8]) -> Result<(&[u8; N], &[u8]), ProgramError> {
+fn take<const N: usize>(data: &[u8]) -> RunResult<(&[u8; N], &[u8])> {
     let (bytes, remaining) = data
         .split_at_checked(N)
         .ok_or(BallistaError::InvalidRunInputs)?;
@@ -739,8 +971,12 @@ mod tests {
     use super::*;
     use RuntimeValue::*;
 
-    fn err(kind: BallistaError) -> ProgramError {
-        kind.into()
+    fn err(kind: BallistaError) -> RunError {
+        RunError::Vm(kind)
+    }
+
+    fn input_err(index: u16) -> RunError {
+        RunError::VmAt(BallistaError::InvalidRunInputs, index)
     }
 
     fn segment(kind: u8, register: u8) -> DataSegment {
@@ -761,10 +997,45 @@ mod tests {
         }
     }
 
+    fn instruction(opcode: u8) -> InstructionRecord {
+        record(opcode, NO_INDEX, 0, 0, 0, 0, 0)
+    }
+
     #[test]
     fn runtime_value_storage_is_bounded() {
         let value_size = core::mem::size_of::<RuntimeValue<'static>>();
         assert!(value_size <= 40);
+    }
+
+    #[test]
+    fn vm_errors_carry_the_program_counter_and_pass_callee_errors_through() {
+        let require = instruction(OP_REQUIRE);
+        assert_eq!(
+            err(BallistaError::RequirementFailed).at(7, &require),
+            ProgramError::Custom((7 << 16) | BallistaError::RequirementFailed.code())
+        );
+        assert_eq!(
+            RunError::VmAt(BallistaError::InvalidRuntimeAccount, 3).at(7, &require),
+            ProgramError::Custom((3 << 16) | BallistaError::InvalidRuntimeAccount.code())
+        );
+        assert_eq!(
+            RunError::Program(ProgramError::Custom(6001)).at(7, &require),
+            ProgramError::Custom(6001),
+            "an invoked program's own 6001 must not be rewritten"
+        );
+        assert_eq!(
+            RunError::Program(ProgramError::MissingRequiredSignature).before_execution(),
+            ProgramError::MissingRequiredSignature
+        );
+        assert_eq!(
+            input_err(2).before_execution(),
+            ProgramError::Custom((2 << 16) | BallistaError::InvalidRunInputs.code())
+        );
+        assert_eq!(
+            err(BallistaError::InvalidAccountRange).at(70_000, &require),
+            ProgramError::Custom((0xffff << 16) | BallistaError::InvalidAccountRange.code()),
+            "program counters clamp to 16 bits"
+        );
     }
 
     #[test]
@@ -800,7 +1071,10 @@ mod tests {
             arithmetic(OP_ADD, max, one),
             Err(err(BallistaError::ArithmeticOverflow))
         );
-        assert_eq!(arithmetic(OP_SUB, max, one), Ok(U128((u128::MAX - 1).to_le_bytes())));
+        assert_eq!(
+            arithmetic(OP_SUB, max, one),
+            Ok(U128((u128::MAX - 1).to_le_bytes()))
+        );
         assert_eq!(
             arithmetic(OP_ADD, U64(1), I64(1)),
             Err(err(BallistaError::TypeMismatch))
@@ -826,7 +1100,11 @@ mod tests {
         assert_eq!(compare(OP_GTE, U64(3), U64(3)), Ok(true));
         assert_eq!(compare(OP_GT, U64(3), U64(3)), Ok(false));
         assert_eq!(
-            compare(OP_LTE, U128(2u128.to_le_bytes()), U128(3u128.to_le_bytes())),
+            compare(
+                OP_LTE,
+                U128(2u128.to_le_bytes()),
+                U128(3u128.to_le_bytes())
+            ),
             Ok(true)
         );
         assert_eq!(compare(OP_NE, Bool(true), Bool(false)), Ok(true));
@@ -917,7 +1195,7 @@ mod tests {
         ];
         let encode = |kind: u8, register: u8| {
             let mut output = Vec::new();
-            append_segment_registers(&registers, &segment(kind, register), &mut output)
+            encode_register_segment(&registers, &segment(kind, register), &mut output)
                 .map(|_| output)
         };
         assert_eq!(
@@ -978,6 +1256,25 @@ mod tests {
     }
 
     #[test]
+    fn fixed_sinks_reject_seeds_over_thirty_two_bytes() {
+        let registers = [Bytes(&[1; 20]), Pubkey([2; 32])];
+        let mut buffer = [0u8; MAX_PDA_SEED_LEN];
+        let mut sink = FixedSink::new(&mut buffer);
+        encode_register_segment(&registers, &segment(DATA_REG_BYTES, 0), &mut sink).unwrap();
+        assert_eq!(sink.len, 20);
+        assert_eq!(
+            encode_register_segment(&registers, &segment(DATA_REG_BYTES, 0), &mut sink),
+            Err(err(BallistaError::InvalidPdaDerivation)),
+            "a second twenty-byte push overflows the seed"
+        );
+        let mut buffer = [0u8; MAX_PDA_SEED_LEN];
+        let mut sink = FixedSink::new(&mut buffer);
+        encode_register_segment(&registers, &segment(DATA_REG_PUBKEY, 1), &mut sink).unwrap();
+        assert_eq!(sink.len, 32);
+        assert_eq!(buffer, [2; 32]);
+    }
+
+    #[test]
     fn input_parsing_covers_each_type_and_rejects_malformed_bytes() {
         assert_eq!(
             parse_inputs(&[descriptor(VALUE_BOOL, 0)], &[1]).unwrap()[0],
@@ -989,7 +1286,7 @@ mod tests {
         );
         assert_eq!(
             parse_inputs(&[descriptor(VALUE_BOOL, 0)], &[2]),
-            Err(err(BallistaError::InvalidRunInputs))
+            Err(input_err(0))
         );
         assert_eq!(
             parse_inputs(&[descriptor(VALUE_U64, 0)], &7u64.to_le_bytes()).unwrap()[0],
@@ -1017,27 +1314,32 @@ mod tests {
         );
         assert_eq!(
             parse_inputs(&[descriptor(VALUE_BYTES, 1)], &[2, 0, 8, 9]),
-            Err(err(BallistaError::InvalidRunInputs)),
+            Err(input_err(0)),
             "longer than the declared maximum"
         );
         assert_eq!(
             parse_inputs(&[descriptor(VALUE_BYTES, 4)], &[5, 0, 8, 9]),
-            Err(err(BallistaError::InvalidRunInputs)),
+            Err(input_err(0)),
             "length prefix past the end"
         );
         assert_eq!(
             parse_inputs(&[descriptor(VALUE_U64, 0)], &[1, 2, 3]),
-            Err(err(BallistaError::InvalidRunInputs)),
+            Err(input_err(0)),
             "truncated"
         );
         assert_eq!(
             parse_inputs(&[descriptor(VALUE_U64, 0)], &[0; 9]),
-            Err(err(BallistaError::InvalidRunInputs)),
-            "trailing byte"
+            Err(input_err(1)),
+            "trailing byte is reported after the last input"
+        );
+        assert_eq!(
+            parse_inputs(&[descriptor(VALUE_U64, 0), descriptor(VALUE_BOOL, 0)], &[0; 8]),
+            Err(input_err(1)),
+            "the missing second input is named"
         );
         assert_eq!(
             parse_inputs(&[descriptor(0xfe, 0)], &[0]),
-            Err(err(BallistaError::InvalidRunInputs))
+            Err(input_err(0))
         );
         let two = parse_inputs(
             &[descriptor(VALUE_BOOL, 0), descriptor(VALUE_U64, 0)],
@@ -1079,5 +1381,39 @@ mod tests {
             Err(err(BallistaError::InvalidRunInputs))
         );
         assert_eq!(take::<1>(&[1, 2]), Ok((&[1], &[2][..])));
+    }
+
+    #[test]
+    fn typed_reads_cover_every_width_and_reject_unknown_opcodes() {
+        let data = [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+        assert_eq!(read_value(OP_READ_U8, &data, 2), Ok(U64(3)));
+        assert_eq!(read_value(OP_READ_U16, &data, 0), Ok(U64(0x0201)));
+        assert_eq!(read_value(OP_READ_U32, &data, 0), Ok(U64(0x0403_0201)));
+        assert_eq!(
+            read_value(OP_READ_U64, &data, 1),
+            Ok(U64(u64::from_le_bytes([2, 3, 4, 5, 6, 7, 8, 9])))
+        );
+        assert_eq!(
+            read_value(OP_READ_I64, &data, 0),
+            Ok(I64(i64::from_le_bytes([1, 2, 3, 4, 5, 6, 7, 8])))
+        );
+        assert_eq!(read_value(OP_READ_U128, &data, 1), Ok(U128([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17])));
+        assert_eq!(
+            read_value(OP_READ_U128, &data, 2),
+            Err(err(BallistaError::InvalidRuntimeAccount))
+        );
+        assert_eq!(
+            read_value(OP_READ_PUBKEY, &data, 0),
+            Err(err(BallistaError::InvalidRuntimeAccount))
+        );
+        assert_eq!(read_value(OP_READ_BOOL, &data, 0), Ok(Bool(true)));
+        assert_eq!(
+            read_value(OP_READ_BOOL, &data, 1),
+            Err(err(BallistaError::TypeMismatch))
+        );
+        assert_eq!(
+            read_value(OP_ADD, &data, 0),
+            Err(err(BallistaError::InvalidTemplateProgram))
+        );
     }
 }

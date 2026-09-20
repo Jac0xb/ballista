@@ -5,7 +5,7 @@ use ballista_common::{
         TEMPLATE_ACCOUNT_HEADER_LEN, TEMPLATE_STATE_UPLOADING,
     },
 };
-use error::BallistaError;
+use error::{verifier_error, BallistaError};
 use pinocchio::{
     cpi::{Seed, Signer},
     error::ProgramError,
@@ -63,10 +63,8 @@ fn create_template(
     payload_hash: &[u8; 32],
     payload: &[u8],
 ) -> ProgramResult {
-    let program = ProgramView::parse(payload).map_err(|_| BallistaError::InvalidTemplateProgram)?;
-    program
-        .verify()
-        .map_err(|_| BallistaError::InvalidTemplateProgram)?;
+    let program = ProgramView::parse(payload).map_err(verifier_error)?;
+    program.verify().map_err(verifier_error)?;
     if hash(payload).to_bytes() != *payload_hash {
         return Err(BallistaError::HashMismatch.into());
     }
@@ -171,7 +169,7 @@ fn finalize_template(accounts: &mut [AccountView]) -> ProgramResult {
         }
         ProgramView::parse(account.payload())
             .and_then(|program| program.verify())
-            .map_err(|_| BallistaError::InvalidTemplateProgram)?;
+            .map_err(verifier_error)?;
     }
 
     let mut data = template.try_borrow_mut()?;

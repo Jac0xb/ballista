@@ -8,13 +8,14 @@ mod tests {
     };
     use ballista_common::template::{
         AccountConstraint, CpiAccountRecord, CpiDescriptor, DataSegment, InputDescriptor,
-        InstructionRecord, ProgramHeader, ProgramView, PubkeyRecord, TemplateAccount,
-        ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_LITERAL, DATA_REG_PUBKEY,
-        DATA_REG_U64, ITERATION_ACCOUNT_BIT, NO_INDEX, OP_ACCOUNT_IS_EMPTY, OP_ACCOUNT_KEY,
-        OP_ACCOUNT_LAMPORTS, OP_DERIVE_PDA, OP_EQ, OP_FOREACH, OP_INVOKE, OP_LOAD_INPUT,
-        OP_REQUIRE, OP_SUB, VALUE_BOOL, VALUE_U64,
+        InstructionRecord, ProgramBuilder, ProgramHeader, ProgramView, PubkeyRecord, Segment,
+        TemplateAccount, ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_LITERAL,
+        DATA_REG_PUBKEY, DATA_REG_U64, ITERATION_ACCOUNT_BIT, MAX_PDA_SEEDS, NO_INDEX,
+        OP_ACCOUNT_IS_EMPTY, OP_ACCOUNT_KEY, OP_ACCOUNT_LAMPORTS, OP_DERIVE_PDA, OP_EQ,
+        OP_FOREACH, OP_INVOKE, OP_LOAD_INPUT, OP_NE, OP_REQUIRE, OP_SUB, VALUE_BOOL, VALUE_U64,
     };
     use mollusk_svm::{program::loader_keys::LOADER_V3, Mollusk, MolluskContext};
+    use mollusk_svm_programs_memo::memo;
     use mollusk_svm_programs_token::{associated_token, token};
     use solana_account::{Account, ReadableAccount};
     use solana_instruction::{AccountMeta, Instruction};
@@ -485,11 +486,124 @@ mod tests {
         assert_eq!(token_amount(&context, source), source_before_mismatch);
     }
 
+    /// Fifty-eight system transfers each carrying 1,000 bytes of instruction data. The system
+    /// program's bincode decoder tolerates trailing bytes, so the padding is accepted. Per-CPI
+    /// allocation with a bump allocator would need about 60 KB against a 32 KB heap; scratch
+    /// reuse keeps it constant.
+    #[test]
+    fn many_large_cpis_fit_in_the_default_heap() {
+        let creator = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let rows: Vec<Pubkey> = (0..58).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator, payer], 10_000_000_000);
+        for row in &rows {
+            accounts.insert(*row, Account::new(0, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(
+            ACCOUNT_EXECUTABLE,
+            Some(system_program::id().to_bytes()),
+            None,
+            0,
+        );
+        let source = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let recipient = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
+        builder.batch(58, 0);
+        let mut data = vec![2, 0, 0, 0];
+        data.extend_from_slice(&0u64.to_le_bytes());
+        data.resize(1_000, 0);
+        let literal = builder.blob(&data);
+        let cpi = builder.cpi(
+            system,
+            &[
+                (source, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                (recipient, ACCOUNT_WRITABLE),
+            ],
+            &[Segment::Literal(literal)],
+        );
+        builder.for_each(0, |body| body.invoke(cpi, None));
+        let payload = builder.build().expect("builds");
+        ProgramView::parse(&payload)
+            .and_then(|program| program.verify())
+            .expect("verifies");
+
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 40, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 40);
+        let mut metas = vec![
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new(payer, true),
+        ];
+        metas.extend(rows.iter().map(|row| AccountMeta::new(*row, false)));
+        let result = context.process_instruction(&run_instruction(template, metas, &[]));
+        assert!(result.program_result.is_ok(), "{result:#?}");
+        eprintln!(
+            "58 transfers with 1000-byte data compute units: {}",
+            result.compute_units_consumed
+        );
+    }
+
+    /// Two fifteen-seed PDA derivations in each of 59 rows. Per-derivation seed vectors would
+    /// need well over 100 KB of bump-allocated heap.
+    #[test]
+    fn pda_derivation_in_every_row_fits_in_the_default_heap() {
+        let creator = Pubkey::new_unique();
+        let rows: Vec<Pubkey> = (0..59).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        for row in &rows {
+            accounts.insert(*row, Account::new(0, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(
+            ACCOUNT_EXECUTABLE,
+            Some(system_program::id().to_bytes()),
+            None,
+            0,
+        );
+        let row = builder.row_account(0, None, None, 0);
+        builder.batch(59, 0);
+        builder.for_each(0, |body| {
+            let key = body.account_key(row);
+            let seeds = vec![Segment::Register(DATA_REG_PUBKEY, key); MAX_PDA_SEEDS];
+            let first = body.derive_pda(system, &seeds);
+            let second = body.derive_pda(system, &seeds[..1]);
+            let first_differs = body.binary(OP_NE, first, key);
+            let second_differs = body.binary(OP_NE, second, key);
+            body.require(first_differs);
+            body.require(second_differs);
+        });
+        let payload = builder.build().expect("builds");
+        ProgramView::parse(&payload)
+            .and_then(|program| program.verify())
+            .expect("verifies");
+
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 41, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 41);
+        let mut metas = vec![AccountMeta::new_readonly(system_program::id(), false)];
+        metas.extend(rows.iter().map(|row| AccountMeta::new_readonly(*row, false)));
+        let result = context.process_instruction(&run_instruction(template, metas, &[]));
+        assert!(result.program_result.is_ok(), "{result:#?}");
+        eprintln!(
+            "118 PDA derivations compute units: {}",
+            result.compute_units_consumed
+        );
+    }
+
     fn context(accounts: HashMap<Pubkey, Account>) -> MolluskContext<HashMap<Pubkey, Account>> {
         let mut mollusk = Mollusk::default();
         mollusk.add_program_with_loader_and_elf(&ID, &LOADER_V3, BALLISTA_ELF);
         token::add_program(&mut mollusk);
         associated_token::add_program(&mut mollusk);
+        memo::add_program(&mut mollusk);
         mollusk.with_context(accounts)
     }
 

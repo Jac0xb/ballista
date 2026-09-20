@@ -10,6 +10,7 @@ publish = false
 ballista-common = { path = "../../common" }
 mollusk-svm = { version = "=0.14.0", features = ["inner-instructions"] }
 mollusk-svm-programs-token = { version = "=0.14.0", default-features = false, features = ["associated-token", "token"] }
+mollusk-svm-programs-memo = "=0.14.0"
 solana-account = "=4.3.1"
 solana-address = "=2.6.1"
 solana-fee-calculator = "=3.2.2"

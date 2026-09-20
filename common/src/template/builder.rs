@@ -27,6 +27,8 @@ pub struct ProgramBuilder {
     batch_min: u8,
     flags: u8,
     inputs: Vec<InputDescriptor>,
+    row_inputs: Vec<InputDescriptor>,
+    account_groups: u8,
     instructions: Vec<InstructionRecord>,
     cpis: Vec<CpiDescriptor>,
     cpi_accounts: Vec<CpiAccountRecord>,
@@ -88,6 +90,23 @@ impl ProgramBuilder {
             max_len_le: max_len.to_le_bytes(),
         });
         (self.inputs.len() - 1) as u8
+    }
+
+    /// Declares one input of the batch row and returns its iteration reference, valid inside the
+    /// loop body only.
+    pub fn row_input(&mut self, value_type: u8, max_len: u16) -> u8 {
+        self.row_inputs.push(InputDescriptor {
+            value_type,
+            reserved: 0,
+            max_len_le: max_len.to_le_bytes(),
+        });
+        ITERATION_INPUT_BIT | (self.row_inputs.len() - 1) as u8
+    }
+
+    /// Declares `count` caller-sized account groups, which follow the batch rows at run time.
+    pub fn account_groups(&mut self, count: u8) -> &mut Self {
+        self.account_groups = count;
+        self
     }
 
     /// Interns a constant pubkey and returns its table index.
@@ -249,6 +268,18 @@ impl ProgramBuilder {
     /// sum of the segment widths; bytes segments contribute zero and need
     /// [`ProgramBuilder::set_cpi_max_data_len`].
     pub fn cpi(&mut self, program: u8, accounts: &[(u8, u8)], segments: &[Segment]) -> u8 {
+        self.cpi_with_group(program, accounts, segments, NO_INDEX)
+    }
+
+    /// Declares a CPI that forwards account group `group` after its declared accounts. Pass
+    /// `NO_INDEX` for no group.
+    pub fn cpi_with_group(
+        &mut self,
+        program: u8,
+        accounts: &[(u8, u8)],
+        segments: &[Segment],
+        group: u8,
+    ) -> u8 {
         let account_start = self.cpi_accounts.len() as u16;
         for (account, flags) in accounts {
             self.cpi_accounts.push(CpiAccountRecord {
@@ -263,7 +294,7 @@ impl ProgramBuilder {
         }
         self.cpis.push(CpiDescriptor {
             program_account: program,
-            reserved0: 0,
+            account_group: group,
             account_start_le: account_start.to_le_bytes(),
             account_len: accounts.len() as u8,
             segment_len: segments.len() as u8,
@@ -360,12 +391,14 @@ impl ProgramBuilder {
             self.pubkeys.len() as u8,
             self.flags,
             self.blob.len() as u16,
+            self.row_inputs.len() as u8,
+            self.account_groups,
         );
         let mut bytes = header.as_bytes().to_vec();
         for constraint in self.fixed.iter().chain(self.row.iter()) {
             bytes.extend_from_slice(constraint.as_bytes());
         }
-        for input in &self.inputs {
+        for input in self.inputs.iter().chain(self.row_inputs.iter()) {
             bytes.extend_from_slice(input.as_bytes());
         }
         for instruction in &self.instructions {

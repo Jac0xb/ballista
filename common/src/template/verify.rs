@@ -574,8 +574,13 @@ impl ProgramView<'_> {
             .cpis
             .get(index)
             .ok_or(TemplateError::InvalidCpi(index))?;
-        if descriptor.reserved0 != 0 || descriptor.reserved1 != [0; 2] {
+        if descriptor.reserved1 != [0; 2] {
             return Err(TemplateError::InvalidCpi(index));
+        }
+        if let Some(group) = descriptor.account_group() {
+            if group >= self.header.account_group_count() {
+                return Err(TemplateError::InvalidCpi(index));
+            }
         }
         if descriptor.account_len as usize > MAX_CPI_ACCOUNTS {
             return Err(TemplateError::TooManyCpiAccounts(index));
@@ -858,12 +863,12 @@ mod tests {
         builder.const_bool(true);
         assert_eq!(verify_builder(&builder), Err(TemplateError::TooManyAccounts));
 
-        // Eight row accounts times eight iterations is 64 runtime slots.
+        // Eight row accounts times sixteen iterations is 128 runtime slots, past the 120 cap.
         let mut builder = ProgramBuilder::new();
         for _ in 0..MAX_BATCH_STRIDE {
             builder.row_account(0, None, None, 0);
         }
-        builder.batch(8, 0);
+        builder.batch(16, 0);
         let condition = builder.const_bool(true);
         builder.for_each(0, |body| body.require(condition));
         assert_eq!(verify_builder(&builder), Err(TemplateError::TooManyAccounts));
@@ -1115,7 +1120,7 @@ mod tests {
         // Reserved bytes, declared length mismatch, unknown account flags, bad CPI index.
         let (mut builder, cpi) = transfer_builder(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, ACCOUNT_WRITABLE);
         builder.invoke(cpi, None);
-        builder.cpis_mut()[0].reserved0 = 1;
+        builder.cpis_mut()[0].account_group = 0;
         assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
 
         let (mut builder, cpi) = transfer_builder(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, ACCOUNT_WRITABLE);

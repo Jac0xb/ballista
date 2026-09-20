@@ -229,7 +229,7 @@ export function buildRunInstruction(input: {
     const unknown = Object.keys(row).filter((name) => !input.compiled.batchAccountOrder.includes(name));
     if (unknown.length > 0) throw new TypeError(`Unknown batch accounts in row ${rowIndex}: ${unknown.join(', ')}`);
   }
-  if (accounts.length - 1 > 60) throw new RangeError('Run uses more than 60 runtime account slots');
+  if (accounts.length - 1 > 120) throw new RangeError('Run uses more than 120 runtime account slots');
 
   return {
     programAddress: input.programAddress.slice(),

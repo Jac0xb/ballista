@@ -51,6 +51,8 @@ pub enum BallistaError {
     /// account index. `InvalidRuntimeAccount` is reserved for failures during execution.
     #[error("runtime account does not satisfy its constraint")]
     AccountConstraintFailed,
+    #[error("CPI accounts including the forwarded group exceed the limit")]
+    CpiAccountLimitExceeded,
 }
 
 pub use ballista_common::template::RUNTIME_ERROR_NAMES;
@@ -108,6 +110,7 @@ mod tests {
             BallistaError::MissingReturnData,
             BallistaError::ReturnDataMismatch,
             BallistaError::AccountConstraintFailed,
+            BallistaError::CpiAccountLimitExceeded,
         ];
         for (index, variant) in variants.iter().enumerate() {
             assert_eq!(variant.code(), 6000 + index as u32, "{variant:?}");

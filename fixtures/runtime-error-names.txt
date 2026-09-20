@@ -19,3 +19,4 @@ InvalidPdaDerivation
 MissingReturnData
 ReturnDataMismatch
 AccountConstraintFailed
+CpiAccountLimitExceeded

@@ -292,7 +292,10 @@ mod tests {
         let verifier = decode_ballista_error((3 << 16) | 6115).unwrap();
         assert_eq!(verifier.name, "InvalidCpi");
         assert_eq!(verifier.source, ErrorSource::Verifier);
+        assert_eq!(decode_ballista_error(6021).unwrap().name, "CpiAccountLimitExceeded");
+        assert_eq!(decode_ballista_error(6128).unwrap().name, "TooManyAccountGroups");
         assert!(decode_ballista_error(1).is_none());
-        assert!(decode_ballista_error(6128).is_none());
+        assert!(decode_ballista_error(6022).is_none());
+        assert!(decode_ballista_error(6129).is_none());
     }
 }

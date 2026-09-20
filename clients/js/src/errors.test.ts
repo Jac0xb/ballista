@@ -46,10 +46,13 @@ describe('error decoding', () => {
     expect(decodeBallistaError((7 << 16) | 6015)).toMatchObject({ name: 'RequirementFailed', context: 7 });
     expect(decodeBallistaError((3 << 16) | 6115)).toMatchObject({ name: 'InvalidCpi', context: 3, source: 'verifier' });
     expect(decodeBallistaError(6127)).toMatchObject({ name: 'InvalidMinIterations' });
+    expect(decodeBallistaError(6128)).toMatchObject({ name: 'TooManyAccountGroups' });
     expect(decodeBallistaError(6001)).toMatchObject({ name: 'InvalidTemplateAccount' });
+    expect(decodeBallistaError((65 << 16) | 6021)).toMatchObject({ name: 'CpiAccountLimitExceeded', context: 65 });
     expect(decodeBallistaError(1)).toBeUndefined();
+    expect(decodeBallistaError(6022)).toBeUndefined();
     expect(decodeBallistaError(6099)).toBeUndefined();
-    expect(decodeBallistaError(6128)).toBeUndefined();
+    expect(decodeBallistaError(6129)).toBeUndefined();
     expect(decodeBallistaError(-1)).toBeUndefined();
   });
 

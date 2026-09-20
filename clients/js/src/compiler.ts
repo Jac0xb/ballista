@@ -16,7 +16,7 @@ import {
 
 export const TEMPLATE_PROGRAM_VERSION = 3;
 export const MAX_TEMPLATE_PAYLOAD_LENGTH = 10_240;
-export const MAX_RUNTIME_ACCOUNTS = 60;
+export const MAX_RUNTIME_ACCOUNTS = 120;
 export const MAX_INPUT_BYTES = 1_024;
 export const MAX_REGISTERS = 64;
 export const MAX_VM_INSTRUCTIONS = 128;
@@ -450,7 +450,7 @@ class Compiler {
 
     const descriptor = new Writer();
     descriptor.u8(programAccount);
-    descriptor.u8(0);
+    descriptor.u8(NO_INDEX);
     descriptor.u16(accountStart);
     descriptor.u8(current.accounts.length);
     descriptor.u8(current.data.length);

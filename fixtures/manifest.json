@@ -1,6 +1,6 @@
 {
   "system-transfer": {
-    "hash": "2c18d2fdad501d48846225196414e6d113bf73fa6a36a1f92336429900c8db6b",
+    "hash": "a4366b42ba6ad8afdc38a69879b34a85a36e09dd7d520e707e915f346a2f010f",
     "stats": {
       "payloadBytes": 152,
       "fixedAccounts": 3,
@@ -27,7 +27,7 @@
     ]
   },
   "batch-transfer-30": {
-    "hash": "80672791e78226eb3ae85955a45421f1adb0cc68bba441466ecf703868a0a5a3",
+    "hash": "265414289d7c615f4742e9e96f34341e92f05cfcc1e5dace86ab965b7e22970e",
     "stats": {
       "payloadBytes": 168,
       "fixedAccounts": 2,
@@ -58,7 +58,7 @@
     ]
   },
   "ensure-ata": {
-    "hash": "dac5b1b1e831c06270af31771a0ad7947327d50564bba565647e68e066344d9a",
+    "hash": "5ffb7ab7d4bf66065999209c15f59f1bd9005deec04fbeb84f4b67321643c71e",
     "stats": {
       "payloadBytes": 368,
       "fixedAccounts": 7,
@@ -169,7 +169,7 @@
     ]
   },
   "checked-transfer-snapshot": {
-    "hash": "37c5b34fceb677435e783469f8bfa316c97e5a6fb0ebb257eb39a67e0a6fd916",
+    "hash": "ba6da016caa2f72d25b02e3f8931191ff984a4f0260c64678d50e3addf63d695",
     "stats": {
       "payloadBytes": 248,
       "fixedAccounts": 3,
@@ -322,7 +322,7 @@
     ]
   },
   "return-data": {
-    "hash": "8d04a26cf1188cbf4615d7d38f5f8bcb9ab0dd7cd582f587374468feb48eab95",
+    "hash": "cf5c26f3917709ff09386e514dd61fb168e2f547ea7972bf7dd76c86b3979e58",
     "stats": {
       "payloadBytes": 175,
       "fixedAccounts": 2,
@@ -365,7 +365,7 @@
     ]
   },
   "event-flag": {
-    "hash": "56cb388d1636123182121e99673d7aaaa6ffe7e03103be29f7240243172a8d3d",
+    "hash": "a0f443772773a369e33802ba12afd393f22ed562b000716865c96b9403b0cf81",
     "stats": {
       "payloadBytes": 152,
       "fixedAccounts": 3,

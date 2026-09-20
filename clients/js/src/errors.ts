@@ -28,6 +28,7 @@ export const RUNTIME_ERROR_NAMES = [
   'MissingReturnData',
   'ReturnDataMismatch',
   'AccountConstraintFailed',
+  'CpiAccountLimitExceeded',
 ] as const;
 
 /** Verifier failures raised at create and finalize, in code order. */
@@ -60,6 +61,7 @@ export const VERIFIER_ERROR_NAMES = [
   'TooManyCpiAccounts',
   'InvalidReturnData',
   'InvalidMinIterations',
+  'TooManyAccountGroups',
 ] as const;
 
 export type RuntimeErrorName = (typeof RUNTIME_ERROR_NAMES)[number];

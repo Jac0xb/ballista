@@ -1508,6 +1508,8 @@ mod tests {
             1,
             0,
             4,
+            0,
+            0,
         );
         let mut account_constraints = vec![
             account_constraint(ACCOUNT_EXECUTABLE, 0),
@@ -1530,7 +1532,7 @@ mod tests {
         let destination = if batch { ITERATION_ACCOUNT_BIT } else { 2 };
         let cpi = CpiDescriptor {
             program_account: 0,
-            reserved0: 0,
+            account_group: NO_INDEX,
             account_start_le: 0u16.to_le_bytes(),
             account_len: 2,
             segment_len: 2,
@@ -1582,7 +1584,7 @@ mod tests {
     }
 
     fn token_transfer_template(batch_max: u8) -> Vec<u8> {
-        let header = ProgramHeader::new(3, 1, batch_max, 0, 1, 1, 3, 1, 3, 2, 1, 0, 1);
+        let header = ProgramHeader::new(3, 1, batch_max, 0, 1, 1, 3, 1, 3, 2, 1, 0, 1, 0, 0);
         let mut token_account_constraint = account_constraint(ACCOUNT_WRITABLE, NO_INDEX);
         token_account_constraint.owner_index = 0;
         let account_constraints = [
@@ -1603,7 +1605,7 @@ mod tests {
         ];
         let cpis = [CpiDescriptor {
             program_account: 0,
-            reserved0: 0,
+            account_group: NO_INDEX,
             account_start_le: [0; 2],
             account_len: 3,
             segment_len: 2,
@@ -1663,7 +1665,7 @@ mod tests {
     }
 
     fn ata_then_transfer_template(batch_max: u8) -> Vec<u8> {
-        let header = ProgramHeader::new(7, 2, batch_max, 0, 1, 8, 12, 2, 9, 5, 3, 0, 1);
+        let header = ProgramHeader::new(7, 2, batch_max, 0, 1, 8, 12, 2, 9, 5, 3, 0, 1, 0, 0);
         let account_constraints = [
             account_constraint(ACCOUNT_EXECUTABLE, 0),
             account_constraint(ACCOUNT_EXECUTABLE, 1),
@@ -1697,7 +1699,7 @@ mod tests {
         let cpis = [
             CpiDescriptor {
                 program_account: 0,
-                reserved0: 0,
+                account_group: NO_INDEX,
                 account_start_le: [0; 2],
                 account_len: 6,
                 segment_len: 0,
@@ -1707,7 +1709,7 @@ mod tests {
             },
             CpiDescriptor {
                 program_account: 1,
-                reserved0: 0,
+                account_group: NO_INDEX,
                 account_start_le: 6u16.to_le_bytes(),
                 account_len: 3,
                 segment_len: 2,

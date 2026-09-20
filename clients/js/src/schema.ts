@@ -318,10 +318,10 @@ export const TemplateSchema = z
       context.addIssue({ code: 'custom', message: 'Templates support at most 32 inputs', path: ['inputs'] });
     }
     const stride = template.batch ? Object.keys(template.batch.row).length : 0;
-    if (Object.keys(template.accounts).length + stride * (template.batch?.maxIterations ?? 0) > 60) {
+    if (Object.keys(template.accounts).length + stride * (template.batch?.maxIterations ?? 0) > 120) {
       context.addIssue({
         code: 'custom',
-        message: 'Fixed accounts plus the maximum batch range exceeds 60 runtime accounts',
+        message: 'Fixed accounts plus the maximum batch range exceeds 120 runtime accounts',
         path: ['accounts'],
       });
     }

@@ -6,7 +6,7 @@ pub const TEMPLATE_PROGRAM_MAGIC: [u8; 4] = *b"BVM2";
 pub const TEMPLATE_PROGRAM_VERSION: u8 = 3;
 
 pub const MAX_TEMPLATE_PAYLOAD_LEN: usize = 10_240;
-pub const MAX_RUNTIME_ACCOUNTS: usize = 60;
+pub const MAX_RUNTIME_ACCOUNTS: usize = 120;
 pub const MAX_INPUTS: usize = 32;
 pub const MAX_INPUT_BYTES: usize = 1_024;
 pub const MAX_REGISTERS: usize = 64;
@@ -16,6 +16,12 @@ pub const MAX_CPI_DATA_LEN: usize = 4_096;
 /// Upper bound on accounts passed to one CPI; matches the executor's stack-bounded invoke.
 pub const MAX_CPI_ACCOUNTS: usize = 64;
 pub const MAX_BATCH_STRIDE: usize = 8;
+/// Row inputs a batch may declare; each is carried once per iteration in the run data.
+pub const MAX_ROW_INPUTS: usize = 8;
+/// Parsed input values per run: the fixed inputs plus `iterations × row inputs`.
+pub const MAX_INPUT_VALUES: usize = 256;
+/// Caller-sized account groups a template may declare and forward to CPIs.
+pub const MAX_ACCOUNT_GROUPS: usize = 8;
 pub const MAX_PDA_SEEDS: usize = 15;
 pub const MAX_PDA_SEED_LEN: usize = 32;
 /// Maximum bytes of CPI return data the runtime exposes.
@@ -23,6 +29,9 @@ pub const MAX_RETURN_DATA_LEN: usize = 1_024;
 
 pub const NO_INDEX: u8 = u8::MAX;
 pub const ITERATION_ACCOUNT_BIT: u8 = 0x80;
+/// `LOAD_INPUT` operand bit selecting a row input of the current iteration; the low seven bits
+/// are the offset within the row.
+pub const ITERATION_INPUT_BIT: u8 = ITERATION_ACCOUNT_BIT;
 
 /// Program header flag: emit a `sol_log_data` event after a successful run.
 pub const PROGRAM_FLAG_EMIT_EVENT: u8 = 1 << 0;
@@ -38,7 +47,7 @@ pub const VERIFIER_ERROR_BASE: u32 = 6_100;
 
 /// Runtime error names in code order, starting at [`RUNTIME_ERROR_BASE`]. The program's error
 /// enum and the SDKs are checked against this table.
-pub const RUNTIME_ERROR_NAMES: [&str; 21] = [
+pub const RUNTIME_ERROR_NAMES: [&str; 22] = [
     "InvalidInstructionData",
     "InvalidTemplateAccount",
     "InvalidTemplateProgram",
@@ -60,6 +69,7 @@ pub const RUNTIME_ERROR_NAMES: [&str; 21] = [
     "MissingReturnData",
     "ReturnDataMismatch",
     "AccountConstraintFailed",
+    "CpiAccountLimitExceeded",
 ];
 
 pub const ACCOUNT_SIGNER: u8 = 1 << 0;
@@ -156,7 +166,9 @@ pub struct ProgramHeader {
     flags: u8,
     blob_len_le: [u8; 2],
     batch_min_iterations: u8,
-    reserved: [u8; 3],
+    row_input_count: u8,
+    account_group_count: u8,
+    reserved: [u8; 1],
 }
 
 pub const PROGRAM_HEADER_LEN: usize = size_of::<ProgramHeader>();
@@ -177,6 +189,8 @@ impl ProgramHeader {
         pubkey_count: u8,
         flags: u8,
         blob_len: u16,
+        row_input_count: u8,
+        account_group_count: u8,
     ) -> Self {
         Self {
             magic: TEMPLATE_PROGRAM_MAGIC,
@@ -194,7 +208,9 @@ impl ProgramHeader {
             flags,
             blob_len_le: blob_len.to_le_bytes(),
             batch_min_iterations,
-            reserved: [0; 3],
+            row_input_count,
+            account_group_count,
+            reserved: [0; 1],
         }
     }
 
@@ -218,6 +234,18 @@ impl ProgramHeader {
     }
     pub const fn input_count(&self) -> usize {
         self.input_count as usize
+    }
+    /// Inputs carried once per batch iteration, declared after the fixed inputs.
+    pub const fn row_input_count(&self) -> usize {
+        self.row_input_count as usize
+    }
+    /// Fixed plus row input descriptors: the length of the inputs table.
+    pub const fn total_input_count(&self) -> usize {
+        self.input_count as usize + self.row_input_count as usize
+    }
+    /// Caller-sized account groups that follow the batch rows in the runtime accounts.
+    pub const fn account_group_count(&self) -> usize {
+        self.account_group_count as usize
     }
     pub const fn register_count(&self) -> usize {
         self.register_count as usize
@@ -243,7 +271,7 @@ impl ProgramHeader {
     pub const fn flags(&self) -> u8 {
         self.flags
     }
-    pub const fn reserved(&self) -> &[u8; 3] {
+    pub const fn reserved(&self) -> &[u8; 1] {
         &self.reserved
     }
     pub fn as_bytes(&self) -> &[u8] {
@@ -316,7 +344,8 @@ impl InstructionRecord {
 )]
 pub struct CpiDescriptor {
     pub program_account: u8,
-    pub reserved0: u8,
+    /// Account group forwarded after the declared accounts, or `NO_INDEX` for none.
+    pub account_group: u8,
     pub account_start_le: [u8; 2],
     pub account_len: u8,
     pub segment_len: u8,
@@ -326,6 +355,10 @@ pub struct CpiDescriptor {
 }
 
 impl CpiDescriptor {
+    /// The account group this CPI forwards, if any.
+    pub fn account_group(&self) -> Option<usize> {
+        (self.account_group != NO_INDEX).then_some(self.account_group as usize)
+    }
     pub fn account_start(&self) -> usize {
         u16::from_le_bytes(self.account_start_le) as usize
     }
@@ -401,7 +434,7 @@ impl<'data> ProgramView<'data> {
         if header.version() != TEMPLATE_PROGRAM_VERSION {
             return Err(TemplateError::UnsupportedVersion(header.version()));
         }
-        if header.flags() & !PROGRAM_FLAGS_MASK != 0 || header.reserved() != &[0; 3] {
+        if header.flags() & !PROGRAM_FLAGS_MASK != 0 || header.reserved() != &[0; 1] {
             return Err(TemplateError::InvalidReservedBytes);
         }
 
@@ -411,7 +444,8 @@ impl<'data> ProgramView<'data> {
             .ok_or(TemplateError::CountOverflow)?;
         let (accounts, suffix) = take_records::<AccountConstraint>(remaining, account_count)?;
         remaining = suffix;
-        let (inputs, suffix) = take_records::<InputDescriptor>(remaining, header.input_count())?;
+        let (inputs, suffix) =
+            take_records::<InputDescriptor>(remaining, header.total_input_count())?;
         remaining = suffix;
         let (instructions, suffix) =
             take_records::<InstructionRecord>(remaining, header.instruction_count())?;
@@ -460,6 +494,24 @@ impl<'data> ProgramView<'data> {
         }
         self.accounts
             .get(self.header.fixed_account_count() + offset)
+    }
+
+    /// The descriptor a `LOAD_INPUT` operand names: a fixed input, or inside a loop a row input.
+    pub fn input_descriptor(&self, reference: u8, in_loop: bool) -> Option<&InputDescriptor> {
+        if reference & ITERATION_INPUT_BIT == 0 {
+            return self
+                .inputs
+                .get(reference as usize)
+                .filter(|_| (reference as usize) < self.header.input_count());
+        }
+        if !in_loop {
+            return None;
+        }
+        let offset = (reference & !ITERATION_INPUT_BIT) as usize;
+        if offset >= self.header.row_input_count() {
+            return None;
+        }
+        self.inputs.get(self.header.input_count() + offset)
     }
 }
 
@@ -514,6 +566,8 @@ pub enum TemplateError {
     InvalidReturnData(usize),
     /// Minimum iterations exceed the maximum, or are set without a batch.
     InvalidMinIterations,
+    /// The header declares more than `MAX_ACCOUNT_GROUPS` account groups.
+    TooManyAccountGroups,
 }
 
 impl TemplateError {
@@ -552,6 +606,7 @@ impl TemplateError {
             TemplateError::TooManyCpiAccounts(index) => (25, clamp(index)),
             TemplateError::InvalidReturnData(index) => (26, clamp(index)),
             TemplateError::InvalidMinIterations => (27, 0),
+            TemplateError::TooManyAccountGroups => (28, 0),
         };
         (VERIFIER_ERROR_BASE + index, context)
     }
@@ -559,7 +614,7 @@ impl TemplateError {
 
 /// Verifier error names in code order, shared with the SDK through
 /// `fixtures/verifier-error-names.txt`.
-pub const VERIFIER_ERROR_NAMES: [&str; 28] = [
+pub const VERIFIER_ERROR_NAMES: [&str; 29] = [
     "Truncated",
     "PayloadTooLarge",
     "InvalidMagic",
@@ -588,6 +643,7 @@ pub const VERIFIER_ERROR_NAMES: [&str; 28] = [
     "TooManyCpiAccounts",
     "InvalidReturnData",
     "InvalidMinIterations",
+    "TooManyAccountGroups",
 ];
 
 /// Packs an error kind and a 16-bit context into one custom program error code.
@@ -656,7 +712,7 @@ mod tests {
 
     #[test]
     fn v3_header_round_trips_min_iterations_and_flags() {
-        let header = ProgramHeader::new(1, 1, 4, 2, 0, 0, 1, 0, 0, 0, 0, PROGRAM_FLAG_EMIT_EVENT, 0);
+        let header = ProgramHeader::new(1, 1, 4, 2, 0, 0, 1, 0, 0, 0, 0, PROGRAM_FLAG_EMIT_EVENT, 0, 0, 0);
         assert_eq!(header.version(), 3);
         assert_eq!(header.batch_min_iterations(), 2);
         assert_eq!(header.flags(), PROGRAM_FLAG_EMIT_EVENT);

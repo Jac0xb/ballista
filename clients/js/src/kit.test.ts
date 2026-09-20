@@ -17,6 +17,7 @@ import {
   buildKitRunInstruction,
   buildKitTemplateUploadPlan,
   createComputeUnitProvider,
+  findFreeTemplateId,
   getComputeUnitLimitWithMargin,
   getComputeUnitsConsumed,
   getLoadedAccountsDataSizeLimitWithHeadroom,
@@ -128,6 +129,39 @@ describe('Solana Kit adapter', () => {
     });
     expect(getTransactionMessageComputeUnitLimit(result.transactionMessage)).toBe(110_000);
     expect(getTransactionMessageLoadedAccountsDataSizeLimit(result.transactionMessage)).toBe(32_768);
+  });
+
+  test('probes template addresses in batches until one is free', async () => {
+    const creator = byteAddress(5);
+    const [taken0] = await getTemplateAddress(creator, 0);
+    const [taken1] = await getTemplateAddress(creator, 1);
+    const [taken2] = await getTemplateAddress(creator, 2);
+    const occupied = new Set<string>([taken0, taken1, taken2]);
+    const calls: number[] = [];
+    const rpc = {
+      getMultipleAccounts: (addresses: readonly string[]) => ({
+        send: async () => {
+          calls.push(addresses.length);
+          return { value: addresses.map((candidate) => (occupied.has(candidate) ? { lamports: 1n } : null)) };
+        },
+      }),
+    };
+
+    const free = await findFreeTemplateId({ rpc, creator, batchSize: 2 });
+    expect(free.templateId).toBe(3);
+    expect(free.templateAddress).toBe((await getTemplateAddress(creator, 3))[0]);
+    expect(calls).toEqual([2, 2]);
+
+    const later = await findFreeTemplateId({ rpc, creator, start: 65_534 });
+    expect(later.templateId).toBe(65_534);
+
+    const everythingTaken = {
+      getMultipleAccounts: (addresses: readonly string[]) => ({
+        send: async () => ({ value: addresses.map(() => ({ lamports: 1n })) }),
+      }),
+    };
+    await expect(findFreeTemplateId({ rpc: everythingTaken, creator, start: 65_530 })).rejects.toThrow('taken');
+    await expect(findFreeTemplateId({ rpc, creator, batchSize: 0 })).rejects.toThrow('batch size');
   });
 
   test('caps margins and reads authoritative confirmed CU metadata', () => {

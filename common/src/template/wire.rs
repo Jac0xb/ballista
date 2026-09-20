@@ -529,6 +529,39 @@ impl TemplateError {
     }
 }
 
+/// Verifier error names in code order, shared with the SDK through
+/// `fixtures/verifier-error-names.txt`.
+pub const VERIFIER_ERROR_NAMES: [&str; 28] = [
+    "Truncated",
+    "PayloadTooLarge",
+    "InvalidMagic",
+    "UnsupportedVersion",
+    "InvalidReservedBytes",
+    "SectionLengthMismatch",
+    "CountOverflow",
+    "TooManyAccounts",
+    "TooManyInputs",
+    "TooManyRegisters",
+    "TooManyInstructions",
+    "InvalidBatch",
+    "InvalidAccountConstraint",
+    "InvalidInput",
+    "InvalidInstruction",
+    "InvalidCpi",
+    "InvalidDataSegment",
+    "InvalidRegister",
+    "RegisterNotInitialized",
+    "TypeMismatch",
+    "InvalidBlobRange",
+    "ExcessiveCpiExpansion",
+    "InvalidFlags",
+    "InvalidCarry",
+    "ReadOutOfBounds",
+    "TooManyCpiAccounts",
+    "InvalidReturnData",
+    "InvalidMinIterations",
+];
+
 /// Packs an error kind and a 16-bit context into one custom program error code.
 ///
 /// The low 16 bits hold the kind (runtime kinds start at 6000, verifier kinds at
@@ -602,6 +635,16 @@ mod tests {
         assert_eq!(codes.len(), variants.len());
         assert_eq!(codes[0], VERIFIER_ERROR_BASE);
         assert_eq!(*codes.last().unwrap(), VERIFIER_ERROR_BASE + 27);
+        for variant in &variants {
+            let (code, _) = variant.code();
+            let name = format!("{variant:?}");
+            let bare = name.split('(').next().unwrap();
+            assert_eq!(
+                VERIFIER_ERROR_NAMES[(code - VERIFIER_ERROR_BASE) as usize],
+                bare,
+                "names must follow code order"
+            );
+        }
 
         let (kind, context) = TemplateError::PayloadTooLarge(70_000).code();
         assert_eq!(context, u16::MAX, "oversized contexts clamp");

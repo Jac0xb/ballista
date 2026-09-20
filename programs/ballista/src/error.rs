@@ -47,7 +47,36 @@ pub enum BallistaError {
     MissingReturnData,
     #[error("return data came from a different program")]
     ReturnDataMismatch,
+    /// A runtime account failed its declared constraint before execution; the context is the
+    /// account index. `InvalidRuntimeAccount` is reserved for failures during execution.
+    #[error("runtime account does not satisfy its constraint")]
+    AccountConstraintFailed,
 }
+
+/// Runtime error names in code order, shared with the SDK through `fixtures/runtime-error-names.txt`.
+pub const RUNTIME_ERROR_NAMES: [&str; 21] = [
+    "InvalidInstructionData",
+    "InvalidTemplateAccount",
+    "InvalidTemplateProgram",
+    "TemplateNotUploading",
+    "TemplateNotFinalized",
+    "InvalidCreator",
+    "InvalidChunkOffset",
+    "HashMismatch",
+    "InvalidRunInputs",
+    "InvalidRuntimeAccount",
+    "InvalidAccountRange",
+    "InvalidRegister",
+    "TypeMismatch",
+    "ArithmeticOverflow",
+    "DivisionByZero",
+    "RequirementFailed",
+    "CpiDataTooLarge",
+    "InvalidPdaDerivation",
+    "MissingReturnData",
+    "ReturnDataMismatch",
+    "AccountConstraintFailed",
+];
 
 impl BallistaError {
     /// The bare error code without context bits.
@@ -79,9 +108,51 @@ mod tests {
     use ballista_common::template::{decode_error, VERIFIER_ERROR_BASE};
 
     #[test]
+    fn runtime_error_names_match_the_shared_fixture_in_code_order() {
+        let variants = [
+            BallistaError::InvalidInstructionData,
+            BallistaError::InvalidTemplateAccount,
+            BallistaError::InvalidTemplateProgram,
+            BallistaError::TemplateNotUploading,
+            BallistaError::TemplateNotFinalized,
+            BallistaError::InvalidCreator,
+            BallistaError::InvalidChunkOffset,
+            BallistaError::HashMismatch,
+            BallistaError::InvalidRunInputs,
+            BallistaError::InvalidRuntimeAccount,
+            BallistaError::InvalidAccountRange,
+            BallistaError::InvalidRegister,
+            BallistaError::TypeMismatch,
+            BallistaError::ArithmeticOverflow,
+            BallistaError::DivisionByZero,
+            BallistaError::RequirementFailed,
+            BallistaError::CpiDataTooLarge,
+            BallistaError::InvalidPdaDerivation,
+            BallistaError::MissingReturnData,
+            BallistaError::ReturnDataMismatch,
+            BallistaError::AccountConstraintFailed,
+        ];
+        for (index, variant) in variants.iter().enumerate() {
+            assert_eq!(variant.code(), 6000 + index as u32, "{variant:?}");
+            assert_eq!(format!("{variant:?}"), RUNTIME_ERROR_NAMES[index]);
+        }
+        let shared: Vec<&str> = include_str!("../../../fixtures/runtime-error-names.txt")
+            .lines()
+            .filter(|line| !line.is_empty())
+            .collect();
+        assert_eq!(shared, RUNTIME_ERROR_NAMES.to_vec());
+
+        let verifier: Vec<&str> = include_str!("../../../fixtures/verifier-error-names.txt")
+            .lines()
+            .filter(|line| !line.is_empty())
+            .collect();
+        assert_eq!(verifier, ballista_common::template::VERIFIER_ERROR_NAMES.to_vec());
+    }
+
+    #[test]
     fn runtime_codes_start_at_6000_and_stay_below_the_verifier_range() {
         assert_eq!(BallistaError::InvalidInstructionData.code(), 6000);
-        assert!(BallistaError::ReturnDataMismatch.code() < VERIFIER_ERROR_BASE);
+        assert!(BallistaError::AccountConstraintFailed.code() < VERIFIER_ERROR_BASE);
         assert_eq!(
             vm_error(BallistaError::RequirementFailed, 7),
             ProgramError::Custom((7 << 16) | 6015)

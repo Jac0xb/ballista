@@ -13,8 +13,10 @@ import { afterAll, describe, expect, test } from 'vitest';
 
 import {
   ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES,
+  RUNTIME_ERROR_NAMES,
   SYSTEM_PROGRAM_ADDRESS_BYTES,
   TOKEN_PROGRAM_ADDRESS_BYTES,
+  VERIFIER_ERROR_NAMES,
   account,
   assertAta,
   compileTemplate,
@@ -259,6 +261,21 @@ describe('shared compiler fixtures', () => {
       expect(hex(compiled.bytes)).toBe(readFileSync(hexPath, 'utf8').trim());
       const recorded = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as Record<string, typeof entry>;
       expect(recorded[name]).toEqual(entry);
+    });
+  }
+
+  for (const [file, names] of [
+    ['runtime-error-names.txt', RUNTIME_ERROR_NAMES],
+    ['verifier-error-names.txt', VERIFIER_ERROR_NAMES],
+  ] as const) {
+    test(file, () => {
+      const path = `${FIXTURE_DIR}${file}`;
+      const content = `${names.join('\n')}\n`;
+      if (UPDATE) {
+        writeFileSync(path, content);
+        return;
+      }
+      expect(readFileSync(path, 'utf8')).toBe(content);
     });
   }
 

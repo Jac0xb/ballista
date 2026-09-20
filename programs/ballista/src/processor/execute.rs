@@ -311,6 +311,9 @@ fn validate_runtime_accounts(
             .get(constraint_index)
             .ok_or(BallistaError::InvalidTemplateProgram)?;
         validate_account(program, account, constraint).map_err(|error| match error {
+            RunError::Vm(BallistaError::InvalidRuntimeAccount) => {
+                RunError::VmAt(BallistaError::AccountConstraintFailed, clamp(index))
+            }
             RunError::Vm(kind) => RunError::VmAt(kind, clamp(index)),
             other => other,
         })?;

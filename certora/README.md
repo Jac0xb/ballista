@@ -36,6 +36,12 @@ certoraSolanaProver run.conf --rule rule_verified_pure_instructions_preserve_reg
 Results appear at `https://prover.certora.com/output/<job>/<key>`. Platform tools v1.53 ship the
 Rust 1.89 compiler that pinocchio 0.11 requires; older versions will not build the program.
 
+## A build-time check in its own right
+
+`cargo certora-sbf` compiles for SBPF version 0 and reports any function whose stack frame exceeds
+4 KiB, which the regular `cargo build-sbf` does not. That report found two real frame overflows in
+the program on first use. Run it after changes to the executor even when no prover job follows.
+
 ## What the rules state
 
 - **Typing preservation.** For any register typing, any register values consistent with it, and

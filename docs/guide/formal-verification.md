@@ -44,6 +44,14 @@ no Ballista-specific code.
   induction itself is an argument, not a machine-checked proof.
 - The pinocchio and Agave runtime code underneath, which remain the trusted base.
 
+## Findings so far
+
+Setting up the prover found a bug before a single rule ran. Certora's platform tools enforce the
+4 KiB stack frame of SBPF version 0 at compile time, which the regular toolchain does not, and
+they reported two functions over the limit: the CPI path at about 4.7 KiB and the return-data read
+at about 7.5 KiB. Both overflowed into the caller's frame on every run and happened to work. They
+are fixed, and the Certora build is now the check that keeps them fixed.
+
 ## Running a job
 
 ```bash

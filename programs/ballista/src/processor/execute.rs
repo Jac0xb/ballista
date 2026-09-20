@@ -655,8 +655,12 @@ pub fn execute_instruction<'data>(
     Ok(())
 }
 
-/// Reads a typed value from the return data of the CPI that just ran. Kept out of line because
-/// the runtime's return-data buffer is a kilobyte of stack.
+/// Reads a typed value from the return data of the CPI that just ran.
+///
+/// Kept out of line, and reading through the syscall directly into one buffer: SBPF version 0
+/// gives every function a fixed 4 KiB frame, and pinocchio's `get_return_data` returns a
+/// kilobyte-sized struct by value, which the compiler copied several times and overflowed that
+/// frame.
 #[inline(never)]
 fn read_return_data<'data>(
     scratch: &Scratch<'data>,
@@ -666,11 +670,16 @@ fn read_return_data<'data>(
     let expected_program = scratch
         .last_invoked
         .ok_or(BallistaError::MissingReturnData)?;
-    let data = pinocchio::cpi::get_return_data().ok_or(BallistaError::MissingReturnData)?;
-    if data.program_id().to_bytes() != expected_program {
+    let mut buffer = [0u8; MAX_RETURN_DATA_LEN];
+    let mut program_id = [0u8; 32];
+    let size = fetch_return_data(&mut buffer, &mut program_id);
+    if size == 0 {
+        return Err(BallistaError::MissingReturnData.into());
+    }
+    if program_id != expected_program {
         return Err(BallistaError::ReturnDataMismatch.into());
     }
-    let bytes = data.as_slice();
+    let bytes = &buffer[..size.min(MAX_RETURN_DATA_LEN)];
     let offset = instruction.immediate() as usize;
     let width = read_width(instruction.a);
     if width == 0
@@ -682,6 +691,28 @@ fn read_return_data<'data>(
     }
     let value = read_value(instruction.a, bytes, offset)?;
     set(registers, instruction.dst as usize, value)
+}
+
+/// Copies the current return data into `buffer` and its setter into `program_id`, returning the
+/// full size the runtime reports (zero when no return data is set). Off-chain there is none.
+#[inline(always)]
+fn fetch_return_data(buffer: &mut [u8; MAX_RETURN_DATA_LEN], program_id: &mut [u8; 32]) -> usize {
+    #[cfg(target_os = "solana")]
+    {
+        let size = unsafe {
+            pinocchio::syscalls::sol_get_return_data(
+                buffer.as_mut_ptr(),
+                buffer.len() as u64,
+                program_id.as_mut_ptr(),
+            )
+        };
+        size as usize
+    }
+    #[cfg(not(target_os = "solana"))]
+    {
+        let _ = (buffer, program_id);
+        0
+    }
 }
 
 /// The blob slice addressed by an instruction's packed `(offset, len)` immediate.
@@ -776,9 +807,17 @@ fn invoke_cpi<'data>(
         accounts: scratch.metas.as_slice(),
         data: scratch.data.as_slice(),
     };
-    invoke_with_bounds::<MAX_CPI_ACCOUNTS, _>(&instruction, scratch.views.as_slice())?;
+    bounded_invoke(&instruction, scratch.views.as_slice())?;
     scratch.last_invoked = Some(program_account.address().to_bytes());
     Ok(())
+}
+
+/// Performs the CPI in its own stack frame. `invoke_with_bounds` places a `MAX_CPI_ACCOUNTS`-slot
+/// account array on the stack; combined with the caller's locals that exceeded the fixed 4 KiB
+/// frame of SBPF version 0, so the array gets a frame to itself.
+#[inline(never)]
+fn bounded_invoke(instruction: &InstructionView, views: &[&AccountView]) -> ProgramResult {
+    invoke_with_bounds::<MAX_CPI_ACCOUNTS, _>(instruction, views)
 }
 
 /// Destination for encoded segment bytes: a reusable `Vec` for CPI data, or a fixed stack buffer

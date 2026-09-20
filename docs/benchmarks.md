@@ -7,13 +7,13 @@ promises. Run `cargo test --manifest-path tests/ballista/Cargo.toml -- --nocaptu
 
 | Scenario | Compute units |
 | --- | ---: |
-| 1 SOL transfer, plain template with the run event enabled | 2,913 |
-| 1 SOL transfer with a guard input and a pre/post balance assertion | 3,532 |
-| 8 SOL transfers in a batch | 16,155 |
-| 30 SOL transfers in a batch | 57,593 |
-| 58 CPIs each carrying 1,000 bytes of data | 105,944 |
-| 118 PDA derivations of 15 seeds across 59 rows | 511,473 |
-| Nested template: one template running another through CPI | 5,350 |
+| 1 SOL transfer, plain template with the run event enabled | 2,886 |
+| 1 SOL transfer with a guard input and a pre/post balance assertion | 3,505 |
+| 8 SOL transfers in a batch | 15,939 |
+| 30 SOL transfers in a batch | 56,783 |
+| 58 CPIs each carrying 1,000 bytes of data | 104,320 |
+| 118 PDA derivations of 15 seeds across 59 rows | 523,473 |
+| Nested template: one template running another through CPI | 5,291 |
 | Guarded ATA creation, repeat run that skips the CPI | about 1,400 |
 
 The fixed cost of a run rose by several hundred compute units against version 2 while the per-CPI
@@ -41,3 +41,11 @@ run with constant heap.
 
 Program and account record tables are borrowed directly from immutable template data. `Run` does
 not allocate or deserialize an AST.
+
+## Stack frames
+
+The program is built for SBPF version 0, which gives every function a fixed 4 KiB stack frame.
+The Certora platform tools report frames that exceed it; the regular toolchain does not. Two did:
+the CPI path, whose 64-slot account array now lives in a frame of its own, and the return-data
+read, which now copies through the syscall into one buffer. Both are under 4 KiB and every
+function in the program compiles without a frame warning.

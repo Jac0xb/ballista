@@ -35,6 +35,8 @@ export const SYSTEM_PROGRAM_ADDRESS = address('11111111111111111111111111111111'
 
 export interface KitAccountBinding {
   address: Address;
+  /** Account group members only: pass the account as writable. */
+  writable?: boolean;
 }
 
 export interface KitUploadInstruction {
@@ -287,8 +289,21 @@ export function buildKitRunInstruction(input: {
   inputs?: Readonly<Record<string, RunInputValue>>;
   accounts: Readonly<Record<string, KitAccountBinding>>;
   batchRows?: readonly Readonly<Record<string, KitAccountBinding>>[];
+  batchInputs?: readonly Readonly<Record<string, RunInputValue>>[];
+  accountGroups?: Readonly<Record<string, readonly KitAccountBinding[]>>;
 }): Instruction {
   const encoder = getAddressEncoder();
+  const accountGroups = input.accountGroups
+    ? (Object.fromEntries(
+        Object.entries(input.accountGroups).map(([name, members]) => [
+          name,
+          members.map((member) => ({
+            address: Uint8Array.from(encoder.encode(member.address)),
+            ...(member.writable !== undefined ? { writable: member.writable } : {}),
+          })),
+        ]),
+      ) as Readonly<Record<string, readonly AccountBinding[]>>)
+    : undefined;
   const accounts = Object.fromEntries(
     Object.entries(input.accounts).map(([name, binding]) => [
       name,
@@ -312,6 +327,8 @@ export function buildKitRunInstruction(input: {
       inputs: input.inputs,
       accounts,
       batchRows,
+      ...(input.batchInputs ? { batchInputs: input.batchInputs } : {}),
+      ...(accountGroups ? { accountGroups } : {}),
     }),
   );
 }

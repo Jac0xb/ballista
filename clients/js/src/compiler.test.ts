@@ -8,6 +8,7 @@ import {
   assertAta,
   buildRunInstruction,
   compileTemplate,
+  data,
   decodeTemplateAccount,
   defineTemplate,
   encodeRun,
@@ -609,6 +610,99 @@ describe('Ballista 0.3 compiler', () => {
       { pc: 4, path: 'steps[1].steps[0]', label: 'positive' },
       { pc: 5, path: 'steps[1].steps[1]', label: 'pay' },
     ]);
+  });
+
+  test('compiles row inputs and account groups', () => {
+    const template = defineTemplate({
+      inputs: { fee: { type: 'u64' } },
+      accounts: {
+        systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
+        treasury: { signer: true, writable: true },
+      },
+      batch: {
+        maxIterations: 4,
+        row: { recipient: { writable: true } },
+        rowInputs: { amount: { type: 'u64' } },
+      },
+      accountGroups: ['extra'],
+      steps: [
+        step.forEach([
+          step.invoke({
+            program: account.fixed('systemProgram'),
+            accounts: [
+              { account: account.fixed('treasury'), signer: true, writable: true },
+              { account: account.iteration('recipient'), signer: false, writable: true },
+            ],
+            accountGroup: 'extra',
+            data: [data.literal(Uint8Array.of(2, 0, 0, 0)), data.encode('u64', expression.rowInput('amount'))],
+          }),
+        ]),
+      ],
+    });
+    const compiled = compileTemplate(template);
+    expect(compiled.bytes[21]).toBe(1); // row input count
+    expect(compiled.bytes[22]).toBe(1); // account group count
+    expect(compiled.stats).toMatchObject({ inputs: 1, rowInputs: 1, accountGroups: 1 });
+    expect(compiled.rowInputOrder).toEqual(['amount']);
+    expect(compiled.accountGroupOrder).toEqual(['extra']);
+    // Header, three account records, then two input records: fee then the row's amount.
+    expect([...compiled.bytes.slice(48, 56)]).toEqual([2, 0, 0, 0, 2, 0, 0, 0]);
+    // Instructions start at 56: FOREACH, then the row load whose operand a carries the iteration bit.
+    expect(compiled.bytes[56]).toBe(42);
+    expect(compiled.bytes[72]).toBe(1);
+    expect(compiled.bytes[74]).toBe(0x80);
+    // Three instructions end at 104; the CPI descriptor's second byte names group 0.
+    expect(compiled.bytes[105]).toBe(0);
+    expect(inspectTemplate(compiled.bytes)).toEqual(compiled.stats);
+
+    const run = buildRunInstruction({
+      compiled,
+      programAddress: address(1),
+      templateAddress: address(2),
+      inputs: { fee: 5n },
+      accounts: { systemProgram: { address: SYSTEM_PROGRAM_ADDRESS_BYTES }, treasury: { address: address(3) } },
+      batchRows: [{ recipient: { address: address(4) } }, { recipient: { address: address(5) } }],
+      batchInputs: [{ amount: 10n }, { amount: 20n }],
+      accountGroups: { extra: [{ address: address(6) }, { address: address(7), writable: true }] },
+    });
+    // Template, two fixed, two rows, two group members.
+    expect(run.accounts).toHaveLength(7);
+    expect(run.accounts[5]).toMatchObject({ signer: false, writable: false });
+    expect(run.accounts[6]).toMatchObject({ signer: false, writable: true });
+    // Discriminator, group prefix [2], fee, then the two row amounts.
+    expect([...run.data]).toEqual([5, 2, 5, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0]);
+
+    expect(() =>
+      buildRunInstruction({
+        compiled,
+        programAddress: address(1),
+        templateAddress: address(2),
+        inputs: { fee: 5n },
+        accounts: { systemProgram: { address: SYSTEM_PROGRAM_ADDRESS_BYTES }, treasury: { address: address(3) } },
+        batchRows: [{ recipient: { address: address(4) } }],
+        batchInputs: [],
+      }),
+    ).toThrow(/one batch input record per row/);
+    expect(() =>
+      defineTemplate({ ...template, steps: [step.require(expression.equal(expression.rowInput('amount'), expression.u64(1)))] }),
+    ).toThrow();
+    expect(() =>
+      compileTemplate(
+        defineTemplate({
+          inputs: {},
+          accounts: {},
+          batch: { maxIterations: 1, row: { recipient: {} }, rowInputs: { amount: { type: 'u64' } } },
+          steps: [step.require(expression.equal(expression.rowInput('amount'), expression.u64(1))), step.forEach([step.require(expression.bool(true))])],
+        }),
+      ),
+    ).toThrow(/only valid inside forEach/);
+    expect(() =>
+      defineTemplate({
+        inputs: {},
+        accounts: { systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES } },
+        steps: [step.invoke({ program: account.fixed('systemProgram'), accounts: [], data: [], accountGroup: 'missing' })],
+      }),
+    ).toThrow(/Unknown account group/);
   });
 
   test('sets the event flag in the header', () => {

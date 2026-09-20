@@ -1557,6 +1557,64 @@ mod tests {
         assert_eq!(custom_code(&result), Some((65 << 16) | 6021), "{result:#?}");
     }
 
+    /// The TypeScript compiler's row-input and account-group fixtures run against the program.
+    #[test]
+    fn row_input_and_account_group_fixtures_run_end_to_end() {
+        let creator = Pubkey::new_unique();
+        let treasury = Pubkey::new_unique();
+        let recipients: Vec<Pubkey> = (0..3).map(|_| Pubkey::new_unique()).collect();
+        let extras: Vec<Pubkey> = (0..2).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator, treasury], 10_000_000_000);
+        for recipient in &recipients {
+            accounts.insert(*recipient, Account::new(1_000_000, 0, &system_program::id()));
+        }
+        for extra in &extras {
+            accounts.insert(*extra, Account::new(0, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        // payroll-row-amounts: each row's amount travels in the run data.
+        let payload = fixture("payroll-row-amounts");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 71, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 71);
+        let mut metas = vec![
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new(treasury, true),
+        ];
+        metas.extend(recipients.iter().map(|recipient| AccountMeta::new(*recipient, false)));
+        let mut inputs = Vec::new();
+        for amount in [100u64, 200, 300] {
+            inputs.extend_from_slice(&amount.to_le_bytes());
+        }
+        let run = context.process_instruction(&run_instruction(template, metas, &inputs));
+        assert!(run.program_result.is_ok(), "{run:#?}");
+        for (recipient, amount) in recipients.iter().zip([100u64, 200, 300]) {
+            assert_eq!(lamports(&context, *recipient), 1_000_000 + amount);
+        }
+
+        // group-forward-transfer: two extra accounts ride along behind the declared ones.
+        let payload = fixture("group-forward-transfer");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 72, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 72);
+        let mut metas = vec![
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new(treasury, true),
+            AccountMeta::new(recipients[0], false),
+        ];
+        metas.extend(extras.iter().map(|extra| AccountMeta::new_readonly(*extra, false)));
+        let mut inputs = vec![2u8];
+        inputs.extend_from_slice(&50u64.to_le_bytes());
+        let run = context.process_instruction(&run_instruction(template, metas, &inputs));
+        assert!(run.program_result.is_ok(), "{run:#?}");
+        assert_eq!(lamports(&context, recipients[0]), 1_000_150);
+    }
+
     /// Account reads observe the state a CPI leaves behind, including a reallocated data length.
     #[test]
     fn data_length_reflects_reallocation_after_a_cpi() {
@@ -1712,6 +1770,8 @@ mod tests {
             "pinned-mint-read" => include_str!("../../../fixtures/pinned-mint-read.hex"),
             "system-transfer" => include_str!("../../../fixtures/system-transfer.hex"),
             "batch-transfer-30" => include_str!("../../../fixtures/batch-transfer-30.hex"),
+            "payroll-row-amounts" => include_str!("../../../fixtures/payroll-row-amounts.hex"),
+            "group-forward-transfer" => include_str!("../../../fixtures/group-forward-transfer.hex"),
             other => panic!("unknown fixture {other}"),
         };
         let bytes: Vec<u8> = hex

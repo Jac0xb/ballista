@@ -48,6 +48,16 @@ export interface DecodedTemplateAccount {
 
 export interface AccountBinding {
   address: Uint8Array;
+  /** Account group members only: pass the account as writable. Declared accounts take their flags from the schema. */
+  writable?: boolean;
+}
+
+/** Row values and group sizes that accompany the fixed input values of a run. */
+export interface RunInputOptions {
+  /** One record per batch row, each holding every row input. Required when the template declares row inputs. */
+  rows?: readonly Readonly<Record<string, RunInputValue>>[];
+  /** One length per declared account group, in declaration order. */
+  groupLengths?: readonly number[];
 }
 
 export interface InstructionAccountDescriptor {
@@ -168,14 +178,34 @@ export function resumeTemplateUpload(
 export function encodeRunInputs(
   compiled: CompiledTemplate,
   values: Readonly<Record<string, RunInputValue>>,
+  options: RunInputOptions = {},
 ): Uint8Array {
   const writer = new Writer();
+  const groupLengths = options.groupLengths ?? [];
+  if (groupLengths.length !== compiled.accountGroupOrder.length) {
+    throw new TypeError(`Expected ${compiled.accountGroupOrder.length} account group lengths`);
+  }
+  for (const length of groupLengths) {
+    if (!Number.isInteger(length) || length < 0 || length > 0xff) throw new RangeError('Account group length must be 0 to 255');
+    writer.u8(length);
+  }
   for (const name of compiled.inputOrder) {
     if (!(name in values)) throw new TypeError(`Missing input: ${name}`);
     encodeInput(writer, compiled.template.inputs[name]!, values[name]!);
   }
   const unknown = Object.keys(values).filter((name) => !compiled.inputOrder.includes(name));
   if (unknown.length > 0) throw new TypeError(`Unknown inputs: ${unknown.join(', ')}`);
+  const rows = options.rows ?? [];
+  if (compiled.rowInputOrder.length === 0 && rows.length > 0) throw new TypeError('Template has no row inputs');
+  const rowDefinitions = compiled.template.batch?.rowInputs ?? {};
+  for (const [rowIndex, row] of rows.entries()) {
+    for (const name of compiled.rowInputOrder) {
+      if (!(name in row)) throw new TypeError(`Missing row input ${name} in row ${rowIndex}`);
+      encodeInput(writer, rowDefinitions[name]!, row[name]!);
+    }
+    const unknownRow = Object.keys(row).filter((name) => !compiled.rowInputOrder.includes(name));
+    if (unknownRow.length > 0) throw new TypeError(`Unknown row inputs in row ${rowIndex}: ${unknownRow.join(', ')}`);
+  }
   const bytes = writer.finish();
   if (bytes.length > MAX_INPUT_BYTES) throw new RangeError('Encoded run inputs exceed 1024 bytes');
   return bytes;
@@ -184,8 +214,9 @@ export function encodeRunInputs(
 export function encodeRun(
   compiled: CompiledTemplate,
   values: Readonly<Record<string, RunInputValue>>,
+  options: RunInputOptions = {},
 ): Uint8Array {
-  const inputs = encodeRunInputs(compiled, values);
+  const inputs = encodeRunInputs(compiled, values, options);
   return Uint8Array.of(INSTRUCTION_RUN, ...inputs);
 }
 
@@ -196,6 +227,10 @@ export function buildRunInstruction(input: {
   inputs?: Readonly<Record<string, RunInputValue>>;
   accounts: Readonly<Record<string, AccountBinding>>;
   batchRows?: readonly Readonly<Record<string, AccountBinding>>[];
+  /** One record per batch row with the row's input values; required when the template declares row inputs. */
+  batchInputs?: readonly Readonly<Record<string, RunInputValue>>[];
+  /** Members of each declared account group, appended after the batch rows in declaration order. */
+  accountGroups?: Readonly<Record<string, readonly AccountBinding[]>>;
 }): InstructionDescriptor {
   assertAddress(input.programAddress, 'program address');
   assertAddress(input.templateAddress, 'template address');
@@ -229,12 +264,32 @@ export function buildRunInstruction(input: {
     const unknown = Object.keys(row).filter((name) => !input.compiled.batchAccountOrder.includes(name));
     if (unknown.length > 0) throw new TypeError(`Unknown batch accounts in row ${rowIndex}: ${unknown.join(', ')}`);
   }
+
+  const batchInputs = input.batchInputs ?? [];
+  if (input.compiled.rowInputOrder.length > 0 && batchInputs.length !== rows.length) {
+    throw new TypeError(`Expected one batch input record per row (${rows.length}), got ${batchInputs.length}`);
+  }
+  if (input.compiled.rowInputOrder.length === 0 && batchInputs.length > 0) throw new TypeError('Template has no row inputs');
+
+  const groups = input.accountGroups ?? {};
+  const unknownGroups = Object.keys(groups).filter((name) => !input.compiled.accountGroupOrder.includes(name));
+  if (unknownGroups.length > 0) throw new TypeError(`Unknown account groups: ${unknownGroups.join(', ')}`);
+  const groupLengths: number[] = [];
+  for (const name of input.compiled.accountGroupOrder) {
+    const members = groups[name] ?? [];
+    if (members.length > 0xff) throw new RangeError(`Account group ${name} has more than 255 members`);
+    groupLengths.push(members.length);
+    for (const member of members) {
+      assertAddress(member.address, `account group ${name} member`);
+      accounts.push({ address: member.address.slice(), signer: false, writable: member.writable ?? false });
+    }
+  }
   if (accounts.length - 1 > 120) throw new RangeError('Run uses more than 120 runtime account slots');
 
   return {
     programAddress: input.programAddress.slice(),
     accounts,
-    data: encodeRun(input.compiled, input.inputs ?? {}),
+    data: encodeRun(input.compiled, input.inputs ?? {}, { rows: batchInputs, groupLengths }),
   };
 }
 
@@ -295,11 +350,13 @@ export function inspectTemplate(bytes: Uint8Array): CompileStats {
   if ((flags & ~PROGRAM_FLAG_EMIT_EVENT) !== 0) throw new TypeError('Invalid template flags');
   const blobLength = reader.u16();
   const batchMinIterations = reader.u8();
-  if (!equalBytes(reader.bytes(3), new Uint8Array(3))) throw new TypeError('Invalid reserved bytes');
+  const rowInputs = reader.u8();
+  const accountGroups = reader.u8();
+  if (reader.u8() !== 0) throw new TypeError('Invalid reserved bytes');
   const expectedLength =
     24 +
     (fixedAccounts + batchStride) * 8 +
-    inputs * 4 +
+    (inputs + rowInputs) * 4 +
     instructions * 16 +
     cpis * 12 +
     cpiAccounts * 2 +
@@ -307,7 +364,7 @@ export function inspectTemplate(bytes: Uint8Array): CompileStats {
     pubkeys * 32 +
     blobLength;
   if (bytes.length !== expectedLength) throw new RangeError('Template section lengths do not match');
-  const instructionStart = 24 + (fixedAccounts + batchStride) * 8 + inputs * 4;
+  const instructionStart = 24 + (fixedAccounts + batchStride) * 8 + (inputs + rowInputs) * 4;
   const opcodes = Array.from({ length: instructions }, (_, index) => {
     const offset = instructionStart + index * 16;
     return { opcode: bytes[offset]!, a: bytes[offset + 2]! };
@@ -342,6 +399,8 @@ export function inspectTemplate(bytes: Uint8Array): CompileStats {
     maxExpandedCpis,
     maxCpiDataLength,
     emitEvent: (flags & PROGRAM_FLAG_EMIT_EVENT) !== 0,
+    rowInputs,
+    accountGroups,
   };
 }
 

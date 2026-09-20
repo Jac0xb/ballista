@@ -20,6 +20,7 @@ import {
   account,
   assertAta,
   compileTemplate,
+  data,
   defineTemplate,
   ensureAssociatedTokenAccount,
   expression,
@@ -175,6 +176,50 @@ export const fixtures: Record<string, () => Template> = {
           { carry: ['total'] },
         ),
         step.require(expression.lessThanOrEqual(expression.variable('total'), expression.input('budget')), 'withinBudget'),
+      ],
+    }),
+
+  'payroll-row-amounts': () =>
+    defineTemplate({
+      accounts: { ...systemPrograms, treasury: { signer: true, writable: true } },
+      batch: {
+        maxIterations: 3,
+        minIterations: 1,
+        row: { recipient: { writable: true } },
+        rowInputs: { amount: { type: 'u64' } },
+      },
+      steps: [
+        step.forEach([
+          systemTransfer({
+            systemProgram: account.fixed('systemProgram'),
+            from: account.fixed('treasury'),
+            to: account.iteration('recipient'),
+            lamports: expression.rowInput('amount'),
+          }),
+        ]),
+      ],
+    }),
+
+  'group-forward-transfer': () =>
+    defineTemplate({
+      inputs: { amount: { type: 'u64' } },
+      accounts: {
+        ...systemPrograms,
+        source: { signer: true, writable: true },
+        destination: { writable: true },
+      },
+      accountGroups: ['extra'],
+      steps: [
+        step.invoke({
+          program: account.fixed('systemProgram'),
+          programAddress: SYSTEM_PROGRAM_ADDRESS_BYTES,
+          accounts: [
+            { account: account.fixed('source'), signer: true, writable: true },
+            { account: account.fixed('destination'), signer: false, writable: true },
+          ],
+          accountGroup: 'extra',
+          data: [data.literal(Uint8Array.of(2, 0, 0, 0)), data.encode('u64', expression.input('amount'))],
+        }),
       ],
     }),
 

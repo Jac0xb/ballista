@@ -13,7 +13,9 @@
       "cpis": 1,
       "maxExpandedCpis": 1,
       "maxCpiDataLength": 12,
-      "emitEvent": false
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
     },
     "sourceMap": [
       {
@@ -40,7 +42,9 @@
       "cpis": 1,
       "maxExpandedCpis": 30,
       "maxCpiDataLength": 12,
-      "emitEvent": false
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
     },
     "sourceMap": [
       {
@@ -71,7 +75,9 @@
       "cpis": 1,
       "maxExpandedCpis": 1,
       "maxCpiDataLength": 0,
-      "emitEvent": false
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
     },
     "sourceMap": [
       {
@@ -135,7 +141,9 @@
       "cpis": 0,
       "maxExpandedCpis": 0,
       "maxCpiDataLength": 0,
-      "emitEvent": false
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
     },
     "sourceMap": [
       {
@@ -182,7 +190,9 @@
       "cpis": 1,
       "maxExpandedCpis": 1,
       "maxCpiDataLength": 12,
-      "emitEvent": false
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
     },
     "sourceMap": [
       {
@@ -237,7 +247,9 @@
       "cpis": 0,
       "maxExpandedCpis": 0,
       "maxCpiDataLength": 0,
-      "emitEvent": false
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
     },
     "sourceMap": [
       {
@@ -277,6 +289,68 @@
       }
     ]
   },
+  "payroll-row-amounts": {
+    "hash": "5bfc0b9e14e27c36b1dac7cdcd2dd09c5e3099b78231eb07dc36c995f0ce0569",
+    "stats": {
+      "payloadBytes": 168,
+      "fixedAccounts": 2,
+      "batchStride": 1,
+      "batchMaxIterations": 3,
+      "batchMinIterations": 1,
+      "inputs": 0,
+      "registers": 1,
+      "instructions": 3,
+      "cpis": 1,
+      "maxExpandedCpis": 3,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 1,
+      "accountGroups": 0
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 1,
+        "path": "steps[0].steps[0]"
+      },
+      {
+        "pc": 2,
+        "path": "steps[0].steps[0]"
+      }
+    ]
+  },
+  "group-forward-transfer": {
+    "hash": "de575c9841be5e6c19b960d70355076f58602af99423b1a643a9e6c7298ba795",
+    "stats": {
+      "payloadBytes": 152,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 1,
+      "instructions": 2,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 1
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 1,
+        "path": "steps[0]"
+      }
+    ]
+  },
   "dynamic-read": {
     "hash": "9d368a878f62f087b7e8b14d17f869df6208d18876fdb4bda3c54d6f40e0dbfa",
     "stats": {
@@ -291,7 +365,9 @@
       "cpis": 0,
       "maxExpandedCpis": 0,
       "maxCpiDataLength": 0,
-      "emitEvent": false
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
     },
     "sourceMap": [
       {
@@ -335,7 +411,9 @@
       "cpis": 1,
       "maxExpandedCpis": 1,
       "maxCpiDataLength": 1,
-      "emitEvent": false
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
     },
     "sourceMap": [
       {
@@ -378,7 +456,9 @@
       "cpis": 1,
       "maxExpandedCpis": 1,
       "maxCpiDataLength": 12,
-      "emitEvent": true
+      "emitEvent": true,
+      "rowInputs": 0,
+      "accountGroups": 0
     },
     "sourceMap": [
       {
@@ -405,7 +485,9 @@
       "cpis": 0,
       "maxExpandedCpis": 0,
       "maxCpiDataLength": 0,
-      "emitEvent": false
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
     },
     "sourceMap": [
       {

@@ -80,6 +80,8 @@ export type AccountConstraint = z.infer<typeof AccountConstraintSchema>;
 
 export type Expression =
   | { kind: 'input'; name: string }
+  /** A batch row input of the current iteration; valid inside `forEach` only. */
+  | { kind: 'rowInput'; name: string }
   | { kind: 'variable'; name: string }
   | { kind: 'literal'; value: Literal }
   | {
@@ -130,6 +132,7 @@ export type Expression =
 export const ExpressionSchema: z.ZodType<Expression> = z.lazy(() =>
   z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('input'), name: identifier }).strict(),
+    z.object({ kind: z.literal('rowInput'), name: identifier }).strict(),
     z.object({ kind: z.literal('variable'), name: identifier }).strict(),
     z.object({ kind: z.literal('literal'), value: LiteralSchema }).strict(),
     z
@@ -248,6 +251,8 @@ export type Step =
       accounts: z.infer<typeof InvokeAccountSchema>[];
       data: DataPart[];
       when?: Expression;
+      /** A declared account group whose members follow `accounts` in the CPI. */
+      accountGroup?: string;
       /** The program this step is written for; compilation fails if the account pins another. */
       programAddress?: Uint8Array;
       label?: string;
@@ -272,6 +277,7 @@ export const StepSchema: z.ZodType<Step> = z.lazy(() =>
         accounts: z.array(InvokeAccountSchema).max(64),
         data: z.array(DataPartSchema).max(64),
         when: ExpressionSchema.optional(),
+        accountGroup: identifier.optional(),
         programAddress: bytes32.optional(),
         label,
       })
@@ -301,6 +307,10 @@ export const TemplateSchema = z
         /** Runs with fewer rows than this fail instead of succeeding vacuously. */
         minIterations: z.number().int().min(0).max(60).default(0),
         row: namedAccounts.refine((row) => Object.keys(row).length >= 1 && Object.keys(row).length <= 8),
+        /** Inputs carried once per iteration, after the fixed inputs in the run data. */
+        rowInputs: namedInputs.default({}).refine((inputs) => Object.keys(inputs).length <= 8, {
+          error: 'A batch row carries at most 8 inputs',
+        }),
       })
       .strict()
       .refine((batch) => batch.minIterations <= batch.maxIterations, {
@@ -310,13 +320,41 @@ export const TemplateSchema = z
       .optional(),
     /** Emit a `BEV1` data log after every successful run. */
     emitEvent: z.boolean().default(false),
+    /**
+     * Caller-sized groups of accounts, supplied at run time after the batch rows. A CPI names one
+     * to forward its members after the CPI's declared accounts. Members carry no constraints,
+     * cannot be read, and never sign.
+     */
+    accountGroups: z
+      .array(identifier)
+      .max(8)
+      .default([])
+      .refine((groups) => new Set(groups).size === groups.length, { error: 'Account group names must be unique' }),
     steps: z.array(StepSchema).min(1).max(128),
   })
   .strict()
   .superRefine((template, context) => {
-    if (Object.keys(template.inputs).length > 32) {
-      context.addIssue({ code: 'custom', message: 'Templates support at most 32 inputs', path: ['inputs'] });
+    const rowInputCount = Object.keys(template.batch?.rowInputs ?? {}).length;
+    if (Object.keys(template.inputs).length + rowInputCount > 32) {
+      context.addIssue({ code: 'custom', message: 'Templates support at most 32 inputs including row inputs', path: ['inputs'] });
     }
+    if (Object.keys(template.inputs).length + rowInputCount * (template.batch?.maxIterations ?? 0) > 256) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Fixed inputs plus row inputs times the maximum iterations exceed 256 values',
+        path: ['batch', 'rowInputs'],
+      });
+    }
+    const groupNames = new Set(template.accountGroups);
+    const checkGroups = (steps: Step[], path: string) => {
+      for (const [index, item] of steps.entries()) {
+        if (item.kind === 'invoke' && item.accountGroup !== undefined && !groupNames.has(item.accountGroup)) {
+          context.addIssue({ code: 'custom', message: `Unknown account group: ${item.accountGroup}`, path: [path, index, 'accountGroup'] });
+        }
+        if (item.kind === 'forEach') checkGroups(item.steps, `${path}.${index}.steps`);
+      }
+    };
+    checkGroups(template.steps, 'steps');
     const stride = template.batch ? Object.keys(template.batch.row).length : 0;
     if (Object.keys(template.accounts).length + stride * (template.batch?.maxIterations ?? 0) > 120) {
       context.addIssue({
@@ -365,6 +403,7 @@ const binary = (op: Extract<Expression, { kind: 'binary' }>['op']) =>
 
 export const expression = {
   input: (name: string): Expression => ({ kind: 'input', name }),
+  rowInput: (name: string): Expression => ({ kind: 'rowInput', name }),
   variable: (name: string): Expression => ({ kind: 'variable', name }),
   snapshot: (name: string): Expression => ({ kind: 'variable', name }),
   bool: (value: boolean): Expression => literal({ type: 'bool', value }),

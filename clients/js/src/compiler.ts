@@ -17,6 +17,9 @@ import {
 export const TEMPLATE_PROGRAM_VERSION = 3;
 export const MAX_TEMPLATE_PAYLOAD_LENGTH = 10_240;
 export const MAX_RUNTIME_ACCOUNTS = 120;
+export const MAX_ROW_INPUTS = 8;
+export const MAX_INPUT_VALUES = 256;
+export const MAX_ACCOUNT_GROUPS = 8;
 export const MAX_INPUT_BYTES = 1_024;
 export const MAX_REGISTERS = 64;
 export const MAX_VM_INSTRUCTIONS = 128;
@@ -202,6 +205,8 @@ export interface CompileStats {
   maxExpandedCpis: number;
   maxCpiDataLength: number;
   emitEvent: boolean;
+  rowInputs: number;
+  accountGroups: number;
 }
 
 export interface CompiledTemplate {
@@ -209,8 +214,12 @@ export interface CompiledTemplate {
   bytes: Uint8Array;
   hash: Uint8Array;
   inputOrder: readonly string[];
+  /** Row inputs in declaration order; each run row supplies these. */
+  rowInputOrder: readonly string[];
   fixedAccountOrder: readonly string[];
   batchAccountOrder: readonly string[];
+  /** Account groups in declaration order; the run data prefix and metas follow it. */
+  accountGroupOrder: readonly string[];
   stats: CompileStats;
   sourceMap: readonly SourceMapEntry[];
 }
@@ -218,11 +227,14 @@ export interface CompiledTemplate {
 class Compiler {
   readonly template: Template;
   readonly inputEntries: [string, InputDefinition][];
+  readonly rowInputEntries: [string, InputDefinition][];
   readonly fixedEntries: [string, AccountConstraint][];
   readonly batchEntries: [string, AccountConstraint][];
   readonly inputIndices = new Map<string, number>();
+  readonly rowInputIndices = new Map<string, number>();
   readonly fixedIndices = new Map<string, number>();
   readonly batchIndices = new Map<string, number>();
+  readonly accountGroupIndices = new Map<string, number>();
   readonly pubkeys: Uint8Array[] = [];
   readonly pubkeyIndices = new Map<string, number>();
   readonly blob: number[] = [];
@@ -242,11 +254,14 @@ class Compiler {
   constructor(template: Template) {
     this.template = template;
     this.inputEntries = Object.entries(template.inputs);
+    this.rowInputEntries = Object.entries(template.batch?.rowInputs ?? {});
     this.fixedEntries = Object.entries(template.accounts);
     this.batchEntries = Object.entries(template.batch?.row ?? {});
     this.inputEntries.forEach(([name], index) => this.inputIndices.set(name, index));
+    this.rowInputEntries.forEach(([name], index) => this.rowInputIndices.set(name, index));
     this.fixedEntries.forEach(([name], index) => this.fixedIndices.set(name, index));
     this.batchEntries.forEach(([name], index) => this.batchIndices.set(name, index));
+    template.accountGroups.forEach((name, index) => this.accountGroupIndices.set(name, index));
   }
 
   compile(): CompiledTemplate {
@@ -259,6 +274,7 @@ class Compiler {
       this.accountRecords.push(this.compileAccountConstraint(constraint, this.requiredDataLength.get(rowKey(name)) ?? 0));
     }
     for (const [, input] of this.inputEntries) this.inputRecords.push(this.compileInput(input));
+    for (const [, input] of this.rowInputEntries) this.inputRecords.push(this.compileInput(input));
 
     if (this.nextRegister > MAX_REGISTERS) throw new RangeError('Template uses more than 64 registers');
     if (this.instructions.length > MAX_VM_INSTRUCTIONS) {
@@ -295,7 +311,9 @@ class Compiler {
     header.u8(this.template.emitEvent ? PROGRAM_FLAG_EMIT_EVENT : 0);
     header.u16(this.blob.length);
     header.u8(this.template.batch?.minIterations ?? 0);
-    header.raw([0, 0, 0]);
+    header.u8(this.rowInputEntries.length);
+    header.u8(this.template.accountGroups.length);
+    header.raw([0]);
 
     const output = new Writer();
     output.raw(header.finish());
@@ -321,8 +339,10 @@ class Compiler {
       bytes,
       hash: sha256(bytes),
       inputOrder: this.inputEntries.map(([name]) => name),
+      rowInputOrder: this.rowInputEntries.map(([name]) => name),
       fixedAccountOrder: this.fixedEntries.map(([name]) => name),
       batchAccountOrder: this.batchEntries.map(([name]) => name),
+      accountGroupOrder: [...this.template.accountGroups],
       stats: {
         payloadBytes: bytes.length,
         fixedAccounts: this.fixedEntries.length,
@@ -336,6 +356,8 @@ class Compiler {
         maxExpandedCpis,
         maxCpiDataLength: this.maxCpiDataLength,
         emitEvent: this.template.emitEvent,
+        rowInputs: this.rowInputEntries.length,
+        accountGroups: this.template.accountGroups.length,
       },
       sourceMap: this.sourceMap,
     };
@@ -448,9 +470,15 @@ class Compiler {
     if (maxDataLength > MAX_CPI_DATA_LENGTH) throw new RangeError('CPI data can exceed 4096 bytes');
     this.maxCpiDataLength = Math.max(this.maxCpiDataLength, maxDataLength);
 
+    let accountGroup = NO_INDEX;
+    if (current.accountGroup !== undefined) {
+      const index = this.accountGroupIndices.get(current.accountGroup);
+      if (index === undefined) throw new TypeError(`Unknown account group: ${current.accountGroup}`);
+      accountGroup = index;
+    }
     const descriptor = new Writer();
     descriptor.u8(programAccount);
-    descriptor.u8(NO_INDEX);
+    descriptor.u8(accountGroup);
     descriptor.u16(accountStart);
     descriptor.u8(current.accounts.length);
     descriptor.u8(current.data.length);
@@ -523,6 +551,18 @@ class Compiler {
       if (index === undefined) throw new TypeError(`Unknown input: ${current.name}`);
       const definition = this.inputEntries[index]![1];
       return this.emit(opcode.loadInput, definition.type, definition.type === 'bytes' ? definition.maxLength : 0, index);
+    }
+    if (current.kind === 'rowInput') {
+      if (!inLoop) throw new TypeError('Row inputs are only valid inside forEach');
+      const index = this.rowInputIndices.get(current.name);
+      if (index === undefined) throw new TypeError(`Unknown row input: ${current.name}`);
+      const definition = this.rowInputEntries[index]![1];
+      return this.emit(
+        opcode.loadInput,
+        definition.type,
+        definition.type === 'bytes' ? definition.maxLength : 0,
+        ITERATION_ACCOUNT_BIT | index,
+      );
     }
     if (current.kind === 'variable') {
       const value = bindings.get(current.name);

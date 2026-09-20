@@ -1,6 +1,7 @@
 import {
   MAX_INPUT_BYTES,
   MAX_TEMPLATE_PAYLOAD_LENGTH,
+  PROGRAM_FLAG_EMIT_EVENT,
   TEMPLATE_PROGRAM_VERSION,
   type CompiledTemplate,
   type CompileStats,
@@ -216,6 +217,9 @@ export function buildRunInstruction(input: {
   if (rows.length > (input.compiled.template.batch?.maxIterations ?? 0)) {
     throw new RangeError('Batch row count exceeds the template maximum');
   }
+  if (rows.length < (input.compiled.template.batch?.minIterations ?? 0)) {
+    throw new RangeError('Batch row count is below the template minimum');
+  }
   for (const [rowIndex, row] of rows.entries()) {
     for (const name of input.compiled.batchAccountOrder) {
       const binding = row[name];
@@ -287,9 +291,10 @@ export function inspectTemplate(bytes: Uint8Array): CompileStats {
   const cpiAccounts = reader.u16();
   const dataSegments = reader.u16();
   const pubkeys = reader.u8();
-  if (reader.u8() !== 0) throw new TypeError('Invalid template flags');
+  const flags = reader.u8();
+  if ((flags & ~PROGRAM_FLAG_EMIT_EVENT) !== 0) throw new TypeError('Invalid template flags');
   const blobLength = reader.u16();
-  reader.u8(); // batch minimum iterations
+  const batchMinIterations = reader.u8();
   if (!equalBytes(reader.bytes(3), new Uint8Array(3))) throw new TypeError('Invalid reserved bytes');
   const expectedLength =
     24 +
@@ -329,12 +334,14 @@ export function inspectTemplate(bytes: Uint8Array): CompileStats {
     fixedAccounts,
     batchStride,
     batchMaxIterations,
+    batchMinIterations,
     inputs,
     registers,
     instructions,
     cpis,
     maxExpandedCpis,
     maxCpiDataLength,
+    emitEvent: (flags & PROGRAM_FLAG_EMIT_EVENT) !== 0,
   };
 }
 

@@ -1,0 +1,433 @@
+{
+  "system-transfer": {
+    "hash": "2c18d2fdad501d48846225196414e6d113bf73fa6a36a1f92336429900c8db6b",
+    "stats": {
+      "payloadBytes": 152,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 1,
+      "instructions": 2,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 1,
+        "path": "steps[0]"
+      }
+    ]
+  },
+  "batch-transfer-30": {
+    "hash": "80672791e78226eb3ae85955a45421f1adb0cc68bba441466ecf703868a0a5a3",
+    "stats": {
+      "payloadBytes": 168,
+      "fixedAccounts": 2,
+      "batchStride": 1,
+      "batchMaxIterations": 30,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 1,
+      "instructions": 3,
+      "cpis": 1,
+      "maxExpandedCpis": 30,
+      "maxCpiDataLength": 12,
+      "emitEvent": false
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 1,
+        "path": "steps[0].steps[0]"
+      },
+      {
+        "pc": 2,
+        "path": "steps[0].steps[0]"
+      }
+    ]
+  },
+  "ensure-ata": {
+    "hash": "dac5b1b1e831c06270af31771a0ad7947327d50564bba565647e68e066344d9a",
+    "stats": {
+      "payloadBytes": 368,
+      "fixedAccounts": 7,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 0,
+      "registers": 7,
+      "instructions": 9,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 0,
+      "emitEvent": false
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "steps[0]",
+        "label": "ataMatches"
+      },
+      {
+        "pc": 1,
+        "path": "steps[0]",
+        "label": "ataMatches"
+      },
+      {
+        "pc": 2,
+        "path": "steps[0]",
+        "label": "ataMatches"
+      },
+      {
+        "pc": 3,
+        "path": "steps[0]",
+        "label": "ataMatches"
+      },
+      {
+        "pc": 4,
+        "path": "steps[0]",
+        "label": "ataMatches"
+      },
+      {
+        "pc": 5,
+        "path": "steps[0]",
+        "label": "ataMatches"
+      },
+      {
+        "pc": 6,
+        "path": "steps[0]",
+        "label": "ataMatches"
+      },
+      {
+        "pc": 7,
+        "path": "steps[1]",
+        "label": "createIfMissing"
+      },
+      {
+        "pc": 8,
+        "path": "steps[1]",
+        "label": "createIfMissing"
+      }
+    ]
+  },
+  "assert-ata": {
+    "hash": "1b4ac55aae56f2a4afa57c68e9f08a7e22f098099ac090bef3fd9905d2921644",
+    "stats": {
+      "payloadBytes": 264,
+      "fixedAccounts": 5,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 0,
+      "registers": 6,
+      "instructions": 7,
+      "cpis": 0,
+      "maxExpandedCpis": 0,
+      "maxCpiDataLength": 0,
+      "emitEvent": false
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 1,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 2,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 3,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 4,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 5,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 6,
+        "path": "steps[0]"
+      }
+    ]
+  },
+  "checked-transfer-snapshot": {
+    "hash": "37c5b34fceb677435e783469f8bfa316c97e5a6fb0ebb257eb39a67e0a6fd916",
+    "stats": {
+      "payloadBytes": 248,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 6,
+      "instructions": 8,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 1,
+        "path": "steps[1]"
+      },
+      {
+        "pc": 2,
+        "path": "steps[1]"
+      },
+      {
+        "pc": 3,
+        "path": "steps[2]"
+      },
+      {
+        "pc": 4,
+        "path": "steps[3]",
+        "label": "balanceDropsByAmount"
+      },
+      {
+        "pc": 5,
+        "path": "steps[3]",
+        "label": "balanceDropsByAmount"
+      },
+      {
+        "pc": 6,
+        "path": "steps[3]",
+        "label": "balanceDropsByAmount"
+      },
+      {
+        "pc": 7,
+        "path": "steps[3]",
+        "label": "balanceDropsByAmount"
+      }
+    ]
+  },
+  "carry-sum": {
+    "hash": "c9cf8fe61d2c0cf6262d6e0f27a33a6d83b64e5f270d3501d1156f8cbccd054a",
+    "stats": {
+      "payloadBytes": 164,
+      "fixedAccounts": 0,
+      "batchStride": 1,
+      "batchMaxIterations": 3,
+      "batchMinIterations": 1,
+      "inputs": 1,
+      "registers": 5,
+      "instructions": 8,
+      "cpis": 0,
+      "maxExpandedCpis": 0,
+      "maxCpiDataLength": 0,
+      "emitEvent": false
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 1,
+        "path": "steps[1]"
+      },
+      {
+        "pc": 2,
+        "path": "steps[1].steps[0]"
+      },
+      {
+        "pc": 3,
+        "path": "steps[1].steps[0]"
+      },
+      {
+        "pc": 4,
+        "path": "steps[1].steps[0]"
+      },
+      {
+        "pc": 5,
+        "path": "steps[2]",
+        "label": "withinBudget"
+      },
+      {
+        "pc": 6,
+        "path": "steps[2]",
+        "label": "withinBudget"
+      },
+      {
+        "pc": 7,
+        "path": "steps[2]",
+        "label": "withinBudget"
+      }
+    ]
+  },
+  "dynamic-read": {
+    "hash": "9d368a878f62f087b7e8b14d17f869df6208d18876fdb4bda3c54d6f40e0dbfa",
+    "stats": {
+      "payloadBytes": 152,
+      "fixedAccounts": 1,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 2,
+      "registers": 4,
+      "instructions": 5,
+      "cpis": 0,
+      "maxExpandedCpis": 0,
+      "maxCpiDataLength": 0,
+      "emitEvent": false
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "steps[0]",
+        "label": "fieldMatches"
+      },
+      {
+        "pc": 1,
+        "path": "steps[0]",
+        "label": "fieldMatches"
+      },
+      {
+        "pc": 2,
+        "path": "steps[0]",
+        "label": "fieldMatches"
+      },
+      {
+        "pc": 3,
+        "path": "steps[0]",
+        "label": "fieldMatches"
+      },
+      {
+        "pc": 4,
+        "path": "steps[0]",
+        "label": "fieldMatches"
+      }
+    ]
+  },
+  "return-data": {
+    "hash": "8d04a26cf1188cbf4615d7d38f5f8bcb9ab0dd7cd582f587374468feb48eab95",
+    "stats": {
+      "payloadBytes": 175,
+      "fixedAccounts": 2,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 0,
+      "registers": 3,
+      "instructions": 5,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 1,
+      "emitEvent": false
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "steps[0]",
+        "label": "getAccountDataSize"
+      },
+      {
+        "pc": 1,
+        "path": "steps[1]"
+      },
+      {
+        "pc": 2,
+        "path": "steps[2]",
+        "label": "sizeIs165"
+      },
+      {
+        "pc": 3,
+        "path": "steps[2]",
+        "label": "sizeIs165"
+      },
+      {
+        "pc": 4,
+        "path": "steps[2]",
+        "label": "sizeIs165"
+      }
+    ]
+  },
+  "event-flag": {
+    "hash": "56cb388d1636123182121e99673d7aaaa6ffe7e03103be29f7240243172a8d3d",
+    "stats": {
+      "payloadBytes": 152,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 1,
+      "instructions": 2,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": true
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 1,
+        "path": "steps[0]"
+      }
+    ]
+  },
+  "pinned-mint-read": {
+    "hash": "1ffc55681ece4bf9317b6597f4c86f18c273a304b24997969a31d12ecb50013c",
+    "stats": {
+      "payloadBytes": 160,
+      "fixedAccounts": 1,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 0,
+      "registers": 3,
+      "instructions": 4,
+      "cpis": 0,
+      "maxExpandedCpis": 0,
+      "maxCpiDataLength": 0,
+      "emitEvent": false
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "steps[0]",
+        "label": "sixDecimals"
+      },
+      {
+        "pc": 1,
+        "path": "steps[0]",
+        "label": "sixDecimals"
+      },
+      {
+        "pc": 2,
+        "path": "steps[0]",
+        "label": "sixDecimals"
+      },
+      {
+        "pc": 3,
+        "path": "steps[0]",
+        "label": "sixDecimals"
+      }
+    ]
+  }
+}

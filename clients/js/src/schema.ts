@@ -5,6 +5,7 @@ const u32 = z.number().int().min(0).max(0xffff_ffff);
 const bytes32 = z.instanceof(Uint8Array).refine((value) => value.length === 32, {
   error: 'Expected 32 bytes',
 });
+const label = z.string().min(1).max(64).optional();
 const bigintLike = z
   .union([z.bigint(), z.number().int().safe()])
   .transform((value) => BigInt(value));
@@ -15,6 +16,10 @@ const rangedBigint = (minimum: bigint, maximum: bigint) =>
 
 export const ValueTypeSchema = z.enum(['bool', 'u64', 'i64', 'u128', 'pubkey', 'bytes']);
 export type ValueType = z.infer<typeof ValueTypeSchema>;
+
+/** Widths a template can read from account data or return data. */
+export const ReadTypeSchema = z.enum(['bool', 'u8', 'u16', 'u32', 'u64', 'i64', 'u128', 'pubkey']);
+export type ReadType = z.infer<typeof ReadTypeSchema>;
 
 export const InputSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('bool') }).strict(),
@@ -63,6 +68,12 @@ export const AccountConstraintSchema = z
     address: bytes32.optional(),
     owner: bytes32.optional(),
     minDataLength: u32.default(0),
+    /**
+     * Opts this account out of the compiler's pin requirements. Programs that are invoked or used
+     * to derive PDAs normally need `address`; accounts whose data is read need `owner` or
+     * `address`. With this flag the template trusts whatever the caller supplies for the account.
+     */
+    unsafeUnpinned: z.boolean().default(false),
   })
   .strict();
 export type AccountConstraint = z.infer<typeof AccountConstraintSchema>;
@@ -79,8 +90,15 @@ export type Expression =
   | {
       kind: 'accountData';
       account: AccountReference;
+      /** A fixed byte offset, or a `u64` expression evaluated at run time. */
+      offset: number | Expression;
+      type: ReadType;
+    }
+  | {
+      /** A typed read of the return data set by the invoke immediately before this step. */
+      kind: 'returnData';
       offset: number;
-      type: 'bool' | 'u8' | 'u16' | 'u32' | 'u64' | 'i64' | 'u128' | 'pubkey';
+      type: ReadType;
     }
   | { kind: 'clock'; field: 'slot' | 'unixTimestamp' }
   | { kind: 'loopIndex' }
@@ -125,8 +143,15 @@ export const ExpressionSchema: z.ZodType<Expression> = z.lazy(() =>
       .object({
         kind: z.literal('accountData'),
         account: AccountReferenceSchema,
+        offset: z.union([u32, ExpressionSchema]),
+        type: ReadTypeSchema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('returnData'),
         offset: u32,
-        type: z.enum(['bool', 'u8', 'u16', 'u32', 'u64', 'i64', 'u128', 'pubkey']),
+        type: ReadTypeSchema,
       })
       .strict(),
     z.object({ kind: z.literal('clock'), field: z.enum(['slot', 'unixTimestamp']) }).strict(),
@@ -208,21 +233,38 @@ export const InvokeAccountSchema = z
   .strict();
 
 export type Step =
-  | { kind: 'require'; condition: Expression }
-  | { kind: 'let'; name: string; value: Expression }
+  | { kind: 'require'; condition: Expression; label?: string }
+  | { kind: 'let'; name: string; value: Expression; label?: string }
+  | {
+      /** Reassigns a variable listed in the enclosing loop's `carry`. */
+      kind: 'assign';
+      name: string;
+      value: Expression;
+      label?: string;
+    }
   | {
       kind: 'invoke';
       program: AccountReference;
       accounts: z.infer<typeof InvokeAccountSchema>[];
       data: DataPart[];
       when?: Expression;
+      /** The program this step is written for; compilation fails if the account pins another. */
+      programAddress?: Uint8Array;
+      label?: string;
     }
-  | { kind: 'forEach'; steps: Step[] };
+  | {
+      kind: 'forEach';
+      steps: Step[];
+      /** Variables defined before the loop whose values flow across iterations and out of it. */
+      carry?: string[];
+      label?: string;
+    };
 
 export const StepSchema: z.ZodType<Step> = z.lazy(() =>
   z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('require'), condition: ExpressionSchema }).strict(),
-    z.object({ kind: z.literal('let'), name: identifier, value: ExpressionSchema }).strict(),
+    z.object({ kind: z.literal('require'), condition: ExpressionSchema, label }).strict(),
+    z.object({ kind: z.literal('let'), name: identifier, value: ExpressionSchema, label }).strict(),
+    z.object({ kind: z.literal('assign'), name: identifier, value: ExpressionSchema, label }).strict(),
     z
       .object({
         kind: z.literal('invoke'),
@@ -230,9 +272,18 @@ export const StepSchema: z.ZodType<Step> = z.lazy(() =>
         accounts: z.array(InvokeAccountSchema).max(64),
         data: z.array(DataPartSchema).max(64),
         when: ExpressionSchema.optional(),
+        programAddress: bytes32.optional(),
+        label,
       })
       .strict(),
-    z.object({ kind: z.literal('forEach'), steps: z.array(StepSchema).min(1).max(64) }).strict(),
+    z
+      .object({
+        kind: z.literal('forEach'),
+        steps: z.array(StepSchema).min(1).max(64),
+        carry: z.array(identifier).max(64).optional(),
+        label,
+      })
+      .strict(),
   ]),
 );
 
@@ -247,10 +298,18 @@ export const TemplateSchema = z
     batch: z
       .object({
         maxIterations: z.number().int().min(1).max(60),
+        /** Runs with fewer rows than this fail instead of succeeding vacuously. */
+        minIterations: z.number().int().min(0).max(60).default(0),
         row: namedAccounts.refine((row) => Object.keys(row).length >= 1 && Object.keys(row).length <= 8),
       })
       .strict()
+      .refine((batch) => batch.minIterations <= batch.maxIterations, {
+        error: 'minIterations cannot exceed maxIterations',
+        path: ['minIterations'],
+      })
       .optional(),
+    /** Emit a `BEV1` data log after every successful run. */
+    emitEvent: z.boolean().default(false),
     steps: z.array(StepSchema).min(1).max(128),
   })
   .strict()
@@ -278,6 +337,12 @@ export const TemplateSchema = z
       if (forEach.kind === 'forEach' && forEach.steps.some((step) => step.kind === 'forEach')) {
         context.addIssue({ code: 'custom', message: 'Nested iteration is not supported', path: ['steps'] });
       }
+      if (forEach.kind === 'forEach' && new Set(forEach.carry ?? []).size !== (forEach.carry ?? []).length) {
+        context.addIssue({ code: 'custom', message: 'Carried variables must be unique', path: ['steps'] });
+      }
+    }
+    if (template.steps.some((step) => step.kind === 'assign')) {
+      context.addIssue({ code: 'custom', message: 'assign is only valid inside forEach', path: ['steps'] });
     }
   });
 
@@ -314,9 +379,10 @@ export const expression = {
   ): Expression => ({ kind: 'accountField', account: accountReference, field }),
   accountData: (
     accountReference: AccountReference,
-    offset: number,
-    type: Extract<Expression, { kind: 'accountData' }>['type'],
+    offset: number | Expression,
+    type: ReadType,
   ): Expression => ({ kind: 'accountData', account: accountReference, offset, type }),
+  returnData: (type: ReadType, offset = 0): Expression => ({ kind: 'returnData', offset, type }),
   clockSlot: (): Expression => ({ kind: 'clock', field: 'slot' }),
   clockUnixTimestamp: (): Expression => ({ kind: 'clock', field: 'unixTimestamp' }),
   loopIndex: (): Expression => ({ kind: 'loopIndex' }),
@@ -355,9 +421,34 @@ export const data = {
 };
 
 export const step = {
-  require: (condition: Expression): Step => ({ kind: 'require', condition }),
-  let: (name: string, value: Expression): Step => ({ kind: 'let', name, value }),
-  snapshot: (name: string, value: Expression): Step => ({ kind: 'let', name, value }),
+  require: (condition: Expression, label?: string): Step => ({
+    kind: 'require',
+    condition,
+    ...(label ? { label } : {}),
+  }),
+  let: (name: string, value: Expression, label?: string): Step => ({
+    kind: 'let',
+    name,
+    value,
+    ...(label ? { label } : {}),
+  }),
+  snapshot: (name: string, value: Expression, label?: string): Step => ({
+    kind: 'let',
+    name,
+    value,
+    ...(label ? { label } : {}),
+  }),
+  assign: (name: string, value: Expression, label?: string): Step => ({
+    kind: 'assign',
+    name,
+    value,
+    ...(label ? { label } : {}),
+  }),
   invoke: (input: Omit<Extract<Step, { kind: 'invoke' }>, 'kind'>): Step => ({ kind: 'invoke', ...input }),
-  forEach: (steps: Step[]): Step => ({ kind: 'forEach', steps }),
+  forEach: (steps: Step[], options: { carry?: string[]; label?: string } = {}): Step => ({
+    kind: 'forEach',
+    steps,
+    ...(options.carry ? { carry: options.carry } : {}),
+    ...(options.label ? { label: options.label } : {}),
+  }),
 };

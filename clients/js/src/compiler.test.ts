@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest';
 
 import {
+  ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES,
+  SYSTEM_PROGRAM_ADDRESS_BYTES,
+  TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
   assertAta,
   buildRunInstruction,
@@ -15,15 +18,30 @@ import {
   resumeTemplateUpload,
   step,
   systemTransfer,
+  type CompiledTemplate,
 } from './index.js';
 
 const address = (byte: number) => new Uint8Array(32).fill(byte);
-const hex = (bytes: Uint8Array) => [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+
+const HEADER_LENGTH = 24;
+const ACCOUNT_RECORD_LENGTH = 8;
+const INPUT_RECORD_LENGTH = 4;
+const INSTRUCTION_LENGTH = 16;
+
+/** Byte offset of instruction `pc` inside a compiled payload. */
+function instructionOffset(compiled: CompiledTemplate, pc: number): number {
+  const accounts = compiled.stats.fixedAccounts + compiled.stats.batchStride;
+  return HEADER_LENGTH + accounts * ACCOUNT_RECORD_LENGTH + compiled.stats.inputs * INPUT_RECORD_LENGTH + pc * INSTRUCTION_LENGTH;
+}
+
+function readU64(bytes: Uint8Array, offset: number): bigint {
+  return new DataView(bytes.buffer, bytes.byteOffset).getBigUint64(offset, true);
+}
 
 const transfer = defineTemplate({
   inputs: { amount: { type: 'u64' } },
   accounts: {
-    systemProgram: { executable: true, address: address(1) },
+    systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
     source: { signer: true, writable: true },
     destination: { writable: true },
   },
@@ -38,21 +56,29 @@ const transfer = defineTemplate({
 });
 
 describe('Ballista 0.3 compiler', () => {
-  test('matches the Rust system-transfer fixture', () => {
+  test('compiles the system transfer with stable stats and a matching inspection', () => {
     const compiled = compileTemplate(transfer);
-    expect(hex(compiled.bytes)).toBe(
-      '42564d3203030000010102010200020001000400000000000400ff000000000003ffff000000000002ffff000000000002000000010000ffff000000000000000000000029ff00ffff000000000000000000000000000000020200000c0000000103020200ff0000040000000400000000000000010101010101010101010101010101010101010101010101010101010101010102000000',
-    );
-    expect(hex(compiled.hash)).toBe('87e92fa207ef8822fb654d9461e04ed11232247ad0edf9d457063054ff20591d');
-    expect(compiled.stats).toMatchObject({ payloadBytes: 152, instructions: 2, cpis: 1 });
+    expect(compiled.stats).toMatchObject({
+      payloadBytes: 152,
+      instructions: 2,
+      cpis: 1,
+      registers: 1,
+      batchMinIterations: 0,
+      emitEvent: false,
+    });
+    expect(compiled.bytes[4]).toBe(3);
     expect(inspectTemplate(compiled.bytes)).toEqual(compiled.stats);
+    expect(compiled.sourceMap).toEqual([
+      { pc: 0, path: 'steps[0]' },
+      { pc: 1, path: 'steps[0]' },
+    ]);
   });
 
   test('compiles a constant-size 30-recipient batch template', () => {
     const batch = defineTemplate({
       inputs: { amount: { type: 'u64' } },
       accounts: {
-        systemProgram: { executable: true, address: address(1) },
+        systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
         source: { signer: true, writable: true },
       },
       batch: { maxIterations: 30, row: { recipient: { writable: true } } },
@@ -82,7 +108,7 @@ describe('Ballista 0.3 compiler', () => {
       templateAddress: address(8),
       inputs: { amount: 1_000n },
       accounts: {
-        systemProgram: { address: address(1) },
+        systemProgram: { address: SYSTEM_PROGRAM_ADDRESS_BYTES },
         source: { address: address(2) },
       },
       batchRows: Array.from({ length: 30 }, (_, index) => ({ recipient: { address: address(index + 20) } })),
@@ -94,11 +120,11 @@ describe('Ballista 0.3 compiler', () => {
   test('guards non-idempotent associated-token creation on account emptiness', () => {
     const ensureUsdcAta = defineTemplate({
       accounts: {
-        associatedTokenProgram: { executable: true, address: address(1) },
-        tokenProgram: { executable: true, address: address(2) },
-        systemProgram: { executable: true, address: address(3) },
-        mint: { address: address(4), owner: address(2), minDataLength: 82 },
-        payer: { signer: true, writable: true, owner: address(3) },
+        associatedTokenProgram: { executable: true, address: ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES },
+        tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
+        systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
+        mint: { address: address(4), owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: 82 },
+        payer: { signer: true, writable: true, owner: SYSTEM_PROGRAM_ADDRESS_BYTES },
         owner: {},
         associatedTokenAccount: { writable: true },
       },
@@ -139,7 +165,7 @@ describe('Ballista 0.3 compiler', () => {
         withinLimit: { type: 'bool' },
         force: { type: 'bool' },
       },
-      accounts: { program: { executable: true } },
+      accounts: { program: { executable: true, unsafeUnpinned: true } },
       steps: [
         step.invoke({
           program: account.fixed('program'),
@@ -158,7 +184,7 @@ describe('Ballista 0.3 compiler', () => {
     const checkedTransfer = defineTemplate({
       inputs: { amount: { type: 'u64' } },
       accounts: {
-        systemProgram: { executable: true, address: address(1) },
+        systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
         source: { signer: true, writable: true },
         destination: { writable: true },
       },
@@ -206,8 +232,8 @@ describe('Ballista 0.3 compiler', () => {
   test('compiles canonical PDA and ATA relationship assertions', () => {
     const assertedAta = defineTemplate({
       accounts: {
-        associatedTokenProgram: { executable: true },
-        tokenProgram: { executable: true },
+        associatedTokenProgram: { executable: true, address: ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES },
+        tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
         owner: {},
         mint: {},
         associatedTokenAccount: {},
@@ -223,17 +249,13 @@ describe('Ballista 0.3 compiler', () => {
       ],
     });
     const compiled = compileTemplate(assertedAta);
-    expect(hex(compiled.bytes)).toBe(
-      '42564d32030500000006070000000300000000000000000004ffff000000000004ffff000000000000ffff000000000000ffff000000000000ffff0000000000080004ffff0000000000000000000000080102ffff0000000000000000000000080201ffff0000000000000000000000080303ffff00000000000000000000002f0400ffff000000000003000000000017050004ff000000000000000000000028ff05ffff0000000000000000000000070100000000000007020000000000000703000000000000',
-    );
     expect(compiled.stats).toMatchObject({ instructions: 7, registers: 6, cpis: 0 });
     expect(new DataView(compiled.bytes.buffer, compiled.bytes.byteOffset).getUint16(14, true)).toBe(3);
-    const instructionStart = 24 + 5 * 8;
-    expect(compiled.bytes[instructionStart + 4 * 16]).toBe(47);
+    expect(compiled.bytes[instructionOffset(compiled, 4)]).toBe(47);
 
     const oversizedSeed = defineTemplate({
       inputs: { seed: { type: 'bytes', maxLength: 33 } },
-      accounts: { program: { executable: true }, candidate: {} },
+      accounts: { program: { executable: true, address: address(9) }, candidate: {} },
       steps: [
         step.require(
           expression.equal(
@@ -257,6 +279,343 @@ describe('Ballista 0.3 compiler', () => {
       ],
     });
     expect(() => compileTemplate(nonExecutableProgram)).toThrow('PDA program account must require executable=true');
+  });
+
+  test('requires pins for programs and data reads unless the author opts out', () => {
+    const unpinnedInvoke = defineTemplate({
+      accounts: { program: { executable: true } },
+      steps: [step.invoke({ program: account.fixed('program'), accounts: [], data: [] })],
+    });
+    expect(() => compileTemplate(unpinnedInvoke)).toThrow('Invoke program account program must pin an address');
+
+    const unpinnedPda = defineTemplate({
+      accounts: { program: { executable: true }, candidate: {} },
+      steps: [
+        step.require(
+          expression.equal(
+            expression.accountField(account.fixed('candidate'), 'key'),
+            expression.pda(account.fixed('program'), [expression.bytes(Uint8Array.of(1))]),
+          ),
+        ),
+      ],
+    });
+    expect(() => compileTemplate(unpinnedPda)).toThrow('PDA program account program must pin an address');
+
+    const unpinnedRead = defineTemplate({
+      accounts: { holder: {} },
+      steps: [
+        step.require(
+          expression.equal(expression.accountData(account.fixed('holder'), 64, 'u64'), expression.u64(1)),
+        ),
+      ],
+    });
+    expect(() => compileTemplate(unpinnedRead)).toThrow('pins neither owner nor address');
+
+    const optedOut = defineTemplate({
+      accounts: { program: { executable: true, unsafeUnpinned: true }, holder: { unsafeUnpinned: true } },
+      steps: [
+        step.require(
+          expression.equal(expression.accountData(account.fixed('holder'), 64, 'u64'), expression.u64(1)),
+        ),
+        step.invoke({ program: account.fixed('program'), accounts: [], data: [] }),
+      ],
+    });
+    expect(() => compileTemplate(optedOut)).not.toThrow();
+
+    const ownerPinnedRead = defineTemplate({
+      accounts: { holder: { owner: TOKEN_PROGRAM_ADDRESS_BYTES } },
+      steps: [
+        step.require(
+          expression.equal(expression.accountData(account.fixed('holder'), 64, 'u64'), expression.u64(1)),
+        ),
+      ],
+    });
+    expect(() => compileTemplate(ownerPinnedRead)).not.toThrow();
+
+    const wrongProgram = defineTemplate({
+      inputs: { amount: { type: 'u64' } },
+      accounts: {
+        systemProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
+        source: { signer: true, writable: true },
+        destination: { writable: true },
+      },
+      steps: [
+        systemTransfer({
+          systemProgram: account.fixed('systemProgram'),
+          from: account.fixed('source'),
+          to: account.fixed('destination'),
+          lamports: expression.input('amount'),
+        }),
+      ],
+    });
+    expect(() => compileTemplate(wrongProgram)).toThrow('Invoke targets program');
+  });
+
+  test('infers the minimum data length from static reads', () => {
+    const compiled = compileTemplate(
+      defineTemplate({
+        accounts: {
+          holder: { owner: TOKEN_PROGRAM_ADDRESS_BYTES },
+          declared: { owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: 100 },
+        },
+        steps: [
+          step.require(
+            expression.equal(
+              expression.accountData(account.fixed('holder'), 64, 'u64'),
+              expression.accountData(account.fixed('declared'), 32, 'u64'),
+            ),
+          ),
+        ],
+      }),
+    );
+    const view = new DataView(compiled.bytes.buffer, compiled.bytes.byteOffset);
+    expect(view.getUint32(HEADER_LENGTH + 4, true)).toBe(72);
+    expect(view.getUint32(HEADER_LENGTH + ACCOUNT_RECORD_LENGTH + 4, true)).toBe(100);
+  });
+
+  test('compiles loop-carried sums with assign and move', () => {
+    const budgeted = defineTemplate({
+      inputs: { budget: { type: 'u64' } },
+      accounts: {},
+      batch: { maxIterations: 3, row: { recipient: {} } },
+      steps: [
+        step.let('total', expression.u64(0)),
+        step.forEach(
+          [
+            step.assign(
+              'total',
+              expression.add(expression.variable('total'), expression.accountField(account.iteration('recipient'), 'lamports')),
+            ),
+          ],
+          { carry: ['total'] },
+        ),
+        step.require(expression.lessThanOrEqual(expression.variable('total'), expression.input('budget')), 'withinBudget'),
+      ],
+    });
+    const compiled = compileTemplate(budgeted);
+    expect(compiled.stats).toMatchObject({ instructions: 8, registers: 5 });
+    const forEachPc = compiled.sourceMap.find((entry) => entry.path === 'steps[1]')!.pc;
+    const record = instructionOffset(compiled, forEachPc);
+    expect(compiled.bytes[record]).toBe(42);
+    expect(compiled.bytes[record + 2]).toBe(3);
+    expect(readU64(compiled.bytes, record + 6)).toBe(1n << 0n);
+    const move = instructionOffset(compiled, forEachPc + 3);
+    expect(compiled.bytes[move]).toBe(49);
+    expect(compiled.bytes[move + 1]).toBe(0);
+    expect(compiled.sourceMap.at(-1)).toEqual({ pc: 7, path: 'steps[2]', label: 'withinBudget' });
+
+    expect(() =>
+      defineTemplate({
+        accounts: {},
+        steps: [step.let('total', expression.u64(0)), step.assign('total', expression.u64(1))],
+      }),
+    ).toThrow('assign is only valid inside forEach');
+    expect(() =>
+      compileTemplate(
+        defineTemplate({
+          accounts: {},
+          batch: { maxIterations: 1, row: { recipient: {} } },
+          steps: [step.let('total', expression.u64(0)), step.forEach([step.assign('total', expression.u64(1))])],
+        }),
+      ),
+    ).toThrow("must be listed in the loop's carry");
+    expect(() =>
+      compileTemplate(
+        defineTemplate({
+          accounts: {},
+          batch: { maxIterations: 1, row: { recipient: {} } },
+          steps: [step.forEach([step.require(expression.bool(true))], { carry: ['missing'] })],
+        }),
+      ),
+    ).toThrow('must be defined before the loop');
+    expect(() =>
+      compileTemplate(
+        defineTemplate({
+          accounts: {},
+          batch: { maxIterations: 1, row: { recipient: {} } },
+          steps: [
+            step.let('total', expression.u64(0)),
+            step.forEach([step.assign('total', expression.bool(true))], { carry: ['total'] }),
+          ],
+        }),
+      ),
+    ).toThrow('must keep its u64 type');
+  });
+
+  test('encodes minimum iterations and rejects short batches when building a run', () => {
+    const compiled = compileTemplate(
+      defineTemplate({
+        accounts: {},
+        batch: { maxIterations: 4, minIterations: 2, row: { recipient: {} } },
+        steps: [step.forEach([step.require(expression.bool(true))])],
+      }),
+    );
+    expect(compiled.bytes[20]).toBe(2);
+    expect(compiled.stats.batchMinIterations).toBe(2);
+    expect(inspectTemplate(compiled.bytes).batchMinIterations).toBe(2);
+    expect(() =>
+      buildRunInstruction({
+        compiled,
+        programAddress: address(9),
+        templateAddress: address(8),
+        accounts: {},
+        batchRows: [{ recipient: { address: address(1) } }],
+      }),
+    ).toThrow('below the template minimum');
+    expect(() =>
+      defineTemplate({
+        accounts: {},
+        batch: { maxIterations: 1, minIterations: 2, row: { recipient: {} } },
+        steps: [step.forEach([step.require(expression.bool(true))])],
+      }),
+    ).toThrow('minIterations cannot exceed maxIterations');
+  });
+
+  test('compiles dynamic-offset reads with the instruction flag', () => {
+    const compiled = compileTemplate(
+      defineTemplate({
+        inputs: { offset: { type: 'u64' }, expected: { type: 'u64' } },
+        accounts: { holder: { owner: TOKEN_PROGRAM_ADDRESS_BYTES } },
+        steps: [
+          step.require(
+            expression.equal(
+              expression.accountData(account.fixed('holder'), expression.input('offset'), 'u64'),
+              expression.input('expected'),
+            ),
+          ),
+        ],
+      }),
+    );
+    const read = instructionOffset(compiled, 1);
+    expect(compiled.bytes[read]).toBe(13);
+    expect(compiled.bytes[read + 3]).toBe(0);
+    expect(compiled.bytes[read + 5]).toBe(1);
+    expect(readU64(compiled.bytes, read + 6)).toBe(0n);
+    expect(new DataView(compiled.bytes.buffer, compiled.bytes.byteOffset).getUint32(HEADER_LENGTH + 4, true)).toBe(0);
+
+    expect(() =>
+      compileTemplate(
+        defineTemplate({
+          inputs: { offset: { type: 'bool' } },
+          accounts: { holder: { owner: TOKEN_PROGRAM_ADDRESS_BYTES } },
+          steps: [
+            step.require(
+              expression.equal(
+                expression.accountData(account.fixed('holder'), expression.input('offset'), 'u64'),
+                expression.u64(1),
+              ),
+            ),
+          ],
+        }),
+      ),
+    ).toThrow('accountData offset requires u64');
+  });
+
+  test('compiles returnData only as a let directly after an unconditional invoke', () => {
+    const sized = defineTemplate({
+      accounts: {
+        tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
+        mint: { owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: 82 },
+      },
+      steps: [
+        step.invoke({
+          program: account.fixed('tokenProgram'),
+          accounts: [{ account: account.fixed('mint'), signer: false, writable: false }],
+          data: [{ kind: 'literal', bytes: Uint8Array.of(21) }],
+        }),
+        step.let('size', expression.returnData('u64')),
+        step.require(expression.equal(expression.variable('size'), expression.u64(165))),
+      ],
+    });
+    const compiled = compileTemplate(sized);
+    const read = instructionOffset(compiled, 1);
+    expect(compiled.bytes[read]).toBe(48);
+    expect(compiled.bytes[read + 2]).toBe(13);
+    expect(compiled.stats.instructions).toBe(5);
+
+    expect(() =>
+      compileTemplate(
+        defineTemplate({ accounts: {}, steps: [step.let('size', expression.returnData('u64'))] }),
+      ),
+    ).toThrow('directly after an unconditional invoke');
+    expect(() =>
+      compileTemplate(
+        defineTemplate({
+          inputs: { go: { type: 'bool' } },
+          accounts: { program: { executable: true, unsafeUnpinned: true } },
+          steps: [
+            step.invoke({ program: account.fixed('program'), accounts: [], data: [], when: expression.input('go') }),
+            step.let('size', expression.returnData('u64')),
+          ],
+        }),
+      ),
+    ).toThrow('directly after an unconditional invoke');
+    expect(() =>
+      compileTemplate(
+        defineTemplate({
+          accounts: { program: { executable: true, unsafeUnpinned: true } },
+          steps: [
+            step.invoke({ program: account.fixed('program'), accounts: [], data: [] }),
+            step.require(expression.equal(expression.returnData('u64'), expression.u64(1))),
+          ],
+        }),
+      ),
+    ).toThrow('must be the value of a let');
+    expect(() =>
+      compileTemplate(
+        defineTemplate({
+          accounts: { program: { executable: true, unsafeUnpinned: true } },
+          steps: [
+            step.invoke({ program: account.fixed('program'), accounts: [], data: [] }),
+            step.let('size', expression.returnData('u64', 1020)),
+          ],
+        }),
+      ),
+    ).toThrow('extends past 1024 bytes');
+  });
+
+  test('records a source map that reaches into loop bodies', () => {
+    const compiled = compileTemplate(
+      defineTemplate({
+        inputs: { amount: { type: 'u64' } },
+        accounts: {
+          systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
+          source: { signer: true, writable: true },
+        },
+        batch: { maxIterations: 2, row: { recipient: { writable: true } } },
+        steps: [
+          step.let('amount', expression.input('amount'), 'loadAmount'),
+          step.forEach(
+            [
+              step.require(expression.greaterThan(expression.variable('amount'), expression.u64(0)), 'positive'),
+              systemTransfer({
+                systemProgram: account.fixed('systemProgram'),
+                from: account.fixed('source'),
+                to: account.iteration('recipient'),
+                lamports: expression.variable('amount'),
+                label: 'pay',
+              }),
+            ],
+            { label: 'payEveryone' },
+          ),
+        ],
+      }),
+    );
+    expect(compiled.sourceMap).toEqual([
+      { pc: 0, path: 'steps[0]', label: 'loadAmount' },
+      { pc: 1, path: 'steps[1]', label: 'payEveryone' },
+      { pc: 2, path: 'steps[1].steps[0]', label: 'positive' },
+      { pc: 3, path: 'steps[1].steps[0]', label: 'positive' },
+      { pc: 4, path: 'steps[1].steps[0]', label: 'positive' },
+      { pc: 5, path: 'steps[1].steps[1]', label: 'pay' },
+    ]);
+  });
+
+  test('sets the event flag in the header', () => {
+    const compiled = compileTemplate({ ...transfer, emitEvent: true });
+    expect(compiled.bytes[17]).toBe(1);
+    expect(compiled.stats.emitEvent).toBe(true);
+    expect(inspectTemplate(compiled.bytes).emitEvent).toBe(true);
   });
 
   test('plans one-shot, chunked, and resumable uploads', () => {
@@ -303,7 +662,7 @@ describe('Ballista 0.3 compiler', () => {
     const tooManyCpis = defineTemplate({
       inputs: { amount: { type: 'u64' } },
       accounts: {
-        systemProgram: { executable: true, address: address(1) },
+        systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
         source: { signer: true, writable: true },
       },
       batch: { maxIterations: 33, row: { recipient: { writable: true } } },

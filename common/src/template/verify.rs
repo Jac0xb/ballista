@@ -1851,8 +1851,9 @@ mod tests {
         assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidRegister(7)));
     }
 
-    const SYSTEM_TRANSFER_HEX: &str = "42564d3203030000010102010200020001000400000000000400ff000000000003ffff000000000002ffff000000000002000000010000ffff000000000000000000000029ff00ffff000000000000000000000000000000020200000c0000000103020200ff0000040000000400000000000000010101010101010101010101010101010101010101010101010101010101010102000000";
-    const ATA_ASSERTION_HEX: &str = "42564d32030500000006070000000300000000000000000004ffff000000000004ffff000000000000ffff000000000000ffff000000000000ffff0000000000080004ffff0000000000000000000000080102ffff0000000000000000000000080201ffff0000000000000000000000080303ffff00000000000000000000002f0400ffff000000000003000000000017050004ff000000000000000000000028ff05ffff0000000000000000000000070100000000000007020000000000000703000000000000";
+    /// Compiled by the TypeScript SDK; regenerate with `pnpm fixtures`.
+    const SYSTEM_TRANSFER_HEX: &str = include_str!("../../../fixtures/system-transfer.hex");
+    const ATA_ASSERTION_HEX: &str = include_str!("../../../fixtures/assert-ata.hex");
 
     #[test]
     fn typescript_system_transfer_fixture_is_zero_copy_and_valid() {
@@ -1954,8 +1955,44 @@ mod tests {
         );
     }
 
+    /// Every compiler fixture must parse and verify; the TypeScript suite keeps the files current.
+    #[test]
+    fn every_shared_fixture_parses_and_verifies() {
+        let fixtures: [(&str, &str); 10] = [
+            ("system-transfer", include_str!("../../../fixtures/system-transfer.hex")),
+            ("batch-transfer-30", include_str!("../../../fixtures/batch-transfer-30.hex")),
+            ("ensure-ata", include_str!("../../../fixtures/ensure-ata.hex")),
+            ("assert-ata", include_str!("../../../fixtures/assert-ata.hex")),
+            (
+                "checked-transfer-snapshot",
+                include_str!("../../../fixtures/checked-transfer-snapshot.hex"),
+            ),
+            ("carry-sum", include_str!("../../../fixtures/carry-sum.hex")),
+            ("dynamic-read", include_str!("../../../fixtures/dynamic-read.hex")),
+            ("return-data", include_str!("../../../fixtures/return-data.hex")),
+            ("event-flag", include_str!("../../../fixtures/event-flag.hex")),
+            ("pinned-mint-read", include_str!("../../../fixtures/pinned-mint-read.hex")),
+        ];
+        for (name, hex) in fixtures {
+            let bytes = decode_hex(hex);
+            let program =
+                ProgramView::parse(&bytes).unwrap_or_else(|error| panic!("{name}: {error}"));
+            program
+                .verify()
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert_eq!(program.header.version(), TEMPLATE_PROGRAM_VERSION, "{name}");
+        }
+        let carry = decode_hex(include_str!("../../../fixtures/carry-sum.hex"));
+        let program = ProgramView::parse(&carry).unwrap();
+        assert_eq!(program.header.batch_min_iterations(), 1);
+        let event = decode_hex(include_str!("../../../fixtures/event-flag.hex"));
+        let program = ProgramView::parse(&event).unwrap();
+        assert_eq!(program.header.flags(), PROGRAM_FLAG_EMIT_EVENT);
+    }
+
     fn decode_hex(value: &str) -> Vec<u8> {
         value
+            .trim()
             .as_bytes()
             .chunks_exact(2)
             .map(|pair| {

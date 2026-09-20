@@ -7,6 +7,7 @@ import {
   type DataPart,
   type Expression,
   type InputDefinition,
+  type ReadType,
   type Step,
   type Template,
   type TemplateInput,
@@ -21,8 +22,15 @@ export const MAX_REGISTERS = 64;
 export const MAX_VM_INSTRUCTIONS = 128;
 export const MAX_EXPANDED_CPIS = 64;
 export const MAX_CPI_DATA_LENGTH = 4_096;
+export const MAX_CPI_ACCOUNTS = 64;
 export const MAX_PDA_SEEDS = 15;
 export const MAX_PDA_SEED_LENGTH = 32;
+export const MAX_RETURN_DATA_LENGTH = 1_024;
+
+/** Program header flag: emit a `BEV1` data log after every successful run. */
+export const PROGRAM_FLAG_EMIT_EVENT = 1;
+/** Instruction flag on read opcodes: the offset comes from register `b`. */
+export const INSTRUCTION_FLAG_DYNAMIC_OFFSET = 1;
 
 const NO_INDEX = 0xff;
 const ITERATION_ACCOUNT_BIT = 0x80;
@@ -33,7 +41,7 @@ const ACCOUNT_EXECUTABLE = 1 << 2;
 
 const valueTypeCode = { bool: 1, u64: 2, i64: 3, u128: 4, pubkey: 5, bytes: 6 } as const;
 
-const opcode = {
+export const opcode = {
   loadInput: 1,
   constBool: 2,
   constU64: 3,
@@ -80,7 +88,42 @@ const opcode = {
   readU32: 45,
   readBool: 46,
   derivePda: 47,
+  returnData: 48,
+  move: 49,
 } as const;
+
+const readOpcode: Record<ReadType, number> = {
+  bool: opcode.readBool,
+  u8: opcode.readU8,
+  u16: opcode.readU16,
+  u32: opcode.readU32,
+  u64: opcode.readU64,
+  i64: opcode.readI64,
+  u128: opcode.readU128,
+  pubkey: opcode.readPubkey,
+};
+
+const readWidth: Record<ReadType, number> = {
+  bool: 1,
+  u8: 1,
+  u16: 2,
+  u32: 4,
+  u64: 8,
+  i64: 8,
+  u128: 16,
+  pubkey: 32,
+};
+
+const readResultType: Record<ReadType, ValueType> = {
+  bool: 'bool',
+  u8: 'u64',
+  u16: 'u64',
+  u32: 'u64',
+  u64: 'u64',
+  i64: 'i64',
+  u128: 'u128',
+  pubkey: 'pubkey',
+};
 
 const dataKind = {
   literal: 0,
@@ -137,17 +180,28 @@ interface ExpressionResult {
 
 type Bindings = Map<string, ExpressionResult>;
 
+/** Maps one emitted VM instruction back to the authoring step that produced it. */
+export interface SourceMapEntry {
+  /** Instruction index, which is also the program counter reported in run errors. */
+  pc: number;
+  /** Step path such as `steps[2]` or `steps[1].steps[0]`. */
+  path: string;
+  label?: string;
+}
+
 export interface CompileStats {
   payloadBytes: number;
   fixedAccounts: number;
   batchStride: number;
   batchMaxIterations: number;
+  batchMinIterations: number;
   inputs: number;
   registers: number;
   instructions: number;
   cpis: number;
   maxExpandedCpis: number;
   maxCpiDataLength: number;
+  emitEvent: boolean;
 }
 
 export interface CompiledTemplate {
@@ -158,6 +212,7 @@ export interface CompiledTemplate {
   fixedAccountOrder: readonly string[];
   batchAccountOrder: readonly string[];
   stats: CompileStats;
+  sourceMap: readonly SourceMapEntry[];
 }
 
 class Compiler {
@@ -177,6 +232,10 @@ class Compiler {
   readonly cpis: Uint8Array[] = [];
   readonly cpiAccounts: Uint8Array[] = [];
   readonly dataSegments: Uint8Array[] = [];
+  /** Highest byte any fixed-offset read touches per account, used to infer `minDataLength`. */
+  readonly requiredDataLength = new Map<string, number>();
+  readonly sourceMap: SourceMapEntry[] = [];
+  location: { path: string; label?: string } = { path: 'template' };
   nextRegister = 0;
   maxCpiDataLength = 0;
 
@@ -191,11 +250,15 @@ class Compiler {
   }
 
   compile(): CompiledTemplate {
-    for (const [, constraint] of [...this.fixedEntries, ...this.batchEntries]) {
-      this.accountRecords.push(this.compileAccountConstraint(constraint));
+    // Steps compile first so every static read has already raised its account's data floor.
+    this.compileSteps(this.template.steps, false, new Map(), new Set(), 'steps');
+    for (const [name, constraint] of this.fixedEntries) {
+      this.accountRecords.push(this.compileAccountConstraint(constraint, this.requiredDataLength.get(fixedKey(name)) ?? 0));
+    }
+    for (const [name, constraint] of this.batchEntries) {
+      this.accountRecords.push(this.compileAccountConstraint(constraint, this.requiredDataLength.get(rowKey(name)) ?? 0));
     }
     for (const [, input] of this.inputEntries) this.inputRecords.push(this.compileInput(input));
-    this.compileSteps(this.template.steps, false, new Map());
 
     if (this.nextRegister > MAX_REGISTERS) throw new RangeError('Template uses more than 64 registers');
     if (this.instructions.length > MAX_VM_INSTRUCTIONS) {
@@ -229,9 +292,9 @@ class Compiler {
     header.u16(this.cpiAccounts.length);
     header.u16(this.dataSegments.length);
     header.u8(this.pubkeys.length);
-    header.u8(0); // flags
+    header.u8(this.template.emitEvent ? PROGRAM_FLAG_EMIT_EVENT : 0);
     header.u16(this.blob.length);
-    header.u8(0); // batch minimum iterations
+    header.u8(this.template.batch?.minIterations ?? 0);
     header.raw([0, 0, 0]);
 
     const output = new Writer();
@@ -265,17 +328,20 @@ class Compiler {
         fixedAccounts: this.fixedEntries.length,
         batchStride: this.batchEntries.length,
         batchMaxIterations: this.template.batch?.maxIterations ?? 0,
+        batchMinIterations: this.template.batch?.minIterations ?? 0,
         inputs: this.inputEntries.length,
         registers: this.nextRegister,
         instructions: this.instructions.length,
         cpis: this.cpis.length,
         maxExpandedCpis,
         maxCpiDataLength: this.maxCpiDataLength,
+        emitEvent: this.template.emitEvent,
       },
+      sourceMap: this.sourceMap,
     };
   }
 
-  compileAccountConstraint(constraint: AccountConstraint): Uint8Array {
+  compileAccountConstraint(constraint: AccountConstraint, inferredMinDataLength: number): Uint8Array {
     const writer = new Writer();
     writer.u8(
       (constraint.signer ? ACCOUNT_SIGNER : 0) |
@@ -285,7 +351,7 @@ class Compiler {
     writer.u8(constraint.address ? this.addPubkey(constraint.address) : NO_INDEX);
     writer.u8(constraint.owner ? this.addPubkey(constraint.owner) : NO_INDEX);
     writer.u8(0);
-    writer.u32(constraint.minDataLength);
+    writer.u32(Math.max(constraint.minDataLength, inferredMinDataLength));
     return writer.finish();
   }
 
@@ -297,34 +363,71 @@ class Compiler {
     return writer.finish();
   }
 
-  compileSteps(steps: Step[], inLoop: boolean, bindings: Bindings): void {
-    for (const current of steps) {
+  compileSteps(steps: Step[], inLoop: boolean, bindings: Bindings, carried: Set<string>, path: string): void {
+    let previous: Step | undefined;
+    for (const [index, current] of steps.entries()) {
+      const stepPath = `${path}[${index}]`;
+      this.location = { path: stepPath, ...(current.label ? { label: current.label } : {}) };
       if (current.kind === 'forEach') {
         if (inLoop) throw new TypeError('Nested forEach is not supported');
-        const index = this.instructions.length;
-        this.instructions.push(instructionRecord(opcode.forEach, NO_INDEX, 0));
+        let carry = 0n;
+        const carriedNames = new Set<string>();
+        for (const name of current.carry ?? []) {
+          const binding = bindings.get(name);
+          if (!binding) throw new TypeError(`Carried variable must be defined before the loop: ${name}`);
+          carriedNames.add(name);
+          carry |= 1n << BigInt(binding.register);
+        }
+        const forEachIndex = this.pushInstruction(instructionRecord(opcode.forEach, NO_INDEX, 0, NO_INDEX, NO_INDEX, carry));
         const bodyStart = this.instructions.length;
-        this.compileSteps(current.steps, true, new Map(bindings));
+        this.compileSteps(current.steps, true, new Map(bindings), carriedNames, `${stepPath}.steps`);
         const bodyLength = this.instructions.length - bodyStart;
         if (bodyLength === 0 || bodyLength > 0xff) throw new RangeError('Invalid forEach body length');
-        this.instructions[index] = instructionRecord(opcode.forEach, NO_INDEX, bodyLength);
+        this.instructions[forEachIndex] = instructionRecord(opcode.forEach, NO_INDEX, bodyLength, NO_INDEX, NO_INDEX, carry);
       } else if (current.kind === 'let') {
         if (bindings.has(current.name)) throw new TypeError(`Variable already defined: ${current.name}`);
-        bindings.set(current.name, this.compileExpression(current.value, inLoop, bindings));
+        const value =
+          current.value.kind === 'returnData'
+            ? this.compileReturnData(current.value, previous)
+            : this.compileExpression(current.value, inLoop, bindings);
+        bindings.set(current.name, value);
+      } else if (current.kind === 'assign') {
+        if (!inLoop) throw new TypeError('assign is only valid inside forEach');
+        const binding = bindings.get(current.name);
+        if (!binding || !carried.has(current.name)) {
+          throw new TypeError(`assign target must be listed in the loop's carry: ${current.name}`);
+        }
+        const value = this.compileExpression(current.value, inLoop, bindings);
+        if (value.type !== binding.type || (value.type === 'bytes' && value.maxLength !== binding.maxLength)) {
+          throw new TypeError(`assign to ${current.name} must keep its ${binding.type} type and size`);
+        }
+        this.pushInstruction(instructionRecord(opcode.move, binding.register, value.register));
       } else if (current.kind === 'require') {
         const condition = this.compileExpression(current.condition, inLoop, bindings);
         requireType(condition, 'bool', 'require condition');
-        this.instructions.push(instructionRecord(opcode.require, NO_INDEX, condition.register));
+        this.pushInstruction(instructionRecord(opcode.require, NO_INDEX, condition.register));
       } else {
         this.compileInvoke(current, inLoop, bindings);
       }
+      this.location = { path: stepPath, ...(current.label ? { label: current.label } : {}) };
+      previous = current;
     }
   }
 
   compileInvoke(current: Extract<Step, { kind: 'invoke' }>, inLoop: boolean, bindings: Bindings): void {
     const programAccount = this.encodeAccountReference(current.program, inLoop);
     const programConstraint = this.constraintFor(current.program, inLoop);
-    if (!programConstraint.executable) throw new TypeError('Invoke program account must require executable=true');
+    this.requirePinnedProgram(current.program, programConstraint, 'Invoke program');
+    if (
+      current.programAddress &&
+      programConstraint.address &&
+      !equalBytes(current.programAddress, programConstraint.address)
+    ) {
+      throw new TypeError(
+        `Invoke targets program ${toHex(current.programAddress)} but account ${current.program.name} pins ${toHex(programConstraint.address)}`,
+      );
+    }
+    if (current.accounts.length > MAX_CPI_ACCOUNTS) throw new RangeError('CPI passes more than 64 accounts');
 
     const accountStart = this.cpiAccounts.length;
     for (const account of current.accounts) {
@@ -363,7 +466,17 @@ class Compiler {
       requireType(result, 'bool', 'invoke guard');
       guard = result.register;
     }
-    this.instructions.push(instructionRecord(opcode.invoke, NO_INDEX, cpiIndex, guard));
+    this.pushInstruction(instructionRecord(opcode.invoke, NO_INDEX, cpiIndex, guard));
+  }
+
+  compileReturnData(node: Extract<Expression, { kind: 'returnData' }>, previous: Step | undefined): ExpressionResult {
+    if (!previous || previous.kind !== 'invoke' || previous.when) {
+      throw new TypeError('returnData must be the value of a let step directly after an unconditional invoke');
+    }
+    if (node.offset + readWidth[node.type] > MAX_RETURN_DATA_LENGTH) {
+      throw new RangeError(`returnData read extends past ${MAX_RETURN_DATA_LENGTH} bytes`);
+    }
+    return this.emit(opcode.returnData, readResultType[node.type], 0, readOpcode[node.type], NO_INDEX, NO_INDEX, BigInt(node.offset));
   }
 
   compileDataPart(part: DataPart, inLoop: boolean, bindings: Bindings): { record: Uint8Array; maxLength: number } {
@@ -451,18 +564,19 @@ class Compiler {
     }
     if (current.kind === 'accountData') {
       const accountReference = this.encodeAccountReference(current.account, inLoop);
-      const reads = {
-        bool: [opcode.readBool, 'bool'],
-        u8: [opcode.readU8, 'u64'],
-        u16: [opcode.readU16, 'u64'],
-        u32: [opcode.readU32, 'u64'],
-        u64: [opcode.readU64, 'u64'],
-        i64: [opcode.readI64, 'i64'],
-        u128: [opcode.readU128, 'u128'],
-        pubkey: [opcode.readPubkey, 'pubkey'],
-      } as const;
-      const [operation, type] = reads[current.type];
-      return this.emit(operation, type, 0, accountReference, NO_INDEX, NO_INDEX, BigInt(current.offset));
+      this.requirePinnedForRead(current.account, this.constraintFor(current.account, inLoop));
+      const operation = readOpcode[current.type];
+      const type = readResultType[current.type];
+      if (typeof current.offset === 'number') {
+        this.raiseDataFloor(current.account, current.offset + readWidth[current.type]);
+        return this.emit(operation, type, 0, accountReference, NO_INDEX, NO_INDEX, BigInt(current.offset));
+      }
+      const offset = this.compileExpression(current.offset, inLoop, bindings);
+      requireType(offset, 'u64', 'accountData offset');
+      return this.emit(operation, type, 0, accountReference, offset.register, NO_INDEX, 0n, INSTRUCTION_FLAG_DYNAMIC_OFFSET);
+    }
+    if (current.kind === 'returnData') {
+      throw new TypeError('returnData must be the value of a let step directly after an unconditional invoke');
     }
     if (current.kind === 'clock') {
       return current.field === 'slot'
@@ -476,7 +590,7 @@ class Compiler {
     if (current.kind === 'pda') {
       const programAccount = this.encodeAccountReference(current.program, inLoop);
       const programConstraint = this.constraintFor(current.program, inLoop);
-      if (!programConstraint.executable) throw new TypeError('PDA program account must require executable=true');
+      this.requirePinnedProgram(current.program, programConstraint, 'PDA program');
       if (current.seeds.length < 1 || current.seeds.length > MAX_PDA_SEEDS) {
         throw new RangeError(`PDA derivation requires 1 to ${MAX_PDA_SEEDS} seeds`);
       }
@@ -556,6 +670,37 @@ class Compiler {
     return writer.finish();
   }
 
+  /** Programs that are invoked or derive PDAs must be pinned unless the author opts out. */
+  requirePinnedProgram(reference: AccountReference, constraint: AccountConstraint, role: string): void {
+    if (!constraint.executable) throw new TypeError(`${role} account must require executable=true`);
+    if (!constraint.address && !constraint.unsafeUnpinned) {
+      throw new TypeError(
+        `${role} account ${reference.name} must pin an address; set unsafeUnpinned: true to accept any program`,
+      );
+    }
+  }
+
+  /** Data reads only mean something when the account's layout is known, which needs a pin. */
+  requirePinnedForRead(reference: AccountReference, constraint: AccountConstraint): void {
+    if (!constraint.owner && !constraint.address && !constraint.unsafeUnpinned) {
+      throw new TypeError(
+        `Account ${reference.name} is read as data but pins neither owner nor address; set unsafeUnpinned: true to read untrusted data`,
+      );
+    }
+  }
+
+  raiseDataFloor(reference: AccountReference, end: number): void {
+    const key = reference.kind === 'account' ? fixedKey(reference.name) : rowKey(reference.name);
+    this.requiredDataLength.set(key, Math.max(this.requiredDataLength.get(key) ?? 0, end));
+  }
+
+  pushInstruction(record: Uint8Array): number {
+    const pc = this.instructions.length;
+    this.instructions.push(record);
+    this.sourceMap.push({ pc, ...this.location });
+    return pc;
+  }
+
   emit(
     operation: number,
     type: ValueType,
@@ -564,11 +709,12 @@ class Compiler {
     b = NO_INDEX,
     c = NO_INDEX,
     immediate = 0n,
+    flags = 0,
   ): ExpressionResult {
     const register = this.nextRegister;
     this.nextRegister += 1;
     if (register >= MAX_REGISTERS) throw new RangeError('Template uses more than 64 registers');
-    this.instructions.push(instructionRecord(operation, register, a, b, c, immediate));
+    this.pushInstruction(instructionRecord(operation, register, a, b, c, immediate, flags));
     return { register, type, maxLength };
   }
 
@@ -620,6 +766,14 @@ export function compileTemplate(input: TemplateInput | Template): CompiledTempla
   return new Compiler(TemplateSchema.parse(input)).compile();
 }
 
+function fixedKey(name: string): string {
+  return `account:${name}`;
+}
+
+function rowKey(name: string): string {
+  return `row:${name}`;
+}
+
 function instructionRecord(
   operation: number,
   dst: number,
@@ -627,6 +781,7 @@ function instructionRecord(
   b = NO_INDEX,
   c = NO_INDEX,
   immediate = 0n,
+  flags = 0,
 ): Uint8Array {
   const writer = new Writer();
   writer.u8(operation);
@@ -634,7 +789,7 @@ function instructionRecord(
   writer.u8(a);
   writer.u8(b);
   writer.u8(c);
-  writer.u8(0);
+  writer.u8(flags);
   writer.bigint(immediate, 8);
   writer.raw([0, 0]);
   return writer.finish();
@@ -670,6 +825,10 @@ function countCpis(steps: Step[]): number {
     if (current.kind === 'forEach') return total + countCpis(current.steps);
     return total;
   }, 0);
+}
+
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+  return left.length === right.length && left.every((byte, index) => byte === right[index]);
 }
 
 function toHex(value: Uint8Array): string {

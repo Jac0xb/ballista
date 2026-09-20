@@ -3,7 +3,7 @@ use core::{fmt, mem::size_of};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 pub const TEMPLATE_PROGRAM_MAGIC: [u8; 4] = *b"BVM2";
-pub const TEMPLATE_PROGRAM_VERSION: u8 = 2;
+pub const TEMPLATE_PROGRAM_VERSION: u8 = 3;
 
 pub const MAX_TEMPLATE_PAYLOAD_LEN: usize = 10_240;
 pub const MAX_RUNTIME_ACCOUNTS: usize = 60;
@@ -13,12 +13,26 @@ pub const MAX_REGISTERS: usize = 64;
 pub const MAX_VM_INSTRUCTIONS: usize = 128;
 pub const MAX_EXPANDED_CPIS: usize = 64;
 pub const MAX_CPI_DATA_LEN: usize = 4_096;
+/// Upper bound on accounts passed to one CPI; matches the executor's stack-bounded invoke.
+pub const MAX_CPI_ACCOUNTS: usize = 64;
 pub const MAX_BATCH_STRIDE: usize = 8;
 pub const MAX_PDA_SEEDS: usize = 15;
 pub const MAX_PDA_SEED_LEN: usize = 32;
+/// Maximum bytes of CPI return data the runtime exposes.
+pub const MAX_RETURN_DATA_LEN: usize = 1_024;
 
 pub const NO_INDEX: u8 = u8::MAX;
 pub const ITERATION_ACCOUNT_BIT: u8 = 0x80;
+
+/// Program header flag: emit a `sol_log_data` event after a successful run.
+pub const PROGRAM_FLAG_EMIT_EVENT: u8 = 1 << 0;
+pub const PROGRAM_FLAGS_MASK: u8 = PROGRAM_FLAG_EMIT_EVENT;
+
+/// Instruction flag (read opcodes only): the data offset comes from register `b` instead of the immediate.
+pub const INSTRUCTION_FLAG_DYNAMIC_OFFSET: u8 = 1 << 0;
+
+/// Base of the on-chain custom error codes reserved for verifier failures.
+pub const VERIFIER_ERROR_BASE: u32 = 6_100;
 
 pub const ACCOUNT_SIGNER: u8 = 1 << 0;
 pub const ACCOUNT_WRITABLE: u8 = 1 << 1;
@@ -78,6 +92,10 @@ pub const OP_READ_U16: u8 = 44;
 pub const OP_READ_U32: u8 = 45;
 pub const OP_READ_BOOL: u8 = 46;
 pub const OP_DERIVE_PDA: u8 = 47;
+/// Reads a typed value from the return data of the immediately preceding unconditional invoke.
+pub const OP_RETURN_DATA: u8 = 48;
+/// Copies register `a` into `dst`; used to assign loop-carried registers.
+pub const OP_MOVE: u8 = 49;
 
 pub const DATA_LITERAL: u8 = 0;
 pub const DATA_REG_U8: u8 = 1;
@@ -109,7 +127,8 @@ pub struct ProgramHeader {
     pubkey_count: u8,
     flags: u8,
     blob_len_le: [u8; 2],
-    reserved: [u8; 4],
+    batch_min_iterations: u8,
+    reserved: [u8; 3],
 }
 
 pub const PROGRAM_HEADER_LEN: usize = size_of::<ProgramHeader>();
@@ -120,6 +139,7 @@ impl ProgramHeader {
         fixed_account_count: u8,
         batch_stride: u8,
         batch_max_iterations: u8,
+        batch_min_iterations: u8,
         input_count: u8,
         register_count: u8,
         instruction_count: u8,
@@ -127,6 +147,7 @@ impl ProgramHeader {
         cpi_account_count: u16,
         data_segment_count: u16,
         pubkey_count: u8,
+        flags: u8,
         blob_len: u16,
     ) -> Self {
         Self {
@@ -142,9 +163,10 @@ impl ProgramHeader {
             cpi_account_count_le: cpi_account_count.to_le_bytes(),
             data_segment_count_le: data_segment_count.to_le_bytes(),
             pubkey_count,
-            flags: 0,
+            flags,
             blob_len_le: blob_len.to_le_bytes(),
-            reserved: [0; 4],
+            batch_min_iterations,
+            reserved: [0; 3],
         }
     }
 
@@ -162,6 +184,9 @@ impl ProgramHeader {
     }
     pub const fn batch_max_iterations(&self) -> usize {
         self.batch_max_iterations as usize
+    }
+    pub const fn batch_min_iterations(&self) -> usize {
+        self.batch_min_iterations as usize
     }
     pub const fn input_count(&self) -> usize {
         self.input_count as usize
@@ -190,7 +215,7 @@ impl ProgramHeader {
     pub const fn flags(&self) -> u8 {
         self.flags
     }
-    pub const fn reserved(&self) -> &[u8; 4] {
+    pub const fn reserved(&self) -> &[u8; 3] {
         &self.reserved
     }
     pub fn as_bytes(&self) -> &[u8] {
@@ -348,7 +373,7 @@ impl<'data> ProgramView<'data> {
         if header.version() != TEMPLATE_PROGRAM_VERSION {
             return Err(TemplateError::UnsupportedVersion(header.version()));
         }
-        if header.flags() != 0 || header.reserved() != &[0; 4] {
+        if header.flags() & !PROGRAM_FLAGS_MASK != 0 || header.reserved() != &[0; 3] {
             return Err(TemplateError::InvalidReservedBytes);
         }
 
@@ -449,6 +474,73 @@ pub enum TemplateError {
     TypeMismatch,
     InvalidBlobRange,
     ExcessiveCpiExpansion,
+    /// An instruction record carries flag bits its opcode does not accept.
+    InvalidFlags(usize),
+    /// A loop-carried register is not initialized before the loop or changes type inside it.
+    InvalidCarry(u8),
+    /// A fixed-offset read extends past the account's declared minimum data length.
+    ReadOutOfBounds(usize),
+    /// A CPI descriptor lists more than `MAX_CPI_ACCOUNTS` accounts.
+    TooManyCpiAccounts(usize),
+    /// A return-data read does not directly follow an unconditional invoke, or its range is invalid.
+    InvalidReturnData(usize),
+    /// Minimum iterations exceed the maximum, or are set without a batch.
+    InvalidMinIterations,
+}
+
+impl TemplateError {
+    /// Stable on-chain custom error code and 16-bit context for this verifier failure.
+    ///
+    /// Codes start at [`VERIFIER_ERROR_BASE`] and follow the variant order below. The context
+    /// carries the offending index, register, or version where the variant has one.
+    pub fn code(&self) -> (u32, u16) {
+        let clamp = |value: usize| u16::try_from(value).unwrap_or(u16::MAX);
+        let (index, context) = match *self {
+            TemplateError::Truncated => (0, 0),
+            TemplateError::PayloadTooLarge(len) => (1, clamp(len)),
+            TemplateError::InvalidMagic => (2, 0),
+            TemplateError::UnsupportedVersion(version) => (3, version as u16),
+            TemplateError::InvalidReservedBytes => (4, 0),
+            TemplateError::SectionLengthMismatch => (5, 0),
+            TemplateError::CountOverflow => (6, 0),
+            TemplateError::TooManyAccounts => (7, 0),
+            TemplateError::TooManyInputs => (8, 0),
+            TemplateError::TooManyRegisters => (9, 0),
+            TemplateError::TooManyInstructions => (10, 0),
+            TemplateError::InvalidBatch => (11, 0),
+            TemplateError::InvalidAccountConstraint(index) => (12, clamp(index)),
+            TemplateError::InvalidInput(index) => (13, clamp(index)),
+            TemplateError::InvalidInstruction(index) => (14, clamp(index)),
+            TemplateError::InvalidCpi(index) => (15, clamp(index)),
+            TemplateError::InvalidDataSegment(index) => (16, clamp(index)),
+            TemplateError::InvalidRegister(register) => (17, register as u16),
+            TemplateError::RegisterNotInitialized(register) => (18, register as u16),
+            TemplateError::TypeMismatch => (19, 0),
+            TemplateError::InvalidBlobRange => (20, 0),
+            TemplateError::ExcessiveCpiExpansion => (21, 0),
+            TemplateError::InvalidFlags(index) => (22, clamp(index)),
+            TemplateError::InvalidCarry(register) => (23, register as u16),
+            TemplateError::ReadOutOfBounds(index) => (24, clamp(index)),
+            TemplateError::TooManyCpiAccounts(index) => (25, clamp(index)),
+            TemplateError::InvalidReturnData(index) => (26, clamp(index)),
+            TemplateError::InvalidMinIterations => (27, 0),
+        };
+        (VERIFIER_ERROR_BASE + index, context)
+    }
+}
+
+/// Packs an error kind and a 16-bit context into one custom program error code.
+///
+/// The low 16 bits hold the kind (runtime kinds start at 6000, verifier kinds at
+/// [`VERIFIER_ERROR_BASE`]); the high 16 bits hold the program counter, account index, or other
+/// context that identifies where the failure happened.
+pub const fn encode_error(kind: u32, context: u16) -> u32 {
+    kind | ((context as u32) << 16)
+}
+
+/// Splits a code produced by [`encode_error`] back into its kind and context.
+pub const fn decode_error(code: u32) -> (u32, u16) {
+    (code & 0xffff, (code >> 16) as u16)
 }
 
 impl fmt::Display for TemplateError {
@@ -458,3 +550,62 @@ impl fmt::Display for TemplateError {
 }
 
 impl std::error::Error for TemplateError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn v3_header_round_trips_min_iterations_and_flags() {
+        let header = ProgramHeader::new(1, 1, 4, 2, 0, 0, 1, 0, 0, 0, 0, PROGRAM_FLAG_EMIT_EVENT, 0);
+        assert_eq!(header.version(), 3);
+        assert_eq!(header.batch_min_iterations(), 2);
+        assert_eq!(header.flags(), PROGRAM_FLAG_EMIT_EVENT);
+        assert_eq!(PROGRAM_HEADER_LEN, 24);
+    }
+
+    #[test]
+    fn error_codes_are_unique_and_round_trip_context() {
+        let variants = [
+            TemplateError::Truncated,
+            TemplateError::PayloadTooLarge(70_000),
+            TemplateError::InvalidMagic,
+            TemplateError::UnsupportedVersion(2),
+            TemplateError::InvalidReservedBytes,
+            TemplateError::SectionLengthMismatch,
+            TemplateError::CountOverflow,
+            TemplateError::TooManyAccounts,
+            TemplateError::TooManyInputs,
+            TemplateError::TooManyRegisters,
+            TemplateError::TooManyInstructions,
+            TemplateError::InvalidBatch,
+            TemplateError::InvalidAccountConstraint(3),
+            TemplateError::InvalidInput(4),
+            TemplateError::InvalidInstruction(5),
+            TemplateError::InvalidCpi(6),
+            TemplateError::InvalidDataSegment(7),
+            TemplateError::InvalidRegister(8),
+            TemplateError::RegisterNotInitialized(9),
+            TemplateError::TypeMismatch,
+            TemplateError::InvalidBlobRange,
+            TemplateError::ExcessiveCpiExpansion,
+            TemplateError::InvalidFlags(10),
+            TemplateError::InvalidCarry(11),
+            TemplateError::ReadOutOfBounds(12),
+            TemplateError::TooManyCpiAccounts(13),
+            TemplateError::InvalidReturnData(14),
+            TemplateError::InvalidMinIterations,
+        ];
+        let mut codes: Vec<u32> = variants.iter().map(|error| error.code().0).collect();
+        codes.sort_unstable();
+        codes.dedup();
+        assert_eq!(codes.len(), variants.len());
+        assert_eq!(codes[0], VERIFIER_ERROR_BASE);
+        assert_eq!(*codes.last().unwrap(), VERIFIER_ERROR_BASE + 27);
+
+        let (kind, context) = TemplateError::PayloadTooLarge(70_000).code();
+        assert_eq!(context, u16::MAX, "oversized contexts clamp");
+        assert_eq!(decode_error(encode_error(kind, context)), (kind, context));
+        assert_eq!(TemplateError::InvalidCpi(6).code(), (VERIFIER_ERROR_BASE + 15, 6));
+    }
+}

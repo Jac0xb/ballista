@@ -289,7 +289,8 @@ export function inspectTemplate(bytes: Uint8Array): CompileStats {
   const pubkeys = reader.u8();
   if (reader.u8() !== 0) throw new TypeError('Invalid template flags');
   const blobLength = reader.u16();
-  if (!equalBytes(reader.bytes(4), new Uint8Array(4))) throw new TypeError('Invalid reserved bytes');
+  reader.u8(); // batch minimum iterations
+  if (!equalBytes(reader.bytes(3), new Uint8Array(3))) throw new TypeError('Invalid reserved bytes');
   const expectedLength =
     24 +
     (fixedAccounts + batchStride) * 8 +

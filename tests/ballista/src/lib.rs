@@ -560,6 +560,7 @@ mod tests {
             fixed_accounts,
             u8::from(batch),
             batch_max.unwrap_or(0),
+            0,
             input_count,
             register_count,
             instructions.len() as u8,
@@ -567,6 +568,7 @@ mod tests {
             2,
             2,
             1,
+            0,
             4,
         );
         let mut account_constraints = vec![
@@ -642,7 +644,7 @@ mod tests {
     }
 
     fn token_transfer_template(batch_max: u8) -> Vec<u8> {
-        let header = ProgramHeader::new(3, 1, batch_max, 1, 1, 3, 1, 3, 2, 1, 1);
+        let header = ProgramHeader::new(3, 1, batch_max, 0, 1, 1, 3, 1, 3, 2, 1, 0, 1);
         let mut token_account_constraint = account_constraint(ACCOUNT_WRITABLE, NO_INDEX);
         token_account_constraint.owner_index = 0;
         let account_constraints = [
@@ -723,7 +725,7 @@ mod tests {
     }
 
     fn ata_then_transfer_template(batch_max: u8) -> Vec<u8> {
-        let header = ProgramHeader::new(7, 2, batch_max, 1, 8, 12, 2, 9, 5, 3, 1);
+        let header = ProgramHeader::new(7, 2, batch_max, 0, 1, 8, 12, 2, 9, 5, 3, 0, 1);
         let account_constraints = [
             account_constraint(ACCOUNT_EXECUTABLE, 0),
             account_constraint(ACCOUNT_EXECUTABLE, 1),

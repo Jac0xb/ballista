@@ -241,7 +241,7 @@ const namedAccounts = z.record(identifier, AccountConstraintSchema);
 
 export const TemplateSchema = z
   .object({
-    version: z.literal(2).default(2),
+    version: z.literal(3).default(3),
     inputs: namedInputs.default({}),
     accounts: namedAccounts,
     batch: z

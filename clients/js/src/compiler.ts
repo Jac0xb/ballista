@@ -13,7 +13,7 @@ import {
   type ValueType,
 } from './schema.js';
 
-export const TEMPLATE_PROGRAM_VERSION = 2;
+export const TEMPLATE_PROGRAM_VERSION = 3;
 export const MAX_TEMPLATE_PAYLOAD_LENGTH = 10_240;
 export const MAX_RUNTIME_ACCOUNTS = 60;
 export const MAX_INPUT_BYTES = 1_024;
@@ -229,9 +229,10 @@ class Compiler {
     header.u16(this.cpiAccounts.length);
     header.u16(this.dataSegments.length);
     header.u8(this.pubkeys.length);
-    header.u8(0);
+    header.u8(0); // flags
     header.u16(this.blob.length);
-    header.raw([0, 0, 0, 0]);
+    header.u8(0); // batch minimum iterations
+    header.raw([0, 0, 0]);
 
     const output = new Writer();
     output.raw(header.finish());

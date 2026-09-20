@@ -1,0 +1,2666 @@
+{
+  "bounded-sol-payroll": {
+    "page": "payments",
+    "anchor": "bounded-sol-payroll",
+    "standIn": false,
+    "rowCount": 8,
+    "templateHex": "42564d310102011e010103010200020001000400010000000400ff000000000003ffff000000000002ffff0000000000020000002aff02ffff0000000000000000000000010000ffff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 168,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient"
+    ],
+    "runData": "1027000000000000",
+    "ballistaTransactionBytes": 514,
+    "ballistaAccountKeys": 12,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "equivalent",
+      "note": "One System transfer per recipient does the same work.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 570,
+      "instructionCount": 8
+    },
+    "stats": {
+      "payloadBytes": 168,
+      "fixedAccounts": 2,
+      "batchStride": 1,
+      "batchMaxIterations": 30,
+      "batchMinIterations": 1,
+      "inputs": 1,
+      "registers": 1,
+      "instructions": 3,
+      "cpis": 1,
+      "maxExpandedCpis": 30,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "basis-point-revenue-split": {
+    "page": "payments",
+    "anchor": "basis-point-revenue-split",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d3101040000020a0d020400040001000800000000000400ff000000000003ffff000000000002ffff000000000002ffff00000000000200000002000000010001ffff00000000000000000000000301ffffff00102700000000000000001a020001ff000000000000000000000028ff02ffff0000000000000000000000010300ffff0000000000000000000000010401ffff000000000000000000000015050304ff00000000000000000000000306ffffff001027000000000000000016070506ff000000000000000000000029ff00ffff0000000000000000000000010800ffff000000000000000000000014090807ff000000000000000000000029ff01ffff000000000000000000000000ff0000020200000c00000000ff0200020202000c000000010302020103030200ff000004000000040700000000000000ff040004000000040900000000000000000000000000000000000000000000000000000000000000000000000000000200000002000000",
+    "payloadBytes": 376,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient",
+      "recipient"
+    ],
+    "runData": "40420f0000000000fa00000000000000",
+    "ballistaTransactionBytes": 324,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "Two transfers with client-computed amounts settle the same way, but nothing on chain ties the two amounts to one total or bounds the share.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000a861000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "0200000098e00e0000000000"
+        }
+      ],
+      "transactionBytes": 270,
+      "instructionCount": 2
+    },
+    "stats": {
+      "payloadBytes": 376,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 2,
+      "registers": 10,
+      "instructions": 13,
+      "cpis": 2,
+      "maxExpandedCpis": 2,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "index-weighted-rewards": {
+    "page": "payments",
+    "anchor": "index-weighted-rewards",
+    "standIn": false,
+    "rowCount": 8,
+    "templateHex": "42564d310102011e010507010200020001000400010000000400ff000000000003ffff000000000002ffff0000000000020000002aff06ffff00000000000000000000002600ffffff00000000000000000000000301ffffff000100000000000000000013020001ff0000000000000000000000010300ffff000000000000000000000015040203ff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000404000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 232,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient"
+    ],
+    "runData": "e803000000000000",
+    "ballistaTransactionBytes": 514,
+    "ballistaAccountKeys": 12,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "Transfers with client-computed weights settle the same way; the weighting rule itself is not enforced on chain.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000d007000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000b80b000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000a00f000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000008813000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000007017000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000581b000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000401f000000000000"
+        }
+      ],
+      "transactionBytes": 570,
+      "instructionCount": 8
+    },
+    "stats": {
+      "payloadBytes": 232,
+      "fixedAccounts": 2,
+      "batchStride": 1,
+      "batchMaxIterations": 30,
+      "batchMinIterations": 1,
+      "inputs": 1,
+      "registers": 5,
+      "instructions": 7,
+      "cpis": 1,
+      "maxExpandedCpis": 30,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "deadline-refund": {
+    "page": "payments",
+    "anchor": "deadline-refund",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d3101030000020405010200020001000400000000000400ff000000000003ffff000000000002ffff00000000000200000003000000010000ffff00000000000000000000001201ffffff0000000000000000000000010201ffff00000000000000000000001a030102ff000000000000000000000029ff0003ff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 204,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient"
+    ],
+    "runData": "1027000000000000001a711802000000",
+    "ballistaTransactionBytes": 291,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "A bare transfer refunds unconditionally; the deadline is only checked by whoever builds the transaction.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "stats": {
+      "payloadBytes": 204,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 2,
+      "registers": 4,
+      "instructions": 5,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "reserve-preserving-sweep": {
+    "page": "payments",
+    "anchor": "reserve-preserving-sweep",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d3101030000020a0d010200020001000400000000000400ff000000000003ffff000000000002ffff000000000002000000020000000a0001ffff0000000000000000000000010100ffff00000000000000000000001c020001ff000000000000000000000028ff02ffff0000000000000000000000010300ffff000000000000000000000014040003ff0000000000000000000000010501ffff000000000000000000000020060405ff000000000000000000000029ff00ffff00000000000000000000000a0701ffff0000000000000000000000010800ffff00000000000000000000001c090708ff000000000000000000000028ff09ffff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000406000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 332,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient"
+    ],
+    "runData": "00ca9a3b0000000050c3000000000000",
+    "ballistaTransactionBytes": 291,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "A transfer of a client-computed amount can be built, but no on-chain check proves the reserve survived.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "0200000050c3000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "stats": {
+      "payloadBytes": 332,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 2,
+      "registers": 10,
+      "instructions": 13,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "assert-create-then-transfer": {
+    "page": "token-accounts",
+    "anchor": "assert-create-then-transfer",
+    "standIn": false,
+    "rowCount": 4,
+    "templateHex": "42564d310107020801080c020900050003000100010000000400ff00000000000401ff00000000000402ff000000000000ff01005200000003ffff000000000001ffff000000000002ff0100a500000000ffff000000000002ffff0000000000020000002aff0bffff0000000000000000000000080081ffff0000000000000000000000080180ffff0000000000000000000000080201ffff0000000000000000000000080303ffff00000000000000000000002f0400ffff000000000003000000000017050004ff000000000000000000000028ff05ffff00000000000000000000000c0681ffff000000000000000000000029ff0006ff0000000000000000000000010700ffff000000000000000000000029ff01ffff000000000000000000000000ff0000060003000000000001ff0600030203000900000004038102800003000200010006028102050107010000000000000702000000000000070300000000000000ff00000100000004070000000000008c97258f4e2489f1bb3d1029148e0d830b5a1399daff1084048e7bd8dbe9f85906ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9000000000000000000000000000000000000000000000000000000000000000003",
+    "payloadBytes": 471,
+    "runtimeAccounts": [
+      "ata-program",
+      "token-program",
+      "system-program",
+      "mint",
+      "signer",
+      "signer",
+      "source-tokens",
+      "recipient",
+      "recipient-ata",
+      "recipient",
+      "recipient-ata",
+      "recipient",
+      "recipient-ata",
+      "recipient",
+      "recipient-ata"
+    ],
+    "runData": "e803000000000000",
+    "ballistaTransactionBytes": 743,
+    "ballistaAccountKeys": 17,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": true,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "equivalent",
+      "note": "ATA CreateIdempotent then Transfer per recipient. The ATA program derives the address itself, so the guarantee matches.",
+      "instructions": [
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 12,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 11,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 12,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 14,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 13,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 14,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        }
+      ],
+      "transactionBytes": 758,
+      "instructionCount": 8
+    },
+    "stats": {
+      "payloadBytes": 471,
+      "fixedAccounts": 7,
+      "batchStride": 2,
+      "batchMaxIterations": 8,
+      "batchMinIterations": 1,
+      "inputs": 1,
+      "registers": 8,
+      "instructions": 12,
+      "cpis": 2,
+      "maxExpandedCpis": 16,
+      "maxCpiDataLength": 9,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "existing-account-token-payroll": {
+    "page": "token-accounts",
+    "anchor": "existing-account-token-payroll",
+    "standIn": false,
+    "rowCount": 8,
+    "templateHex": "42564d3101030120010103010300020001000100010000000400ff000000000002ff0000a500000001ffff000000000002ff0000a5000000020000002aff02ffff0000000000000000000000010000ffff000000000000000000000029ff00ffff000000000000000000000000ff0000030200000900000001028002020100ff000001000000040000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a903",
+    "payloadBytes": 175,
+    "runtimeAccounts": [
+      "token-program",
+      "source-tokens",
+      "signer",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens"
+    ],
+    "runData": "e803000000000000",
+    "ballistaTransactionBytes": 547,
+    "ballistaAccountKeys": 13,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": true,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "equivalent",
+      "note": "One SPL Token transfer per destination does the same work.",
+      "instructions": [
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        }
+      ],
+      "transactionBytes": 586,
+      "instructionCount": 8
+    },
+    "stats": {
+      "payloadBytes": 175,
+      "fixedAccounts": 3,
+      "batchStride": 1,
+      "batchMaxIterations": 32,
+      "batchMinIterations": 1,
+      "inputs": 1,
+      "registers": 1,
+      "instructions": 3,
+      "cpis": 1,
+      "maxExpandedCpis": 32,
+      "maxCpiDataLength": 9,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "conditional-ata-setup": {
+    "page": "token-accounts",
+    "anchor": "conditional-ata-setup",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d3101070000000102010600000003000000000000000400ff00000000000401ff00000000000402ff000000000000ff01005200000003ffff000000000000ffff000000000002ffff00000000000c0006ffff000000000000000000000029ff0000ff000000000000000000000000ff000006000000000000000403060205000300020001008c97258f4e2489f1bb3d1029148e0d830b5a1399daff1084048e7bd8dbe9f85906ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a90000000000000000000000000000000000000000000000000000000000000000",
+    "payloadBytes": 232,
+    "runtimeAccounts": [
+      "ata-program",
+      "token-program",
+      "system-program",
+      "mint",
+      "signer",
+      "recipient",
+      "recipient-ata"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 407,
+    "ballistaAccountKeys": 9,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "equivalent",
+      "note": "ATA CreateIdempotent is the same behavior in one instruction.",
+      "instructions": [
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        }
+      ],
+      "transactionBytes": 341,
+      "instructionCount": 1
+    },
+    "stats": {
+      "payloadBytes": 232,
+      "fixedAccounts": 7,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 0,
+      "registers": 1,
+      "instructions": 2,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 0,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "close-empty-token-accounts": {
+    "page": "token-accounts",
+    "anchor": "close-empty-token-accounts",
+    "standIn": false,
+    "rowCount": 4,
+    "templateHex": "42564d3101030110000305010300010001000100010000000400ff000000000002ffff000000000001ffff000000000002ff0000a50000002aff04ffff00000000000000000000000d0080ffff00400000000000000000000301ffffff000000000000000000000017020001ff000000000000000000000029ff0002ff000000000000000000000000ff0000030100000100000080020102020100ff00000100000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a909",
+    "payloadBytes": 195,
+    "runtimeAccounts": [
+      "token-program",
+      "recipient",
+      "signer",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 407,
+    "ballistaAccountKeys": 9,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": true,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "CloseAccount per candidate works only while every candidate is empty: SPL Token rejects a funded account, which fails the whole transaction instead of skipping that row.",
+      "instructions": [
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        }
+      ],
+      "transactionBytes": 362,
+      "instructionCount": 4
+    },
+    "stats": {
+      "payloadBytes": 195,
+      "fixedAccounts": 3,
+      "batchStride": 1,
+      "batchMaxIterations": 16,
+      "batchMinIterations": 1,
+      "inputs": 0,
+      "registers": 3,
+      "instructions": 5,
+      "cpis": 1,
+      "maxExpandedCpis": 16,
+      "maxCpiDataLength": 1,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "exact-token-debit": {
+    "page": "token-accounts",
+    "anchor": "exact-token-debit",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d3101040000010608010300020001000100000000000400ff000000000002ff0000a500000002ff0000a500000001ffff0000000000020000000d0001ffff0040000000000000000000010100ffff000000000000000000000029ff00ffff00000000000000000000000d0201ffff0040000000000000000000010300ffff000000000000000000000014040003ff000000000000000000000017050204ff000000000000000000000028ff05ffff000000000000000000000000ff0000030200000900000001020202030100ff000001000000040100000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a903",
+    "payloadBytes": 255,
+    "runtimeAccounts": [
+      "token-program",
+      "source-tokens",
+      "recipient-tokens",
+      "signer"
+    ],
+    "runData": "e803000000000000",
+    "ballistaTransactionBytes": 316,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": true,
+        "writable": false
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "A bare transfer moves the tokens; nothing proves the source was debited by exactly that amount and no more.",
+      "instructions": [
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        }
+      ],
+      "transactionBytes": 250,
+      "instructionCount": 1
+    },
+    "stats": {
+      "payloadBytes": 255,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 6,
+      "instructions": 8,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 9,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "deadline-and-minimum-output": {
+    "page": "guardrails",
+    "anchor": "deadline-and-minimum-output",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d310103000004080a010200010001000000000000000400ff000000000003ffff000000000002ffff0000000000030000000200000002000000060000011200ffffff0000000000000000000000010100ffff00000000000000000000001a020001ff0000000000000000000000010301ffff0000000000000000000000010402ffff00000000000000000000001c050304ff00000000000000000000001d060205ff000000000000000000000028ff06ffff0000000000000000000000010703ffff000000000000000000000029ff00ffff000000000000000000000000ff000002010000000100000103020209070000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "payloadBytes": 280,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient"
+    ],
+    "runData": "001a711802000000e803000000000000840300000000000020000200000010270000000000000000000000000000000000000000000000000000",
+    "ballistaTransactionBytes": 333,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "The route instruction alone. Deadline and minimum output are whatever the client checked before signing.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "0200000010270000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "transactionBytes": 240,
+      "instructionCount": 1
+    },
+    "stats": {
+      "payloadBytes": 280,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 4,
+      "registers": 8,
+      "instructions": 10,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 256,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "pinned-program-and-owner": {
+    "page": "guardrails",
+    "anchor": "pinned-program-and-owner",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101030000010102010200020001000400000000000400ff000000000003ffff000000000002ff00008000000002000000010000ffff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 152,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "state-account"
+    ],
+    "runData": "1027000000000000",
+    "ballistaTransactionBytes": 283,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "The same instruction with no schema: a substituted program ID or a wrong-owner account is accepted as far as the transaction is concerned.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "stats": {
+      "payloadBytes": 152,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 1,
+      "instructions": 2,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "oracle-price-band": {
+    "page": "guardrails",
+    "anchor": "oracle-price-band",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d310104000002080a0102000200010004000000000000ff0000800000000400ff000000000003ffff000000000002ffff000000000003000000030000000e0000ffff0008000000000000000000010100ffff00000000000000000000001c020001ff00000000000000000000000e0300ffff0008000000000000000000010401ffff00000000000000000000001a050304ff00000000000000000000001d060205ff000000000000000000000028ff06ffff00000000000000000000000307ffffff001027000000000000000029ff00ffff000000000000000000000001ff0000020200000c0000000203030200ff0000040000000407000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 292,
+    "runtimeAccounts": [
+      "state-account",
+      "system-program",
+      "signer",
+      "recipient"
+    ],
+    "runData": "010000000000000040420f0000000000",
+    "ballistaTransactionBytes": 324,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "No instruction sequence reads an oracle account and refuses to continue. Enforcing a band on chain needs a program.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "stats": {
+      "payloadBytes": 292,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 2,
+      "registers": 8,
+      "instructions": 10,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "maximum-lamport-spend": {
+    "page": "guardrails",
+    "anchor": "maximum-lamport-spend",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101030000010608010200020001000400000000000400ff000000000003ffff000000000002ffff0000000000020000000a0001ffff00000000000000000000000301ffffff001027000000000000000029ff00ffff00000000000000000000000a0201ffff000000000000000000000014030002ff0000000000000000000000010400ffff00000000000000000000001a050304ff000000000000000000000028ff05ffff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000401000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 248,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient"
+    ],
+    "runData": "40420f0000000000",
+    "ballistaTransactionBytes": 283,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "A transaction cannot compare a balance before and after one of its own instructions. Capping the debit on chain needs a program.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "stats": {
+      "payloadBytes": 248,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 6,
+      "instructions": 8,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "canonical-position-account": {
+    "page": "guardrails",
+    "anchor": "canonical-position-account",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101030000010709010200050001000c00000000000400ff000000000003ffff000000000002ff00008000000006000800080002ffff00000000000000000000000701ffffff0000000000080000000000080201ffff0000000000000000000000010300ffff00000000000000000000002f0400ffff000000000003000000000017050004ff000000000000000000000028ff05ffff00000000000000000000000306ffffff001027000000000000000029ff00ffff000000000000000000000000ff0000020203000c0000000103020209010000000000000702000000000000090300000000000000ff08000400000004060000000000000000000000000000000000000000000000000000000000000000000000000000706f736974696f6e02000000",
+    "payloadBytes": 296,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "position-pda"
+    ],
+    "runData": "08000700000000000000",
+    "ballistaTransactionBytes": 285,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "A transaction cannot derive a PDA and compare it to a supplied account. Rejecting a substituted account on chain needs a program.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "stats": {
+      "payloadBytes": 296,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 7,
+      "instructions": 9,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "swap-then-deposit": {
+    "page": "composition",
+    "anchor": "swap-then-deposit",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d310105000003070a020400020002000000000000000400ff00000000000400ff000000000003ffff000000000002ffff000000000002ff0100a50000000200000006000001060000010d0004ffff0040000000000000000000010101ffff000000000000000000000029ff00ffff00000000000000000000000d0204ffff004000000000000000000014030200ff0000000000000000000000010400ffff00000000000000000000001c050304ff000000000000000000000028ff05ffff0000000000000000000000010602ffff000000000000000000000029ff01ffff000000000000000000000000ff0000020100000001000001ff02000201010000010000020303020203030209010000000000000906000000000000000000000000000000000000000000000000000000000000000000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9",
+    "payloadBytes": 348,
+    "runtimeAccounts": [
+      "system-program",
+      "system-program",
+      "signer",
+      "recipient",
+      "source-tokens"
+    ],
+    "runData": "00000000000000002000020000001027000000000000000000000000000000000000000000000000000020000200000010270000000000000000000000000000000000000000000000000000",
+    "ballistaTransactionBytes": 385,
+    "ballistaAccountKeys": 7,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "Both instructions can be sent back to back, but the intermediate token delta is never checked, so a bad fill still deposits.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "0200000010270000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "0200000010270000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "transactionBytes": 278,
+      "instructionCount": 2
+    },
+    "stats": {
+      "payloadBytes": 348,
+      "fixedAccounts": 5,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 3,
+      "registers": 7,
+      "instructions": 10,
+      "cpis": 2,
+      "maxExpandedCpis": 2,
+      "maxCpiDataLength": 256,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "claim-then-distribute": {
+    "page": "composition",
+    "anchor": "claim-then-distribute",
+    "standIn": true,
+    "rowCount": 8,
+    "templateHex": "42564d3101060110010205020500040002000500010000000400ff00000000000401ff000000000003ffff000000000002ffff000000000002ff0100a500000001ffff000000000002ff0100a5000000020000000300ffffff001027000000000000000029ff00ffff00000000000000000000002aff02ffff0000000000000000000000010100ffff000000000000000000000029ff01ffff000000000000000000000000ff0000020200000c00000001ff020003020200090000000203030204028002050100ff000004000000040000000000000000ff0400010000000401000000000000000000000000000000000000000000000000000000000000000000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a90200000003",
+    "payloadBytes": 299,
+    "runtimeAccounts": [
+      "system-program",
+      "token-program",
+      "signer",
+      "recipient",
+      "source-tokens",
+      "signer",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens"
+    ],
+    "runData": "e803000000000000",
+    "ballistaTransactionBytes": 710,
+    "ballistaAccountKeys": 16,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": true,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "equivalent",
+      "note": "A claim instruction followed by one token transfer per recipient does the same work.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 11,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 12,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 13,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        }
+      ],
+      "transactionBytes": 764,
+      "instructionCount": 9
+    },
+    "stats": {
+      "payloadBytes": 299,
+      "fixedAccounts": 6,
+      "batchStride": 1,
+      "batchMaxIterations": 16,
+      "batchMinIterations": 1,
+      "inputs": 1,
+      "registers": 2,
+      "instructions": 5,
+      "cpis": 2,
+      "maxExpandedCpis": 17,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "primary-or-fallback-route": {
+    "page": "composition",
+    "anchor": "primary-or-fallback-route",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101040000030507020400020001000000000000000400ff00000000000400ff000000000003ffff000000000002ffff0000000000010000000600000106000001010001ffff0000000000000000000000010100ffff000000000000000000000029ff0001ff0000000000000000000000010202ffff0000000000000000000000010300ffff00000000000000000000001f0403ffff000000000000000000000029ff0104ff000000000000000000000000ff0000020100000001000001ff020002010100000100000203030202030302090000000000000009020000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "payloadBytes": 260,
+    "runtimeAccounts": [
+      "system-program",
+      "system-program",
+      "signer",
+      "recipient"
+    ],
+    "runData": "012000020000001027000000000000000000000000000000000000000000000000000020000200000010270000000000000000000000000000000000000000000000000000",
+    "ballistaTransactionBytes": 345,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "The client picks a route and sends that one instruction. The choice is made before signing, not from state at execution time.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "0200000010270000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "transactionBytes": 240,
+      "instructionCount": 1
+    },
+    "stats": {
+      "payloadBytes": 260,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 3,
+      "registers": 5,
+      "instructions": 7,
+      "cpis": 2,
+      "maxExpandedCpis": 2,
+      "maxCpiDataLength": 256,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "time-gated-governance-execution": {
+    "page": "composition",
+    "anchor": "time-gated-governance-execution",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101040000010608010200010001000000000000000400ff000000000000ff00008000000003ffff000000000002ffff0000000000060000012e0001ffff00000000000000000000001201ffffff00000000000000000000000e0201ffff00080000000000000000001c030102ff00000000000000000000001d040003ff000000000000000000000028ff04ffff0000000000000000000000010500ffff000000000000000000000029ff00ffff000000000000000000000000ff000002010000000100000203030209050000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "payloadBytes": 244,
+    "runtimeAccounts": [
+      "system-program",
+      "state-account",
+      "signer",
+      "recipient"
+    ],
+    "runData": "20000200000010270000000000000000000000000000000000000000000000000000",
+    "ballistaTransactionBytes": 342,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "A transaction cannot read a proposal flag and a timestamp and refuse to execute. Gating on chain needs a program.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "0200000010270000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "transactionBytes": 240,
+      "instructionCount": 1
+    },
+    "stats": {
+      "payloadBytes": 244,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 6,
+      "instructions": 8,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 256,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "bounded-keeper-crank": {
+    "page": "composition",
+    "anchor": "bounded-keeper-crank",
+    "standIn": true,
+    "rowCount": 4,
+    "templateHex": "42564d3101020218000103010200020001000400010000000400ff000000000003ffff000000000002ffff000000000002ffff00000000002aff02ffff00000000000000000000000300ffffff00e803000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 172,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 506,
+    "ballistaAccountKeys": 12,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "equivalent",
+      "note": "One crank instruction per row does the same work.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        }
+      ],
+      "transactionBytes": 370,
+      "instructionCount": 4
+    },
+    "stats": {
+      "payloadBytes": 172,
+      "fixedAccounts": 2,
+      "batchStride": 2,
+      "batchMaxIterations": 24,
+      "batchMinIterations": 1,
+      "inputs": 0,
+      "registers": 1,
+      "instructions": 3,
+      "cpis": 1,
+      "maxExpandedCpis": 24,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  }
+}

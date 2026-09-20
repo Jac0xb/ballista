@@ -43,6 +43,18 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 
 :::
 
+<!-- benchmark:swap-then-deposit -->
+
+| Approach | Compute units | Transaction bytes | Stored on chain |
+| --- | ---: | ---: | --- |
+| Ballista | 5,721 | 385 | 348-byte template, once |
+| Plain instructions, weaker | 300 | 278 | none |
+| Difference | +5,421 | +107 | — |
+
+One Ballista instruction against 2 plain instructions, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. Both instructions can be sent back to back, but the intermediate token delta is never checked, so a bad fill still deposits. Enforcing that on chain any other way means deploying your own program.
+
+<!-- /benchmark -->
+
 ## Claim then distribute
 
 Claim once into a treasury account, then distribute a fixed amount across a bounded recipient table.
@@ -75,6 +87,18 @@ let run = ballista_sdk::run_instruction(template, metas, &amount.to_le_bytes());
 ```
 
 :::
+
+<!-- benchmark:claim-then-distribute -->
+
+| Approach | Compute units | Transaction bytes | Stored on chain |
+| --- | ---: | ---: | --- |
+| Ballista | 19,030 | 710 | 299-byte template, once |
+| Plain instructions | 758 | 764 | none |
+| Difference | +18,272 | −54 | — |
+
+One Ballista instruction covering 8 rows against 9 plain instructions, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. A claim instruction followed by one token transfer per recipient does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
+
+<!-- /benchmark -->
 
 ## Primary or fallback route
 
@@ -110,6 +134,18 @@ let run = ballista_sdk::run_instruction(template, both_route_metas, &inputs);
 
 :::
 
+<!-- benchmark:primary-or-fallback-route -->
+
+| Approach | Compute units | Transaction bytes | Stored on chain |
+| --- | ---: | ---: | --- |
+| Ballista | 3,582 | 345 | 260-byte template, once |
+| Plain instructions, weaker | 150 | 240 | none |
+| Difference | +3,432 | +105 | — |
+
+One Ballista instruction against 1 plain instruction, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. The client picks a route and sends that one instruction. The choice is made before signing, not from state at execution time. Enforcing that on chain any other way means deploying your own program.
+
+<!-- /benchmark -->
+
 ## Time-gated governance execution
 
 Check an executable-after timestamp and a protocol state flag before forwarding an execution CPI.
@@ -139,6 +175,18 @@ let run = ballista_sdk::run_instruction(template, governance_metas, &inputs);
 ```
 
 :::
+
+<!-- benchmark:time-gated-governance-execution -->
+
+| Approach | Compute units | Transaction bytes | Stored on chain |
+| --- | ---: | ---: | --- |
+| Ballista | 3,834 | 342 | 244-byte template, once |
+| Plain instructions, not equivalent | 150 | 240 | none |
+| Difference | +3,684 | +102 | — |
+
+One Ballista instruction against 1 plain instruction, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. A transaction cannot read a proposal flag and a timestamp and refuse to execute. Gating on chain needs a program.
+
+<!-- /benchmark -->
 
 ## Bounded keeper crank
 
@@ -180,3 +228,15 @@ let run = ballista_sdk::run_instruction(template, metas, &[]);
 :::
 
 Ballista does not wake itself. A bot, user, or keeper service still decides when to submit the run.
+
+<!-- benchmark:bounded-keeper-crank -->
+
+| Approach | Compute units | Transaction bytes | Stored on chain |
+| --- | ---: | ---: | --- |
+| Ballista | 9,032 | 506 | 172-byte template, once |
+| Plain instructions | 600 | 370 | none |
+| Difference | +8,432 | +136 | — |
+
+One Ballista instruction covering 4 rows against 4 plain instructions, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. One crank instruction per row does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
+
+<!-- /benchmark -->

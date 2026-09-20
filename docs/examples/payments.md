@@ -68,6 +68,18 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 
 :::
 
+<!-- benchmark:bounded-sol-payroll -->
+
+| Approach | Compute units | Transaction bytes | Stored on chain |
+| --- | ---: | ---: | --- |
+| Ballista | 16,712 | 514 | 168-byte template, once |
+| Plain instructions | 1,200 | 570 | none |
+| Difference | +15,512 | −56 | — |
+
+One Ballista instruction covering 8 rows against 8 plain instructions, measured with Mollusk. One System transfer per recipient does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
+
+<!-- /benchmark -->
+
 ## Basis-point revenue split
 
 Split an input amount among two fixed recipients. The final transfer uses subtraction, so integer
@@ -107,6 +119,18 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 
 :::
 
+<!-- benchmark:basis-point-revenue-split -->
+
+| Approach | Compute units | Transaction bytes | Stored on chain |
+| --- | ---: | ---: | --- |
+| Ballista | 5,948 | 324 | 376-byte template, once |
+| Plain instructions, weaker | 300 | 270 | none |
+| Difference | +5,648 | +54 | — |
+
+One Ballista instruction against 2 plain instructions, measured with Mollusk. Two transfers with client-computed amounts settle the same way, but nothing on chain ties the two amounts to one total or bounds the share. Enforcing that on chain any other way means deploying your own program.
+
+<!-- /benchmark -->
+
 ## Index-weighted rewards
 
 Use the bounded iteration index to pay row `n` exactly `(n + 1) × base`.
@@ -134,6 +158,18 @@ let run = ballista_sdk::run_instruction(template, ordered_recipient_metas, &inpu
 ```
 
 :::
+
+<!-- benchmark:index-weighted-rewards -->
+
+| Approach | Compute units | Transaction bytes | Stored on chain |
+| --- | ---: | ---: | --- |
+| Ballista | 20,500 | 514 | 232-byte template, once |
+| Plain instructions, weaker | 1,200 | 570 | none |
+| Difference | +19,300 | −56 | — |
+
+One Ballista instruction covering 8 rows against 8 plain instructions, measured with Mollusk. Transfers with client-computed weights settle the same way; the weighting rule itself is not enforced on chain. Enforcing that on chain any other way means deploying your own program.
+
+<!-- /benchmark -->
 
 ## Deadline refund
 
@@ -166,6 +202,18 @@ Ballista does not control the escrow. `escrowAuthority` must already sign the tr
 downstream program must authorize the operation from its own state.
 :::
 
+<!-- benchmark:deadline-refund -->
+
+| Approach | Compute units | Transaction bytes | Stored on chain |
+| --- | ---: | ---: | --- |
+| Ballista | 3,450 | 291 | 204-byte template, once |
+| Plain instructions, weaker | 150 | 220 | none |
+| Difference | +3,300 | +71 | — |
+
+One Ballista instruction against 1 plain instruction, measured with Mollusk. A bare transfer refunds unconditionally; the deadline is only checked by whoever builds the transaction. Enforcing that on chain any other way means deploying your own program.
+
+<!-- /benchmark -->
+
 ## Reserve-preserving sweep
 
 Sweep at most `cap` while proving the payer remains above its required reserve.
@@ -197,3 +245,15 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 ```
 
 :::
+
+<!-- benchmark:reserve-preserving-sweep -->
+
+| Approach | Compute units | Transaction bytes | Stored on chain |
+| --- | ---: | ---: | --- |
+| Ballista | 4,257 | 291 | 332-byte template, once |
+| Plain instructions, weaker | 150 | 220 | none |
+| Difference | +4,107 | +71 | — |
+
+One Ballista instruction against 1 plain instruction, measured with Mollusk. A transfer of a client-computed amount can be built, but no on-chain check proves the reserve survived. Enforcing that on chain any other way means deploying your own program.
+
+<!-- /benchmark -->

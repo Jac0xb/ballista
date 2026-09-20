@@ -25,6 +25,7 @@ solana-program-option = "=3.1.0"
 solana-reward-info = "=6.2.0"
 solana-sdk-ids = "=3.1.0"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
+serde_json = "1"
 solana-short-vec = "=3.2.2"
 solana-signature = "=3.4.1"
 solana-system-program = { version = "=4.1.1", features = ["agave-unstable-api"] }

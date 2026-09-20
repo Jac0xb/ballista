@@ -1,0 +1,102 @@
+{
+  "assert-create-then-transfer": {
+    "ballistaComputeUnits": 105512,
+    "baselineComputeUnits": 66376,
+    "baselineSucceeded": true
+  },
+  "basis-point-revenue-split": {
+    "ballistaComputeUnits": 5948,
+    "baselineComputeUnits": 300,
+    "baselineSucceeded": true
+  },
+  "bounded-keeper-crank": {
+    "ballistaComputeUnits": 9032,
+    "baselineComputeUnits": 600,
+    "baselineSucceeded": true
+  },
+  "bounded-sol-payroll": {
+    "ballistaComputeUnits": 16712,
+    "baselineComputeUnits": 1200,
+    "baselineSucceeded": true
+  },
+  "canonical-position-account": {
+    "ballistaComputeUnits": 7090,
+    "baselineComputeUnits": 150,
+    "baselineSucceeded": true
+  },
+  "claim-then-distribute": {
+    "ballistaComputeUnits": 19030,
+    "baselineComputeUnits": 758,
+    "baselineSucceeded": true
+  },
+  "close-empty-token-accounts": {
+    "ballistaComputeUnits": 10160,
+    "baselineComputeUnits": 472,
+    "baselineSucceeded": true
+  },
+  "conditional-ata-setup": {
+    "ballistaComputeUnits": 16648,
+    "baselineComputeUnits": 13518,
+    "baselineSucceeded": true
+  },
+  "deadline-and-minimum-output": {
+    "ballistaComputeUnits": 4069,
+    "baselineComputeUnits": 150,
+    "baselineSucceeded": true
+  },
+  "deadline-refund": {
+    "ballistaComputeUnits": 3450,
+    "baselineComputeUnits": 150,
+    "baselineSucceeded": true
+  },
+  "exact-token-debit": {
+    "ballistaComputeUnits": 3849,
+    "baselineComputeUnits": 76,
+    "baselineSucceeded": true
+  },
+  "existing-account-token-payroll": {
+    "ballistaComputeUnits": 17074,
+    "baselineComputeUnits": 608,
+    "baselineSucceeded": true
+  },
+  "index-weighted-rewards": {
+    "ballistaComputeUnits": 20500,
+    "baselineComputeUnits": 1200,
+    "baselineSucceeded": true
+  },
+  "maximum-lamport-spend": {
+    "ballistaComputeUnits": 3589,
+    "baselineComputeUnits": 150,
+    "baselineSucceeded": true
+  },
+  "oracle-price-band": {
+    "ballistaComputeUnits": 4086,
+    "baselineComputeUnits": 150,
+    "baselineSucceeded": true
+  },
+  "pinned-program-and-owner": {
+    "ballistaComputeUnits": 2934,
+    "baselineComputeUnits": 150,
+    "baselineSucceeded": true
+  },
+  "primary-or-fallback-route": {
+    "ballistaComputeUnits": 3582,
+    "baselineComputeUnits": 150,
+    "baselineSucceeded": true
+  },
+  "reserve-preserving-sweep": {
+    "ballistaComputeUnits": 4257,
+    "baselineComputeUnits": 150,
+    "baselineSucceeded": true
+  },
+  "swap-then-deposit": {
+    "ballistaComputeUnits": 5721,
+    "baselineComputeUnits": 300,
+    "baselineSucceeded": true
+  },
+  "time-gated-governance-execution": {
+    "ballistaComputeUnits": 3834,
+    "baselineComputeUnits": 150,
+    "baselineSucceeded": true
+  }
+}

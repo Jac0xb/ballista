@@ -27,6 +27,57 @@ System Program, source, and 30 recipients), and the transaction has 34 unique ac
 including the Ballista program. Account locks and compute therefore become relevant well before
 template bytes, which are stored on-chain and absent from `Run` data.
 
+## Example cost tables
+
+Every pattern in the [example cookbook](/examples/) carries a measured table: what the run costs in
+compute units, what the transaction weighs, and what the same work costs as plain instructions.
+
+The numbers come from one pipeline. `pnpm benchmarks` compiles each example and measures its
+transaction with Solana Kit; the Mollusk benchmark in `tests/ballista` runs the template and the
+plain sequence against the same accounts and records compute units;
+`node scripts/benchmark-tables.mjs` writes the tables. The System Program is Mollusk's builtin, and
+the Token and Associated Token programs are mainnet dumps, so their costs are the current on-chain
+ones. Where an example names a third-party protocol, the callee is a System transfer with padded
+data: the CPI is real, and the protocol's own work is excluded from both sides of the comparison.
+
+The last column answers the question the tables exist for. A pattern marked **Yes, same
+guarantees** is one a plain transaction already handles, where Ballista buys a single instruction
+and a stored, verified shape. **Yes, weaker guarantees** means the instructions can be sent, but a
+check that Ballista performs on chain is left to whoever builds the transaction. **No, needs a
+program** means no instruction sequence expresses it, because the decision depends on state read
+during execution.
+
+<!-- benchmark:summary -->
+
+| Pattern | Ballista CU | Plain CU | Ballista bytes | Plain bytes | Without a program? |
+| --- | ---: | ---: | ---: | ---: | --- |
+| [Bounded SOL payroll](/examples/payments#bounded-sol-payroll) | 16,712 | 1,200 | 514 | 570 | Yes, same guarantees |
+| [Basis-point revenue split](/examples/payments#basis-point-revenue-split) | 5,948 | 300 | 324 | 270 | Yes, weaker guarantees |
+| [Index-weighted rewards](/examples/payments#index-weighted-rewards) | 20,500 | 1,200 | 514 | 570 | Yes, weaker guarantees |
+| [Deadline refund](/examples/payments#deadline-refund) | 3,450 | 150 | 291 | 220 | Yes, weaker guarantees |
+| [Reserve-preserving sweep](/examples/payments#reserve-preserving-sweep) | 4,257 | 150 | 291 | 220 | Yes, weaker guarantees |
+| [Assert, create, then transfer](/examples/token-accounts#assert-create-then-transfer) | 105,512 | 66,376 | 743 | 758 | Yes, same guarantees |
+| [Existing-account token payroll](/examples/token-accounts#existing-account-token-payroll) | 17,074 | 608 | 547 | 586 | Yes, same guarantees |
+| [Conditional ATA setup](/examples/token-accounts#conditional-ata-setup) | 16,648 | 13,518 | 407 | 341 | Yes, same guarantees |
+| [Close empty token accounts](/examples/token-accounts#close-empty-token-accounts) | 10,160 | 472 | 407 | 362 | Yes, weaker guarantees |
+| [Exact token debit](/examples/token-accounts#exact-token-debit) | 3,849 | 76 | 316 | 250 | Yes, weaker guarantees |
+| [Deadline and minimum output](/examples/guardrails#deadline-and-minimum-output) | 4,069 | 150 | 333 | 240 | Yes, weaker guarantees |
+| [Pinned program and owner](/examples/guardrails#pinned-program-and-owner) | 2,934 | 150 | 283 | 220 | Yes, weaker guarantees |
+| [Oracle price band](/examples/guardrails#oracle-price-band) | 4,086 | 150 | 324 | 220 | No, needs a program |
+| [Maximum lamport spend](/examples/guardrails#maximum-lamport-spend) | 3,589 | 150 | 283 | 220 | No, needs a program |
+| [Canonical position account](/examples/guardrails#canonical-position-account) | 7,090 | 150 | 285 | 220 | No, needs a program |
+| [Swap then deposit](/examples/composition#swap-then-deposit) | 5,721 | 300 | 385 | 278 | Yes, weaker guarantees |
+| [Claim then distribute](/examples/composition#claim-then-distribute) | 19,030 | 758 | 710 | 764 | Yes, same guarantees |
+| [Primary or fallback route](/examples/composition#primary-or-fallback-route) | 3,582 | 150 | 345 | 240 | Yes, weaker guarantees |
+| [Time-gated governance execution](/examples/composition#time-gated-governance-execution) | 3,834 | 150 | 342 | 240 | No, needs a program |
+| [Bounded keeper crank](/examples/composition#bounded-keeper-crank) | 9,032 | 600 | 506 | 370 | Yes, same guarantees |
+
+<!-- /benchmark -->
+
+Ballista's overhead is the difference column in each table: roughly 1,900 compute units per batch
+row, a few thousand for a run's fixed cost, and more where a pattern derives a PDA. Against that,
+one run replaces a transaction's worth of instructions and carries its guards with it.
+
 ## Heap and parsing boundary
 
 The register file is sized to the template's declared register count, at most 64 slots of 40

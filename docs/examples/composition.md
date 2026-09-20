@@ -45,11 +45,13 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 
 <!-- benchmark:swap-then-deposit -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 5,721 | 385 | 348-byte template, once |
-| Plain instructions, weaker | 300 | 278 | none |
-| Difference | +5,421 | +107 | — |
+| Cost | Ballista | Plain instructions, weaker | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 5,721 | 300 | +5,421 |
+| Transaction bytes, every run | 385 | 278 | +107 |
+| Compute units, upload once | 6,881 | none | — |
+| Transaction bytes, upload once | 624 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00282 SOL for 428 bytes | none | — |
 
 One Ballista instruction against 2 plain instructions, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. Both instructions can be sent back to back, but the intermediate token delta is never checked, so a bad fill still deposits. Enforcing that on chain any other way means deploying your own program.
 
@@ -90,11 +92,13 @@ let run = ballista_sdk::run_instruction(template, metas, &amount.to_le_bytes());
 
 <!-- benchmark:claim-then-distribute -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 19,030 | 710 | 299-byte template, once |
-| Plain instructions | 758 | 764 | none |
-| Difference | +18,272 | −54 | — |
+| Cost | Ballista | Plain instructions | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 19,030 | 758 | +18,272 |
+| Transaction bytes, every run | 710 | 764 | −54 |
+| Compute units, upload once | 7,402 | none | — |
+| Transaction bytes, upload once | 575 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00258 SOL for 379 bytes | none | — |
 
 One Ballista instruction covering 8 rows against 9 plain instructions, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. A claim instruction followed by one token transfer per recipient does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
 
@@ -136,11 +140,13 @@ let run = ballista_sdk::run_instruction(template, both_route_metas, &inputs);
 
 <!-- benchmark:primary-or-fallback-route -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 3,582 | 345 | 260-byte template, once |
-| Plain instructions, weaker | 150 | 240 | none |
-| Difference | +3,432 | +105 | — |
+| Cost | Ballista | Plain instructions, weaker | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 3,582 | 150 | +3,432 |
+| Transaction bytes, every run | 345 | 240 | +105 |
+| Compute units, upload once | 15,499 | none | — |
+| Transaction bytes, upload once | 536 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00238 SOL for 340 bytes | none | — |
 
 One Ballista instruction against 1 plain instruction, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. The client picks a route and sends that one instruction. The choice is made before signing, not from state at execution time. Enforcing that on chain any other way means deploying your own program.
 
@@ -178,11 +184,13 @@ let run = ballista_sdk::run_instruction(template, governance_metas, &inputs);
 
 <!-- benchmark:time-gated-governance-execution -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 3,834 | 342 | 244-byte template, once |
-| Plain instructions, not equivalent | 150 | 240 | none |
-| Difference | +3,684 | +102 | — |
+| Cost | Ballista | Plain instructions, not equivalent | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 3,834 | 150 | +3,684 |
+| Transaction bytes, every run | 342 | 240 | +102 |
+| Compute units, upload once | 6,380 | none | — |
+| Transaction bytes, upload once | 520 in 1 transaction | none | — |
+| Rent locked in the template account | 0.0023 SOL for 324 bytes | none | — |
 
 One Ballista instruction against 1 plain instruction, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. A transaction cannot read a proposal flag and a timestamp and refuse to execute. Gating on chain needs a program.
 
@@ -231,11 +239,13 @@ Ballista does not wake itself. A bot, user, or keeper service still decides when
 
 <!-- benchmark:bounded-keeper-crank -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 9,032 | 506 | 172-byte template, once |
-| Plain instructions | 600 | 370 | none |
-| Difference | +8,432 | +136 | — |
+| Cost | Ballista | Plain instructions | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 9,032 | 600 | +8,432 |
+| Transaction bytes, every run | 506 | 370 | +136 |
+| Compute units, upload once | 6,817 | none | — |
+| Transaction bytes, upload once | 448 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00193 SOL for 252 bytes | none | — |
 
 One Ballista instruction covering 4 rows against 4 plain instructions, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. One crank instruction per row does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
 

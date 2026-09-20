@@ -85,6 +85,7 @@ export default defineConfig({
           text: 'Example cookbook',
           items: [
             { text: 'All examples', link: '/examples/' },
+            { text: 'Cost and alternatives', link: '/examples/#cost-and-alternatives' },
             { text: 'Author and run in both languages', link: '/examples/end-to-end' },
             { text: 'Payments', link: '/examples/payments' },
             { text: 'Token accounts', link: '/examples/token-accounts' },

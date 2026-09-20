@@ -212,6 +212,7 @@ fn measure_every_example() {
             failures.push(format!("{name}: create failed: {created:#?}"));
             continue;
         }
+        let create_units = created.compute_units_consumed;
 
         // The Ballista run.
         let flags = case["runtimeAccountFlags"].as_array().unwrap();
@@ -285,6 +286,7 @@ fn measure_every_example() {
 
         let mut entry = serde_json::Map::new();
         entry.insert("ballistaComputeUnits".into(), ballista_units.into());
+        entry.insert("uploadComputeUnits".into(), create_units.into());
         entry.insert("baselineComputeUnits".into(), baseline_units.into());
         entry.insert("baselineSucceeded".into(), baseline_failed.is_none().into());
         results.insert(name.clone(), entry.into());

@@ -199,6 +199,12 @@
       "transactionBytes": 570,
       "instructionCount": 8
     },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 444,
+      "accountBytes": 248,
+      "rentLamports": 1910080
+    },
     "stats": {
       "payloadBytes": 168,
       "fixedAccounts": 2,
@@ -289,6 +295,12 @@
       ],
       "transactionBytes": 270,
       "instructionCount": 2
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 652,
+      "accountBytes": 456,
+      "rentLamports": 2966720
     },
     "stats": {
       "payloadBytes": 376,
@@ -507,6 +519,12 @@
       "transactionBytes": 570,
       "instructionCount": 8
     },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 508,
+      "accountBytes": 312,
+      "rentLamports": 2235200
+    },
     "stats": {
       "payloadBytes": 232,
       "fixedAccounts": 2,
@@ -577,6 +595,12 @@
       "transactionBytes": 220,
       "instructionCount": 1
     },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 480,
+      "accountBytes": 284,
+      "rentLamports": 2092960
+    },
     "stats": {
       "payloadBytes": 204,
       "fixedAccounts": 3,
@@ -646,6 +670,12 @@
       ],
       "transactionBytes": 220,
       "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 608,
+      "accountBytes": 412,
+      "rentLamports": 2743200
     },
     "stats": {
       "payloadBytes": 332,
@@ -989,6 +1019,12 @@
       "transactionBytes": 758,
       "instructionCount": 8
     },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 747,
+      "accountBytes": 551,
+      "rentLamports": 3449320
+    },
     "stats": {
       "payloadBytes": 471,
       "fixedAccounts": 7,
@@ -1251,6 +1287,12 @@
       "transactionBytes": 586,
       "instructionCount": 8
     },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 451,
+      "accountBytes": 255,
+      "rentLamports": 1945640
+    },
     "stats": {
       "payloadBytes": 175,
       "fixedAccounts": 3,
@@ -1360,6 +1402,12 @@
       ],
       "transactionBytes": 341,
       "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 508,
+      "accountBytes": 312,
+      "rentLamports": 2235200
     },
     "stats": {
       "payloadBytes": 232,
@@ -1519,6 +1567,12 @@
       "transactionBytes": 362,
       "instructionCount": 4
     },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 471,
+      "accountBytes": 275,
+      "rentLamports": 2047240
+    },
     "stats": {
       "payloadBytes": 195,
       "fixedAccounts": 3,
@@ -1599,6 +1653,12 @@
       "transactionBytes": 250,
       "instructionCount": 1
     },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 531,
+      "accountBytes": 335,
+      "rentLamports": 2352040
+    },
     "stats": {
       "payloadBytes": 255,
       "fixedAccounts": 4,
@@ -1669,6 +1729,12 @@
       "transactionBytes": 240,
       "instructionCount": 1
     },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 556,
+      "accountBytes": 360,
+      "rentLamports": 2479040
+    },
     "stats": {
       "payloadBytes": 280,
       "fixedAccounts": 3,
@@ -1738,6 +1804,12 @@
       ],
       "transactionBytes": 220,
       "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 428,
+      "accountBytes": 232,
+      "rentLamports": 1828800
     },
     "stats": {
       "payloadBytes": 152,
@@ -1814,6 +1886,12 @@
       "transactionBytes": 220,
       "instructionCount": 1
     },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 568,
+      "accountBytes": 372,
+      "rentLamports": 2540000
+    },
     "stats": {
       "payloadBytes": 292,
       "fixedAccounts": 4,
@@ -1884,6 +1962,12 @@
       "transactionBytes": 220,
       "instructionCount": 1
     },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 524,
+      "accountBytes": 328,
+      "rentLamports": 2316480
+    },
     "stats": {
       "payloadBytes": 248,
       "fixedAccounts": 3,
@@ -1953,6 +2037,12 @@
       ],
       "transactionBytes": 220,
       "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 572,
+      "accountBytes": 376,
+      "rentLamports": 2560320
     },
     "stats": {
       "payloadBytes": 296,
@@ -2049,6 +2139,12 @@
       ],
       "transactionBytes": 278,
       "instructionCount": 2
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 624,
+      "accountBytes": 428,
+      "rentLamports": 2824480
     },
     "stats": {
       "payloadBytes": 348,
@@ -2343,6 +2439,12 @@
       "transactionBytes": 764,
       "instructionCount": 9
     },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 575,
+      "accountBytes": 379,
+      "rentLamports": 2575560
+    },
     "stats": {
       "payloadBytes": 299,
       "fixedAccounts": 6,
@@ -2418,6 +2520,12 @@
       "transactionBytes": 240,
       "instructionCount": 1
     },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 536,
+      "accountBytes": 340,
+      "rentLamports": 2377440
+    },
     "stats": {
       "payloadBytes": 260,
       "fixedAccounts": 4,
@@ -2492,6 +2600,12 @@
       ],
       "transactionBytes": 240,
       "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 520,
+      "accountBytes": 324,
+      "rentLamports": 2296160
     },
     "stats": {
       "payloadBytes": 244,
@@ -2645,6 +2759,12 @@
       ],
       "transactionBytes": 370,
       "instructionCount": 4
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 448,
+      "accountBytes": 252,
+      "rentLamports": 1930400
     },
     "stats": {
       "payloadBytes": 172,

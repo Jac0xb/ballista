@@ -70,11 +70,13 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 
 <!-- benchmark:bounded-sol-payroll -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 16,712 | 514 | 168-byte template, once |
-| Plain instructions | 1,200 | 570 | none |
-| Difference | +15,512 | −56 | — |
+| Cost | Ballista | Plain instructions | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 16,712 | 1,200 | +15,512 |
+| Transaction bytes, every run | 514 | 570 | −56 |
+| Compute units, upload once | 18,826 | none | — |
+| Transaction bytes, upload once | 444 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00191 SOL for 248 bytes | none | — |
 
 One Ballista instruction covering 8 rows against 8 plain instructions, measured with Mollusk. One System transfer per recipient does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
 
@@ -121,11 +123,13 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 
 <!-- benchmark:basis-point-revenue-split -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 5,948 | 324 | 376-byte template, once |
-| Plain instructions, weaker | 300 | 270 | none |
-| Difference | +5,648 | +54 | — |
+| Cost | Ballista | Plain instructions, weaker | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 5,948 | 300 | +5,648 |
+| Transaction bytes, every run | 324 | 270 | +54 |
+| Compute units, upload once | 19,173 | none | — |
+| Transaction bytes, upload once | 652 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00297 SOL for 456 bytes | none | — |
 
 One Ballista instruction against 2 plain instructions, measured with Mollusk. Two transfers with client-computed amounts settle the same way, but nothing on chain ties the two amounts to one total or bounds the share. Enforcing that on chain any other way means deploying your own program.
 
@@ -161,11 +165,13 @@ let run = ballista_sdk::run_instruction(template, ordered_recipient_metas, &inpu
 
 <!-- benchmark:index-weighted-rewards -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 20,500 | 514 | 232-byte template, once |
-| Plain instructions, weaker | 1,200 | 570 | none |
-| Difference | +19,300 | −56 | — |
+| Cost | Ballista | Plain instructions, weaker | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 20,500 | 1,200 | +19,300 |
+| Transaction bytes, every run | 514 | 570 | −56 |
+| Compute units, upload once | 10,243 | none | — |
+| Transaction bytes, upload once | 508 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00224 SOL for 312 bytes | none | — |
 
 One Ballista instruction covering 8 rows against 8 plain instructions, measured with Mollusk. Transfers with client-computed weights settle the same way; the weighting rule itself is not enforced on chain. Enforcing that on chain any other way means deploying your own program.
 
@@ -204,11 +210,13 @@ downstream program must authorize the operation from its own state.
 
 <!-- benchmark:deadline-refund -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 3,450 | 291 | 204-byte template, once |
-| Plain instructions, weaker | 150 | 220 | none |
-| Difference | +3,300 | +71 | — |
+| Cost | Ballista | Plain instructions, weaker | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 3,450 | 150 | +3,300 |
+| Transaction bytes, every run | 291 | 220 | +71 |
+| Compute units, upload once | 15,051 | none | — |
+| Transaction bytes, upload once | 480 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00209 SOL for 284 bytes | none | — |
 
 One Ballista instruction against 1 plain instruction, measured with Mollusk. A bare transfer refunds unconditionally; the deadline is only checked by whoever builds the transaction. Enforcing that on chain any other way means deploying your own program.
 
@@ -248,11 +256,13 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 
 <!-- benchmark:reserve-preserving-sweep -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 4,257 | 291 | 332-byte template, once |
-| Plain instructions, weaker | 150 | 220 | none |
-| Difference | +4,107 | +71 | — |
+| Cost | Ballista | Plain instructions, weaker | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 4,257 | 150 | +4,107 |
+| Transaction bytes, every run | 291 | 220 | +71 |
+| Compute units, upload once | 12,922 | none | — |
+| Transaction bytes, upload once | 608 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00274 SOL for 412 bytes | none | — |
 
 One Ballista instruction against 1 plain instruction, measured with Mollusk. A transfer of a client-computed amount can be built, but no on-chain check proves the reserve survived. Enforcing that on chain any other way means deploying your own program.
 

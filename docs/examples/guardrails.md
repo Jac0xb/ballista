@@ -42,11 +42,13 @@ actual destination token-account amount after the CPI.
 
 <!-- benchmark:deadline-and-minimum-output -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 4,069 | 333 | 280-byte template, once |
-| Plain instructions, weaker | 150 | 240 | none |
-| Difference | +3,919 | +93 | — |
+| Cost | Ballista | Plain instructions, weaker | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 4,069 | 150 | +3,919 |
+| Transaction bytes, every run | 333 | 240 | +93 |
+| Compute units, upload once | 9,580 | none | — |
+| Transaction bytes, upload once | 556 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00248 SOL for 360 bytes | none | — |
 
 One Ballista instruction against 1 plain instruction, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. The route instruction alone. Deadline and minimum output are whatever the client checked before signing. Enforcing that on chain any other way means deploying your own program.
 
@@ -85,11 +87,13 @@ let run = ballista_sdk::run_instruction(
 
 <!-- benchmark:pinned-program-and-owner -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 2,934 | 283 | 152-byte template, once |
-| Plain instructions, weaker | 150 | 220 | none |
-| Difference | +2,784 | +63 | — |
+| Cost | Ballista | Plain instructions, weaker | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 2,934 | 150 | +2,784 |
+| Transaction bytes, every run | 283 | 220 | +63 |
+| Compute units, upload once | 5,673 | none | — |
+| Transaction bytes, upload once | 428 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00183 SOL for 232 bytes | none | — |
 
 One Ballista instruction against 1 plain instruction, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. The same instruction with no schema: a substituted program ID or a wrong-owner account is accepted as far as the transaction is concerned. Enforcing that on chain any other way means deploying your own program.
 
@@ -126,11 +130,13 @@ published slot or timestamp. Ballista has no built-in oracle evaluator.
 
 <!-- benchmark:oracle-price-band -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 4,086 | 324 | 292-byte template, once |
-| Plain instructions, not equivalent | 150 | 220 | none |
-| Difference | +3,936 | +104 | — |
+| Cost | Ballista | Plain instructions, not equivalent | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 4,086 | 150 | +3,936 |
+| Transaction bytes, every run | 324 | 220 | +104 |
+| Compute units, upload once | 6,664 | none | — |
+| Transaction bytes, upload once | 568 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00254 SOL for 372 bytes | none | — |
 
 One Ballista instruction against 1 plain instruction, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. No instruction sequence reads an oracle account and refuses to continue. Enforcing a band on chain needs a program.
 
@@ -166,11 +172,13 @@ let run = ballista_sdk::run_instruction(
 
 <!-- benchmark:maximum-lamport-spend -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 3,589 | 283 | 248-byte template, once |
-| Plain instructions, not equivalent | 150 | 220 | none |
-| Difference | +3,439 | +63 | — |
+| Cost | Ballista | Plain instructions, not equivalent | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 3,589 | 150 | +3,439 |
+| Transaction bytes, every run | 283 | 220 | +63 |
+| Compute units, upload once | 9,327 | none | — |
+| Transaction bytes, upload once | 524 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00232 SOL for 328 bytes | none | — |
 
 One Ballista instruction against 1 plain instruction, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. A transaction cannot compare a balance before and after one of its own instructions. Capping the debit on chain needs a program.
 
@@ -206,11 +214,13 @@ let run = ballista_sdk::run_instruction(template, position_metas, &position_id.t
 
 <!-- benchmark:canonical-position-account -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 7,090 | 285 | 296-byte template, once |
-| Plain instructions, not equivalent | 150 | 220 | none |
-| Difference | +6,940 | +65 | — |
+| Cost | Ballista | Plain instructions, not equivalent | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 7,090 | 150 | +6,940 |
+| Transaction bytes, every run | 285 | 220 | +65 |
+| Compute units, upload once | 6,659 | none | — |
+| Transaction bytes, upload once | 572 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00256 SOL for 376 bytes | none | — |
 
 One Ballista instruction against 1 plain instruction, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. A transaction cannot derive a PDA and compare it to a supplied account. Rejecting a substituted account on chain needs a program.
 

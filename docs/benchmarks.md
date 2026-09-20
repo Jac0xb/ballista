@@ -49,28 +49,28 @@ during execution.
 
 <!-- benchmark:summary -->
 
-| Pattern | Ballista CU | Plain CU | Ballista bytes | Plain bytes | Without a program? |
-| --- | ---: | ---: | ---: | ---: | --- |
-| [Bounded SOL payroll](/examples/payments#bounded-sol-payroll) | 16,712 | 1,200 | 514 | 570 | Yes, same guarantees |
-| [Basis-point revenue split](/examples/payments#basis-point-revenue-split) | 5,948 | 300 | 324 | 270 | Yes, weaker guarantees |
-| [Index-weighted rewards](/examples/payments#index-weighted-rewards) | 20,500 | 1,200 | 514 | 570 | Yes, weaker guarantees |
-| [Deadline refund](/examples/payments#deadline-refund) | 3,450 | 150 | 291 | 220 | Yes, weaker guarantees |
-| [Reserve-preserving sweep](/examples/payments#reserve-preserving-sweep) | 4,257 | 150 | 291 | 220 | Yes, weaker guarantees |
-| [Assert, create, then transfer](/examples/token-accounts#assert-create-then-transfer) | 105,512 | 66,376 | 743 | 758 | Yes, same guarantees |
-| [Existing-account token payroll](/examples/token-accounts#existing-account-token-payroll) | 17,074 | 608 | 547 | 586 | Yes, same guarantees |
-| [Conditional ATA setup](/examples/token-accounts#conditional-ata-setup) | 16,648 | 13,518 | 407 | 341 | Yes, same guarantees |
-| [Close empty token accounts](/examples/token-accounts#close-empty-token-accounts) | 10,160 | 472 | 407 | 362 | Yes, weaker guarantees |
-| [Exact token debit](/examples/token-accounts#exact-token-debit) | 3,849 | 76 | 316 | 250 | Yes, weaker guarantees |
-| [Deadline and minimum output](/examples/guardrails#deadline-and-minimum-output) | 4,069 | 150 | 333 | 240 | Yes, weaker guarantees |
-| [Pinned program and owner](/examples/guardrails#pinned-program-and-owner) | 2,934 | 150 | 283 | 220 | Yes, weaker guarantees |
-| [Oracle price band](/examples/guardrails#oracle-price-band) | 4,086 | 150 | 324 | 220 | No, needs a program |
-| [Maximum lamport spend](/examples/guardrails#maximum-lamport-spend) | 3,589 | 150 | 283 | 220 | No, needs a program |
-| [Canonical position account](/examples/guardrails#canonical-position-account) | 7,090 | 150 | 285 | 220 | No, needs a program |
-| [Swap then deposit](/examples/composition#swap-then-deposit) | 5,721 | 300 | 385 | 278 | Yes, weaker guarantees |
-| [Claim then distribute](/examples/composition#claim-then-distribute) | 19,030 | 758 | 710 | 764 | Yes, same guarantees |
-| [Primary or fallback route](/examples/composition#primary-or-fallback-route) | 3,582 | 150 | 345 | 240 | Yes, weaker guarantees |
-| [Time-gated governance execution](/examples/composition#time-gated-governance-execution) | 3,834 | 150 | 342 | 240 | No, needs a program |
-| [Bounded keeper crank](/examples/composition#bounded-keeper-crank) | 9,032 | 600 | 506 | 370 | Yes, same guarantees |
+| Pattern | CU per run | Plain CU | Bytes per run | Plain bytes | Template rent | Without a program? |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| [Bounded SOL payroll](/examples/payments#bounded-sol-payroll) | 16,712 | 1,200 | 514 | 570 | 0.00191 SOL | Yes, same guarantees |
+| [Basis-point revenue split](/examples/payments#basis-point-revenue-split) | 5,948 | 300 | 324 | 270 | 0.00297 SOL | Yes, weaker guarantees |
+| [Index-weighted rewards](/examples/payments#index-weighted-rewards) | 20,500 | 1,200 | 514 | 570 | 0.00224 SOL | Yes, weaker guarantees |
+| [Deadline refund](/examples/payments#deadline-refund) | 3,450 | 150 | 291 | 220 | 0.00209 SOL | Yes, weaker guarantees |
+| [Reserve-preserving sweep](/examples/payments#reserve-preserving-sweep) | 4,257 | 150 | 291 | 220 | 0.00274 SOL | Yes, weaker guarantees |
+| [Assert, create, then transfer](/examples/token-accounts#assert-create-then-transfer) | 105,512 | 66,376 | 743 | 758 | 0.00345 SOL | Yes, same guarantees |
+| [Existing-account token payroll](/examples/token-accounts#existing-account-token-payroll) | 17,074 | 608 | 547 | 586 | 0.00195 SOL | Yes, same guarantees |
+| [Conditional ATA setup](/examples/token-accounts#conditional-ata-setup) | 16,648 | 13,518 | 407 | 341 | 0.00224 SOL | Yes, same guarantees |
+| [Close empty token accounts](/examples/token-accounts#close-empty-token-accounts) | 10,160 | 472 | 407 | 362 | 0.00205 SOL | Yes, weaker guarantees |
+| [Exact token debit](/examples/token-accounts#exact-token-debit) | 3,849 | 76 | 316 | 250 | 0.00235 SOL | Yes, weaker guarantees |
+| [Deadline and minimum output](/examples/guardrails#deadline-and-minimum-output) | 4,069 | 150 | 333 | 240 | 0.00248 SOL | Yes, weaker guarantees |
+| [Pinned program and owner](/examples/guardrails#pinned-program-and-owner) | 2,934 | 150 | 283 | 220 | 0.00183 SOL | Yes, weaker guarantees |
+| [Oracle price band](/examples/guardrails#oracle-price-band) | 4,086 | 150 | 324 | 220 | 0.00254 SOL | No, needs a program |
+| [Maximum lamport spend](/examples/guardrails#maximum-lamport-spend) | 3,589 | 150 | 283 | 220 | 0.00232 SOL | No, needs a program |
+| [Canonical position account](/examples/guardrails#canonical-position-account) | 7,090 | 150 | 285 | 220 | 0.00256 SOL | No, needs a program |
+| [Swap then deposit](/examples/composition#swap-then-deposit) | 5,721 | 300 | 385 | 278 | 0.00282 SOL | Yes, weaker guarantees |
+| [Claim then distribute](/examples/composition#claim-then-distribute) | 19,030 | 758 | 710 | 764 | 0.00258 SOL | Yes, same guarantees |
+| [Primary or fallback route](/examples/composition#primary-or-fallback-route) | 3,582 | 150 | 345 | 240 | 0.00238 SOL | Yes, weaker guarantees |
+| [Time-gated governance execution](/examples/composition#time-gated-governance-execution) | 3,834 | 150 | 342 | 240 | 0.0023 SOL | No, needs a program |
+| [Bounded keeper crank](/examples/composition#bounded-keeper-crank) | 9,032 | 600 | 506 | 370 | 0.00193 SOL | Yes, same guarantees |
 
 <!-- /benchmark -->
 

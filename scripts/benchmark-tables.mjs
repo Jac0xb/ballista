@@ -15,6 +15,7 @@ const benchmarks = JSON.parse(readFileSync(fileURLToPath(new URL('fixtures/bench
 const results = JSON.parse(readFileSync(fileURLToPath(new URL('fixtures/benchmark-results.json', root)), 'utf8'));
 
 const group = (value) => value.toLocaleString('en-US');
+const sol = (lamports) => (lamports / 1e9).toFixed(5).replace(/0+$/, '').replace(/\.$/, '');
 const signed = (value) => (value >= 0 ? `+${group(value)}` : `−${group(Math.abs(value))}`);
 
 const baselineLabel = {
@@ -35,12 +36,16 @@ function table(name) {
   if (!item || !measured) throw new Error(`No benchmark for ${name}`);
   const ballistaUnits = measured.ballistaComputeUnits;
   const baselineUnits = measured.baselineComputeUnits;
+  const upload = item.upload;
+  const uploadPlural = upload.transactionCount === 1 ? 'transaction' : 'transactions';
   const rows = [
-    '| Approach | Compute units | Transaction bytes | Stored on chain |',
-    '| --- | ---: | ---: | --- |',
-    `| Ballista | ${group(ballistaUnits)} | ${group(item.ballistaTransactionBytes)} | ${group(item.payloadBytes)}-byte template, once |`,
-    `| ${baselineLabel[item.baseline.verdict]} | ${group(baselineUnits)} | ${group(item.baseline.transactionBytes)} | none |`,
-    `| Difference | ${signed(ballistaUnits - baselineUnits)} | ${signed(item.ballistaTransactionBytes - item.baseline.transactionBytes)} | — |`,
+    `| Cost | Ballista | ${baselineLabel[item.baseline.verdict]} | Difference |`,
+    '| --- | ---: | ---: | ---: |',
+    `| Compute units, every run | ${group(ballistaUnits)} | ${group(baselineUnits)} | ${signed(ballistaUnits - baselineUnits)} |`,
+    `| Transaction bytes, every run | ${group(item.ballistaTransactionBytes)} | ${group(item.baseline.transactionBytes)} | ${signed(item.ballistaTransactionBytes - item.baseline.transactionBytes)} |`,
+    `| Compute units, upload once | ${group(measured.uploadComputeUnits)} | none | — |`,
+    `| Transaction bytes, upload once | ${group(upload.transactionBytes)} in ${upload.transactionCount} ${uploadPlural} | none | — |`,
+    `| Rent locked in the template account | ${sol(upload.rentLamports)} SOL for ${group(upload.accountBytes)} bytes | none | — |`,
   ];
   const instructionCount = item.baseline.instructionCount;
   const plural = instructionCount === 1 ? 'instruction' : 'instructions';
@@ -106,8 +111,8 @@ for (const [page, items] of pages) {
 }
 
 const summary = [
-  '| Pattern | Ballista CU | Plain CU | Ballista bytes | Plain bytes | Without a program? |',
-  '| --- | ---: | ---: | ---: | ---: | --- |',
+  '| Pattern | CU per run | Plain CU | Bytes per run | Plain bytes | Template rent | Without a program? |',
+  '| --- | ---: | ---: | ---: | ---: | ---: | --- |',
   ...Object.entries(benchmarks).map(([name, item]) => {
     const measured = results[name];
     const verdict = {
@@ -116,19 +121,21 @@ const summary = [
       impossible: 'No, needs a program',
     }[item.baseline.verdict];
     const title = titles.get(item.anchor) ?? name;
-    return `| [${title}](/examples/${item.page}#${item.anchor}) | ${group(measured.ballistaComputeUnits)} | ${group(measured.baselineComputeUnits)} | ${group(item.ballistaTransactionBytes)} | ${group(item.baseline.transactionBytes)} | ${verdict} |`;
+    return `| [${title}](/examples/${item.page}#${item.anchor}) | ${group(measured.ballistaComputeUnits)} | ${group(measured.baselineComputeUnits)} | ${group(item.ballistaTransactionBytes)} | ${group(item.baseline.transactionBytes)} | ${sol(item.upload.rentLamports)} SOL | ${verdict} |`;
   }),
 ].join('\n');
 
-const summaryPath = fileURLToPath(new URL('docs/benchmarks.md', root));
-let summaryText = readFileSync(summaryPath, 'utf8');
 const summaryBlock = `<!-- benchmark:summary -->\n\n${summary}\n\n<!-- /benchmark -->`;
-if (/<!-- benchmark:summary -->[\s\S]*?<!-- \/benchmark -->/.test(summaryText)) {
-  summaryText = summaryText.replace(/<!-- benchmark:summary -->[\s\S]*?<!-- \/benchmark -->/, summaryBlock);
-  writeFileSync(summaryPath, summaryText);
-  console.log('benchmarks.md: summary table');
-} else {
-  console.log('benchmarks.md: no summary marker, skipped');
+for (const page of ['docs/benchmarks.md', 'docs/examples/index.md']) {
+  const summaryPath = fileURLToPath(new URL(page, root));
+  const summaryText = readFileSync(summaryPath, 'utf8');
+  const marker = /<!-- benchmark:summary -->[\s\S]*?<!-- \/benchmark -->/;
+  if (!marker.test(summaryText)) {
+    console.log(`${page}: no summary marker, skipped`);
+    continue;
+  }
+  writeFileSync(summaryPath, summaryText.replace(marker, summaryBlock));
+  console.log(`${page}: summary table`);
 }
 
 function slug(heading) {

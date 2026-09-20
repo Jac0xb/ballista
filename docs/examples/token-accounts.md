@@ -51,11 +51,13 @@ let run = ballista_sdk::run_instruction(template, metas, &amount.to_le_bytes());
 
 <!-- benchmark:assert-create-then-transfer -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 105,512 | 743 | 471-byte template, once |
-| Plain instructions | 66,376 | 758 | none |
-| Difference | +39,136 | −15 | — |
+| Cost | Ballista | Plain instructions | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 105,512 | 66,376 | +39,136 |
+| Transaction bytes, every run | 743 | 758 | −15 |
+| Compute units, upload once | 8,478 | none | — |
+| Transaction bytes, upload once | 747 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00345 SOL for 551 bytes | none | — |
 
 One Ballista instruction covering 4 rows against 8 plain instructions, measured with Mollusk. ATA CreateIdempotent then Transfer per recipient. The ATA program derives the address itself, so the guarantee matches. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
 
@@ -93,11 +95,13 @@ let run = ballista_sdk::run_instruction(template, metas, &amount.to_le_bytes());
 
 <!-- benchmark:existing-account-token-payroll -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 17,074 | 547 | 175-byte template, once |
-| Plain instructions | 608 | 586 | none |
-| Difference | +16,466 | −39 | — |
+| Cost | Ballista | Plain instructions | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 17,074 | 608 | +16,466 |
+| Transaction bytes, every run | 547 | 586 | −39 |
+| Compute units, upload once | 6,875 | none | — |
+| Transaction bytes, upload once | 451 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00195 SOL for 255 bytes | none | — |
 
 One Ballista instruction covering 8 rows against 8 plain instructions, measured with Mollusk. One SPL Token transfer per destination does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
 
@@ -144,11 +148,13 @@ let run = ballista_sdk::run_instruction(
 
 <!-- benchmark:conditional-ata-setup -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 16,648 | 407 | 232-byte template, once |
-| Plain instructions | 13,518 | 341 | none |
-| Difference | +3,130 | +66 | — |
+| Cost | Ballista | Plain instructions | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 16,648 | 13,518 | +3,130 |
+| Transaction bytes, every run | 407 | 341 | +66 |
+| Compute units, upload once | 5,817 | none | — |
+| Transaction bytes, upload once | 508 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00224 SOL for 312 bytes | none | — |
 
 One Ballista instruction against 1 plain instruction, measured with Mollusk. ATA CreateIdempotent is the same behavior in one instruction. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
 
@@ -188,11 +194,13 @@ let run = ballista_sdk::run_instruction(template, metas, &[]);
 
 <!-- benchmark:close-empty-token-accounts -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 10,160 | 407 | 195-byte template, once |
-| Plain instructions, weaker | 472 | 362 | none |
-| Difference | +9,688 | +45 | — |
+| Cost | Ballista | Plain instructions, weaker | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 10,160 | 472 | +9,688 |
+| Transaction bytes, every run | 407 | 362 | +45 |
+| Compute units, upload once | 7,079 | none | — |
+| Transaction bytes, upload once | 471 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00205 SOL for 275 bytes | none | — |
 
 One Ballista instruction covering 4 rows against 4 plain instructions, measured with Mollusk. CloseAccount per candidate works only while every candidate is empty: SPL Token rejects a funded account, which fails the whole transaction instead of skipping that row. Enforcing that on chain any other way means deploying your own program.
 
@@ -220,11 +228,13 @@ let run = ballista_sdk::run_instruction(template, token_metas, &amount.to_le_byt
 
 <!-- benchmark:exact-token-debit -->
 
-| Approach | Compute units | Transaction bytes | Stored on chain |
-| --- | ---: | ---: | --- |
-| Ballista | 3,849 | 316 | 255-byte template, once |
-| Plain instructions, weaker | 76 | 250 | none |
-| Difference | +3,773 | +66 | — |
+| Cost | Ballista | Plain instructions, weaker | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 3,849 | 76 | +3,773 |
+| Transaction bytes, every run | 316 | 250 | +66 |
+| Compute units, upload once | 9,440 | none | — |
+| Transaction bytes, upload once | 531 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00235 SOL for 335 bytes | none | — |
 
 One Ballista instruction against 1 plain instruction, measured with Mollusk. A bare transfer moves the tokens; nothing proves the source was debited by exactly that amount and no more. Enforcing that on chain any other way means deploying your own program.
 

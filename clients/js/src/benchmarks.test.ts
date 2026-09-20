@@ -51,7 +51,18 @@ import {
   type Step,
   type Template,
 } from './index.js';
-import { buildKitRunInstruction, measureTransactionMessage } from './kit.js';
+import {
+  buildKitRunInstruction,
+  buildKitTemplateUploadPlan,
+  measureTransactionMessage,
+} from './kit.js';
+
+/** Rent parameters from the mainnet rent sysvar: lamports per byte-year and the account overhead. */
+const LAMPORTS_PER_BYTE_YEAR = 5_080;
+const RENT_EXEMPT_YEARS = 1;
+const ACCOUNT_OVERHEAD_BYTES = 128;
+/** The template account header that precedes the compiled payload. */
+const TEMPLATE_ACCOUNT_HEADER_BYTES = 80;
 
 const FIXTURE_PATH = fileURLToPath(new URL('../../../fixtures/benchmarks.json', import.meta.url));
 
@@ -1291,7 +1302,7 @@ const programAddress: Record<string, Address> = {
 };
 
 describe('example benchmarks', () => {
-  test('compiles every example and measures its transaction size', () => {
+  test('compiles every example and measures its transaction size', async () => {
     const output: Record<string, unknown> = {};
     for (const item of cases) {
       const compiled = compileTemplate(item.template);
@@ -1341,6 +1352,18 @@ describe('example benchmarks', () => {
         data: Uint8Array.from(Buffer.from(instruction.data, 'hex')),
       }));
 
+      // What it costs to put the template on chain, once, before any run.
+      const uploadPlan = await buildKitTemplateUploadPlan({
+        compiled,
+        creator: feePayer,
+        templateId: 1,
+      });
+      const uploadTransactionBytes = uploadPlan.instructions
+        .map((entry) => measure([entry.instruction], feePayer))
+        .reduce((total, size) => total + size, 0);
+      const accountBytes = TEMPLATE_ACCOUNT_HEADER_BYTES + compiled.bytes.length;
+      const rentLamports = (accountBytes + ACCOUNT_OVERHEAD_BYTES) * LAMPORTS_PER_BYTE_YEAR * RENT_EXEMPT_YEARS;
+
       output[item.name] = {
         page: item.page,
         anchor: item.anchor,
@@ -1363,6 +1386,12 @@ describe('example benchmarks', () => {
           instructions: item.baseline.instructions,
           transactionBytes: measure(baselineInstructions, feePayer),
           instructionCount: item.baseline.instructions.length,
+        },
+        upload: {
+          transactionCount: uploadPlan.instructions.length,
+          transactionBytes: uploadTransactionBytes,
+          accountBytes,
+          rentLamports,
         },
         stats: compiled.stats,
       };

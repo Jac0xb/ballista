@@ -31,8 +31,36 @@ pub const PROGRAM_FLAGS_MASK: u8 = PROGRAM_FLAG_EMIT_EVENT;
 /// Instruction flag (read opcodes only): the data offset comes from register `b` instead of the immediate.
 pub const INSTRUCTION_FLAG_DYNAMIC_OFFSET: u8 = 1 << 0;
 
+/// Base of the on-chain custom error codes for runtime failures.
+pub const RUNTIME_ERROR_BASE: u32 = 6_000;
 /// Base of the on-chain custom error codes reserved for verifier failures.
 pub const VERIFIER_ERROR_BASE: u32 = 6_100;
+
+/// Runtime error names in code order, starting at [`RUNTIME_ERROR_BASE`]. The program's error
+/// enum and the SDKs are checked against this table.
+pub const RUNTIME_ERROR_NAMES: [&str; 21] = [
+    "InvalidInstructionData",
+    "InvalidTemplateAccount",
+    "InvalidTemplateProgram",
+    "TemplateNotUploading",
+    "TemplateNotFinalized",
+    "InvalidCreator",
+    "InvalidChunkOffset",
+    "HashMismatch",
+    "InvalidRunInputs",
+    "InvalidRuntimeAccount",
+    "InvalidAccountRange",
+    "InvalidRegister",
+    "TypeMismatch",
+    "ArithmeticOverflow",
+    "DivisionByZero",
+    "RequirementFailed",
+    "CpiDataTooLarge",
+    "InvalidPdaDerivation",
+    "MissingReturnData",
+    "ReturnDataMismatch",
+    "AccountConstraintFailed",
+];
 
 pub const ACCOUNT_SIGNER: u8 = 1 << 0;
 pub const ACCOUNT_WRITABLE: u8 = 1 << 1;
@@ -574,6 +602,44 @@ pub const fn encode_error(kind: u32, context: u16) -> u32 {
 /// Splits a code produced by [`encode_error`] back into its kind and context.
 pub const fn decode_error(code: u32) -> (u32, u16) {
     (code & 0xffff, (code >> 16) as u16)
+}
+
+/// Where a decoded Ballista error came from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ErrorSource {
+    /// Raised while running a template; the context is usually a program counter.
+    Runtime,
+    /// Raised while verifying a template at create or finalize.
+    Verifier,
+}
+
+/// A Ballista custom error code split into its parts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DecodedError {
+    pub code: u32,
+    pub kind: u32,
+    pub name: &'static str,
+    pub context: u16,
+    pub source: ErrorSource,
+}
+
+/// Decodes a custom program error code. Returns `None` for codes outside Ballista's ranges, which
+/// belong to an invoked program and pass through `Run` unchanged.
+pub fn decode_ballista_error(code: u32) -> Option<DecodedError> {
+    let (kind, context) = decode_error(code);
+    let (names, base, source) = if kind >= VERIFIER_ERROR_BASE {
+        (&VERIFIER_ERROR_NAMES[..], VERIFIER_ERROR_BASE, ErrorSource::Verifier)
+    } else {
+        (&RUNTIME_ERROR_NAMES[..], RUNTIME_ERROR_BASE, ErrorSource::Runtime)
+    };
+    let name = names.get(kind.checked_sub(base)? as usize)?;
+    Some(DecodedError {
+        code,
+        kind,
+        name,
+        context,
+        source,
+    })
 }
 
 impl fmt::Display for TemplateError {

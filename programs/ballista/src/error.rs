@@ -53,30 +53,7 @@ pub enum BallistaError {
     AccountConstraintFailed,
 }
 
-/// Runtime error names in code order, shared with the SDK through `fixtures/runtime-error-names.txt`.
-pub const RUNTIME_ERROR_NAMES: [&str; 21] = [
-    "InvalidInstructionData",
-    "InvalidTemplateAccount",
-    "InvalidTemplateProgram",
-    "TemplateNotUploading",
-    "TemplateNotFinalized",
-    "InvalidCreator",
-    "InvalidChunkOffset",
-    "HashMismatch",
-    "InvalidRunInputs",
-    "InvalidRuntimeAccount",
-    "InvalidAccountRange",
-    "InvalidRegister",
-    "TypeMismatch",
-    "ArithmeticOverflow",
-    "DivisionByZero",
-    "RequirementFailed",
-    "CpiDataTooLarge",
-    "InvalidPdaDerivation",
-    "MissingReturnData",
-    "ReturnDataMismatch",
-    "AccountConstraintFailed",
-];
+pub use ballista_common::template::RUNTIME_ERROR_NAMES;
 
 impl BallistaError {
     /// The bare error code without context bits.

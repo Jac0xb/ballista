@@ -15,11 +15,30 @@ use super::*;
 #[derive(Clone, Debug)]
 pub struct GeneratedProgram {
     pub bytes: Vec<u8>,
-    pub run_inputs: Vec<u8>,
+    /// Encoded fixed input values.
+    pub fixed_inputs: Vec<u8>,
+    /// One encoded row of input values, repeated once per iteration in the run data.
+    pub row_input_bytes: Vec<u8>,
     pub fixed_accounts: usize,
     pub row_accounts: usize,
+    pub row_inputs: usize,
+    pub account_groups: usize,
     pub max_iterations: usize,
     pub min_iterations: usize,
+}
+
+impl GeneratedProgram {
+    /// Run data for `iterations` rows and the given group lengths: the group-length prefix, the
+    /// fixed values, then one row of values per iteration.
+    pub fn run_inputs(&self, iterations: usize, group_lengths: &[u8]) -> Vec<u8> {
+        assert_eq!(group_lengths.len(), self.account_groups, "one length per declared group");
+        let mut data = group_lengths.to_vec();
+        data.extend_from_slice(&self.fixed_inputs);
+        for _ in 0..iterations {
+            data.extend_from_slice(&self.row_input_bytes);
+        }
+        data
+    }
 }
 
 /// Value-dependent runtime error kinds a generated program is allowed to produce.
@@ -126,13 +145,25 @@ impl GeneratedProgram {
         };
 
         let input_count = choices.below(4);
-        let mut run_inputs = Vec::new();
+        let mut fixed_inputs = Vec::new();
         let mut inputs: Vec<(u8, u8)> = Vec::new();
         for _ in 0..input_count {
             let value_type = SCALAR_TYPES[choices.below(SCALAR_TYPES.len())];
             inputs.push((builder.input(value_type, 0), value_type));
-            encode_input(&mut choices, value_type, &mut run_inputs);
+            encode_input(&mut choices, value_type, &mut fixed_inputs);
         }
+        // Row inputs exist only alongside a batch; their loads are valid inside the body.
+        let row_input_count = if batched { choices.below(3) } else { 0 };
+        let mut row_input_bytes = Vec::new();
+        let mut body_inputs = inputs.clone();
+        for _ in 0..row_input_count {
+            let value_type = SCALAR_TYPES[choices.below(SCALAR_TYPES.len())];
+            body_inputs.push((builder.row_input(value_type, 0), value_type));
+            encode_input(&mut choices, value_type, &mut row_input_bytes);
+        }
+        // Groups have no schema, so the generator only declares them; the run supplies members.
+        let account_groups = choices.below(3);
+        builder.account_groups(account_groups as u8);
 
         // Every generated program starts with something in a register so later ops have operands.
         let seed = builder.const_u64(choices.next() as u64);
@@ -159,7 +190,7 @@ impl GeneratedProgram {
                         body,
                         &mut body_registers,
                         &body_accounts,
-                        &inputs,
+                        &body_inputs,
                         true,
                     );
                 }
@@ -189,9 +220,12 @@ impl GeneratedProgram {
         let bytes = builder.build().expect("generated programs stay within the payload limit");
         Self {
             bytes,
-            run_inputs,
+            fixed_inputs,
+            row_input_bytes,
             fixed_accounts,
             row_accounts,
+            row_inputs: row_input_count,
+            account_groups,
             max_iterations,
             min_iterations,
         }

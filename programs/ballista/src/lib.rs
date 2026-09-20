@@ -27,7 +27,8 @@ declare_id!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
 mod init {
     use crate::process_instruction;
     use pinocchio::entrypoint;
-    entrypoint!(process_instruction);
+    // Template account plus up to 120 runtime accounts, with room to spare.
+    entrypoint!(process_instruction, 128);
 }
 
 pub fn process_instruction(

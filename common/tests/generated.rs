@@ -14,5 +14,11 @@ proptest! {
         prop_assert_eq!(stats.batch_max_iterations as usize, program.max_iterations);
         prop_assert_eq!(parsed.header.batch_min_iterations(), program.min_iterations);
         prop_assert_eq!(stats.fixed_accounts as usize, program.fixed_accounts);
+        prop_assert_eq!(parsed.header.row_input_count(), program.row_inputs);
+        prop_assert_eq!(parsed.header.account_group_count(), program.account_groups);
+        prop_assert_eq!(
+            program.run_inputs(program.max_iterations, &vec![0; program.account_groups]).len(),
+            program.account_groups + program.fixed_inputs.len() + program.max_iterations * program.row_input_bytes.len()
+        );
     }
 }

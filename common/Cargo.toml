@@ -20,3 +20,7 @@ proptest = ["dep:proptest"]
 
 [dev-dependencies]
 proptest = "1.11"
+
+[[test]]
+name = "generated"
+required-features = ["proptest"]

@@ -1329,6 +1329,60 @@ mod tests {
         assert_eq!(context.account_store.borrow()[&ata].data().len(), 165);
     }
 
+    /// Anything the verifier accepts must execute without a structural error. Generated programs
+    /// contain no CPIs, so the only failures they may produce are value-dependent.
+    #[test]
+    fn generated_programs_never_hit_structural_errors() {
+        use ballista_common::template::generate::{
+            any_program, ALLOWED_RUNTIME_ERRORS, STRUCTURAL_RUNTIME_ERRORS,
+        };
+        use proptest::prelude::*;
+        use proptest::test_runner::{Config, TestRunner};
+
+        let cases = std::env::var("PROPTEST_CASES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(48);
+        let mut runner = TestRunner::new(Config {
+            cases,
+            ..Config::default()
+        });
+        runner
+            .run(&any_program(), |program| {
+                let creator = Pubkey::new_unique();
+                let total = program.fixed_accounts + program.row_accounts * program.max_iterations;
+                let runtime: Vec<Pubkey> = (0..total).map(|_| Pubkey::new_unique()).collect();
+                let mut accounts = funded_accounts([creator], 10_000_000_000);
+                for (index, address) in runtime.iter().enumerate() {
+                    accounts.insert(*address, Account::new(index as u64 * 1_000, 0, &system_program::id()));
+                }
+                let context = context(accounts);
+                let created = context.process_instruction(&create_template_instruction(creator, 1, &program.bytes));
+                prop_assert!(created.program_result.is_ok(), "finalize rejected a generated program: {created:#?}");
+                let (template, _) = find_template_pda(&creator, 1);
+
+                for iterations in [program.min_iterations, program.max_iterations] {
+                    let count = program.fixed_accounts + program.row_accounts * iterations;
+                    let metas: Vec<AccountMeta> = runtime[..count]
+                        .iter()
+                        .map(|address| AccountMeta::new_readonly(*address, false))
+                        .collect();
+                    let result = context.process_instruction(&run_instruction(template, metas, &program.run_inputs));
+                    if result.program_result.is_ok() {
+                        continue;
+                    }
+                    let code = custom_code(&result);
+                    let kind = code.map(|code| code & 0xffff);
+                    prop_assert!(
+                        kind.is_some_and(|kind| ALLOWED_RUNTIME_ERRORS.contains(&kind)),
+                        "unexpected failure {code:?} (structural kinds are {STRUCTURAL_RUNTIME_ERRORS:?}): {result:#?}"
+                    );
+                }
+                Ok(())
+            })
+            .unwrap_or_else(|failure| panic!("{failure}"));
+    }
+
     /// Loads a compiler fixture written by `pnpm fixtures`.
     fn fixture(name: &str) -> Vec<u8> {
         let hex = match name {

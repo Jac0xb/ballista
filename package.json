@@ -7,7 +7,7 @@
     "check:sdk": "pnpm --dir clients/js check",
     "check:docs": "vitepress build docs",
     "test": "pnpm run test:core && pnpm run test:sdk",
-    "test:core": "cargo test -p ballista-common -p ballista -p ballista-sdk",
+    "test:core": "cargo test -p ballista-common -p ballista -p ballista-sdk --features ballista-common/proptest",
     "test:sdk": "pnpm --dir clients/js test",
     "fixtures": "UPDATE_FIXTURES=1 pnpm --dir clients/js exec vitest run src/fixtures.test.ts",
     "test:integration": "cargo test --manifest-path tests/ballista/Cargo.toml",

@@ -1,5 +1,7 @@
 mod account;
 pub mod builder;
+#[cfg(feature = "proptest")]
+pub mod generate;
 mod verify;
 mod wire;
 

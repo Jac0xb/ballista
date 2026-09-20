@@ -50,11 +50,20 @@ pub fn template_hash(payload: &[u8]) -> [u8; 32] {
 
 /// Encodes run inputs in the order the template declares them.
 ///
+/// Run data is: one length byte per declared account group, the fixed input values, then one
+/// row of values per batch iteration. Call [`RunInputs::groups`] first when the template declares
+/// groups, then append fixed values, then each row's values in iteration order.
+///
 /// ```
 /// use ballista_sdk::RunInputs;
 ///
 /// let inputs = RunInputs::new().bool(true).u64(55_000).finish();
 /// assert_eq!(inputs, vec![1, 0xd8, 0xd6, 0, 0, 0, 0, 0, 0]);
+///
+/// // Two groups holding 3 and 0 accounts, one fixed u64, then two rows of one u64 each.
+/// let batched = RunInputs::new().groups(&[3, 0]).u64(1).u64(10).u64(20).finish();
+/// assert_eq!(batched.len(), 2 + 8 * 3);
+/// assert_eq!(&batched[..2], &[3, 0]);
 /// ```
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RunInputs {
@@ -64,6 +73,14 @@ pub struct RunInputs {
 impl RunInputs {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The account-group length prefix: one byte per declared group, in declaration order. Must
+    /// come before any value.
+    pub fn groups(mut self, lengths: &[u8]) -> Self {
+        assert!(self.bytes.is_empty(), "group lengths come before the input values");
+        self.bytes.extend_from_slice(lengths);
+        self
     }
 
     pub fn bool(mut self, value: bool) -> Self {

@@ -145,6 +145,10 @@ impl ProgramView<'_> {
         if root_cpis > MAX_EXPANDED_CPIS {
             return Err(TemplateError::ExcessiveCpiExpansion);
         }
+        // Descriptors that no instruction invokes still shape the executor's scratch buffers.
+        for index in 0..self.cpis.len() {
+            self.verify_cpi_shape(index)?;
+        }
 
         Ok(VerificationStats {
             fixed_accounts: header.fixed_account_count() as u8,
@@ -246,26 +250,25 @@ impl ProgramView<'_> {
                 self.require_account(instruction.a, in_loop)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_PUBKEY))?;
             }
-            OP_ACCOUNT_LAMPORTS | OP_ACCOUNT_DATA_LEN | OP_READ_U64 | OP_READ_U8 | OP_READ_U16
-            | OP_READ_U32 => {
+            OP_ACCOUNT_LAMPORTS | OP_ACCOUNT_DATA_LEN => {
                 self.require_account(instruction.a, in_loop)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
             }
-            OP_ACCOUNT_IS_EMPTY | OP_READ_BOOL => {
+            OP_ACCOUNT_IS_EMPTY => {
                 self.require_account(instruction.a, in_loop)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_BOOL))?;
             }
-            OP_READ_I64 => {
-                self.require_account(instruction.a, in_loop)?;
-                self.write_register(registers, instruction.dst, scalar(VALUE_I64))?;
-            }
-            OP_READ_U128 => {
-                self.require_account(instruction.a, in_loop)?;
-                self.write_register(registers, instruction.dst, scalar(VALUE_U128))?;
-            }
-            OP_READ_PUBKEY => {
-                self.require_account(instruction.a, in_loop)?;
-                self.write_register(registers, instruction.dst, scalar(VALUE_PUBKEY))?;
+            OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_U128
+            | OP_READ_PUBKEY | OP_READ_BOOL => {
+                self.verify_read_bounds(instruction, instruction_index, in_loop)?;
+                let value_type = match instruction.opcode {
+                    OP_READ_I64 => VALUE_I64,
+                    OP_READ_U128 => VALUE_U128,
+                    OP_READ_PUBKEY => VALUE_PUBKEY,
+                    OP_READ_BOOL => VALUE_BOOL,
+                    _ => VALUE_U64,
+                };
+                self.write_register(registers, instruction.dst, scalar(value_type))?;
             }
             OP_CLOCK_SLOT => self.write_register(registers, instruction.dst, scalar(VALUE_U64))?,
             OP_CLOCK_TIMESTAMP => {
@@ -440,17 +443,41 @@ impl ProgramView<'_> {
         Ok(len)
     }
 
-    fn verify_cpi(
+    /// A fixed-offset read must stay inside the account's declared minimum data length, so the
+    /// runtime never fails on an offset the author could have caught at compile time.
+    fn verify_read_bounds(
         &self,
-        index: usize,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
         in_loop: bool,
-        registers: &[Option<RegisterInfo>; MAX_REGISTERS],
-    ) -> Result<usize, TemplateError> {
+    ) -> Result<(), TemplateError> {
+        let constraint = self
+            .account_constraint(instruction.a, in_loop)
+            .ok_or(TemplateError::InvalidAccountConstraint(instruction.a as usize))?;
+        let width = read_width(instruction.opcode);
+        let end = usize::try_from(instruction.immediate())
+            .ok()
+            .and_then(|offset| offset.checked_add(width))
+            .ok_or(TemplateError::ReadOutOfBounds(instruction_index))?;
+        if end > constraint.min_data_len() {
+            return Err(TemplateError::ReadOutOfBounds(instruction_index));
+        }
+        Ok(())
+    }
+
+    /// Structural checks that apply to every CPI descriptor, invoked or not.
+    fn verify_cpi_shape(&self, index: usize) -> Result<&CpiDescriptor, TemplateError> {
         let descriptor = self
             .cpis
             .get(index)
             .ok_or(TemplateError::InvalidCpi(index))?;
         if descriptor.reserved0 != 0 || descriptor.reserved1 != [0; 2] {
+            return Err(TemplateError::InvalidCpi(index));
+        }
+        if descriptor.account_len as usize > MAX_CPI_ACCOUNTS {
+            return Err(TemplateError::TooManyCpiAccounts(index));
+        }
+        if descriptor.max_data_len() > MAX_CPI_DATA_LEN {
             return Err(TemplateError::InvalidCpi(index));
         }
         let account_end = descriptor
@@ -464,6 +491,18 @@ impl ProgramView<'_> {
         if account_end > self.cpi_accounts.len() || segment_end > self.data_segments.len() {
             return Err(TemplateError::InvalidCpi(index));
         }
+        Ok(descriptor)
+    }
+
+    fn verify_cpi(
+        &self,
+        index: usize,
+        in_loop: bool,
+        registers: &[Option<RegisterInfo>; MAX_REGISTERS],
+    ) -> Result<usize, TemplateError> {
+        let descriptor = self.verify_cpi_shape(index)?;
+        let account_end = descriptor.account_start() + descriptor.account_len as usize;
+        let segment_end = descriptor.segment_start() + descriptor.segment_len as usize;
         let program = self
             .account_constraint(descriptor.program_account, in_loop)
             .ok_or(TemplateError::InvalidCpi(index))?;
@@ -601,6 +640,19 @@ const fn is_value_type(value_type: u8) -> bool {
 
 fn valid_range(total: usize, offset: usize, len: usize) -> bool {
     offset.checked_add(len).is_some_and(|end| end <= total)
+}
+
+/// Bytes read from account data by each `OP_READ_*` opcode.
+pub const fn read_width(opcode: u8) -> usize {
+    match opcode {
+        OP_READ_U8 | OP_READ_BOOL => 1,
+        OP_READ_U16 => 2,
+        OP_READ_U32 => 4,
+        OP_READ_U64 | OP_READ_I64 => 8,
+        OP_READ_U128 => 16,
+        OP_READ_PUBKEY => 32,
+        _ => 0,
+    }
 }
 
 #[cfg(test)]
@@ -1281,6 +1333,124 @@ mod tests {
         assert_eq!(
             verify_builder(&builder),
             Err(TemplateError::InvalidInstruction(0))
+        );
+    }
+
+    #[test]
+    fn cpi_account_counts_are_bounded_even_when_never_invoked() {
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let target = builder.account(0, None, None, 0);
+        let accounts = vec![(target, 0u8); MAX_CPI_ACCOUNTS + 1];
+        let cpi = builder.cpi(program, &accounts, &[]);
+        builder.invoke(cpi, None);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::TooManyCpiAccounts(0))
+        );
+
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let target = builder.account(0, None, None, 0);
+        let accounts = vec![(target, 0u8); MAX_CPI_ACCOUNTS];
+        let cpi = builder.cpi(program, &accounts, &[]);
+        builder.invoke(cpi, None);
+        assert!(verify_builder(&builder).is_ok(), "exactly 64 accounts are allowed");
+
+        // A descriptor that no instruction invokes still has to be well formed, because the
+        // executor sizes its scratch buffers from every descriptor's declared data length.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let dead = builder.cpi(program, &[], &[]);
+        builder.set_cpi_max_data_len(dead, u16::MAX);
+        builder.const_bool(true);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
+
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let target = builder.account(0, None, None, 0);
+        let accounts = vec![(target, 0u8); MAX_CPI_ACCOUNTS + 1];
+        builder.cpi(program, &accounts, &[]);
+        builder.const_bool(true);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::TooManyCpiAccounts(0))
+        );
+
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        builder.cpi(program, &[], &[]);
+        builder.cpis_mut()[0].account_start_le = 9u16.to_le_bytes();
+        builder.const_bool(true);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
+    }
+
+    #[test]
+    fn fixed_offset_reads_must_fit_the_declared_minimum_data_length() {
+        let read_at = |offset: u64, min_data_len: u32| {
+            let mut builder = ProgramBuilder::new();
+            let account = builder.account(0, None, Some([2; 32]), min_data_len);
+            let value = builder.read(OP_READ_U64, account, offset);
+            let same = builder.binary(OP_EQ, value, value);
+            builder.require(same);
+            verify_builder(&builder)
+        };
+        assert!(read_at(56, 64).is_ok());
+        assert_eq!(read_at(57, 64), Err(TemplateError::ReadOutOfBounds(0)));
+        assert_eq!(read_at(0, 0), Err(TemplateError::ReadOutOfBounds(0)));
+        assert_eq!(read_at(u64::MAX, 64), Err(TemplateError::ReadOutOfBounds(0)));
+
+        // Every read width is checked against its own size.
+        let widths = [
+            (OP_READ_BOOL, 1u64),
+            (OP_READ_U8, 1),
+            (OP_READ_U16, 2),
+            (OP_READ_U32, 4),
+            (OP_READ_U64, 8),
+            (OP_READ_I64, 8),
+            (OP_READ_U128, 16),
+            (OP_READ_PUBKEY, 32),
+        ];
+        for (opcode, width) in widths {
+            let mut builder = ProgramBuilder::new();
+            let account = builder.account(0, None, None, 40);
+            let value = builder.read(opcode, account, 40 - width);
+            let same = builder.binary(OP_EQ, value, value);
+            builder.require(same);
+            assert!(verify_builder(&builder).is_ok(), "opcode {opcode} at the boundary");
+            let mut builder = ProgramBuilder::new();
+            let account = builder.account(0, None, None, 40);
+            let value = builder.read(opcode, account, 41 - width);
+            let same = builder.binary(OP_EQ, value, value);
+            builder.require(same);
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::ReadOutOfBounds(0)),
+                "opcode {opcode} one past the boundary"
+            );
+        }
+
+        // Row accounts use the row constraint.
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 16);
+        builder.batch(2, 0);
+        builder.for_each(0, |body| {
+            let value = body.read(OP_READ_U64, row, 8);
+            let same = body.binary(OP_EQ, value, value);
+            body.require(same);
+        });
+        assert!(verify_builder(&builder).is_ok());
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 16);
+        builder.batch(2, 0);
+        builder.for_each(0, |body| {
+            let value = body.read(OP_READ_U64, row, 9);
+            let same = body.binary(OP_EQ, value, value);
+            body.require(same);
+        });
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::ReadOutOfBounds(1))
         );
     }
 

@@ -56,7 +56,7 @@ const transfer = defineTemplate({
   ],
 });
 
-describe('Ballista 0.3 compiler', () => {
+describe('Ballista compiler', () => {
   test('compiles the system transfer with stable stats and a matching inspection', () => {
     const compiled = compileTemplate(transfer);
     expect(compiled.stats).toMatchObject({
@@ -67,7 +67,7 @@ describe('Ballista 0.3 compiler', () => {
       batchMinIterations: 0,
       emitEvent: false,
     });
-    expect(compiled.bytes[4]).toBe(3);
+    expect(compiled.bytes[4]).toBe(1);
     expect(inspectTemplate(compiled.bytes)).toEqual(compiled.stats);
     expect(compiled.sourceMap).toEqual([
       { pc: 0, path: 'steps[0]' },

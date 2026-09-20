@@ -1,7 +1,7 @@
 # Wire format
 
 The template payload is a canonical sequence of alignment-free fixed-record tables followed by
-constant pubkeys and literal bytes. This page describes bytecode version 3.
+constant pubkeys and literal bytes. This page describes bytecode version 1, the only version the program accepts.
 
 ```text
 ProgramHeader
@@ -31,8 +31,8 @@ The header is 24 bytes.
 
 | Offset | Bytes | Field |
 | ---: | ---: | --- |
-| 0 | 4 | Magic `BVM2` |
-| 4 | 1 | Version, `3` |
+| 0 | 4 | Magic `BVM1` |
+| 4 | 1 | Version, `1` |
 | 5 | 1 | Fixed account count |
 | 6 | 1 | Batch stride (row accounts) |
 | 7 | 1 | Batch maximum iterations |
@@ -66,7 +66,7 @@ Every VM instruction is 16 bytes:
 | immediate | 8 | scalar, packed offset/length, or carry mask |
 | reserved | 2 | must be zero |
 
-Version 3 additions:
+Batch, return-data, and move opcodes:
 
 | Opcode | Name | Operands |
 | ---: | --- | --- |

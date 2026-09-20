@@ -1,7 +1,7 @@
-# Ballista 0.3 measurements
+# Measurements
 
 Measurements are produced by the Agave 4.1-aligned Mollusk 0.14 suite from the compiled SBF
-program at bytecode version 3. They are regression evidence, not cluster-wide fee or latency
+program. They are regression evidence, not cluster-wide fee or latency
 promises. Run `cargo test --manifest-path tests/ballista/Cargo.toml -- --nocapture` and grep for
 `compute units` to reproduce them.
 

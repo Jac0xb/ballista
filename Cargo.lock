@@ -22,7 +22,7 @@ checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
 
 [[package]]
 name = "ballista"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "ballista-common",
  "pinocchio",
@@ -34,7 +34,7 @@ dependencies = [
 
 [[package]]
 name = "ballista-common"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "proptest",
  "zerocopy",
@@ -42,7 +42,7 @@ dependencies = [
 
 [[package]]
 name = "ballista-sdk"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "ballista-common",
  "solana-program",

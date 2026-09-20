@@ -7,15 +7,15 @@ change what a finalized template means after the fact, and templates are bound t
 that finalized them. Moving to a new bytecode version means deploying a new program and uploading
 templates under it.
 
-| Bytecode | Program | Status |
+| Build | Program | Status |
 | --- | --- | --- |
-| 2 | [`BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD`](https://explorer.solana.com/address/BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD?cluster=devnet) | Deployed on devnet; predates `derivePda` |
-| 3 | not yet deployed | Current source; run it locally with the Mollusk suite |
+| Pre-release | [`BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD`](https://explorer.solana.com/address/BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD?cluster=devnet) | Deployed on devnet; predates the current bytecode and `derivePda` |
+| Current | not yet deployed | Run it locally with the Mollusk suite |
 
-::: warning Version 3 templates need a version 3 deployment
-The SDKs in this repository compile bytecode version 3. The devnet program above rejects it with
-`UnsupportedVersion`. Pass the version 3 program address to the SDKs once it is deployed, or run
-against Mollusk locally with `pnpm build:program && pnpm test:integration`.
+::: warning Templates from this repository need the final deployment
+The devnet program above rejects them with `UnsupportedVersion`. Pass the final program address to
+the SDKs once it is deployed, or run against Mollusk locally with
+`pnpm build:program && pnpm test:integration`.
 :::
 
 ## Run the ATA example

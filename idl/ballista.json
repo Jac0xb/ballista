@@ -2,7 +2,7 @@
   "address": "BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD",
   "metadata": {
     "name": "ballista",
-    "version": "0.3.0",
+    "version": "1.0.0",
     "spec": "0.1.0",
     "description": "Bounded orchestration VM for immutable, reusable SVM transaction templates",
     "repository": "https://github.com/Jac0xb/ballista",

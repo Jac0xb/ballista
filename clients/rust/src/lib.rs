@@ -24,7 +24,7 @@ pub const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111"
 pub const TOKEN_PROGRAM_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 pub const ASSOCIATED_TOKEN_PROGRAM_ID: Pubkey =
     pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
-pub const TEMPLATE_SEED: &[u8] = b"template-v2";
+pub const TEMPLATE_SEED: &[u8] = b"template";
 
 pub fn find_template_pda(creator: &Pubkey, template_id: u16) -> (Pubkey, u8) {
     find_template_pda_for_program(creator, template_id, &ID)

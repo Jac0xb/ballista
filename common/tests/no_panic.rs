@@ -64,7 +64,7 @@ proptest! {
         counts in proptest::collection::vec(any::<u8>(), 20),
     ) {
         // Keep magic and version valid so parsing reaches the section arithmetic.
-        let mut bytes = b"BVM2\x03".to_vec();
+        let mut bytes = b"BVM1\x01".to_vec();
         bytes.extend_from_slice(&counts[..19]);
         bytes.extend_from_slice(&body);
         parse_and_verify(&bytes);

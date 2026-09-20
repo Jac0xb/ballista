@@ -216,7 +216,7 @@ export async function getTemplateAddress(
   const [templateAddress, bump] = await getProgramDerivedAddress({
     programAddress,
     seeds: [
-      new TextEncoder().encode('template-v2'),
+      new TextEncoder().encode('template'),
       getAddressEncoder().encode(creator),
       Uint8Array.of(templateId & 0xff, templateId >>> 8),
     ],

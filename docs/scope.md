@@ -1,4 +1,4 @@
-# Ballista 0.3 scope and limits
+# Scope and limits
 
 ## Product statement
 

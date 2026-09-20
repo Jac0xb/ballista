@@ -28,7 +28,7 @@ mod tests {
 
     const BALLISTA_ELF: &[u8] = include_bytes!("../../../target/deploy/ballista.so");
     const ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
-    const TEMPLATE_SEED: &[u8] = b"template-v2";
+    const TEMPLATE_SEED: &[u8] = b"template";
 
     #[test]
     fn one_shot_open_run_guards_and_privileges() {
@@ -46,7 +46,7 @@ mod tests {
         {
             let store = context.account_store.borrow();
             let template_account = store.get(&template).expect("template account");
-            let decoded = TemplateAccount::parse(template_account.data()).expect("v2 template");
+            let decoded = TemplateAccount::parse(template_account.data()).expect("template account");
             assert!(decoded.finalized_program().is_ok());
             assert_eq!(decoded.payload(), payload);
         }

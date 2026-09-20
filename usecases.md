@@ -5,11 +5,11 @@ read state, calculate typed values, guard effects, build CPI data, and repeat a 
 tail account range. It does not add custody, scheduling, or protocol behavior that the invoked
 programs do not already expose.
 
-The table records what the Ballista 0.3 language can express. "External capability"
+The table records what the Ballista language can express. "External capability"
 means the workflow also depends on a downstream protocol instruction, transaction signer, oracle,
 delegate, multisig, or other account state.
 
-| # | Use case | Ballista 0.3 capability | External capability required |
+| # | Use case | Ballista capability | External capability required |
 | -: | --- | --- | --- |
 | 1 | Batch SOL payroll | Bounded account range and System Program CPI | Funding-authority signer |
 | 2 | Batch SPL token payouts | Bounded account range and Token Program CPI | Token-authority signer |
@@ -47,4 +47,4 @@ delegate, multisig, or other account state.
 - The single bounded account range is for compression, not unbounded computation. Its iteration
   count is inferred from the supplied tail accounts and constrained at template finalization.
 - Automation without an end-user signature requires an authority or delegate model provided by a
-  downstream program. Ballista 0.3 does not custody assets or sign through a per-user PDA.
+  downstream program. Ballista does not custody assets or sign through a per-user PDA.

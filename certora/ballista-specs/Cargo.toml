@@ -1,6 +1,6 @@
 [package]
 name = "ballista-specs"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2021"
 license = "MIT"
 description = "Certora Solana Prover specifications for the Ballista program"

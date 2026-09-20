@@ -1,4 +1,4 @@
-# Ballista 0.3
+# Ballista
 
 Ballista is an on-chain transaction-template engine for Solana. Define a multi-program workflow
 once, compile it into bounded bytecode, store it in an immutable account, and let any caller execute
@@ -27,11 +27,10 @@ by the 0.3 runtime.
 - Deployed SBF: 78,192 bytes, SHA-256 `cd13bbf4d5e695ef9b50a2e6eaff749c0c9edd74c847efbc0cd5021ca2123b11`
 - Explorer IDL: [`JDQL78RmakzfYKcWzAC56CmUGNhCMtje3HvDCyiH2xCX`](https://explorer.solana.com/address/JDQL78RmakzfYKcWzAC56CmUGNhCMtje3HvDCyiH2xCX?cluster=devnet)
 
-That deployment runs bytecode version 2. This repository now compiles bytecode version 3, which
-the devnet program rejects as `UnsupportedVersion`. Every program version is deployed immutably
-under its own address, so version 3 templates need the version 3 deployment; until then, run them
-locally with `pnpm build:program && pnpm test:integration`. See the
-[deployment policy](https://jac0xb.github.io/ballista/guide/devnet).
+That deployment is an earlier pre-release build and rejects templates compiled from this
+repository with `UnsupportedVersion`. The program is deployed once and immutably; until that
+deployment exists, run templates locally with `pnpm build:program && pnpm test:integration`. See
+the [deployment policy](https://jac0xb.github.io/ballista/guide/devnet).
 
 The checked-in [IDL](idl/ballista.json) is published through Solana's Program Metadata program.
 It describes Ballista's accounts and instructions for Explorer discovery; instruction fields marked
@@ -192,7 +191,7 @@ cargo run -p ballista-sdk --example run_template      # encode inputs and decode
 
 ## Template lifecycle
 
-Template PDAs use `['template-v2', creator, templateId]`. Small payloads use `CreateTemplate`;
+Template PDAs use `['template', creator, templateId]`. Small payloads use `CreateTemplate`;
 larger payloads use `BeginTemplate`, sequential `WriteTemplateChunk` calls, and `FinalizeTemplate`.
 Only uploading templates can be cancelled. Finalized bytes are immutable and cannot be closed.
 

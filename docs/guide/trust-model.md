@@ -57,8 +57,9 @@ executor and only then mapped to codes, so a callee's `6001` is never mistaken f
 
 Each version of the Ballista program is deployed immutably under its own address; there is no
 upgrade authority that can change what a stored template means. Template addresses are derived
-under the program that finalized them, so a template is bound to one deployment forever. Moving to
-a new bytecode version means uploading templates again under the new program address.
+under the program that finalized them, so a template is bound to one deployment forever. A
+different deployment is a different program, and templates would have to be uploaded again under
+it.
 
 The SDKs take the program address as a parameter everywhere for this reason. The address in the
-README is the version 2 devnet deployment; version 3 templates need the version 3 deployment.
+README is an earlier pre-release deployment; templates from this repository need the final one.

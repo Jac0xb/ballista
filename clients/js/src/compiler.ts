@@ -14,7 +14,7 @@ import {
   type ValueType,
 } from './schema.js';
 
-export const TEMPLATE_PROGRAM_VERSION = 3;
+export const TEMPLATE_PROGRAM_VERSION = 1;
 export const MAX_TEMPLATE_PAYLOAD_LENGTH = 10_240;
 export const MAX_RUNTIME_ACCOUNTS = 120;
 export const MAX_ROW_INPUTS = 8;
@@ -296,7 +296,7 @@ class Compiler {
     }
 
     const header = new Writer();
-    header.raw([0x42, 0x56, 0x4d, 0x32]);
+    header.raw([0x42, 0x56, 0x4d, 0x31]);
     header.u8(TEMPLATE_PROGRAM_VERSION);
     header.u8(this.fixedEntries.length);
     header.u8(this.batchEntries.length);

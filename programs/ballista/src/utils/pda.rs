@@ -1,6 +1,6 @@
 use solana_address::Address;
 
-pub const TEMPLATE_SEED: &[u8] = b"template-v2";
+pub const TEMPLATE_SEED: &[u8] = b"template";
 
 pub fn get_template_address(creator: &Address, id: u16) -> (Address, u8) {
     let (pubkey, bump) = Address::find_program_address(

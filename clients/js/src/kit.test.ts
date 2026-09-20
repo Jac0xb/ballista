@@ -33,9 +33,9 @@ const byteAddress = (byte: number) => decoder.decode(new Uint8Array(32).fill(byt
 const systemAddress = address('11111111111111111111111111111111');
 
 describe('Solana Kit adapter', () => {
-  test('derives the template-v2 PDA identically to Rust', async () => {
+  test('derives the template PDA identically to Rust', async () => {
     await expect(getTemplateAddress(systemAddress, 7)).resolves.toEqual([
-      address('HJhruxADGAkstBRu5Kj77XG6tGmkVHUQZ5JmgNd6xm2f'),
+      address('CFbBQL1sPP69VFwLutH11V4cpaCUSyvaCDfAeetHEtJW'),
       255,
     ]);
   });

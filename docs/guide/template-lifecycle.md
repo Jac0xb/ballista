@@ -1,6 +1,6 @@
 # Template lifecycle
 
-Templates are immutable PDA accounts derived from `['template-v2', creator, templateId]`.
+Templates are immutable PDA accounts derived from `['template', creator, templateId]`.
 
 ## One-shot creation
 

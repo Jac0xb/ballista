@@ -332,7 +332,7 @@ export function decodeTemplateAccount(data: Uint8Array): DecodedTemplateAccount 
 export function inspectTemplate(bytes: Uint8Array): CompileStats {
   if (bytes.length < 24) throw new RangeError('Template program is truncated');
   const reader = new Reader(bytes);
-  if (!equalBytes(reader.bytes(4), Uint8Array.of(0x42, 0x56, 0x4d, 0x32))) {
+  if (!equalBytes(reader.bytes(4), Uint8Array.of(0x42, 0x56, 0x4d, 0x31))) {
     throw new TypeError('Invalid template program magic');
   }
   if (reader.u8() !== TEMPLATE_PROGRAM_VERSION) throw new TypeError('Unsupported template program version');

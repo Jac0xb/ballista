@@ -1,6 +1,6 @@
 {
   "name": "@jac0xb/ballista",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "description": "Zod authoring and deterministic bytecode compiler for Ballista",
   "license": "MIT",
   "type": "module",

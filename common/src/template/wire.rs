@@ -2,8 +2,8 @@ use core::{fmt, mem::size_of};
 
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
-pub const TEMPLATE_PROGRAM_MAGIC: [u8; 4] = *b"BVM2";
-pub const TEMPLATE_PROGRAM_VERSION: u8 = 3;
+pub const TEMPLATE_PROGRAM_MAGIC: [u8; 4] = *b"BVM1";
+pub const TEMPLATE_PROGRAM_VERSION: u8 = 1;
 
 pub const MAX_TEMPLATE_PAYLOAD_LEN: usize = 10_240;
 pub const MAX_RUNTIME_ACCOUNTS: usize = 120;
@@ -711,9 +711,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn v3_header_round_trips_min_iterations_and_flags() {
+    fn header_round_trips_min_iterations_and_flags() {
         let header = ProgramHeader::new(1, 1, 4, 2, 0, 0, 1, 0, 0, 0, 0, PROGRAM_FLAG_EMIT_EVENT, 0, 0, 0);
-        assert_eq!(header.version(), 3);
+        assert_eq!(header.version(), 1);
         assert_eq!(header.batch_min_iterations(), 2);
         assert_eq!(header.flags(), PROGRAM_FLAG_EMIT_EVENT);
         assert_eq!(PROGRAM_HEADER_LEN, 24);

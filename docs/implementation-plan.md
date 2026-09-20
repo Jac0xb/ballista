@@ -1,4 +1,4 @@
-# Ballista 0.3 implementation plan
+# Implementation plan
 
 This plan tracks the clean-break bounded orchestration VM. The 25 workflows in
 [use-case matrix](/use-cases) are acceptance scenarios for the language surface, subject to the
@@ -15,7 +15,7 @@ external programs, accounts, and authorities listed there.
 
 ## 2. Immutable template lifecycle
 
-- [x] Derive `template-v2` PDAs from creator and template ID.
+- [x] Derive `template` PDAs from creator and template ID.
 - [x] Implement one-shot create plus begin, sequential chunk write, finalize, and upload cancel.
 - [x] Store creator, ID, state, lengths, bump, and SHA-256 hash in an 80-byte v2 header.
 - [x] Make finalized templates public, repeatable, immutable, and non-closeable.
@@ -54,7 +54,7 @@ external programs, accounts, and authorities listed there.
 - [x] Pass Rust checks/tests, TypeScript checks/tests, SBF build, fixture parity, and
   `git diff --check`.
 
-## 6. Bytecode version 3 hardening
+## 6. Bytecode hardening
 
 - [x] Attribute VM failures to a program counter, account index, or input index in the error code,
   and pass invoked-program errors through untouched.
@@ -77,7 +77,7 @@ external programs, accounts, and authorities listed there.
 - [x] Run host and integration suites in CI on every pull request.
 - [x] Specify the executor, verifier, parser, account constraints, and lifecycle for the Certora
   Solana Prover, with a pinocchio account adapter.
-- [ ] Deploy version 3 immutably under a new address and refresh the IDL.
+- [ ] Deploy the program immutably and refresh the IDL.
 
 ## Supported workflow scenarios
 

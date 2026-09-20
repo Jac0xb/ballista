@@ -65,6 +65,7 @@ const ACCOUNT_OVERHEAD_BYTES = 128;
 const TEMPLATE_ACCOUNT_HEADER_BYTES = 80;
 
 const FIXTURE_PATH = fileURLToPath(new URL('../../../fixtures/benchmarks.json', import.meta.url));
+const SWEEP_PATH = fileURLToPath(new URL('../../../fixtures/benchmark-sweeps.json', import.meta.url));
 
 /** Roles the Mollusk benchmark knows how to materialize. */
 type Role =
@@ -142,8 +143,14 @@ function standInData(lamports: bigint, padding: number): string {
   return transferData(lamports) + '00'.repeat(padding);
 }
 
-const ROW_COUNT = 8;
 const AMOUNT = 10_000n;
+/** Rows each batch example is measured at: the maximum its template declares. */
+const PAYROLL_ROWS = 30;
+const TOKEN_PAYROLL_ROWS = 32;
+const ATA_ROWS = 8;
+const CLOSE_ROWS = 16;
+const DISTRIBUTE_ROWS = 16;
+const CRANK_ROWS = 24;
 
 const cases: BenchmarkCase[] = [];
 
@@ -169,12 +176,12 @@ cases.push({
     ],
   }),
   accounts: { systemProgram: 'system-program', treasury: 'signer' },
-  rows: Array.from({ length: ROW_COUNT }, () => ({ recipient: 'recipient' as Role })),
+  rows: Array.from({ length: PAYROLL_ROWS }, () => ({ recipient: 'recipient' as Role })),
   inputs: { amount: AMOUNT },
   baseline: {
     verdict: 'equivalent',
     note: 'One System transfer per recipient does the same work.',
-    instructions: Array.from({ length: ROW_COUNT }, (_, index) => ({
+    instructions: Array.from({ length: PAYROLL_ROWS }, (_, index) => ({
       program: 'system-program' as Role,
       accounts: [
         { index: 1, signer: true, writable: true },
@@ -269,12 +276,12 @@ cases.push({
     ],
   }),
   accounts: { systemProgram: 'system-program', treasury: 'signer' },
-  rows: Array.from({ length: ROW_COUNT }, () => ({ recipient: 'recipient' as Role })),
+  rows: Array.from({ length: PAYROLL_ROWS }, () => ({ recipient: 'recipient' as Role })),
   inputs: { base: 1_000n },
   baseline: {
     verdict: 'weaker',
     note: 'Transfers with client-computed weights settle the same way; the weighting rule itself is not enforced on chain.',
-    instructions: Array.from({ length: ROW_COUNT }, (_, index) => ({
+    instructions: Array.from({ length: PAYROLL_ROWS }, (_, index) => ({
       program: 'system-program' as Role,
       accounts: [
         { index: 1, signer: true, writable: true },
@@ -430,12 +437,12 @@ cases.push({
     authority: 'signer',
     source: 'source-tokens',
   },
-  rows: Array.from({ length: 4 }, () => ({ recipient: 'recipient' as Role, destinationAta: 'recipient-ata' as Role })),
+  rows: Array.from({ length: ATA_ROWS }, () => ({ recipient: 'recipient' as Role, destinationAta: 'recipient-ata' as Role })),
   inputs: { amount: 1_000n },
   baseline: {
     verdict: 'equivalent',
     note: 'ATA CreateIdempotent then Transfer per recipient. The ATA program derives the address itself, so the guarantee matches.',
-    instructions: Array.from({ length: 4 }, (_, index) => [
+    instructions: Array.from({ length: ATA_ROWS }, (_, index) => [
       {
         program: 'ata-program' as Role,
         accounts: [
@@ -490,12 +497,12 @@ cases.push({
     ],
   }),
   accounts: { tokenProgram: 'token-program', source: 'source-tokens', authority: 'signer' },
-  rows: Array.from({ length: ROW_COUNT }, () => ({ destination: 'recipient-tokens' as Role })),
+  rows: Array.from({ length: TOKEN_PAYROLL_ROWS }, () => ({ destination: 'recipient-tokens' as Role })),
   inputs: { amount: 1_000n },
   baseline: {
     verdict: 'equivalent',
     note: 'One SPL Token transfer per destination does the same work.',
-    instructions: Array.from({ length: ROW_COUNT }, (_, index) => ({
+    instructions: Array.from({ length: TOKEN_PAYROLL_ROWS }, (_, index) => ({
       program: 'token-program' as Role,
       accounts: [
         { index: 1, signer: false, writable: true },
@@ -597,11 +604,11 @@ cases.push({
     ],
   }),
   accounts: { tokenProgram: 'token-program', rentDestination: 'recipient', authority: 'signer' },
-  rows: Array.from({ length: 4 }, () => ({ tokenAccount: 'empty-tokens' as Role })),
+  rows: Array.from({ length: CLOSE_ROWS }, () => ({ tokenAccount: 'empty-tokens' as Role })),
   baseline: {
     verdict: 'weaker',
     note: 'CloseAccount per candidate works only while every candidate is empty: SPL Token rejects a funded account, which fails the whole transaction instead of skipping that row.',
-    instructions: Array.from({ length: 4 }, (_, index) => ({
+    instructions: Array.from({ length: CLOSE_ROWS }, (_, index) => ({
       program: 'token-program' as Role,
       accounts: [
         { index: 3 + index, signer: false, writable: true },
@@ -1059,7 +1066,7 @@ cases.push({
     treasuryTokens: 'source-tokens',
     authority: 'signer',
   },
-  rows: Array.from({ length: ROW_COUNT }, () => ({ recipientTokens: 'recipient-tokens' as Role })),
+  rows: Array.from({ length: DISTRIBUTE_ROWS }, () => ({ recipientTokens: 'recipient-tokens' as Role })),
   inputs: { amountPerRecipient: 1_000n },
   baseline: {
     verdict: 'equivalent',
@@ -1073,7 +1080,7 @@ cases.push({
         ],
         data: transferData(AMOUNT),
       },
-      ...Array.from({ length: ROW_COUNT }, (_, index) => ({
+      ...Array.from({ length: DISTRIBUTE_ROWS }, (_, index) => ({
         program: 'token-program' as Role,
         accounts: [
           { index: 4, signer: false, writable: true },
@@ -1229,6 +1236,7 @@ cases.push({
           accounts: [
             { account: account.fixed('keeper'), signer: true, writable: true },
             { account: account.iteration('market'), writable: true, signer: false },
+            { account: account.iteration('queue'), writable: true, signer: false },
           ],
           data: [data.literal(Uint8Array.of(2, 0, 0, 0)), data.encode('u64', expression.u64(1_000n))],
         }),
@@ -1236,20 +1244,109 @@ cases.push({
     ],
   }),
   accounts: { protocolProgram: 'system-program', keeper: 'signer' },
-  rows: Array.from({ length: 4 }, () => ({ market: 'recipient' as Role, queue: 'recipient' as Role })),
+  rows: Array.from({ length: CRANK_ROWS }, () => ({ market: 'recipient' as Role, queue: 'recipient' as Role })),
   baseline: {
     verdict: 'equivalent',
     note: 'One crank instruction per row does the same work.',
-    instructions: Array.from({ length: 4 }, (_, index) => ({
+    instructions: Array.from({ length: CRANK_ROWS }, (_, index) => ({
       program: 'system-program' as Role,
       accounts: [
         { index: 1, signer: true, writable: true },
         { index: 2 + index * 2, signer: false, writable: true },
+        { index: 3 + index * 2, signer: false, writable: true },
       ],
       data: transferData(1_000n),
     })),
   },
 });
+
+// ------------------------------------------------------------------ sweeps
+
+interface Sweep {
+  label: string;
+  /** The label as it reads mid-sentence in the chart caption. */
+  captionLabel: string;
+  template: Template;
+  /** Roles of the fixed accounts, in template order. */
+  fixed: Role[];
+  inputs: Record<string, RunInputValue>;
+  maxRows: number;
+  baselineProgram: Role;
+  baselineData: string;
+  baselineAccounts: (
+    addresses: Address[],
+    rowIndex: number,
+  ) => { address: Address; signer: boolean; writable: boolean }[];
+}
+
+const SWEEPS: Record<string, Sweep> = {
+  'sol-transfer': {
+    label: 'SOL transfer',
+    captionLabel: 'SOL transfer',
+    template: defineTemplate({
+      inputs: { amount: { type: 'u64' } },
+      accounts: { ...systemPrograms, treasury: { signer: true, writable: true } },
+      batch: { maxIterations: 30, minIterations: 1, row: { recipient: { writable: true } } },
+      steps: [
+        step.forEach([
+          systemTransfer({
+            systemProgram: account.fixed('systemProgram'),
+            from: account.fixed('treasury'),
+            to: account.iteration('recipient'),
+            lamports: expression.input('amount'),
+          }),
+        ]),
+      ],
+    }),
+    fixed: ['system-program', 'signer'],
+    inputs: { amount: AMOUNT },
+    maxRows: 30,
+    baselineProgram: 'system-program',
+    baselineData: transferData(AMOUNT),
+    baselineAccounts: (addresses, rowIndex) => [
+      { address: addresses[1]!, signer: true, writable: true },
+      { address: addresses[rowIndex]!, signer: false, writable: true },
+    ],
+  },
+  'token-transfer': {
+    label: 'Token transfer',
+    captionLabel: 'token transfer',
+    template: defineTemplate({
+      inputs: { amount: { type: 'u64' } },
+      accounts: {
+        ...tokenPrograms,
+        source: { writable: true, owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: 165 },
+        authority: { signer: true },
+      },
+      batch: {
+        maxIterations: 32,
+        minIterations: 1,
+        row: { destination: { writable: true, owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: 165 } },
+      },
+      steps: [
+        step.forEach([
+          tokenTransfer({
+            tokenProgram: account.fixed('tokenProgram'),
+            source: account.fixed('source'),
+            destination: account.iteration('destination'),
+            authority: account.fixed('authority'),
+            amount: expression.input('amount'),
+          }),
+        ]),
+      ],
+    }),
+    fixed: ['token-program', 'source-tokens', 'signer'],
+    inputs: { amount: 1_000n },
+    maxRows: 32,
+    baselineProgram: 'token-program',
+    baselineData: tokenTransferData(1_000n),
+    baselineAccounts: (addresses, rowIndex) => [
+      { address: addresses[1]!, signer: false, writable: true },
+      { address: addresses[rowIndex]!, signer: false, writable: true },
+      { address: addresses[2]!, signer: true, writable: false },
+    ],
+  },
+};
 
 // ------------------------------------------------------------- measurement
 
@@ -1398,5 +1495,58 @@ describe('example benchmarks', () => {
     }
     writeFileSync(FIXTURE_PATH, `${JSON.stringify(output, null, 2)}\n`);
     expect(Object.keys(output)).toHaveLength(cases.length);
+  });
+
+  test('sweeps transaction size against the row count', () => {
+    // How the saving grows with the batch. Both sides carry the same recipients; the difference is
+    // that a plain transaction repeats the program index, account indices, and data for every row,
+    // while the run carries them once and pays for two extra account keys.
+    const sweeps: Record<string, unknown> = {};
+    for (const [label, entry] of Object.entries(SWEEPS)) {
+      const compiled = compileTemplate(entry.template);
+      const points: { rows: number; ballista: number; plain: number }[] = [];
+      for (let rows = 1; rows <= entry.maxRows; rows += 1) {
+        const addresses = Array.from({ length: entry.fixed.length + rows }, (_, index) =>
+          index < entry.fixed.length
+            ? (programAddress[entry.fixed[index]!] ?? PLACEHOLDER(index + 1))
+            : PLACEHOLDER(index + 1),
+        );
+        const feePayer = PLACEHOLDER(251);
+        const accounts = Object.fromEntries(
+          compiled.fixedAccountOrder.map((name, index) => [name, { address: addresses[index]! }]),
+        );
+        const batchRows = Array.from({ length: rows }, (_, row) =>
+          Object.fromEntries(
+            compiled.batchAccountOrder.map((name) => [
+              name,
+              { address: addresses[entry.fixed.length + row]! },
+            ]),
+          ),
+        );
+        const run = buildKitRunInstruction({
+          compiled,
+          templateAddress: PLACEHOLDER(250),
+          inputs: entry.inputs,
+          accounts,
+          batchRows,
+        });
+        const plain: Instruction[] = Array.from({ length: rows }, (_, row) => ({
+          programAddress: programAddress[entry.baselineProgram]!,
+          accounts: entry.baselineAccounts(addresses, entry.fixed.length + row).map((account) => ({
+            address: account.address,
+            role: accountRole(account.signer, account.writable),
+          })),
+          data: Uint8Array.from(Buffer.from(entry.baselineData, 'hex')),
+        }));
+        points.push({
+          rows,
+          ballista: measure([run], feePayer),
+          plain: measure(plain, feePayer),
+        });
+      }
+      sweeps[label] = { label: entry.label, captionLabel: entry.captionLabel, points };
+    }
+    writeFileSync(SWEEP_PATH, `${JSON.stringify(sweeps, null, 2)}\n`);
+    expect(Object.keys(sweeps).length).toBeGreaterThan(0);
   });
 });

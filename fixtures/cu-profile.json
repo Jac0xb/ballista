@@ -1,0 +1,142 @@
+{
+  "32-byte bytes input": {
+    "computeUnits": 78,
+    "group": "Inputs",
+    "note": "decoded before execution"
+  },
+  "Account data read": {
+    "computeUnits": 173,
+    "group": "Instructions",
+    "note": "u64 at a fixed offset"
+  },
+  "Account data read, dynamic offset": {
+    "computeUnits": 185,
+    "group": "Instructions",
+    "note": "offset from a register"
+  },
+  "Account emptiness read": {
+    "computeUnits": 105,
+    "group": "Instructions",
+    "note": "bool header field"
+  },
+  "Account key read": {
+    "computeUnits": 115,
+    "group": "Instructions",
+    "note": "32 bytes into a register"
+  },
+  "Account lamports read": {
+    "computeUnits": 102,
+    "group": "Instructions",
+    "note": "u64 header field"
+  },
+  "Account length read": {
+    "computeUnits": 102,
+    "group": "Instructions",
+    "note": "u64 header field"
+  },
+  "Account passed to an invocation": {
+    "computeUnits": 140,
+    "group": "Invocations",
+    "note": "resolved and given a meta"
+  },
+  "Account pinned to an address": {
+    "computeUnits": 67,
+    "group": "Accounts",
+    "note": "32-byte comparison"
+  },
+  "Account pinned to an owner": {
+    "computeUnits": 67,
+    "group": "Accounts",
+    "note": "32-byte comparison"
+  },
+  "Account with a minimum length": {
+    "computeUnits": 46,
+    "group": "Accounts",
+    "note": "length comparison"
+  },
+  "Boolean and": {
+    "computeUnits": 118,
+    "group": "Instructions",
+    "note": "bool && bool"
+  },
+  "Byte of invocation data": {
+    "computeUnits": 0.0,
+    "group": "Invocations",
+    "note": "measured across 1,000 extra bytes"
+  },
+  "Cast": {
+    "computeUnits": 125,
+    "group": "Instructions",
+    "note": "u64 to u128"
+  },
+  "Checked add": {
+    "computeUnits": 159,
+    "group": "Instructions",
+    "note": "u64 + u64"
+  },
+  "Clock slot": {
+    "computeUnits": 205,
+    "group": "Instructions",
+    "note": "sysvar read"
+  },
+  "Clock timestamp": {
+    "computeUnits": 206,
+    "group": "Instructions",
+    "note": "sysvar read"
+  },
+  "Comparison": {
+    "computeUnits": 155,
+    "group": "Instructions",
+    "note": "u64 < u64"
+  },
+  "Constant": {
+    "computeUnits": 86,
+    "group": "Instructions",
+    "note": "const u64"
+  },
+  "Cross-program invocation": {
+    "computeUnits": 1706,
+    "group": "Invocations",
+    "note": "System transfer, 2 accounts, 12 bytes"
+  },
+  "Fixed cost of any run": {
+    "computeUnits": 1012,
+    "group": "Run",
+    "note": "parse, validate, allocate, one assertion"
+  },
+  "Iteration with one invocation": {
+    "computeUnits": 1855,
+    "group": "Batches",
+    "note": "the shape a payroll run repeats"
+  },
+  "Iteration, three instructions": {
+    "computeUnits": 474,
+    "group": "Batches",
+    "note": "one account read, compare, assert"
+  },
+  "Move": {
+    "computeUnits": 106,
+    "group": "Instructions",
+    "note": "copy a register"
+  },
+  "PDA derivation": {
+    "computeUnits": 4846,
+    "group": "Instructions",
+    "note": "one literal seed, bump search"
+  },
+  "Unconstrained account": {
+    "computeUnits": 46,
+    "group": "Accounts",
+    "note": "declared and supplied, nothing checked"
+  },
+  "pubkey input": {
+    "computeUnits": 78,
+    "group": "Inputs",
+    "note": "decoded before execution"
+  },
+  "u64 input": {
+    "computeUnits": 63,
+    "group": "Inputs",
+    "note": "decoded before execution"
+  }
+}

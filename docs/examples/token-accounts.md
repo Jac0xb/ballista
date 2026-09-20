@@ -53,13 +53,13 @@ let run = ballista_sdk::run_instruction(template, metas, &amount.to_le_bytes());
 
 | Cost | Ballista | Plain instructions | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 105,512 | 66,376 | +39,136 |
-| Transaction bytes, every run | 743 | 758 | −15 |
+| Compute units, every run | 167,396 | 111,752 | +55,644 |
+| Transaction bytes, every run | 1,007 | 1,122 | −115 |
 | Compute units, upload once | 8,478 | none | — |
 | Transaction bytes, upload once | 747 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00345 SOL for 551 bytes | none | — |
 
-One Ballista instruction covering 4 rows against 8 plain instructions, measured with Mollusk. ATA CreateIdempotent then Transfer per recipient. The ATA program derives the address itself, so the guarantee matches. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
+One Ballista instruction covering 8 rows against 16 plain instructions, measured with Mollusk. ATA CreateIdempotent then Transfer per recipient. The ATA program derives the address itself, so the guarantee matches. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
 
 <!-- /benchmark -->
 
@@ -97,13 +97,13 @@ let run = ballista_sdk::run_instruction(template, metas, &amount.to_le_bytes());
 
 | Cost | Ballista | Plain instructions | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 17,074 | 608 | +16,466 |
-| Transaction bytes, every run | 547 | 586 | −39 |
+| Compute units, every run | 64,465 | 2,432 | +62,033 |
+| Transaction bytes, every run | 1,339 | 1,738 | −399 |
 | Compute units, upload once | 6,875 | none | — |
 | Transaction bytes, upload once | 451 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00195 SOL for 255 bytes | none | — |
 
-One Ballista instruction covering 8 rows against 8 plain instructions, measured with Mollusk. One SPL Token transfer per destination does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
+One Ballista instruction covering 32 rows against 32 plain instructions, measured with Mollusk. One SPL Token transfer per destination does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
 
 <!-- /benchmark -->
 
@@ -152,7 +152,7 @@ let run = ballista_sdk::run_instruction(
 | --- | ---: | ---: | ---: |
 | Compute units, every run | 16,648 | 13,518 | +3,130 |
 | Transaction bytes, every run | 407 | 341 | +66 |
-| Compute units, upload once | 5,817 | none | — |
+| Compute units, upload once | 8,817 | none | — |
 | Transaction bytes, upload once | 508 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00224 SOL for 312 bytes | none | — |
 
@@ -196,13 +196,13 @@ let run = ballista_sdk::run_instruction(template, metas, &[]);
 
 | Cost | Ballista | Plain instructions, weaker | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 10,160 | 472 | +9,688 |
-| Transaction bytes, every run | 407 | 362 | +45 |
+| Compute units, every run | 37,047 | 1,888 | +35,159 |
+| Transaction bytes, every run | 803 | 842 | −39 |
 | Compute units, upload once | 7,079 | none | — |
 | Transaction bytes, upload once | 471 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00205 SOL for 275 bytes | none | — |
 
-One Ballista instruction covering 4 rows against 4 plain instructions, measured with Mollusk. CloseAccount per candidate works only while every candidate is empty: SPL Token rejects a funded account, which fails the whole transaction instead of skipping that row. Enforcing that on chain any other way means deploying your own program.
+One Ballista instruction covering 16 rows against 16 plain instructions, measured with Mollusk. CloseAccount per candidate works only while every candidate is empty: SPL Token rejects a funded account, which fails the whole transaction instead of skipping that row. Enforcing that on chain any other way means deploying your own program.
 
 <!-- /benchmark -->
 
@@ -232,7 +232,7 @@ let run = ballista_sdk::run_instruction(template, token_metas, &amount.to_le_byt
 | --- | ---: | ---: | ---: |
 | Compute units, every run | 3,849 | 76 | +3,773 |
 | Transaction bytes, every run | 316 | 250 | +66 |
-| Compute units, upload once | 9,440 | none | — |
+| Compute units, upload once | 6,440 | none | — |
 | Transaction bytes, upload once | 531 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00235 SOL for 335 bytes | none | — |
 

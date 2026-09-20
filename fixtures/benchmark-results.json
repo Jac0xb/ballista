@@ -1,7 +1,7 @@
 {
   "assert-create-then-transfer": {
-    "ballistaComputeUnits": 105512,
-    "baselineComputeUnits": 66376,
+    "ballistaComputeUnits": 167396,
+    "baselineComputeUnits": 111752,
     "baselineSucceeded": true,
     "uploadComputeUnits": 8478
   },
@@ -9,35 +9,35 @@
     "ballistaComputeUnits": 5948,
     "baselineComputeUnits": 300,
     "baselineSucceeded": true,
-    "uploadComputeUnits": 19173
+    "uploadComputeUnits": 13173
   },
   "bounded-keeper-crank": {
-    "ballistaComputeUnits": 9032,
-    "baselineComputeUnits": 600,
+    "ballistaComputeUnits": 51028,
+    "baselineComputeUnits": 3600,
     "baselineSucceeded": true,
-    "uploadComputeUnits": 6817
+    "uploadComputeUnits": 6845
   },
   "bounded-sol-payroll": {
-    "ballistaComputeUnits": 16712,
-    "baselineComputeUnits": 1200,
+    "ballistaComputeUnits": 59338,
+    "baselineComputeUnits": 4500,
     "baselineSucceeded": true,
-    "uploadComputeUnits": 18826
+    "uploadComputeUnits": 6826
   },
   "canonical-position-account": {
-    "ballistaComputeUnits": 7090,
+    "ballistaComputeUnits": 5590,
     "baselineComputeUnits": 150,
     "baselineSucceeded": true,
-    "uploadComputeUnits": 6659
+    "uploadComputeUnits": 9659
   },
   "claim-then-distribute": {
-    "ballistaComputeUnits": 19030,
-    "baselineComputeUnits": 758,
+    "ballistaComputeUnits": 34827,
+    "baselineComputeUnits": 1366,
     "baselineSucceeded": true,
-    "uploadComputeUnits": 7402
+    "uploadComputeUnits": 10402
   },
   "close-empty-token-accounts": {
-    "ballistaComputeUnits": 10160,
-    "baselineComputeUnits": 472,
+    "ballistaComputeUnits": 37047,
+    "baselineComputeUnits": 1888,
     "baselineSucceeded": true,
     "uploadComputeUnits": 7079
   },
@@ -45,7 +45,7 @@
     "ballistaComputeUnits": 16648,
     "baselineComputeUnits": 13518,
     "baselineSucceeded": true,
-    "uploadComputeUnits": 5817
+    "uploadComputeUnits": 8817
   },
   "deadline-and-minimum-output": {
     "ballistaComputeUnits": 4069,
@@ -57,25 +57,25 @@
     "ballistaComputeUnits": 3450,
     "baselineComputeUnits": 150,
     "baselineSucceeded": true,
-    "uploadComputeUnits": 15051
+    "uploadComputeUnits": 6051
   },
   "exact-token-debit": {
     "ballistaComputeUnits": 3849,
     "baselineComputeUnits": 76,
     "baselineSucceeded": true,
-    "uploadComputeUnits": 9440
+    "uploadComputeUnits": 6440
   },
   "existing-account-token-payroll": {
-    "ballistaComputeUnits": 17074,
-    "baselineComputeUnits": 608,
+    "ballistaComputeUnits": 64465,
+    "baselineComputeUnits": 2432,
     "baselineSucceeded": true,
     "uploadComputeUnits": 6875
   },
   "index-weighted-rewards": {
-    "ballistaComputeUnits": 20500,
-    "baselineComputeUnits": 1200,
+    "ballistaComputeUnits": 73400,
+    "baselineComputeUnits": 4500,
     "baselineSucceeded": true,
-    "uploadComputeUnits": 10243
+    "uploadComputeUnits": 16243
   },
   "maximum-lamport-spend": {
     "ballistaComputeUnits": 3589,
@@ -87,13 +87,13 @@
     "ballistaComputeUnits": 4086,
     "baselineComputeUnits": 150,
     "baselineSucceeded": true,
-    "uploadComputeUnits": 6664
+    "uploadComputeUnits": 9664
   },
   "pinned-program-and-owner": {
     "ballistaComputeUnits": 2934,
     "baselineComputeUnits": 150,
     "baselineSucceeded": true,
-    "uploadComputeUnits": 5673
+    "uploadComputeUnits": 8673
   },
   "primary-or-fallback-route": {
     "ballistaComputeUnits": 3582,
@@ -105,13 +105,13 @@
     "ballistaComputeUnits": 4257,
     "baselineComputeUnits": 150,
     "baselineSucceeded": true,
-    "uploadComputeUnits": 12922
+    "uploadComputeUnits": 9922
   },
   "swap-then-deposit": {
     "ballistaComputeUnits": 5721,
     "baselineComputeUnits": 300,
     "baselineSucceeded": true,
-    "uploadComputeUnits": 6881
+    "uploadComputeUnits": 9881
   },
   "time-gated-governance-execution": {
     "ballistaComputeUnits": 3834,

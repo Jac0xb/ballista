@@ -3,7 +3,7 @@
     "page": "payments",
     "anchor": "bounded-sol-payroll",
     "standIn": false,
-    "rowCount": 8,
+    "rowCount": 30,
     "templateHex": "42564d310102011e010103010200020001000400010000000400ff000000000003ffff000000000002ffff0000000000020000002aff02ffff0000000000000000000000010000ffff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
     "payloadBytes": 168,
     "runtimeAccounts": [
@@ -16,11 +16,33 @@
       "recipient",
       "recipient",
       "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
       "recipient"
     ],
     "runData": "1027000000000000",
-    "ballistaTransactionBytes": 514,
-    "ballistaAccountKeys": 12,
+    "ballistaTransactionBytes": 1240,
+    "ballistaAccountKeys": 34,
     "runtimeAccountFlags": [
       {
         "signer": false,
@@ -28,6 +50,94 @@
       },
       {
         "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
         "writable": true
       },
       {
@@ -194,10 +304,362 @@
             }
           ],
           "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 11,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 12,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 13,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 14,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 15,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 16,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 17,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 18,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 19,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 20,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 21,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 22,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 23,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 24,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 25,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 26,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 27,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 28,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 29,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 30,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 31,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
         }
       ],
-      "transactionBytes": 570,
-      "instructionCount": 8
+      "transactionBytes": 1670,
+      "instructionCount": 30
     },
     "upload": {
       "transactionCount": 1,
@@ -323,7 +785,7 @@
     "page": "payments",
     "anchor": "index-weighted-rewards",
     "standIn": false,
-    "rowCount": 8,
+    "rowCount": 30,
     "templateHex": "42564d310102011e010507010200020001000400010000000400ff000000000003ffff000000000002ffff0000000000020000002aff06ffff00000000000000000000002600ffffff00000000000000000000000301ffffff000100000000000000000013020001ff0000000000000000000000010300ffff000000000000000000000015040203ff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000404000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
     "payloadBytes": 232,
     "runtimeAccounts": [
@@ -336,11 +798,33 @@
       "recipient",
       "recipient",
       "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
       "recipient"
     ],
     "runData": "e803000000000000",
-    "ballistaTransactionBytes": 514,
-    "ballistaAccountKeys": 12,
+    "ballistaTransactionBytes": 1240,
+    "ballistaAccountKeys": 34,
     "runtimeAccountFlags": [
       {
         "signer": false,
@@ -348,6 +832,94 @@
       },
       {
         "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
         "writable": true
       },
       {
@@ -514,10 +1086,362 @@
             }
           ],
           "data": "02000000401f000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000002823000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 11,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 12,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000f82a000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 13,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e02e000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 14,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000c832000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 15,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000b036000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 16,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000983a000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 17,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000803e000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 18,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000006842000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 19,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000005046000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 20,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000384a000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 21,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000204e000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 22,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000000852000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 23,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000f055000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 24,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000d859000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 25,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000c05d000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 26,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000a861000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 27,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000009065000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 28,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000007869000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 29,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000606d000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 30,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000004871000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 31,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000003075000000000000"
         }
       ],
-      "transactionBytes": 570,
-      "instructionCount": 8
+      "transactionBytes": 1670,
+      "instructionCount": 30
     },
     "upload": {
       "transactionCount": 1,
@@ -698,7 +1622,7 @@
     "page": "token-accounts",
     "anchor": "assert-create-then-transfer",
     "standIn": false,
-    "rowCount": 4,
+    "rowCount": 8,
     "templateHex": "42564d310107020801080c020900050003000100010000000400ff00000000000401ff00000000000402ff000000000000ff01005200000003ffff000000000001ffff000000000002ff0100a500000000ffff000000000002ffff0000000000020000002aff0bffff0000000000000000000000080081ffff0000000000000000000000080180ffff0000000000000000000000080201ffff0000000000000000000000080303ffff00000000000000000000002f0400ffff000000000003000000000017050004ff000000000000000000000028ff05ffff00000000000000000000000c0681ffff000000000000000000000029ff0006ff0000000000000000000000010700ffff000000000000000000000029ff01ffff000000000000000000000000ff0000060003000000000001ff0600030203000900000004038102800003000200010006028102050107010000000000000702000000000000070300000000000000ff00000100000004070000000000008c97258f4e2489f1bb3d1029148e0d830b5a1399daff1084048e7bd8dbe9f85906ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9000000000000000000000000000000000000000000000000000000000000000003",
     "payloadBytes": 471,
     "runtimeAccounts": [
@@ -716,11 +1640,19 @@
       "recipient",
       "recipient-ata",
       "recipient",
+      "recipient-ata",
+      "recipient",
+      "recipient-ata",
+      "recipient",
+      "recipient-ata",
+      "recipient",
+      "recipient-ata",
+      "recipient",
       "recipient-ata"
     ],
     "runData": "e803000000000000",
-    "ballistaTransactionBytes": 743,
-    "ballistaAccountKeys": 17,
+    "ballistaTransactionBytes": 1007,
+    "ballistaAccountKeys": 25,
     "runtimeAccountFlags": [
       {
         "signer": false,
@@ -744,6 +1676,38 @@
       },
       {
         "signer": true,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
         "writable": false
       },
       {
@@ -1014,10 +1978,238 @@
             }
           ],
           "data": "03e803000000000000"
+        },
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 16,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 15,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 16,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 18,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 17,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 18,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 20,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 19,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 20,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 22,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 21,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 22,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
         }
       ],
-      "transactionBytes": 758,
-      "instructionCount": 8
+      "transactionBytes": 1122,
+      "instructionCount": 16
     },
     "upload": {
       "transactionCount": 1,
@@ -1046,7 +2238,7 @@
     "page": "token-accounts",
     "anchor": "existing-account-token-payroll",
     "standIn": false,
-    "rowCount": 8,
+    "rowCount": 32,
     "templateHex": "42564d3101030120010103010300020001000100010000000400ff000000000002ff0000a500000001ffff000000000002ff0000a5000000020000002aff02ffff0000000000000000000000010000ffff000000000000000000000029ff00ffff000000000000000000000000ff0000030200000900000001028002020100ff000001000000040000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a903",
     "payloadBytes": 175,
     "runtimeAccounts": [
@@ -1060,11 +2252,35 @@
       "recipient-tokens",
       "recipient-tokens",
       "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
       "recipient-tokens"
     ],
     "runData": "e803000000000000",
-    "ballistaTransactionBytes": 547,
-    "ballistaAccountKeys": 13,
+    "ballistaTransactionBytes": 1339,
+    "ballistaAccountKeys": 37,
     "runtimeAccountFlags": [
       {
         "signer": false,
@@ -1077,6 +2293,102 @@
       {
         "signer": true,
         "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
       },
       {
         "signer": false,
@@ -1282,10 +2594,514 @@
             }
           ],
           "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 11,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 12,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 13,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 14,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 15,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 16,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 17,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 18,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 19,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 20,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 21,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 22,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 23,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 24,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 25,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 26,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 27,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 28,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 29,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 30,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 31,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 32,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 33,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 34,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
         }
       ],
-      "transactionBytes": 586,
-      "instructionCount": 8
+      "transactionBytes": 1738,
+      "instructionCount": 32
     },
     "upload": {
       "transactionCount": 1,
@@ -1430,7 +3246,7 @@
     "page": "token-accounts",
     "anchor": "close-empty-token-accounts",
     "standIn": false,
-    "rowCount": 4,
+    "rowCount": 16,
     "templateHex": "42564d3101030110000305010300010001000100010000000400ff000000000002ffff000000000001ffff000000000002ff0000a50000002aff04ffff00000000000000000000000d0080ffff00400000000000000000000301ffffff000000000000000000000017020001ff000000000000000000000029ff0002ff000000000000000000000000ff0000030100000100000080020102020100ff00000100000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a909",
     "payloadBytes": 195,
     "runtimeAccounts": [
@@ -1440,11 +3256,23 @@
       "empty-tokens",
       "empty-tokens",
       "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
       "empty-tokens"
     ],
     "runData": "",
-    "ballistaTransactionBytes": 407,
-    "ballistaAccountKeys": 9,
+    "ballistaTransactionBytes": 803,
+    "ballistaAccountKeys": 21,
     "runtimeAccountFlags": [
       {
         "signer": false,
@@ -1457,6 +3285,54 @@
       {
         "signer": true,
         "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
       },
       {
         "signer": false,
@@ -1562,10 +3438,262 @@
             }
           ],
           "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 11,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 12,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 13,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 14,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 15,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 16,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 17,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 18,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
         }
       ],
-      "transactionBytes": 362,
-      "instructionCount": 4
+      "transactionBytes": 842,
+      "instructionCount": 16
     },
     "upload": {
       "transactionCount": 1,
@@ -2167,7 +4295,7 @@
     "page": "composition",
     "anchor": "claim-then-distribute",
     "standIn": true,
-    "rowCount": 8,
+    "rowCount": 16,
     "templateHex": "42564d3101060110010205020500040002000500010000000400ff00000000000401ff000000000003ffff000000000002ffff000000000002ff0100a500000001ffff000000000002ff0100a5000000020000000300ffffff001027000000000000000029ff00ffff00000000000000000000002aff02ffff0000000000000000000000010100ffff000000000000000000000029ff01ffff000000000000000000000000ff0000020200000c00000001ff020003020200090000000203030204028002050100ff000004000000040000000000000000ff0400010000000401000000000000000000000000000000000000000000000000000000000000000000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a90200000003",
     "payloadBytes": 299,
     "runtimeAccounts": [
@@ -2184,11 +4312,19 @@
       "recipient-tokens",
       "recipient-tokens",
       "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
       "recipient-tokens"
     ],
     "runData": "e803000000000000",
-    "ballistaTransactionBytes": 710,
-    "ballistaAccountKeys": 16,
+    "ballistaTransactionBytes": 974,
+    "ballistaAccountKeys": 24,
     "runtimeAccountFlags": [
       {
         "signer": false,
@@ -2213,6 +4349,38 @@
       {
         "signer": true,
         "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
       },
       {
         "signer": false,
@@ -2434,10 +4602,178 @@
             }
           ],
           "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 14,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 15,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 16,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 17,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 18,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 19,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 20,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 21,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
         }
       ],
-      "transactionBytes": 764,
-      "instructionCount": 9
+      "transactionBytes": 1148,
+      "instructionCount": 17
     },
     "upload": {
       "transactionCount": 1,
@@ -2628,9 +4964,9 @@
     "page": "composition",
     "anchor": "bounded-keeper-crank",
     "standIn": true,
-    "rowCount": 4,
-    "templateHex": "42564d3101020218000103010200020001000400010000000400ff000000000003ffff000000000002ffff000000000002ffff00000000002aff02ffff00000000000000000000000300ffffff00e803000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
-    "payloadBytes": 172,
+    "rowCount": 24,
+    "templateHex": "42564d3101020218000103010300020001000400010000000400ff000000000003ffff000000000002ffff000000000002ffff00000000002aff02ffff00000000000000000000000300ffffff00e803000000000000000029ff00ffff000000000000000000000000ff0000030200000c00000001038002810200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 174,
     "runtimeAccounts": [
       "system-program",
       "signer",
@@ -2641,11 +4977,51 @@
       "recipient",
       "recipient",
       "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
       "recipient"
     ],
     "runData": "",
-    "ballistaTransactionBytes": 506,
-    "ballistaAccountKeys": 12,
+    "ballistaTransactionBytes": 1826,
+    "ballistaAccountKeys": 52,
     "runtimeAccountFlags": [
       {
         "signer": false,
@@ -2653,6 +5029,166 @@
       },
       {
         "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
         "writable": true
       },
       {
@@ -2704,6 +5240,11 @@
               "index": 2,
               "signer": false,
               "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
             }
           ],
           "data": "02000000e803000000000000"
@@ -2718,6 +5259,11 @@
             },
             {
               "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
               "signer": false,
               "writable": true
             }
@@ -2736,6 +5282,11 @@
               "index": 6,
               "signer": false,
               "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
             }
           ],
           "data": "02000000e803000000000000"
@@ -2752,22 +5303,447 @@
               "index": 8,
               "signer": false,
               "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 11,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 12,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 13,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 14,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 15,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 16,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 17,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 18,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 19,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 20,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 21,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 22,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 23,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 24,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 25,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 26,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 27,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 28,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 29,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 30,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 31,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 32,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 33,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 34,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 35,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 36,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 37,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 38,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 39,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 40,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 41,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 42,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 43,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 44,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 45,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 46,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 47,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 48,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 49,
+              "signer": false,
+              "writable": true
             }
           ],
           "data": "02000000e803000000000000"
         }
       ],
-      "transactionBytes": 370,
-      "instructionCount": 4
+      "transactionBytes": 2162,
+      "instructionCount": 24
     },
     "upload": {
       "transactionCount": 1,
-      "transactionBytes": 448,
-      "accountBytes": 252,
-      "rentLamports": 1930400
+      "transactionBytes": 450,
+      "accountBytes": 254,
+      "rentLamports": 1940560
     },
     "stats": {
-      "payloadBytes": 172,
+      "payloadBytes": 174,
       "fixedAccounts": 2,
       "batchStride": 2,
       "batchMaxIterations": 24,

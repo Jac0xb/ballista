@@ -1,4 +1,5 @@
 mod benchmarks;
+mod profile;
 
 #[cfg(test)]
 mod tests {

@@ -43,6 +43,7 @@ export default defineConfig({
         items: [
           { text: 'Scope and limits', link: '/scope' },
           { text: 'Benchmarks', link: '/benchmarks' },
+          { text: 'Compute profile', link: '/cu-profile' },
           { text: 'Implementation status', link: '/implementation-plan' },
         ],
       },

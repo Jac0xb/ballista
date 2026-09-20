@@ -72,13 +72,13 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 
 | Cost | Ballista | Plain instructions | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 16,712 | 1,200 | +15,512 |
-| Transaction bytes, every run | 514 | 570 | −56 |
-| Compute units, upload once | 18,826 | none | — |
+| Compute units, every run | 59,338 | 4,500 | +54,838 |
+| Transaction bytes, every run | 1,240 | 1,670 | −430 |
+| Compute units, upload once | 6,826 | none | — |
 | Transaction bytes, upload once | 444 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00191 SOL for 248 bytes | none | — |
 
-One Ballista instruction covering 8 rows against 8 plain instructions, measured with Mollusk. One System transfer per recipient does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
+One Ballista instruction covering 30 rows against 30 plain instructions, measured with Mollusk. One System transfer per recipient does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
 
 <!-- /benchmark -->
 
@@ -127,7 +127,7 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 | --- | ---: | ---: | ---: |
 | Compute units, every run | 5,948 | 300 | +5,648 |
 | Transaction bytes, every run | 324 | 270 | +54 |
-| Compute units, upload once | 19,173 | none | — |
+| Compute units, upload once | 13,173 | none | — |
 | Transaction bytes, upload once | 652 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00297 SOL for 456 bytes | none | — |
 
@@ -167,13 +167,13 @@ let run = ballista_sdk::run_instruction(template, ordered_recipient_metas, &inpu
 
 | Cost | Ballista | Plain instructions, weaker | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 20,500 | 1,200 | +19,300 |
-| Transaction bytes, every run | 514 | 570 | −56 |
-| Compute units, upload once | 10,243 | none | — |
+| Compute units, every run | 73,400 | 4,500 | +68,900 |
+| Transaction bytes, every run | 1,240 | 1,670 | −430 |
+| Compute units, upload once | 16,243 | none | — |
 | Transaction bytes, upload once | 508 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00224 SOL for 312 bytes | none | — |
 
-One Ballista instruction covering 8 rows against 8 plain instructions, measured with Mollusk. Transfers with client-computed weights settle the same way; the weighting rule itself is not enforced on chain. Enforcing that on chain any other way means deploying your own program.
+One Ballista instruction covering 30 rows against 30 plain instructions, measured with Mollusk. Transfers with client-computed weights settle the same way; the weighting rule itself is not enforced on chain. Enforcing that on chain any other way means deploying your own program.
 
 <!-- /benchmark -->
 
@@ -214,7 +214,7 @@ downstream program must authorize the operation from its own state.
 | --- | ---: | ---: | ---: |
 | Compute units, every run | 3,450 | 150 | +3,300 |
 | Transaction bytes, every run | 291 | 220 | +71 |
-| Compute units, upload once | 15,051 | none | — |
+| Compute units, upload once | 6,051 | none | — |
 | Transaction bytes, upload once | 480 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00209 SOL for 284 bytes | none | — |
 
@@ -260,7 +260,7 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 | --- | ---: | ---: | ---: |
 | Compute units, every run | 4,257 | 150 | +4,107 |
 | Transaction bytes, every run | 291 | 220 | +71 |
-| Compute units, upload once | 12,922 | none | — |
+| Compute units, upload once | 9,922 | none | — |
 | Transaction bytes, upload once | 608 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00274 SOL for 412 bytes | none | — |
 

@@ -49,7 +49,7 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 | --- | ---: | ---: | ---: |
 | Compute units, every run | 5,721 | 300 | +5,421 |
 | Transaction bytes, every run | 385 | 278 | +107 |
-| Compute units, upload once | 6,881 | none | — |
+| Compute units, upload once | 9,881 | none | — |
 | Transaction bytes, upload once | 624 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00282 SOL for 428 bytes | none | — |
 
@@ -94,13 +94,13 @@ let run = ballista_sdk::run_instruction(template, metas, &amount.to_le_bytes());
 
 | Cost | Ballista | Plain instructions | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 19,030 | 758 | +18,272 |
-| Transaction bytes, every run | 710 | 764 | −54 |
-| Compute units, upload once | 7,402 | none | — |
+| Compute units, every run | 34,827 | 1,366 | +33,461 |
+| Transaction bytes, every run | 974 | 1,148 | −174 |
+| Compute units, upload once | 10,402 | none | — |
 | Transaction bytes, upload once | 575 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00258 SOL for 379 bytes | none | — |
 
-One Ballista instruction covering 8 rows against 9 plain instructions, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. A claim instruction followed by one token transfer per recipient does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
+One Ballista instruction covering 16 rows against 17 plain instructions, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. A claim instruction followed by one token transfer per recipient does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
 
 <!-- /benchmark -->
 
@@ -241,12 +241,12 @@ Ballista does not wake itself. A bot, user, or keeper service still decides when
 
 | Cost | Ballista | Plain instructions | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 9,032 | 600 | +8,432 |
-| Transaction bytes, every run | 506 | 370 | +136 |
-| Compute units, upload once | 6,817 | none | — |
-| Transaction bytes, upload once | 448 in 1 transaction | none | — |
-| Rent locked in the template account | 0.00193 SOL for 252 bytes | none | — |
+| Compute units, every run | 51,028 | 3,600 | +47,428 |
+| Transaction bytes, every run | 1,826 | 2,162 | −336 |
+| Compute units, upload once | 6,845 | none | — |
+| Transaction bytes, upload once | 450 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00194 SOL for 254 bytes | none | — |
 
-One Ballista instruction covering 4 rows against 4 plain instructions, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. One crank instruction per row does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
+One Ballista instruction covering 24 rows against 24 plain instructions, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. One crank instruction per row does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
 
 <!-- /benchmark -->

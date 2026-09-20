@@ -10,7 +10,7 @@
     "test:core": "cargo test -p ballista-common -p ballista -p ballista-sdk --features ballista-common/proptest",
     "test:sdk": "pnpm --dir clients/js test",
     "fixtures": "UPDATE_FIXTURES=1 pnpm --dir clients/js exec vitest run src/fixtures.test.ts",
-    "benchmarks": "pnpm --dir clients/js exec vitest run src/benchmarks.test.ts && UPDATE_BENCHMARKS=1 cargo test --manifest-path tests/ballista/Cargo.toml measure_every_example && node scripts/benchmark-tables.mjs",
+    "benchmarks": "pnpm --dir clients/js exec vitest run src/benchmarks.test.ts && UPDATE_BENCHMARKS=1 cargo test --manifest-path tests/ballista/Cargo.toml -- measure_every_example profile_compute_units && node scripts/benchmark-tables.mjs",
     "test:integration": "cargo test --manifest-path tests/ballista/Cargo.toml",
     "build": "pnpm run build:program && pnpm run build:sdk",
     "build:program": "cargo build-sbf --manifest-path programs/ballista/Cargo.toml",

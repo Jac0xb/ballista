@@ -1,8 +1,10 @@
 # Batch execution
 
-A template may declare one repeated tail-account row. The caller supplies rows after the fixed
-accounts, and the VM infers the iteration count from the remaining account count. A template can
-require a minimum number of rows so a batch cannot succeed vacuously with none.
+A template may declare one repeated account row, and beside it a row of inputs. The caller supplies
+rows after the fixed accounts, and the VM infers the iteration count from the remaining account
+count. Each row's input values travel in the run data, so every iteration can carry its own
+amount, recipient-specific parameter, or flag. A template can require a minimum number of rows so
+a batch cannot succeed vacuously with none.
 
 ## Thirty-recipient payroll
 
@@ -76,6 +78,91 @@ let run = ballista_sdk::run_instruction(template, accounts, &inputs);
 ```
 
 :::
+
+## A different amount per row
+
+`batch.rowInputs` declares inputs that are carried once per iteration. Inside `forEach`,
+`expression.rowInput(name)` reads the current row's value. At run time the caller passes one
+input record per row, in the same order as the rows.
+
+::: code-group
+
+```ts [TypeScript · template]
+const payroll = defineTemplate({
+  accounts: {
+    systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
+    treasury: { signer: true, writable: true },
+  },
+  batch: {
+    maxIterations: 30,
+    minIterations: 1,
+    row: { recipient: { writable: true } },
+    rowInputs: { amount: { type: 'u64' } },
+  },
+  steps: [
+    step.forEach([
+      systemTransfer({
+        systemProgram: account.fixed('systemProgram'),
+        from: account.fixed('treasury'),
+        to: account.iteration('recipient'),
+        lamports: expression.rowInput('amount'),
+      }),
+    ]),
+  ],
+});
+```
+
+```ts [TypeScript · run]
+const instruction = buildKitRunInstruction({
+  compiled,
+  templateAddress,
+  accounts: {
+    systemProgram: { address: SYSTEM_PROGRAM_ADDRESS },
+    treasury: { address: treasury },
+  },
+  batchRows: payees.map((payee) => ({ recipient: { address: payee.address } })),
+  batchInputs: payees.map((payee) => ({ amount: payee.lamports })),
+});
+```
+
+```rust [Rust · template]
+let mut builder = ProgramBuilder::new();
+let system = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ID.to_bytes()), None, 0);
+let treasury = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+let recipient = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
+builder.batch(30, 1);
+let amount_input = builder.row_input(VALUE_U64, 0);
+let discriminator = builder.blob(&[2, 0, 0, 0]);
+builder.for_each(0, |body| {
+    let amount = body.load_input(amount_input);
+    let transfer = body.cpi(
+        system,
+        &[(treasury, ACCOUNT_SIGNER | ACCOUNT_WRITABLE), (recipient, ACCOUNT_WRITABLE)],
+        &[Segment::Literal(discriminator), Segment::Register(DATA_REG_U64, amount)],
+    );
+    body.invoke(transfer, None);
+});
+```
+
+```rust [Rust · inputs and run]
+// Fixed inputs first (none here), then one row of values per recipient, in row order.
+let mut inputs = RunInputs::new();
+for payee in &payees {
+    inputs = inputs.u64(payee.lamports);
+}
+let run = ballista_sdk::run_instruction(template, accounts, &inputs.finish());
+```
+
+:::
+
+Row inputs share the input table with the fixed inputs (32 descriptors in total, at most 8 per row),
+and the run may carry at most 256 values: fixed inputs plus row inputs times the maximum iteration
+count. Encoded run data is still capped at 1,024 bytes, which is the practical bound on `bytes` row
+inputs. A run whose row values do not match its rows fails with `InvalidRunInputs`, and the error's
+context is the index of the first missing or malformed value, counting fixed values first.
+
+Rows carry values and accounts, not CPI shapes: an `invoke` inside the loop forwards the same
+[account group](./account-groups) on every iteration.
 
 ## Carry a total across rows
 

@@ -10,16 +10,17 @@ bits are a context that locates the failure.
 
 | Kind range | Source | Context |
 | --- | --- | --- |
-| 6000 to 6020 | Runtime | Program counter of the failing instruction, except as noted below |
-| 6100 to 6127 | Verifier, at create or finalize | Offending instruction, account, input, register, or CPI index |
+| 6000 to 6021 | Runtime | Program counter of the failing instruction, except as noted below |
+| 6100 to 6128 | Verifier, at create or finalize | Offending instruction, account, input, register, or CPI index |
 
-Three runtime kinds carry a different context:
+Four runtime kinds carry a different context:
 
 | Kind | Name | Context |
 | ---: | --- | --- |
-| 6008 | `InvalidRunInputs` | Index of the input that failed to decode, or the input count for trailing bytes |
+| 6008 | `InvalidRunInputs` | Index of the value that failed to decode (fixed values first, then row values), or the value count for trailing bytes; `0` for a missing account-group prefix |
 | 6010 | `InvalidAccountRange` | The runtime account or row count that was rejected |
 | 6020 | `AccountConstraintFailed` | Index of the runtime account that failed its constraint |
+| 6021 | `CpiAccountLimitExceeded` | Declared accounts plus forwarded group members, which exceeded 64 |
 
 The full name tables live in `fixtures/runtime-error-names.txt` and
 `fixtures/verifier-error-names.txt`; the program, the Rust SDK, and the TypeScript SDK are all

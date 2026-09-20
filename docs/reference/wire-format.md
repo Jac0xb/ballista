@@ -46,7 +46,9 @@ The header is 24 bytes.
 | 17 | 1 | Flags |
 | 18 | 2 | Blob length |
 | 20 | 1 | Batch minimum iterations |
-| 21 | 3 | Reserved, zero |
+| 21 | 1 | Row input count |
+| 22 | 1 | Account group count |
+| 23 | 1 | Reserved, zero |
 
 Flag bit 0 (`PROGRAM_FLAG_EMIT_EVENT`) asks the runtime to log a run event after success. Other
 bits are reserved and rejected.
@@ -75,6 +77,28 @@ Version 3 additions:
 Read opcodes (`13` to `16`, `43` to `46`) with the dynamic-offset flag take their offset from the
 `u64` register in `b` and must have a zero immediate. Without the flag, the immediate offset plus
 the read width must fit inside the account's declared minimum data length.
+
+## Inputs table and CPI descriptors
+
+The inputs table holds the fixed input descriptors followed by the row input descriptors, `input
+count + row input count` records of 4 bytes each. A `LOAD_INPUT` whose `a` operand has bit `0x80`
+set loads row input `a & 0x7f` of the current iteration and is valid only inside `FOREACH`.
+
+Each 12-byte CPI descriptor names its program account, then the account group it forwards (`0xff`
+for none), the account record range, the segment range, and the maximum data length. Group members
+follow the declared accounts in the CPI and are passed with the transaction's writable flag and
+signer cleared.
+
+## Run data
+
+```text
+group lengths [u8; account group count] | fixed input values | row input values × iterations
+```
+
+Values are encoded by type: `bool` one byte, `u64` and `i64` eight bytes little-endian, `u128`
+sixteen, `pubkey` thirty-two, `bytes` a little-endian `u16` length then the bytes. Runtime accounts
+are laid out as fixed accounts, batch rows, then the groups in declaration order; the iteration
+count is `(accounts − fixed − Σ group lengths) / stride`.
 
 ## Error codes
 

@@ -64,6 +64,7 @@ export default defineConfig({
             { text: 'Inputs and expressions', link: '/guide/expressions' },
             { text: 'Accounts and CPIs', link: '/guide/accounts-and-cpis' },
             { text: 'Batch execution', link: '/guide/batching' },
+            { text: 'Account groups', link: '/guide/account-groups' },
             { text: 'Assertions and snapshots', link: '/guide/assertions' },
             { text: 'PDA and ATA assertions', link: '/guide/pda-assertions' },
             { text: 'Trust model', link: '/guide/trust-model' },

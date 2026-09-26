@@ -1,7 +1,7 @@
 # Getting started
 
 This walkthrough compiles a SOL-transfer template, plans its immutable upload, and builds a run
-instruction. Ballista 0.3 is pre-release; use the workspace packages until the npm and crates.io
+instruction. Ballista is pre-release; use the workspace packages until the npm and crates.io
 artifacts are published.
 
 ## Install the workspace

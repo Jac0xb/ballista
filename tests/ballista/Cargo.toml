@@ -1,15 +1,22 @@
 [package]
 name = "ballista-integration-tests"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2021"
 publish = false
 
 [workspace]
 
+[features]
+# Loads `target/deploy/ballista-cu-profile.so` and prints the phase breakdown.
+cu-profile = []
+
 [dependencies]
-ballista-common = { path = "../../common" }
+ballista-common = { path = "../../common", features = ["proptest"] }
+proptest = "1.11"
 mollusk-svm = { version = "=0.14.0", features = ["inner-instructions"] }
 mollusk-svm-programs-token = { version = "=0.14.0", default-features = false, features = ["associated-token", "token"] }
+mollusk-svm-bencher = "=0.14.0"
+mollusk-svm-programs-memo = "=0.14.0"
 solana-account = "=4.3.1"
 solana-address = "=2.6.1"
 solana-fee-calculator = "=3.2.2"
@@ -18,10 +25,12 @@ solana-instruction = "=3.4.0"
 solana-message = "=4.2.3"
 solana-nonce = "=3.2.0"
 solana-pubkey = "=4.2.0"
+solana-program-error = "=3.0.1"
 solana-program-option = "=3.1.0"
 solana-reward-info = "=6.2.0"
 solana-sdk-ids = "=3.1.0"
 solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
+serde_json = "1"
 solana-short-vec = "=3.2.2"
 solana-signature = "=3.4.1"
 solana-system-program = { version = "=4.1.1", features = ["agave-unstable-api"] }
@@ -29,3 +38,7 @@ solana-transaction = "=4.1.2"
 spl-token-interface = "=2.0.0"
 wincode = "=0.5.4"
 zerocopy = "=0.8.56"
+
+[[bench]]
+name = "compute_units"
+harness = false

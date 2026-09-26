@@ -34,15 +34,3 @@ guard or CPI rolls back the entire Solana transaction.
                            │
               generic CPI + outer signers
 ```
-
-## `let` is not storage
-
-`step.let('before', expression)` evaluates once and names the result register for later compiler
-references. The name does not enter the wire format. `step.snapshot` is the same operation with a
-name that communicates its usual role in pre/post checks.
-
-## Accounts are capabilities
-
-An account schema declares the maximum privilege a template may use. A CPI descriptor may request
-only a subset. Ballista never creates signer authority; it can forward only signers already present
-in the transaction.

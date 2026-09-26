@@ -13,28 +13,30 @@ pub struct VerificationStats {
     pub max_cpi_data_len: u16,
 }
 
+/// The verifier's static knowledge about one register: its value type and, for `bytes`, the
+/// maximum length it can hold. Public so formal specifications can state typing invariants.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct RegisterInfo {
-    value_type: u8,
-    bytes_max_len: usize,
+pub struct RegisterInfo {
+    pub value_type: u8,
+    pub bytes_max_len: usize,
 }
 
 impl RegisterInfo {
-    const fn scalar(value_type: u8) -> Self {
+    pub const fn scalar(value_type: u8) -> Self {
         Self {
             value_type,
             bytes_max_len: 0,
         }
     }
 
-    const fn bytes(max_len: usize) -> Self {
+    pub const fn bytes(max_len: usize) -> Self {
         Self {
             value_type: VALUE_BYTES,
             bytes_max_len: max_len,
         }
     }
 
-    const fn is_numeric(self) -> bool {
+    pub const fn is_numeric(self) -> bool {
         matches!(self.value_type, VALUE_U64 | VALUE_I64 | VALUE_U128)
     }
 }
@@ -69,6 +71,31 @@ impl ProgramView<'_> {
         {
             return Err(TemplateError::InvalidBatch);
         }
+        if header.batch_min_iterations() > header.batch_max_iterations() {
+            return Err(TemplateError::InvalidMinIterations);
+        }
+        if header.row_input_count() > MAX_ROW_INPUTS || header.total_input_count() > MAX_INPUTS {
+            return Err(TemplateError::TooManyInputs);
+        }
+        // Row inputs are carried once per iteration, so they need a batch to iterate over.
+        if header.row_input_count() != 0 && header.batch_stride() == 0 {
+            return Err(TemplateError::InvalidBatch);
+        }
+        let input_values = header
+            .input_count()
+            .checked_add(
+                header
+                    .row_input_count()
+                    .checked_mul(header.batch_max_iterations())
+                    .ok_or(TemplateError::CountOverflow)?,
+            )
+            .ok_or(TemplateError::CountOverflow)?;
+        if input_values > MAX_INPUT_VALUES {
+            return Err(TemplateError::TooManyInputs);
+        }
+        if header.account_group_count() > MAX_ACCOUNT_GROUPS {
+            return Err(TemplateError::TooManyAccountGroups);
+        }
 
         for (index, constraint) in self.accounts.iter().enumerate() {
             if constraint.flags & !ACCOUNT_FLAGS_MASK != 0
@@ -98,6 +125,8 @@ impl ProgramView<'_> {
         let mut root_cpis = 0usize;
         let mut foreach_count = 0usize;
         let mut max_cpi_data_len = 0usize;
+        // The previous root-level instruction, if the previous instruction was not a loop body.
+        let mut previous: Option<&InstructionRecord> = None;
 
         while program_counter < self.instructions.len() {
             let instruction = &self.instructions[program_counter];
@@ -115,9 +144,12 @@ impl ProgramView<'_> {
                     return Err(TemplateError::InvalidInstruction(program_counter));
                 }
 
+                let carry = instruction.immediate();
+                self.verify_carry_before(carry, &registers)?;
                 let mut body_registers = registers;
                 let (body_cpis, body_max_data) =
                     self.verify_range(body_start, body_end, true, &mut body_registers)?;
+                verify_carry_after(carry, &registers, &body_registers)?;
                 root_cpis = root_cpis
                     .checked_add(
                         body_cpis
@@ -127,13 +159,20 @@ impl ProgramView<'_> {
                     .ok_or(TemplateError::CountOverflow)?;
                 max_cpi_data_len = max_cpi_data_len.max(body_max_data);
                 program_counter = body_end;
+                previous = None;
                 continue;
             }
 
-            let (cpis, data_len) =
-                self.verify_instruction(instruction, program_counter, false, &mut registers)?;
+            let (cpis, data_len) = self.verify_instruction(
+                instruction,
+                program_counter,
+                false,
+                previous,
+                &mut registers,
+            )?;
             root_cpis += cpis;
             max_cpi_data_len = max_cpi_data_len.max(data_len);
+            previous = Some(instruction);
             program_counter += 1;
         }
 
@@ -144,6 +183,10 @@ impl ProgramView<'_> {
         }
         if root_cpis > MAX_EXPANDED_CPIS {
             return Err(TemplateError::ExcessiveCpiExpansion);
+        }
+        // Descriptors that no instruction invokes still shape the executor's scratch buffers.
+        for index in 0..self.cpis.len() {
+            self.verify_cpi_shape(index)?;
         }
 
         Ok(VerificationStats {
@@ -159,6 +202,25 @@ impl ProgramView<'_> {
         })
     }
 
+    /// Verifies one instruction record against a register typing state, exactly as the full
+    /// verifier does inside `verify`. Exposed for formal specifications that state the
+    /// per-instruction soundness property: whatever this accepts, the executor runs without a
+    /// structural error and leaves `dst` holding the type recorded here.
+    pub fn verify_single_instruction(
+        &self,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
+        in_loop: bool,
+        previous: Option<&InstructionRecord>,
+        registers: &mut [Option<RegisterInfo>; MAX_REGISTERS],
+    ) -> Result<(usize, usize), TemplateError> {
+        self.verify_record_header(instruction, instruction_index)?;
+        if instruction.opcode == OP_FOREACH {
+            return Err(TemplateError::InvalidBatch);
+        }
+        self.verify_instruction(instruction, instruction_index, in_loop, previous, registers)
+    }
+
     fn verify_range(
         &self,
         start: usize,
@@ -168,6 +230,7 @@ impl ProgramView<'_> {
     ) -> Result<(usize, usize), TemplateError> {
         let mut cpis = 0usize;
         let mut max_data_len = 0usize;
+        let mut previous: Option<&InstructionRecord> = None;
         for index in start..end {
             let instruction = &self.instructions[index];
             self.verify_record_header(instruction, index)?;
@@ -175,9 +238,10 @@ impl ProgramView<'_> {
                 return Err(TemplateError::InvalidBatch);
             }
             let (instruction_cpis, data_len) =
-                self.verify_instruction(instruction, index, in_loop, registers)?;
+                self.verify_instruction(instruction, index, in_loop, previous, registers)?;
             cpis += instruction_cpis;
             max_data_len = max_data_len.max(data_len);
+            previous = Some(instruction);
         }
         Ok((cpis, max_data_len))
     }
@@ -187,25 +251,55 @@ impl ProgramView<'_> {
         instruction: &InstructionRecord,
         index: usize,
     ) -> Result<(), TemplateError> {
-        if instruction.flags != 0 || instruction.reserved != [0; 2] {
+        if instruction.reserved != [0; 2] {
             return Err(TemplateError::InvalidInstruction(index));
+        }
+        let allowed_flags = if read_width(instruction.opcode) != 0 {
+            INSTRUCTION_FLAG_DYNAMIC_OFFSET
+        } else {
+            0
+        };
+        if instruction.flags & !allowed_flags != 0 {
+            return Err(TemplateError::InvalidFlags(index));
         }
         Ok(())
     }
 
+    /// Every carried register must exist and hold a value before the loop starts, so a run with
+    /// zero iterations still leaves it readable afterwards.
+    fn verify_carry_before(
+        &self,
+        carry: u64,
+        registers: &[Option<RegisterInfo>; MAX_REGISTERS],
+    ) -> Result<(), TemplateError> {
+        for register in 0..MAX_REGISTERS as u8 {
+            if carry & (1u64 << register) == 0 {
+                continue;
+            }
+            if register as usize >= self.header.register_count()
+                || registers[register as usize].is_none()
+            {
+                return Err(TemplateError::InvalidCarry(register));
+            }
+        }
+        Ok(())
+    }
+
+    /// `previous` is the instruction immediately before this one within the same range (root or
+    /// loop body), or `None` at a range boundary.
     fn verify_instruction(
         &self,
         instruction: &InstructionRecord,
         instruction_index: usize,
         in_loop: bool,
+        previous: Option<&InstructionRecord>,
         registers: &mut [Option<RegisterInfo>; MAX_REGISTERS],
     ) -> Result<(usize, usize), TemplateError> {
         let scalar = |value_type| RegisterInfo::scalar(value_type);
         match instruction.opcode {
             OP_LOAD_INPUT => {
                 let input = self
-                    .inputs
-                    .get(instruction.a as usize)
+                    .input_descriptor(instruction.a, in_loop)
                     .ok_or(TemplateError::InvalidInstruction(instruction_index))?;
                 let info = if input.value_type == VALUE_BYTES {
                     RegisterInfo::bytes(input.max_len())
@@ -246,26 +340,33 @@ impl ProgramView<'_> {
                 self.require_account(instruction.a, in_loop)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_PUBKEY))?;
             }
-            OP_ACCOUNT_LAMPORTS | OP_ACCOUNT_DATA_LEN | OP_READ_U64 | OP_READ_U8 | OP_READ_U16
-            | OP_READ_U32 => {
+            OP_ACCOUNT_LAMPORTS | OP_ACCOUNT_DATA_LEN => {
                 self.require_account(instruction.a, in_loop)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
             }
-            OP_ACCOUNT_IS_EMPTY | OP_READ_BOOL => {
+            OP_ACCOUNT_IS_EMPTY => {
                 self.require_account(instruction.a, in_loop)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_BOOL))?;
             }
-            OP_READ_I64 => {
-                self.require_account(instruction.a, in_loop)?;
-                self.write_register(registers, instruction.dst, scalar(VALUE_I64))?;
-            }
-            OP_READ_U128 => {
-                self.require_account(instruction.a, in_loop)?;
-                self.write_register(registers, instruction.dst, scalar(VALUE_U128))?;
-            }
-            OP_READ_PUBKEY => {
-                self.require_account(instruction.a, in_loop)?;
-                self.write_register(registers, instruction.dst, scalar(VALUE_PUBKEY))?;
+            OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_U128
+            | OP_READ_PUBKEY | OP_READ_BOOL => {
+                if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
+                    self.require_account(instruction.a, in_loop)?;
+                    self.require_type(registers, instruction.b, VALUE_U64)?;
+                    if instruction.immediate() != 0 {
+                        return Err(TemplateError::InvalidFlags(instruction_index));
+                    }
+                } else {
+                    self.verify_read_bounds(instruction, instruction_index, in_loop)?;
+                }
+                let value_type = match instruction.opcode {
+                    OP_READ_I64 => VALUE_I64,
+                    OP_READ_U128 => VALUE_U128,
+                    OP_READ_PUBKEY => VALUE_PUBKEY,
+                    OP_READ_BOOL => VALUE_BOOL,
+                    _ => VALUE_U64,
+                };
+                self.write_register(registers, instruction.dst, scalar(value_type))?;
             }
             OP_CLOCK_SLOT => self.write_register(registers, instruction.dst, scalar(VALUE_U64))?,
             OP_CLOCK_TIMESTAMP => {
@@ -336,33 +437,41 @@ impl ProgramView<'_> {
                 }
                 self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
             }
+            OP_MOVE => {
+                let source = self.read_register(registers, instruction.a)?;
+                self.write_register(registers, instruction.dst, source)?;
+            }
+            OP_RETURN_DATA => {
+                // Return data is only meaningful straight after the CPI that produced it, and only
+                // when that CPI always runs.
+                let follows_invoke = previous
+                    .is_some_and(|record| record.opcode == OP_INVOKE && record.b == NO_INDEX);
+                let width = read_width(instruction.a);
+                let end = usize::try_from(instruction.immediate())
+                    .ok()
+                    .and_then(|offset| offset.checked_add(width));
+                if !follows_invoke || width == 0 || end.is_none_or(|end| end > MAX_RETURN_DATA_LEN)
+                {
+                    return Err(TemplateError::InvalidReturnData(instruction_index));
+                }
+                let value_type = match instruction.a {
+                    OP_READ_I64 => VALUE_I64,
+                    OP_READ_U128 => VALUE_U128,
+                    OP_READ_PUBKEY => VALUE_PUBKEY,
+                    OP_READ_BOOL => VALUE_BOOL,
+                    _ => VALUE_U64,
+                };
+                self.write_register(registers, instruction.dst, scalar(value_type))?;
+            }
             OP_DERIVE_PDA => {
-                let program = self
-                    .account_constraint(instruction.a, in_loop)
-                    .ok_or(TemplateError::InvalidInstruction(instruction_index))?;
-                if program.flags & ACCOUNT_EXECUTABLE == 0 {
-                    return Err(TemplateError::InvalidInstruction(instruction_index));
-                }
-                let (segment_start, segment_len) = instruction.blob_range();
-                let segment_end = segment_start
-                    .checked_add(segment_len)
-                    .ok_or(TemplateError::CountOverflow)?;
-                if segment_len == 0
-                    || segment_len > MAX_PDA_SEEDS
-                    || segment_end > self.data_segments.len()
-                {
-                    return Err(TemplateError::InvalidInstruction(instruction_index));
-                }
-                for (offset, segment) in self.data_segments[segment_start..segment_end]
-                    .iter()
-                    .enumerate()
-                {
-                    let seed_len =
-                        self.verify_pda_seed_segment(segment_start + offset, segment, registers)?;
-                    if seed_len > MAX_PDA_SEED_LEN {
-                        return Err(TemplateError::InvalidDataSegment(segment_start + offset));
-                    }
-                }
+                self.verify_pda_seeds(instruction, instruction_index, in_loop, registers)?;
+                self.write_register(registers, instruction.dst, scalar(VALUE_PUBKEY))?;
+            }
+            OP_CREATE_PDA => {
+                // The bump completes the seed list, so it is a plain u64 the template computed or
+                // read from an input; the executor rejects one that does not fit in a byte.
+                self.require_type(registers, instruction.b, VALUE_U64)?;
+                self.verify_pda_seeds(instruction, instruction_index, in_loop, registers)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_PUBKEY))?;
             }
             OP_REQUIRE => self.require_type(registers, instruction.a, VALUE_BOOL)?,
@@ -377,6 +486,42 @@ impl ProgramView<'_> {
             _ => return Err(TemplateError::InvalidInstruction(instruction_index)),
         }
         Ok((0, 0))
+    }
+
+    /// Shared by `DERIVE_PDA` and `CREATE_PDA`: the program account must be executable and the
+    /// immediate must name a non-empty, in-bounds run of seed segments no longer than a seed.
+    fn verify_pda_seeds(
+        &self,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
+        in_loop: bool,
+        registers: &[Option<RegisterInfo>; MAX_REGISTERS],
+    ) -> Result<(), TemplateError> {
+        let program = self
+            .account_constraint(instruction.a, in_loop)
+            .ok_or(TemplateError::InvalidInstruction(instruction_index))?;
+        if program.flags & ACCOUNT_EXECUTABLE == 0 {
+            return Err(TemplateError::InvalidInstruction(instruction_index));
+        }
+        let (segment_start, segment_len) = instruction.blob_range();
+        let segment_end = segment_start
+            .checked_add(segment_len)
+            .ok_or(TemplateError::CountOverflow)?;
+        if segment_len == 0 || segment_len > MAX_PDA_SEEDS || segment_end > self.data_segments.len()
+        {
+            return Err(TemplateError::InvalidInstruction(instruction_index));
+        }
+        for (offset, segment) in self.data_segments[segment_start..segment_end]
+            .iter()
+            .enumerate()
+        {
+            let seed_len =
+                self.verify_pda_seed_segment(segment_start + offset, segment, registers)?;
+            if seed_len > MAX_PDA_SEED_LEN {
+                return Err(TemplateError::InvalidDataSegment(segment_start + offset));
+            }
+        }
+        Ok(())
     }
 
     fn verify_pda_seed_segment(
@@ -440,17 +585,46 @@ impl ProgramView<'_> {
         Ok(len)
     }
 
-    fn verify_cpi(
+    /// A fixed-offset read must stay inside the account's declared minimum data length, so the
+    /// runtime never fails on an offset the author could have caught at compile time.
+    fn verify_read_bounds(
         &self,
-        index: usize,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
         in_loop: bool,
-        registers: &[Option<RegisterInfo>; MAX_REGISTERS],
-    ) -> Result<usize, TemplateError> {
+    ) -> Result<(), TemplateError> {
+        let constraint = self
+            .account_constraint(instruction.a, in_loop)
+            .ok_or(TemplateError::InvalidAccountConstraint(instruction.a as usize))?;
+        let width = read_width(instruction.opcode);
+        let end = usize::try_from(instruction.immediate())
+            .ok()
+            .and_then(|offset| offset.checked_add(width))
+            .ok_or(TemplateError::ReadOutOfBounds(instruction_index))?;
+        if end > constraint.min_data_len() {
+            return Err(TemplateError::ReadOutOfBounds(instruction_index));
+        }
+        Ok(())
+    }
+
+    /// Structural checks that apply to every CPI descriptor, invoked or not.
+    fn verify_cpi_shape(&self, index: usize) -> Result<&CpiDescriptor, TemplateError> {
         let descriptor = self
             .cpis
             .get(index)
             .ok_or(TemplateError::InvalidCpi(index))?;
-        if descriptor.reserved0 != 0 || descriptor.reserved1 != [0; 2] {
+        if descriptor.reserved1 != [0; 2] {
+            return Err(TemplateError::InvalidCpi(index));
+        }
+        if let Some(group) = descriptor.account_group() {
+            if group >= self.header.account_group_count() {
+                return Err(TemplateError::InvalidCpi(index));
+            }
+        }
+        if descriptor.account_len as usize > MAX_CPI_ACCOUNTS {
+            return Err(TemplateError::TooManyCpiAccounts(index));
+        }
+        if descriptor.max_data_len() > MAX_CPI_DATA_LEN {
             return Err(TemplateError::InvalidCpi(index));
         }
         let account_end = descriptor
@@ -464,6 +638,18 @@ impl ProgramView<'_> {
         if account_end > self.cpi_accounts.len() || segment_end > self.data_segments.len() {
             return Err(TemplateError::InvalidCpi(index));
         }
+        Ok(descriptor)
+    }
+
+    fn verify_cpi(
+        &self,
+        index: usize,
+        in_loop: bool,
+        registers: &[Option<RegisterInfo>; MAX_REGISTERS],
+    ) -> Result<usize, TemplateError> {
+        let descriptor = self.verify_cpi_shape(index)?;
+        let account_end = descriptor.account_start() + descriptor.account_len as usize;
+        let segment_end = descriptor.segment_start() + descriptor.segment_len as usize;
         let program = self
             .account_constraint(descriptor.program_account, in_loop)
             .ok_or(TemplateError::InvalidCpi(index))?;
@@ -603,12 +789,1294 @@ fn valid_range(total: usize, offset: usize, len: usize) -> bool {
     offset.checked_add(len).is_some_and(|end| end <= total)
 }
 
+/// A carried register must leave the loop body with exactly the type it entered with.
+fn verify_carry_after(
+    carry: u64,
+    before: &[Option<RegisterInfo>; MAX_REGISTERS],
+    after: &[Option<RegisterInfo>; MAX_REGISTERS],
+) -> Result<(), TemplateError> {
+    for register in 0..MAX_REGISTERS as u8 {
+        if carry & (1u64 << register) != 0 && before[register as usize] != after[register as usize]
+        {
+            return Err(TemplateError::InvalidCarry(register));
+        }
+    }
+    Ok(())
+}
+
+/// Bytes read from account data by each `OP_READ_*` opcode.
+pub const fn read_width(opcode: u8) -> usize {
+    match opcode {
+        OP_READ_U8 | OP_READ_BOOL => 1,
+        OP_READ_U16 => 2,
+        OP_READ_U32 => 4,
+        OP_READ_U64 | OP_READ_I64 => 8,
+        OP_READ_U128 => 16,
+        OP_READ_PUBKEY => 32,
+        _ => 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const SYSTEM_TRANSFER_HEX: &str = "42564d3202030000010102010200020001000400000000000400ff000000000003ffff000000000002ffff000000000002000000010000ffff000000000000000000000029ff00ffff000000000000000000000000000000020200000c0000000103020200ff0000040000000400000000000000010101010101010101010101010101010101010101010101010101010101010102000000";
-    const ATA_ASSERTION_HEX: &str = "42564d32020500000006070000000300000000000000000004ffff000000000004ffff000000000000ffff000000000000ffff000000000000ffff0000000000080004ffff0000000000000000000000080102ffff0000000000000000000000080201ffff0000000000000000000000080303ffff00000000000000000000002f0400ffff000000000003000000000017050004ff000000000000000000000028ff05ffff0000000000000000000000070100000000000007020000000000000703000000000000";
+    fn verify_bytes(bytes: &[u8]) -> Result<VerificationStats, TemplateError> {
+        ProgramView::parse(bytes)?.verify()
+    }
+
+    fn verify_builder(builder: &ProgramBuilder) -> Result<VerificationStats, TemplateError> {
+        verify_bytes(&builder.build()?)
+    }
+
+    /// Emits a constant of the requested type, or allocates an uninitialized register for `None`.
+    fn typed_register(builder: &mut ProgramBuilder, value_type: Option<u8>) -> u8 {
+        match value_type {
+            None => builder.register(),
+            Some(VALUE_BOOL) => builder.const_bool(true),
+            Some(VALUE_U64) => builder.const_u64(1),
+            Some(VALUE_I64) => builder.const_i64(-1),
+            Some(VALUE_U128) => builder.const_u128(1),
+            Some(VALUE_PUBKEY) => builder.const_pubkey([9; 32]),
+            Some(VALUE_BYTES) => builder.const_bytes(&[1, 2, 3]),
+            Some(other) => panic!("unsupported value type {other}"),
+        }
+    }
+
+    /// A single-CPI system transfer built with `account_flags` on the source and destination.
+    fn transfer_builder(source_flags: u8, destination_flags: u8) -> (ProgramBuilder, u8) {
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let source = builder.account(source_flags, None, None, 0);
+        let destination = builder.account(destination_flags, None, None, 0);
+        let amount = builder.const_u64(5);
+        let literal = builder.blob(&[2, 0, 0, 0]);
+        let cpi = builder.cpi(
+            system,
+            &[
+                (source, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                (destination, ACCOUNT_WRITABLE),
+            ],
+            &[
+                Segment::Literal(literal),
+                Segment::Register(DATA_REG_U64, amount),
+            ],
+        );
+        (builder, cpi)
+    }
+
+    #[test]
+    fn header_limits_are_enforced_at_the_boundary() {
+        // Register count lives at header byte 9 and does not change any section size.
+        let mut builder = ProgramBuilder::new();
+        builder.const_bool(true);
+        let mut bytes = builder.build().unwrap();
+        bytes[9] = MAX_REGISTERS as u8;
+        assert!(verify_bytes(&bytes).is_ok());
+        bytes[9] = MAX_REGISTERS as u8 + 1;
+        assert_eq!(verify_bytes(&bytes), Err(TemplateError::TooManyRegisters));
+
+        let mut builder = ProgramBuilder::new();
+        let condition = builder.const_bool(true);
+        for _ in 0..MAX_VM_INSTRUCTIONS - 1 {
+            builder.require(condition);
+        }
+        assert!(verify_builder(&builder).is_ok(), "128 instructions are allowed");
+        builder.require(condition);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::TooManyInstructions)
+        );
+
+        let mut builder = ProgramBuilder::new();
+        for _ in 0..MAX_INPUTS + 1 {
+            builder.input(VALUE_U64, 0);
+        }
+        builder.const_bool(true);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TooManyInputs));
+
+        let mut builder = ProgramBuilder::new();
+        for _ in 0..MAX_RUNTIME_ACCOUNTS + 1 {
+            builder.account(0, None, None, 0);
+        }
+        builder.const_bool(true);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TooManyAccounts));
+
+        // Eight row accounts times sixteen iterations is 128 runtime slots, past the 120 cap.
+        let mut builder = ProgramBuilder::new();
+        for _ in 0..MAX_BATCH_STRIDE {
+            builder.row_account(0, None, None, 0);
+        }
+        builder.batch(16, 0);
+        let condition = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(condition));
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TooManyAccounts));
+
+        let mut builder = ProgramBuilder::new();
+        for _ in 0..MAX_BATCH_STRIDE + 1 {
+            builder.row_account(0, None, None, 0);
+        }
+        builder.batch(1, 0);
+        let condition = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(condition));
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
+    }
+
+    #[test]
+    fn header_magic_version_flags_and_reserved_bytes_are_checked_at_parse() {
+        let mut builder = ProgramBuilder::new();
+        builder.const_bool(true);
+        let bytes = builder.build().unwrap();
+
+        let mut wrong_magic = bytes.clone();
+        wrong_magic[0] = b'X';
+        assert_eq!(
+            ProgramView::parse(&wrong_magic).unwrap_err(),
+            TemplateError::InvalidMagic
+        );
+
+        let mut old_version = bytes.clone();
+        old_version[4] = 2;
+        assert_eq!(
+            ProgramView::parse(&old_version).unwrap_err(),
+            TemplateError::UnsupportedVersion(2)
+        );
+
+        let mut unknown_flag = bytes.clone();
+        unknown_flag[17] = 0x80;
+        assert_eq!(
+            ProgramView::parse(&unknown_flag).unwrap_err(),
+            TemplateError::InvalidReservedBytes
+        );
+
+        let mut reserved = bytes.clone();
+        reserved[23] = 1;
+        assert_eq!(
+            ProgramView::parse(&reserved).unwrap_err(),
+            TemplateError::InvalidReservedBytes
+        );
+
+        let mut short = bytes.clone();
+        short.truncate(PROGRAM_HEADER_LEN - 1);
+        assert_eq!(
+            ProgramView::parse(&short).unwrap_err(),
+            TemplateError::Truncated
+        );
+
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert_eq!(
+            ProgramView::parse(&trailing).unwrap_err(),
+            TemplateError::SectionLengthMismatch
+        );
+    }
+
+    #[test]
+    fn every_opcode_rejects_uninitialized_or_mistyped_operands() {
+        // (opcode, type of a, type of b, expected verification outcome)
+        let cases: &[(u8, Option<u8>, Option<u8>, Result<(), TemplateError>)] = &[
+            (OP_ADD, Some(VALUE_U64), Some(VALUE_U64), Ok(())),
+            (OP_SUB, Some(VALUE_I64), Some(VALUE_I64), Ok(())),
+            (OP_MUL, Some(VALUE_U128), Some(VALUE_U128), Ok(())),
+            (OP_ADD, Some(VALUE_U64), Some(VALUE_I64), Err(TemplateError::TypeMismatch)),
+            (OP_DIV, Some(VALUE_BOOL), Some(VALUE_BOOL), Err(TemplateError::TypeMismatch)),
+            (OP_MIN, Some(VALUE_PUBKEY), Some(VALUE_PUBKEY), Err(TemplateError::TypeMismatch)),
+            (OP_ADD, None, Some(VALUE_U64), Err(TemplateError::RegisterNotInitialized(0))),
+            (OP_ADD, Some(VALUE_U64), None, Err(TemplateError::RegisterNotInitialized(1))),
+            (OP_LT, Some(VALUE_U64), Some(VALUE_U64), Ok(())),
+            (OP_LT, Some(VALUE_PUBKEY), Some(VALUE_PUBKEY), Err(TemplateError::TypeMismatch)),
+            (OP_GTE, Some(VALUE_BOOL), Some(VALUE_BOOL), Err(TemplateError::TypeMismatch)),
+            (OP_LTE, Some(VALUE_BYTES), Some(VALUE_BYTES), Err(TemplateError::TypeMismatch)),
+            (OP_EQ, Some(VALUE_PUBKEY), Some(VALUE_PUBKEY), Ok(())),
+            (OP_NE, Some(VALUE_BYTES), Some(VALUE_BYTES), Ok(())),
+            (OP_EQ, Some(VALUE_BOOL), Some(VALUE_BOOL), Ok(())),
+            (OP_EQ, Some(VALUE_BYTES), Some(VALUE_PUBKEY), Err(TemplateError::TypeMismatch)),
+            (OP_EQ, Some(VALUE_U64), Some(VALUE_U128), Err(TemplateError::TypeMismatch)),
+            (OP_AND, Some(VALUE_BOOL), Some(VALUE_BOOL), Ok(())),
+            (OP_AND, Some(VALUE_BOOL), Some(VALUE_U64), Err(TemplateError::TypeMismatch)),
+            (OP_OR, Some(VALUE_U64), Some(VALUE_BOOL), Err(TemplateError::TypeMismatch)),
+            (OP_NOT, Some(VALUE_BOOL), None, Ok(())),
+            (OP_NOT, Some(VALUE_U64), None, Err(TemplateError::TypeMismatch)),
+            (OP_CAST_I64, Some(VALUE_U64), None, Ok(())),
+            (OP_CAST_U128, Some(VALUE_I64), None, Ok(())),
+            (OP_CAST_U64, Some(VALUE_U128), None, Ok(())),
+            (OP_CAST_I64, Some(VALUE_BOOL), None, Err(TemplateError::TypeMismatch)),
+            (OP_CAST_U64, Some(VALUE_PUBKEY), None, Err(TemplateError::TypeMismatch)),
+            (OP_CAST_U128, None, None, Err(TemplateError::RegisterNotInitialized(0))),
+            (OP_REQUIRE, Some(VALUE_BOOL), None, Ok(())),
+            (OP_REQUIRE, Some(VALUE_U64), None, Err(TemplateError::TypeMismatch)),
+            (OP_REQUIRE, None, None, Err(TemplateError::RegisterNotInitialized(0))),
+            (OP_LOAD_INPUT, None, None, Err(TemplateError::InvalidInstruction(0))),
+            (OP_LOOP_INDEX, None, None, Err(TemplateError::InvalidInstruction(0))),
+            (39, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
+            (0xfe, Some(VALUE_U64), Some(VALUE_U64), Err(TemplateError::InvalidInstruction(2))),
+        ];
+        for (opcode, a, b, expected) in cases {
+            let mut builder = ProgramBuilder::new();
+            let register_a = typed_register(&mut builder, *a);
+            let register_b = typed_register(&mut builder, *b);
+            if *opcode == OP_REQUIRE {
+                builder.require(register_a);
+            } else {
+                builder.op(*opcode, register_a, register_b, NO_INDEX, 0);
+            }
+            let result = verify_builder(&builder).map(|_| ());
+            assert_eq!(&result, expected, "opcode {opcode} with a={a:?} b={b:?}");
+        }
+    }
+
+    #[test]
+    fn row_inputs_and_account_groups_are_verified() {
+        // A row input loaded inside the loop takes the row descriptor's type.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        let amount = builder.row_input(VALUE_U64, 0);
+        builder.for_each(0, |body| {
+            let value = body.load_input(amount);
+            let floor = body.const_u64(0);
+            let non_negative = body.binary(OP_LTE, floor, value);
+            body.require(non_negative);
+        });
+        assert!(verify_builder(&builder).is_ok(), "row input inside the loop verifies");
+
+        // Outside the loop the same reference is rejected.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        let amount = builder.row_input(VALUE_U64, 0);
+        builder.load_input(amount);
+        let condition = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(condition));
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidInstruction(0))
+        );
+
+        // An offset past the declared row is rejected.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        builder.row_input(VALUE_U64, 0);
+        builder.for_each(0, |body| {
+            body.load_input(ITERATION_INPUT_BIT | 1);
+        });
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidInstruction(1))
+        );
+
+        // Row inputs need a batch to iterate over.
+        let mut builder = ProgramBuilder::new();
+        builder.row_input(VALUE_U64, 0);
+        builder.const_bool(true);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
+
+        // More than eight row inputs, or more than 32 descriptors in total, are rejected.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(1, 0);
+        for _ in 0..MAX_ROW_INPUTS + 1 {
+            builder.row_input(VALUE_BOOL, 0);
+        }
+        let condition = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(condition));
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TooManyInputs));
+
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(1, 0);
+        for _ in 0..MAX_INPUTS - 4 {
+            builder.input(VALUE_BOOL, 0);
+        }
+        for _ in 0..5 {
+            builder.row_input(VALUE_BOOL, 0);
+        }
+        let condition = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(condition));
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TooManyInputs));
+
+        // Fixed values plus iterations times row values are capped at 256.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(60, 0);
+        for _ in 0..4 {
+            builder.input(VALUE_BOOL, 0);
+        }
+        for _ in 0..MAX_ROW_INPUTS {
+            builder.row_input(VALUE_BOOL, 0);
+        }
+        let condition = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(condition));
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::TooManyInputs),
+            "4 + 60 * 8 values"
+        );
+        builder.batch(31, 0);
+        assert!(verify_builder(&builder).is_ok(), "4 + 31 * 8 values fit");
+
+        // Nine account groups are too many.
+        let mut builder = ProgramBuilder::new();
+        builder.account_groups(MAX_ACCOUNT_GROUPS as u8 + 1);
+        builder.const_bool(true);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::TooManyAccountGroups)
+        );
+
+        // A CPI may forward a declared group and nothing beyond it.
+        let mut builder = ProgramBuilder::new();
+        builder.account_groups(1);
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([9; 32]), None, 0);
+        let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let cpi = builder.cpi_with_group(
+            program,
+            &[(payer, ACCOUNT_SIGNER | ACCOUNT_WRITABLE)],
+            &[],
+            0,
+        );
+        builder.invoke(cpi, None);
+        assert!(verify_builder(&builder).is_ok(), "group 0 of 1 is valid");
+        builder.cpis_mut()[0].account_group = 1;
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
+    }
+
+    #[test]
+    fn loop_shape_rules() {
+        // A batch schema without a FOREACH.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        builder.const_bool(true);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
+
+        // Stride without iterations, and iterations without stride.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(0, 0);
+        let condition = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(condition));
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
+
+        let mut builder = ProgramBuilder::new();
+        builder.batch(3, 0);
+        let condition = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(condition));
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
+
+        // Two loops.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let condition = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(condition));
+        builder.for_each(0, |body| body.require(condition));
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
+
+        // Nested loop.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let condition = builder.const_bool(true);
+        builder.for_each(0, |body| {
+            body.for_each(0, |inner| inner.require(condition));
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
+
+        // Empty body.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        builder.const_bool(true);
+        builder.for_each(0, |_| {});
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
+
+        // Body length past the end of the program.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let condition = builder.const_bool(true);
+        let index = builder.for_each(0, |body| body.require(condition));
+        builder.instructions_mut()[index].a = 200;
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidInstruction(index))
+        );
+
+        // Loop index outside a loop, and iteration accounts outside a loop.
+        let mut builder = ProgramBuilder::new();
+        builder.loop_index();
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidInstruction(0))
+        );
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 0);
+        builder.batch(1, 0);
+        builder.account_key(row);
+        let condition = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(condition));
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidAccountConstraint(row as usize))
+        );
+
+        // A valid batch reports the expanded CPI count and accepts loop-local reads.
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let source = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let recipient = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
+        builder.batch(30, 0);
+        let amount = builder.const_u64(1);
+        let literal = builder.blob(&[2, 0, 0, 0]);
+        let cpi = builder.cpi(
+            system,
+            &[
+                (source, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                (recipient, ACCOUNT_WRITABLE),
+            ],
+            &[
+                Segment::Literal(literal),
+                Segment::Register(DATA_REG_U64, amount),
+            ],
+        );
+        builder.for_each(0, |body| {
+            let index = body.loop_index();
+            let lamports = body.account_lamports(recipient);
+            let positive = body.binary(OP_GTE, lamports, index);
+            body.require(positive);
+            body.invoke(cpi, None);
+        });
+        let stats = verify_builder(&builder).unwrap();
+        assert_eq!(stats.max_expanded_cpis, 30);
+        assert_eq!(stats.batch_stride, 1);
+    }
+
+    #[test]
+    fn cpi_privilege_and_shape_rules() {
+        // Escalating signer or writable beyond the account schema.
+        let (mut builder, cpi) = transfer_builder(ACCOUNT_WRITABLE, ACCOUNT_WRITABLE);
+        builder.invoke(cpi, None);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
+        let (mut builder, cpi) = transfer_builder(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, 0);
+        builder.invoke(cpi, None);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
+        let (mut builder, cpi) = transfer_builder(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, ACCOUNT_WRITABLE);
+        builder.invoke(cpi, None);
+        assert!(verify_builder(&builder).is_ok());
+
+        // Program account must be executable.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(0, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.invoke(cpi, None);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
+
+        // Reserved bytes, declared length mismatch, unknown account flags, bad CPI index.
+        let (mut builder, cpi) = transfer_builder(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, ACCOUNT_WRITABLE);
+        builder.invoke(cpi, None);
+        builder.cpis_mut()[0].account_group = 0;
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
+
+        let (mut builder, cpi) = transfer_builder(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, ACCOUNT_WRITABLE);
+        builder.invoke(cpi, None);
+        builder.set_cpi_max_data_len(cpi, 11);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
+        builder.set_cpi_max_data_len(cpi, 13);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
+
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(program, &[(program, ACCOUNT_EXECUTABLE)], &[]);
+        builder.invoke(cpi, None);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
+
+        let mut builder = ProgramBuilder::new();
+        builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        builder.invoke(5, None);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(5)));
+
+        // Guard register must be a bool.
+        let (mut builder, cpi) = transfer_builder(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, ACCOUNT_WRITABLE);
+        let number = builder.const_u64(1);
+        builder.invoke(cpi, Some(number));
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TypeMismatch));
+
+        // Iteration account referenced from a root CPI.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let row = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
+        builder.batch(1, 0);
+        let cpi = builder.cpi(program, &[(row, ACCOUNT_WRITABLE)], &[]);
+        builder.invoke(cpi, None);
+        let condition = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(condition));
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
+
+        // Worst-case expansion above 64.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        builder.row_account(0, None, None, 0);
+        builder.batch(33, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.for_each(0, |body| {
+            body.invoke(cpi, None);
+            body.invoke(cpi, None);
+        });
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::ExcessiveCpiExpansion)
+        );
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        builder.row_account(0, None, None, 0);
+        builder.batch(32, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.for_each(0, |body| {
+            body.invoke(cpi, None);
+            body.invoke(cpi, None);
+        });
+        assert_eq!(verify_builder(&builder).unwrap().max_expanded_cpis, 64);
+    }
+
+    #[test]
+    fn pda_seed_rules() {
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        builder.derive_pda(program, &[]);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidInstruction(0))
+        );
+
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let seed = builder.const_u64(1);
+        let seeds = vec![Segment::Register(DATA_REG_U64, seed); MAX_PDA_SEEDS + 1];
+        builder.derive_pda(program, &seeds);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidInstruction(1))
+        );
+
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let seed = builder.const_bytes(&[7; MAX_PDA_SEED_LEN + 1]);
+        builder.derive_pda(program, &[Segment::Register(DATA_REG_BYTES, seed)]);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidDataSegment(0))
+        );
+
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        builder.blob(&[1, 2]);
+        builder.derive_pda(program, &[Segment::Literal((1, 5))]);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidDataSegment(0))
+        );
+
+        let mut builder = ProgramBuilder::new();
+        let not_program = builder.account(0, Some([1; 32]), None, 0);
+        let seed = builder.const_u64(1);
+        builder.derive_pda(not_program, &[Segment::Register(DATA_REG_U64, seed)]);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidInstruction(1))
+        );
+
+        // Segment range past the table.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        builder.op(OP_DERIVE_PDA, program, NO_INDEX, NO_INDEX, range_immediate(0, 1));
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidInstruction(0))
+        );
+
+        // Fifteen 32-byte seeds of mixed kinds verify.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let owner = builder.account(0, None, None, 0);
+        let key = builder.account_key(owner);
+        let bytes = builder.const_bytes(&[3; 32]);
+        let literal = builder.blob(b"seed");
+        let flag = builder.const_bool(true);
+        let mut seeds = vec![
+            Segment::Register(DATA_REG_PUBKEY, key),
+            Segment::Register(DATA_REG_BYTES, bytes),
+            Segment::Literal(literal),
+            Segment::Register(DATA_REG_BOOL, flag),
+        ];
+        seeds.resize(MAX_PDA_SEEDS, Segment::Register(DATA_REG_PUBKEY, key));
+        let derived = builder.derive_pda(program, &seeds);
+        let matches = builder.binary(OP_EQ, derived, key);
+        builder.require(matches);
+        assert!(verify_builder(&builder).is_ok());
+    }
+
+    #[test]
+    fn create_pda_requires_a_u64_bump() {
+        // A u64 bump and one seed verify.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let owner = builder.account(0, None, None, 0);
+        let key = builder.account_key(owner);
+        let bump = builder.const_u64(255);
+        let literal = builder.blob(b"position");
+        let created = builder.create_pda(
+            program,
+            bump,
+            &[Segment::Literal(literal), Segment::Register(DATA_REG_PUBKEY, key)],
+        );
+        let matches = builder.binary(OP_EQ, created, key);
+        builder.require(matches);
+        assert!(verify_builder(&builder).is_ok());
+
+        // A pubkey bump register is rejected by typing.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let owner = builder.account(0, None, None, 0);
+        let key = builder.account_key(owner);
+        let literal = builder.blob(b"position");
+        builder.create_pda(program, key, &[Segment::Literal(literal)]);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TypeMismatch));
+
+        // A non-executable program account is rejected, as for DERIVE_PDA.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(0, Some([1; 32]), None, 0);
+        let bump = builder.const_u64(254);
+        let literal = builder.blob(b"position");
+        let created = builder.create_pda(program, bump, &[Segment::Literal(literal)]);
+        let matches = builder.binary(OP_EQ, created, created);
+        builder.require(matches);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidInstruction(1))
+        );
+    }
+
+    #[test]
+    fn select_and_loop_register_typing() {
+        // Select widens bytes to the larger branch; a CPI bytes segment must declare that width.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let condition = builder.const_bool(true);
+        let short = builder.const_bytes(&[1, 2, 3]);
+        let long = builder.const_bytes(&[1, 2, 3, 4, 5]);
+        let selected = builder.select(condition, short, long);
+        let cpi = builder.cpi(program, &[], &[Segment::Register(DATA_REG_BYTES, selected)]);
+        builder.invoke(cpi, None);
+        builder.set_cpi_max_data_len(cpi, 5);
+        assert_eq!(verify_builder(&builder).unwrap().max_cpi_data_len, 5);
+        builder.set_cpi_max_data_len(cpi, 3);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
+
+        // Select branch and condition typing.
+        let mut builder = ProgramBuilder::new();
+        let condition = builder.const_bool(true);
+        let number = builder.const_u64(1);
+        let flag = builder.const_bool(false);
+        builder.select(condition, number, flag);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TypeMismatch));
+        let mut builder = ProgramBuilder::new();
+        let number = builder.const_u64(1);
+        builder.select(number, number, number);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TypeMismatch));
+
+        // Registers written inside the loop body are not visible after it.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(1, 0);
+        let mut inner = NO_INDEX;
+        builder.for_each(0, |body| {
+            inner = body.const_u64(1);
+        });
+        let same = builder.binary(OP_EQ, inner, inner);
+        builder.require(same);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::RegisterNotInitialized(inner))
+        );
+
+        // Registers written before the loop stay visible inside and after it.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(1, 0);
+        let outer = builder.const_u64(1);
+        builder.for_each(0, |body| {
+            let same = body.binary(OP_EQ, outer, outer);
+            body.require(same);
+        });
+        let same = builder.binary(OP_EQ, outer, outer);
+        builder.require(same);
+        assert!(verify_builder(&builder).is_ok());
+    }
+
+    #[test]
+    fn data_segment_rules() {
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let signed = builder.const_i64(-1);
+        let cpi = builder.cpi(program, &[], &[Segment::Register(DATA_REG_U8, signed)]);
+        builder.invoke(cpi, None);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TypeMismatch));
+
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let literal = builder.blob(&[1]);
+        builder.derive_pda(program, &[Segment::Literal(literal)]);
+        builder.segments_mut()[0].register = 0;
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidDataSegment(0))
+        );
+
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let literal = builder.blob(&[1]);
+        let cpi = builder.cpi(program, &[], &[Segment::Literal(literal)]);
+        builder.invoke(cpi, None);
+        builder.segments_mut()[0].reserved = [1, 0];
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidDataSegment(0))
+        );
+
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let value = builder.const_u64(1);
+        let cpi = builder.cpi(program, &[], &[Segment::Register(0xfe, value)]);
+        builder.invoke(cpi, None);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidDataSegment(0))
+        );
+
+        // A register-backed PDA seed with a literal offset set is malformed.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let value = builder.const_u64(1);
+        builder.derive_pda(program, &[Segment::Register(DATA_REG_U64, value)]);
+        builder.segments_mut()[0].len_le = [1, 0];
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidDataSegment(0))
+        );
+
+        // Data above 4096 bytes is rejected even when declared honestly.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let literal = builder.blob(&[0; MAX_CPI_DATA_LEN + 1]);
+        let cpi = builder.cpi(program, &[], &[Segment::Literal(literal)]);
+        builder.invoke(cpi, None);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
+    }
+
+    #[test]
+    fn blob_pubkey_account_and_input_ranges() {
+        let mut builder = ProgramBuilder::new();
+        builder.blob(&[0; 16]);
+        builder.op(OP_CONST_U128, NO_INDEX, NO_INDEX, NO_INDEX, range_immediate(0, 15));
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBlobRange));
+
+        let mut builder = ProgramBuilder::new();
+        builder.blob(&[0; 16]);
+        builder.op(OP_CONST_U128, NO_INDEX, NO_INDEX, NO_INDEX, range_immediate(1, 16));
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBlobRange));
+
+        let mut builder = ProgramBuilder::new();
+        builder.const_bytes(&[0; MAX_INPUT_BYTES + 1]);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBlobRange));
+
+        let mut builder = ProgramBuilder::new();
+        builder.op(OP_CONST_PUBKEY, 0, NO_INDEX, NO_INDEX, 0);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidInstruction(0))
+        );
+
+        let mut builder = ProgramBuilder::new();
+        builder.account(0, Some([1; 32]), None, 0);
+        builder.const_bool(true);
+        builder.accounts_mut().0[0].address_index = 5;
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidAccountConstraint(0))
+        );
+        builder.accounts_mut().0[0].address_index = 0;
+        builder.accounts_mut().0[0].owner_index = 1;
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidAccountConstraint(0))
+        );
+        builder.accounts_mut().0[0].owner_index = NO_INDEX;
+        builder.accounts_mut().0[0].flags = 0x10;
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidAccountConstraint(0))
+        );
+        builder.accounts_mut().0[0].flags = 0;
+        builder.accounts_mut().0[0].reserved = 1;
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidAccountConstraint(0))
+        );
+
+        let mut builder = ProgramBuilder::new();
+        builder.input(VALUE_BYTES, 0);
+        builder.const_bool(true);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidInput(0)));
+        let mut builder = ProgramBuilder::new();
+        builder.input(VALUE_BYTES, MAX_INPUT_BYTES as u16 + 1);
+        builder.const_bool(true);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidInput(0)));
+        let mut builder = ProgramBuilder::new();
+        builder.input(VALUE_U64, 1);
+        builder.const_bool(true);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidInput(0)));
+        let mut builder = ProgramBuilder::new();
+        builder.input(VALUE_U64, 0);
+        builder.input(0xfe, 0);
+        builder.const_bool(true);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidInput(1)));
+        let mut builder = ProgramBuilder::new();
+        let input = builder.input(VALUE_BYTES, 8);
+        let loaded = builder.load_input(input);
+        let same = builder.binary(OP_EQ, loaded, loaded);
+        builder.require(same);
+        assert!(verify_builder(&builder).is_ok());
+        let mut builder = ProgramBuilder::new();
+        builder.load_input(3);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidInstruction(0))
+        );
+    }
+
+    #[test]
+    fn cpi_account_counts_are_bounded_even_when_never_invoked() {
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let target = builder.account(0, None, None, 0);
+        let accounts = vec![(target, 0u8); MAX_CPI_ACCOUNTS + 1];
+        let cpi = builder.cpi(program, &accounts, &[]);
+        builder.invoke(cpi, None);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::TooManyCpiAccounts(0))
+        );
+
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let target = builder.account(0, None, None, 0);
+        let accounts = vec![(target, 0u8); MAX_CPI_ACCOUNTS];
+        let cpi = builder.cpi(program, &accounts, &[]);
+        builder.invoke(cpi, None);
+        assert!(verify_builder(&builder).is_ok(), "exactly 64 accounts are allowed");
+
+        // A descriptor that no instruction invokes still has to be well formed, because the
+        // executor sizes its scratch buffers from every descriptor's declared data length.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let dead = builder.cpi(program, &[], &[]);
+        builder.set_cpi_max_data_len(dead, u16::MAX);
+        builder.const_bool(true);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
+
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let target = builder.account(0, None, None, 0);
+        let accounts = vec![(target, 0u8); MAX_CPI_ACCOUNTS + 1];
+        builder.cpi(program, &accounts, &[]);
+        builder.const_bool(true);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::TooManyCpiAccounts(0))
+        );
+
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        builder.cpi(program, &[], &[]);
+        builder.cpis_mut()[0].account_start_le = 9u16.to_le_bytes();
+        builder.const_bool(true);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
+    }
+
+    #[test]
+    fn fixed_offset_reads_must_fit_the_declared_minimum_data_length() {
+        let read_at = |offset: u64, min_data_len: u32| {
+            let mut builder = ProgramBuilder::new();
+            let account = builder.account(0, None, Some([2; 32]), min_data_len);
+            let value = builder.read(OP_READ_U64, account, offset);
+            let same = builder.binary(OP_EQ, value, value);
+            builder.require(same);
+            verify_builder(&builder)
+        };
+        assert!(read_at(56, 64).is_ok());
+        assert_eq!(read_at(57, 64), Err(TemplateError::ReadOutOfBounds(0)));
+        assert_eq!(read_at(0, 0), Err(TemplateError::ReadOutOfBounds(0)));
+        assert_eq!(read_at(u64::MAX, 64), Err(TemplateError::ReadOutOfBounds(0)));
+
+        // Every read width is checked against its own size.
+        let widths = [
+            (OP_READ_BOOL, 1u64),
+            (OP_READ_U8, 1),
+            (OP_READ_U16, 2),
+            (OP_READ_U32, 4),
+            (OP_READ_U64, 8),
+            (OP_READ_I64, 8),
+            (OP_READ_U128, 16),
+            (OP_READ_PUBKEY, 32),
+        ];
+        for (opcode, width) in widths {
+            let mut builder = ProgramBuilder::new();
+            let account = builder.account(0, None, None, 40);
+            let value = builder.read(opcode, account, 40 - width);
+            let same = builder.binary(OP_EQ, value, value);
+            builder.require(same);
+            assert!(verify_builder(&builder).is_ok(), "opcode {opcode} at the boundary");
+            let mut builder = ProgramBuilder::new();
+            let account = builder.account(0, None, None, 40);
+            let value = builder.read(opcode, account, 41 - width);
+            let same = builder.binary(OP_EQ, value, value);
+            builder.require(same);
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::ReadOutOfBounds(0)),
+                "opcode {opcode} one past the boundary"
+            );
+        }
+
+        // Row accounts use the row constraint.
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 16);
+        builder.batch(2, 0);
+        builder.for_each(0, |body| {
+            let value = body.read(OP_READ_U64, row, 8);
+            let same = body.binary(OP_EQ, value, value);
+            body.require(same);
+        });
+        assert!(verify_builder(&builder).is_ok());
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 16);
+        builder.batch(2, 0);
+        builder.for_each(0, |body| {
+            let value = body.read(OP_READ_U64, row, 9);
+            let same = body.binary(OP_EQ, value, value);
+            body.require(same);
+        });
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::ReadOutOfBounds(1))
+        );
+    }
+
+    #[test]
+    fn loop_carried_registers_must_be_initialized_and_keep_their_type() {
+        // Sum each row's lamports into a carried register, then enforce a budget after the loop.
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        let total = builder.const_u64(0);
+        let budget = builder.const_u64(1_000);
+        builder.for_each(1 << total, |body| {
+            let lamports = body.account_lamports(row);
+            let sum = body.binary(OP_ADD, total, lamports);
+            body.mov(total, sum);
+        });
+        let within = builder.binary(OP_LTE, total, budget);
+        builder.require(within);
+        assert!(verify_builder(&builder).is_ok());
+
+        // Never initialized before the loop.
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        let total = builder.register();
+        builder.for_each(1 << total, |body| {
+            let lamports = body.account_lamports(row);
+            body.mov(total, lamports);
+        });
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidCarry(total))
+        );
+
+        // Retyped inside the body.
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        let total = builder.const_u64(0);
+        builder.for_each(1 << total, |body| {
+            let key = body.account_key(row);
+            body.mov(total, key);
+        });
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidCarry(total))
+        );
+
+        // Bytes must keep the same maximum length.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        let short = builder.const_bytes(&[1, 2]);
+        builder.for_each(1 << short, |body| {
+            let long = body.const_bytes(&[1, 2, 3]);
+            body.mov(short, long);
+        });
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidCarry(short))
+        );
+
+        // A carry bit above the register count.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        let flag = builder.const_bool(true);
+        builder.for_each(1 << 63, |body| body.require(flag));
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidCarry(63))
+        );
+
+        // Move follows ordinary register typing.
+        let mut builder = ProgramBuilder::new();
+        let value = builder.const_u64(1);
+        let target = builder.register();
+        builder.mov(target, value);
+        let same = builder.binary(OP_EQ, target, value);
+        builder.require(same);
+        assert!(verify_builder(&builder).is_ok());
+        let mut builder = ProgramBuilder::new();
+        let target = builder.register();
+        builder.mov(target, 5);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidRegister(5))
+        );
+    }
+
+    #[test]
+    fn minimum_iterations_are_bounded_by_the_maximum() {
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(3, 3);
+        let flag = builder.const_bool(true);
+        builder.for_each(0, |body| body.require(flag));
+        assert!(verify_builder(&builder).is_ok());
+        builder.batch(3, 4);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidMinIterations)
+        );
+
+        let mut builder = ProgramBuilder::new();
+        builder.batch(0, 1);
+        builder.const_bool(true);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidMinIterations)
+        );
+    }
+
+    #[test]
+    fn dynamic_offset_reads_take_a_u64_register_and_skip_the_static_bound() {
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 0);
+        let offset = builder.const_u64(64);
+        let value = builder.read_dynamic(OP_READ_U64, account, offset);
+        let same = builder.binary(OP_EQ, value, value);
+        builder.require(same);
+        assert!(verify_builder(&builder).is_ok());
+
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 0);
+        let offset = builder.const_i64(64);
+        builder.read_dynamic(OP_READ_U64, account, offset);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TypeMismatch));
+
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 0);
+        let offset = builder.const_u64(64);
+        builder.read_dynamic(OP_READ_U64, account, offset);
+        builder.instructions_mut()[1].immediate_le = 8u64.to_le_bytes();
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidFlags(1)));
+
+        let mut builder = ProgramBuilder::new();
+        let value = builder.const_u64(1);
+        builder.binary(OP_ADD, value, value);
+        builder.instructions_mut()[1].flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET;
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidFlags(1)));
+
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 8);
+        builder.read(OP_READ_U64, account, 0);
+        builder.instructions_mut()[0].flags = 2;
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidFlags(0)));
+    }
+
+    #[test]
+    fn return_data_reads_must_directly_follow_an_unconditional_invoke() {
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.invoke(cpi, None);
+        let size = builder.return_data(OP_READ_U64, 0);
+        let expected = builder.const_u64(165);
+        let same = builder.binary(OP_EQ, size, expected);
+        builder.require(same);
+        assert!(verify_builder(&builder).is_ok());
+
+        // Every read width is accepted and typed like the matching account read.
+        for (opcode, width) in [
+            (OP_READ_BOOL, 1u64),
+            (OP_READ_U8, 1),
+            (OP_READ_U16, 2),
+            (OP_READ_U32, 4),
+            (OP_READ_U64, 8),
+            (OP_READ_I64, 8),
+            (OP_READ_U128, 16),
+            (OP_READ_PUBKEY, 32),
+        ] {
+            let mut builder = ProgramBuilder::new();
+            let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+            let cpi = builder.cpi(program, &[], &[]);
+            builder.invoke(cpi, None);
+            let value = builder.return_data(opcode, MAX_RETURN_DATA_LEN as u64 - width);
+            let same = builder.binary(OP_EQ, value, value);
+            builder.require(same);
+            assert!(verify_builder(&builder).is_ok(), "opcode {opcode} at the end");
+            let mut builder = ProgramBuilder::new();
+            let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+            let cpi = builder.cpi(program, &[], &[]);
+            builder.invoke(cpi, None);
+            builder.return_data(opcode, MAX_RETURN_DATA_LEN as u64 - width + 1);
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidReturnData(1)),
+                "opcode {opcode} past the end"
+            );
+        }
+
+        // Not a read opcode.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.invoke(cpi, None);
+        builder.return_data(OP_ADD, 0);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidReturnData(1))
+        );
+
+        // Preceded by a guarded invoke.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        let guard = builder.const_bool(true);
+        builder.invoke(cpi, Some(guard));
+        builder.return_data(OP_READ_U64, 0);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidReturnData(2))
+        );
+
+        // Preceded by something other than an invoke, or by nothing at all.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.invoke(cpi, None);
+        builder.const_bool(true);
+        builder.return_data(OP_READ_U64, 0);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidReturnData(2))
+        );
+        let mut builder = ProgramBuilder::new();
+        builder.return_data(OP_READ_U64, 0);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidReturnData(0))
+        );
+
+        // The invoke must be in the same range: first instruction of a loop body, or the first
+        // root instruction after a loop whose body ends with an invoke.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.invoke(cpi, None);
+        builder.for_each(0, |body| {
+            body.return_data(OP_READ_U64, 0);
+        });
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidReturnData(2))
+        );
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.for_each(0, |body| body.invoke(cpi, None));
+        builder.return_data(OP_READ_U64, 0);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidReturnData(2))
+        );
+
+        // Inside a loop body right after an unconditional invoke is fine.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.for_each(0, |body| {
+            body.invoke(cpi, None);
+            let value = body.return_data(OP_READ_U64, 0);
+            let same = body.binary(OP_EQ, value, value);
+            body.require(same);
+        });
+        assert!(verify_builder(&builder).is_ok());
+    }
+
+    #[test]
+    fn instruction_reserved_bytes_must_be_zero() {
+        let mut builder = ProgramBuilder::new();
+        builder.const_bool(true);
+        builder.instructions_mut()[0].reserved = [0, 1];
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidInstruction(0))
+        );
+
+        let mut builder = ProgramBuilder::new();
+        builder.const_bool(true);
+        builder.instructions_mut()[0].flags = 1;
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidFlags(0)));
+
+        let mut builder = ProgramBuilder::new();
+        builder.op(OP_CONST_BOOL, 2, NO_INDEX, NO_INDEX, 0);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidInstruction(0))
+        );
+
+        let mut builder = ProgramBuilder::new();
+        builder.const_bool(true);
+        builder.instructions_mut()[0].dst = 7;
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidRegister(7)));
+    }
+
+    /// Compiled by the TypeScript SDK; regenerate with `pnpm fixtures`.
+    const SYSTEM_TRANSFER_HEX: &str = include_str!("../../../fixtures/system-transfer.hex");
+    const ATA_ASSERTION_HEX: &str = include_str!("../../../fixtures/assert-ata.hex");
 
     #[test]
     fn typescript_system_transfer_fixture_is_zero_copy_and_valid() {
@@ -710,8 +2178,68 @@ mod tests {
         );
     }
 
+    /// Every compiler fixture must parse and verify; the TypeScript suite keeps the files current.
+    #[test]
+    fn every_shared_fixture_parses_and_verifies() {
+        let fixtures: [(&str, &str); 14] = [
+            ("system-transfer", include_str!("../../../fixtures/system-transfer.hex")),
+            ("batch-transfer-30", include_str!("../../../fixtures/batch-transfer-30.hex")),
+            ("ensure-ata", include_str!("../../../fixtures/ensure-ata.hex")),
+            ("assert-ata", include_str!("../../../fixtures/assert-ata.hex")),
+            (
+                "assert-ata-with-bump",
+                include_str!("../../../fixtures/assert-ata-with-bump.hex"),
+            ),
+            (
+                "checked-transfer-snapshot",
+                include_str!("../../../fixtures/checked-transfer-snapshot.hex"),
+            ),
+            ("carry-sum", include_str!("../../../fixtures/carry-sum.hex")),
+            ("waterfall-payout", include_str!("../../../fixtures/waterfall-payout.hex")),
+            ("dynamic-read", include_str!("../../../fixtures/dynamic-read.hex")),
+            ("return-data", include_str!("../../../fixtures/return-data.hex")),
+            ("event-flag", include_str!("../../../fixtures/event-flag.hex")),
+            ("pinned-mint-read", include_str!("../../../fixtures/pinned-mint-read.hex")),
+            ("payroll-row-amounts", include_str!("../../../fixtures/payroll-row-amounts.hex")),
+            ("group-forward-transfer", include_str!("../../../fixtures/group-forward-transfer.hex")),
+        ];
+        for (name, hex) in fixtures {
+            let bytes = decode_hex(hex);
+            let program =
+                ProgramView::parse(&bytes).unwrap_or_else(|error| panic!("{name}: {error}"));
+            program
+                .verify()
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert_eq!(program.header.version(), TEMPLATE_PROGRAM_VERSION, "{name}");
+        }
+
+        // The live-protocol examples in `clients/js/examples/protocols` are compiled by the
+        // TypeScript suite into this file. They target programs no test can invoke, but the
+        // verifier is exactly the check that matters for them: it is what the chain runs before
+        // a template is allowed to be stored.
+        let protocols = include_str!("../../../fixtures/protocol-examples.json");
+        let mut examples = 0usize;
+        for entry in protocols.split('"').filter(|part| part.len() > 64) {
+            let bytes = decode_hex(entry);
+            let program = ProgramView::parse(&bytes)
+                .unwrap_or_else(|error| panic!("protocol example {examples}: {error}"));
+            program
+                .verify()
+                .unwrap_or_else(|error| panic!("protocol example {examples}: {error}"));
+            examples += 1;
+        }
+        assert_eq!(examples, 12, "every protocol example is verified");
+        let carry = decode_hex(include_str!("../../../fixtures/carry-sum.hex"));
+        let program = ProgramView::parse(&carry).unwrap();
+        assert_eq!(program.header.batch_min_iterations(), 1);
+        let event = decode_hex(include_str!("../../../fixtures/event-flag.hex"));
+        let program = ProgramView::parse(&event).unwrap();
+        assert_eq!(program.header.flags(), PROGRAM_FLAG_EMIT_EVENT);
+    }
+
     fn decode_hex(value: &str) -> Vec<u8> {
         value
+            .trim()
             .as_bytes()
             .chunks_exact(2)
             .map(|pair| {

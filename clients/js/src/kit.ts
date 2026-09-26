@@ -35,6 +35,8 @@ export const SYSTEM_PROGRAM_ADDRESS = address('11111111111111111111111111111111'
 
 export interface KitAccountBinding {
   address: Address;
+  /** Account group members only: pass the account as writable. */
+  writable?: boolean;
 }
 
 export interface KitUploadInstruction {
@@ -214,12 +216,58 @@ export async function getTemplateAddress(
   const [templateAddress, bump] = await getProgramDerivedAddress({
     programAddress,
     seeds: [
-      new TextEncoder().encode('template-v2'),
+      new TextEncoder().encode('template'),
       getAddressEncoder().encode(creator),
       Uint8Array.of(templateId & 0xff, templateId >>> 8),
     ],
   });
   return [templateAddress, bump];
+}
+
+/** The subset of a Kit RPC client `findFreeTemplateId` needs. */
+export interface TemplateProbeRpc {
+  getMultipleAccounts(addresses: Address[]): { send(): Promise<{ value: readonly (unknown | null)[] }> };
+}
+
+export interface FreeTemplateId {
+  templateId: number;
+  templateAddress: Address;
+  bump: number;
+}
+
+/**
+ * Finds the lowest template ID at or above `start` whose address holds no account. Anyone can
+ * dust a predictable template address, and creation tolerates that, but an address that already
+ * holds a finalized or uploading template cannot be reused, so callers probe before uploading.
+ */
+export async function findFreeTemplateId(input: {
+  rpc: TemplateProbeRpc;
+  creator: Address;
+  programAddress?: Address;
+  start?: number;
+  batchSize?: number;
+}): Promise<FreeTemplateId> {
+  const programAddress = input.programAddress ?? BALLISTA_ADDRESS;
+  const batchSize = input.batchSize ?? 16;
+  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 100) {
+    throw new RangeError('Probe batch size must be from 1 to 100');
+  }
+  let templateId = input.start ?? 0;
+  validateTemplateId(templateId);
+  while (templateId <= 0xffff) {
+    const count = Math.min(batchSize, 0x1_0000 - templateId);
+    const candidates = await Promise.all(
+      Array.from({ length: count }, (_, offset) => getTemplateAddress(input.creator, templateId + offset, programAddress)),
+    );
+    const { value } = await input.rpc.getMultipleAccounts(candidates.map(([address]) => address)).send();
+    const free = value.findIndex((account) => account === null);
+    if (free !== -1) {
+      const [templateAddress, bump] = candidates[free]!;
+      return { templateId: templateId + free, templateAddress, bump };
+    }
+    templateId += count;
+  }
+  throw new RangeError('Every template ID for this creator is taken');
 }
 
 export function toKitInstruction(descriptor: InstructionDescriptor): Instruction {
@@ -241,8 +289,21 @@ export function buildKitRunInstruction(input: {
   inputs?: Readonly<Record<string, RunInputValue>>;
   accounts: Readonly<Record<string, KitAccountBinding>>;
   batchRows?: readonly Readonly<Record<string, KitAccountBinding>>[];
+  batchInputs?: readonly Readonly<Record<string, RunInputValue>>[];
+  accountGroups?: Readonly<Record<string, readonly KitAccountBinding[]>>;
 }): Instruction {
   const encoder = getAddressEncoder();
+  const accountGroups = input.accountGroups
+    ? (Object.fromEntries(
+        Object.entries(input.accountGroups).map(([name, members]) => [
+          name,
+          members.map((member) => ({
+            address: Uint8Array.from(encoder.encode(member.address)),
+            ...(member.writable !== undefined ? { writable: member.writable } : {}),
+          })),
+        ]),
+      ) as Readonly<Record<string, readonly AccountBinding[]>>)
+    : undefined;
   const accounts = Object.fromEntries(
     Object.entries(input.accounts).map(([name, binding]) => [
       name,
@@ -266,6 +327,8 @@ export function buildKitRunInstruction(input: {
       inputs: input.inputs,
       accounts,
       batchRows,
+      ...(input.batchInputs ? { batchInputs: input.batchInputs } : {}),
+      ...(accountGroups ? { accountGroups } : {}),
     }),
   );
 }

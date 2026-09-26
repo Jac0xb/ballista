@@ -1,4 +1,4 @@
-# Ballista 0.3 implementation plan
+# Implementation plan
 
 This plan tracks the clean-break bounded orchestration VM. The 25 workflows in
 [use-case matrix](/use-cases) are acceptance scenarios for the language surface, subject to the
@@ -15,7 +15,7 @@ external programs, accounts, and authorities listed there.
 
 ## 2. Immutable template lifecycle
 
-- [x] Derive `template-v2` PDAs from creator and template ID.
+- [x] Derive `template` PDAs from creator and template ID.
 - [x] Implement one-shot create plus begin, sequential chunk write, finalize, and upload cancel.
 - [x] Store creator, ID, state, lengths, bump, and SHA-256 hash in an 80-byte v2 header.
 - [x] Make finalized templates public, repeatable, immutable, and non-closeable.
@@ -53,6 +53,31 @@ external programs, accounts, and authorities listed there.
 - [x] Record v1 transaction sizes and compute/heap observations for 1, 8, and 30 transfers.
 - [x] Pass Rust checks/tests, TypeScript checks/tests, SBF build, fixture parity, and
   `git diff --check`.
+
+## 6. Bytecode hardening
+
+- [x] Attribute VM failures to a program counter, account index, or input index in the error code,
+  and pass invoked-program errors through untouched.
+- [x] Replace unchecked table lookups in the executor with checked lookups and remove the
+  unreachable arm.
+- [x] Allocate CPI scratch once per run and derive PDA seeds on the stack so heap use is constant.
+- [x] Verify every CPI descriptor's shape, bound CPI accounts at 64, and check fixed-offset reads
+  against the declared minimum data length at finalize.
+- [x] Create templates on prefunded addresses with transfer, allocate, and assign.
+- [x] Add loop-carried registers, minimum iterations, `MOVE`, dynamic-offset reads, a guarded
+  return-data read, and an opt-in run event.
+- [x] Compile all of the above in TypeScript with pin lints, inferred data lengths, a source map,
+  and error decoding; share compiler fixtures with the Rust suites.
+- [x] Author templates from Rust with `ProgramBuilder`, encode inputs with `RunInputs`, and decode
+  errors; prove Rust and TypeScript emit identical bytes.
+- [x] Table-test the verifier, unit-test the executor core, property-test parse and verify against
+  arbitrary bytes, and generate valid programs to prove the executor accepts everything the verifier
+  does.
+- [x] Run the TypeScript-compiled fixtures end to end under Mollusk.
+- [x] Run host and integration suites in CI on every pull request.
+- [x] Specify the executor, verifier, parser, account constraints, and lifecycle for the Certora
+  Solana Prover, with a pinocchio account adapter.
+- [ ] Deploy the program immutably and refresh the IDL.
 
 ## Supported workflow scenarios
 

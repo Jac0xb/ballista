@@ -40,6 +40,20 @@ let run = ballista_sdk::run_instruction(template, swap_metas, &inputs);
 The quote is still client-provided. For trust-minimized output protection, snapshot and read the
 actual destination token-account amount after the CPI.
 
+<!-- benchmark:deadline-and-minimum-output -->
+
+| Cost | Ballista | Plain instructions, weaker | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 4,064 | 150 | +3,914 |
+| Transaction bytes, every run | 333 | 240 | +93 |
+| Compute units, upload once | 8,079 | none | — |
+| Transaction bytes, upload once | 556 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00248 SOL for 360 bytes | none | — |
+
+One Ballista instruction against 1 plain instruction, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. The route instruction alone. Deadline and minimum output are whatever the client checked before signing. Enforcing that on chain any other way means deploying your own program.
+
+<!-- /benchmark -->
+
 ## Pinned program and owner
 
 Pin executable program IDs and protocol account owners in the account schema.
@@ -71,6 +85,20 @@ let run = ballista_sdk::run_instruction(
 
 :::
 
+<!-- benchmark:pinned-program-and-owner -->
+
+| Cost | Ballista | Plain instructions, weaker | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 2,959 | 150 | +2,809 |
+| Transaction bytes, every run | 283 | 220 | +63 |
+| Compute units, upload once | 4,158 | none | — |
+| Transaction bytes, upload once | 428 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00183 SOL for 232 bytes | none | — |
+
+One Ballista instruction against 1 plain instruction, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. The same instruction with no schema: a substituted program ID or a wrong-owner account is accepted as far as the transaction is concerned. Enforcing that on chain any other way means deploying your own program.
+
+<!-- /benchmark -->
+
 ## Oracle price band
 
 Read a fixed-width price field from a schema-pinned oracle account and enforce a band.
@@ -100,6 +128,20 @@ The template must use the oracle protocol's documented field layout and should a
 published slot or timestamp. Ballista has no built-in oracle evaluator.
 :::
 
+<!-- benchmark:oracle-price-band -->
+
+| Cost | Ballista | Plain instructions, not equivalent | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 4,081 | 150 | +3,931 |
+| Transaction bytes, every run | 324 | 220 | +104 |
+| Compute units, upload once | 5,134 | none | — |
+| Transaction bytes, upload once | 568 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00254 SOL for 372 bytes | none | — |
+
+One Ballista instruction against 1 plain instruction, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. No instruction sequence reads an oracle account and refuses to continue. Enforcing a band on chain needs a program.
+
+<!-- /benchmark -->
+
 ## Maximum lamport spend
 
 Snapshot a signer before arbitrary CPIs and cap the actual debit afterward.
@@ -128,6 +170,20 @@ let run = ballista_sdk::run_instruction(
 
 :::
 
+<!-- benchmark:maximum-lamport-spend -->
+
+| Cost | Ballista | Plain instructions, not equivalent | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 3,624 | 150 | +3,474 |
+| Transaction bytes, every run | 283 | 220 | +63 |
+| Compute units, upload once | 4,814 | none | — |
+| Transaction bytes, upload once | 524 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00232 SOL for 328 bytes | none | — |
+
+One Ballista instruction against 1 plain instruction, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. A transaction cannot compare a balance before and after one of its own instructions. Capping the debit on chain needs a program.
+
+<!-- /benchmark -->
+
 ## Canonical position account
 
 Prevent a caller from substituting a different protocol-owned account with otherwise valid layout.
@@ -155,3 +211,17 @@ let run = ballista_sdk::run_instruction(template, position_metas, &position_id.t
 ```
 
 :::
+
+<!-- benchmark:canonical-position-account -->
+
+| Cost | Ballista | Plain instructions, not equivalent | Difference |
+| --- | ---: | ---: | ---: |
+| Compute units, every run | 5,630 | 150 | +5,480 |
+| Transaction bytes, every run | 285 | 220 | +65 |
+| Compute units, upload once | 11,109 | none | — |
+| Transaction bytes, upload once | 572 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00256 SOL for 376 bytes | none | — |
+
+One Ballista instruction against 1 plain instruction, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. A transaction cannot derive a PDA and compare it to a supplied account. Rejecting a substituted account on chain needs a program.
+
+<!-- /benchmark -->

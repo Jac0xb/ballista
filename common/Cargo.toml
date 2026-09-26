@@ -12,3 +12,15 @@ crate-type = ["lib"]
 
 [dependencies]
 zerocopy = { workspace = true }
+proptest = { version = "1.11", optional = true }
+
+[features]
+## Enables the `template::generate` strategies for property tests in other crates.
+proptest = ["dep:proptest"]
+
+[dev-dependencies]
+proptest = "1.11"
+
+[[test]]
+name = "generated"
+required-features = ["proptest"]

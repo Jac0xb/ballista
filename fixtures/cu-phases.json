@@ -1,0 +1,198 @@
+[
+  {
+    "case": "Empty run",
+    "counterRead": 115,
+    "instrumentationOverhead": 1266,
+    "invokes": 0,
+    "rows": [
+      {
+        "phase": "Entrypoint and account deserialization",
+        "units": 8
+      },
+      {
+        "phase": "Instruction parse and dispatch",
+        "units": 18
+      },
+      {
+        "phase": "Template account load and header parse",
+        "units": 239
+      },
+      {
+        "phase": "Runtime account validation",
+        "units": 100
+      },
+      {
+        "phase": "Run input parse",
+        "units": 221
+      },
+      {
+        "phase": "Register file allocation",
+        "units": 116
+      },
+      {
+        "phase": "Invocation scratch allocation",
+        "units": 56
+      },
+      {
+        "phase": "Interpreter, including invokes",
+        "units": 233
+      },
+      {
+        "phase": "Return and unattributed remainder",
+        "units": 23
+      }
+    ],
+    "total": 1014
+  },
+  {
+    "case": "Payroll, 1 row",
+    "counterRead": 115,
+    "instrumentationOverhead": 1750,
+    "invokes": 1,
+    "rows": [
+      {
+        "phase": "Entrypoint and account deserialization",
+        "units": 63
+      },
+      {
+        "phase": "Instruction parse and dispatch",
+        "units": 18
+      },
+      {
+        "phase": "Template account load and header parse",
+        "units": 239
+      },
+      {
+        "phase": "Runtime account validation",
+        "units": 239
+      },
+      {
+        "phase": "Run input parse",
+        "units": 303
+      },
+      {
+        "phase": "Register file allocation",
+        "units": 115
+      },
+      {
+        "phase": "Invocation scratch allocation",
+        "units": 66
+      },
+      {
+        "phase": "Interpreter, other instructions",
+        "units": 640
+      },
+      {
+        "phase": "Invoke build: accounts and data",
+        "units": 398
+      },
+      {
+        "phase": "Invoke itself: runtime and callee",
+        "units": 1210
+      },
+      {
+        "phase": "Return and unattributed remainder",
+        "units": 0
+      }
+    ],
+    "total": 3290
+  },
+  {
+    "case": "Payroll, 30 rows",
+    "counterRead": 115,
+    "instrumentationOverhead": 15351,
+    "invokes": 30,
+    "rows": [
+      {
+        "phase": "Entrypoint and account deserialization",
+        "units": 490
+      },
+      {
+        "phase": "Instruction parse and dispatch",
+        "units": 18
+      },
+      {
+        "phase": "Template account load and header parse",
+        "units": 239
+      },
+      {
+        "phase": "Runtime account validation",
+        "units": 1399
+      },
+      {
+        "phase": "Run input parse",
+        "units": 303
+      },
+      {
+        "phase": "Register file allocation",
+        "units": 115
+      },
+      {
+        "phase": "Invocation scratch allocation",
+        "units": 66
+      },
+      {
+        "phase": "Interpreter, other instructions",
+        "units": 7803
+      },
+      {
+        "phase": "Invoke build: accounts and data",
+        "units": 5270
+      },
+      {
+        "phase": "Invoke itself: runtime and callee",
+        "units": 36300
+      },
+      {
+        "phase": "Return and unattributed remainder",
+        "units": 0
+      }
+    ],
+    "total": 51741
+  },
+  {
+    "case": "Sum 30 rows, no invoke",
+    "counterRead": 115,
+    "instrumentationOverhead": 1299,
+    "invokes": 0,
+    "rows": [
+      {
+        "phase": "Entrypoint and account deserialization",
+        "units": 462
+      },
+      {
+        "phase": "Instruction parse and dispatch",
+        "units": 18
+      },
+      {
+        "phase": "Template account load and header parse",
+        "units": 239
+      },
+      {
+        "phase": "Runtime account validation",
+        "units": 1249
+      },
+      {
+        "phase": "Run input parse",
+        "units": 221
+      },
+      {
+        "phase": "Register file allocation",
+        "units": 168
+      },
+      {
+        "phase": "Invocation scratch allocation",
+        "units": 56
+      },
+      {
+        "phase": "Interpreter, including invokes",
+        "units": 15805
+      },
+      {
+        "phase": "Return and unattributed remainder",
+        "units": 0
+      }
+    ],
+    "total": 18208
+  }
+]

@@ -1,6 +1,6 @@
 # `@jac0xb/ballista`
 
-Zod authoring, deterministic flat-bytecode compilation, and instruction codecs for Ballista 0.3.
+Zod authoring, deterministic flat-bytecode compilation, and instruction codecs for Ballista.
 
 ```ts
 import { account, compileTemplate, defineTemplate, expression, step, systemTransfer } from '@jac0xb/ballista';

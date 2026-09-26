@@ -1,12 +1,21 @@
 # Devnet workflow
 
-The Ballista program is deployed at
-[`BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD`](https://explorer.solana.com/address/BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD?cluster=devnet).
+## Deployment policy
 
-::: warning Current deployment
-The current binary predates the `derivePda` opcode. Templates containing `assertPda` or `assertAta`
-need the next program upgrade and IDL refresh. Templates using existing instructions—including
-`let` and `snapshot`, which compile to ordinary registers—remain compatible.
+Every version of the Ballista program is deployed immutably under its own address. Nothing can
+change what a finalized template means after the fact, and templates are bound to the deployment
+that finalized them. Moving to a new bytecode version means deploying a new program and uploading
+templates under it.
+
+| Build | Program | Status |
+| --- | --- | --- |
+| Pre-release | [`BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD`](https://explorer.solana.com/address/BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD?cluster=devnet) | Deployed on devnet; predates the current bytecode and `derivePda` |
+| Current | not yet deployed | Run it locally with the Mollusk suite |
+
+::: warning Templates from this repository need the final deployment
+The devnet program above rejects them with `UnsupportedVersion`. Pass the final program address to
+the SDKs once it is deployed, or run against Mollusk locally with
+`pnpm build:program && pnpm test:integration`.
 :::
 
 ## Run the ATA example
@@ -25,13 +34,24 @@ instruction that would otherwise fail.
 
 ## Upload a revision
 
+Finalized templates are immutable and cannot be closed, so every revision needs a fresh template
+ID. Probe for one instead of guessing:
+
+```ts
+import { findFreeTemplateId } from '@jac0xb/ballista/kit';
+
+const { templateId, templateAddress } = await findFreeTemplateId({ rpc, creator: payer.address });
+```
+
 ```bash
 BALLISTA_KEYPAIR=/path/to/keypair.json \
 BALLISTA_TEMPLATE_ID=23001 \
 pnpm --dir clients/js exec tsx examples/ensure-usdc-ata.ts upload
 ```
 
-Use a new template ID for every revision. Finalized templates are immutable and cannot be closed.
+Anyone can send lamports to a future template address. Creation tolerates that: the program tops
+the account up to rent exemption if needed and allocates it under the PDA signature, so dust cannot
+block an ID.
 
 ## Inspect a template
 
@@ -51,3 +71,14 @@ println!("{stats:?}");
 ```
 
 :::
+
+## Read a failure
+
+Simulate the transaction, take the custom error code, and decode it:
+
+```ts
+explainRunError(code, compiled)?.message;
+// 'AccountConstraintFailed: account usdcMint does not satisfy its constraint'
+```
+
+The program also logs the failing program counter, opcode, and operands on one `sol_log_64` line.

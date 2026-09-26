@@ -1,3 +1,11 @@
+pub mod cases;
+mod ceilings;
+
+mod benchmarks;
+#[cfg(feature = "cu-profile")]
+mod phases;
+mod profile;
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -8,13 +16,15 @@ mod tests {
     };
     use ballista_common::template::{
         AccountConstraint, CpiAccountRecord, CpiDescriptor, DataSegment, InputDescriptor,
-        InstructionRecord, ProgramHeader, ProgramView, PubkeyRecord, TemplateAccount,
-        ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_LITERAL, DATA_REG_PUBKEY,
-        DATA_REG_U64, ITERATION_ACCOUNT_BIT, NO_INDEX, OP_ACCOUNT_IS_EMPTY, OP_ACCOUNT_KEY,
-        OP_ACCOUNT_LAMPORTS, OP_DERIVE_PDA, OP_EQ, OP_FOREACH, OP_INVOKE, OP_LOAD_INPUT,
-        OP_REQUIRE, OP_SUB, VALUE_BOOL, VALUE_U64,
+        InstructionRecord, ProgramBuilder, ProgramHeader, ProgramView, PubkeyRecord, Segment,
+        TemplateAccount, ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_LITERAL,
+        DATA_REG_PUBKEY, DATA_REG_U64, ITERATION_ACCOUNT_BIT, MAX_PDA_SEEDS, NO_INDEX,
+        OP_ACCOUNT_IS_EMPTY, OP_ACCOUNT_KEY, OP_ACCOUNT_LAMPORTS, OP_ADD, OP_DERIVE_PDA, OP_EQ,
+        OP_FOREACH, OP_INVOKE, OP_LOAD_INPUT, OP_LTE, OP_NE, OP_READ_U64, OP_REQUIRE, OP_SUB,
+        VALUE_BOOL, VALUE_U64,
     };
     use mollusk_svm::{program::loader_keys::LOADER_V3, Mollusk, MolluskContext};
+    use mollusk_svm_programs_memo::memo;
     use mollusk_svm_programs_token::{associated_token, token};
     use solana_account::{Account, ReadableAccount};
     use solana_instruction::{AccountMeta, Instruction};
@@ -26,7 +36,7 @@ mod tests {
 
     const BALLISTA_ELF: &[u8] = include_bytes!("../../../target/deploy/ballista.so");
     const ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
-    const TEMPLATE_SEED: &[u8] = b"template-v2";
+    const TEMPLATE_SEED: &[u8] = b"template";
 
     #[test]
     fn one_shot_open_run_guards_and_privileges() {
@@ -44,7 +54,7 @@ mod tests {
         {
             let store = context.account_store.borrow();
             let template_account = store.get(&template).expect("template account");
-            let decoded = TemplateAccount::parse(template_account.data()).expect("v2 template");
+            let decoded = TemplateAccount::parse(template_account.data()).expect("template account");
             assert!(decoded.finalized_program().is_ok());
             assert_eq!(decoded.payload(), payload);
         }
@@ -325,12 +335,12 @@ mod tests {
         let mut accounts = funded_accounts([creator, authority], 10_000_000_000);
         accounts.insert(
             source,
-            token::create_account_for_token_account(token_account(mint, authority, 1_000_000)),
+            token::create_account_for_token_account(token_account_state(mint, authority, 1_000_000)),
         );
         for destination in &destinations {
             accounts.insert(
                 *destination,
-                token::create_account_for_token_account(token_account(mint, *destination, 0)),
+                token::create_account_for_token_account(token_account_state(mint, *destination, 0)),
             );
         }
         let context = context(accounts);
@@ -374,10 +384,13 @@ mod tests {
             ],
             &amount.to_le_bytes(),
         );
-        assert!(context
-            .process_instruction(&wrong_owner_run)
-            .program_result
-            .is_err());
+        let wrong_owner_result = context.process_instruction(&wrong_owner_run);
+        // Runtime account 3 (the first row) fails its owner constraint: 6020 with the index.
+        assert_eq!(
+            custom_code(&wrong_owner_result),
+            Some((3 << 16) | 6020),
+            "{wrong_owner_result:#?}"
+        );
     }
 
     #[test]
@@ -389,10 +402,10 @@ mod tests {
         let owner_missing = Pubkey::new_unique();
         let owner_existing = Pubkey::new_unique();
         let (missing_ata, _) = associated_token::create_account_for_associated_token_account(
-            token_account(mint, owner_missing, 0),
+            token_account_state(mint, owner_missing, 0),
         );
         let (existing_ata, existing_account) =
-            associated_token::create_account_for_associated_token_account(token_account(
+            associated_token::create_account_for_associated_token_account(token_account_state(
                 mint,
                 owner_existing,
                 0,
@@ -413,7 +426,7 @@ mod tests {
         );
         accounts.insert(
             source,
-            token::create_account_for_token_account(token_account(mint, authority, 1_000_000)),
+            token::create_account_for_token_account(token_account_state(mint, authority, 1_000_000)),
         );
         accounts.insert(existing_ata, existing_account);
         let context = context(accounts);
@@ -485,11 +498,1535 @@ mod tests {
         assert_eq!(token_amount(&context, source), source_before_mismatch);
     }
 
+    /// A carried register accumulates across rows and is readable after the loop, so a template
+    /// can enforce a budget over a whole batch. Zero rows are rejected once a minimum is declared.
+    #[test]
+    fn carried_sum_enforces_a_budget_across_rows() {
+        let creator = Pubkey::new_unique();
+        let rows: Vec<Pubkey> = (0..3).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        for (index, row) in rows.iter().enumerate() {
+            accounts.insert(*row, Account::new((index as u64 + 1) * 100, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        let build = |min_iterations: u8| {
+            let mut builder = ProgramBuilder::new();
+            let row = builder.row_account(0, None, None, 0);
+            builder.batch(3, min_iterations);
+            let budget_input = builder.input(VALUE_U64, 0);
+            let budget = builder.load_input(budget_input);
+            let total = builder.const_u64(0);
+            builder.for_each(1 << total, |body| {
+                let lamports = body.account_lamports(row);
+                let sum = body.binary(OP_ADD, total, lamports);
+                body.mov(total, sum);
+            });
+            let within = builder.binary(OP_LTE, total, budget);
+            builder.require(within);
+            let payload = builder.build().expect("builds");
+            ProgramView::parse(&payload)
+                .and_then(|program| program.verify())
+                .expect("verifies");
+            payload
+        };
+
+        let payload = build(0);
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 50, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 50);
+        let metas: Vec<AccountMeta> = rows
+            .iter()
+            .map(|row| AccountMeta::new_readonly(*row, false))
+            .collect();
+
+        let exact = context.process_instruction(&run_instruction(
+            template,
+            metas.clone(),
+            &600u64.to_le_bytes(),
+        ));
+        assert!(exact.program_result.is_ok(), "{exact:#?}");
+
+        let short = context.process_instruction(&run_instruction(
+            template,
+            metas.clone(),
+            &599u64.to_le_bytes(),
+        ));
+        // Instruction 7 is the `require`; 6015 is RequirementFailed.
+        assert_eq!(custom_code(&short), Some((7 << 16) | 6015), "{short:#?}");
+
+        let empty = context.process_instruction(&run_instruction(
+            template,
+            Vec::new(),
+            &0u64.to_le_bytes(),
+        ));
+        assert!(empty.program_result.is_ok(), "zero rows leave the total at zero");
+
+        let payload = build(1);
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 51, &payload))
+            .program_result
+            .is_ok());
+        let (strict, _) = find_template_pda(&creator, 51);
+        let rejected = context.process_instruction(&run_instruction(
+            strict,
+            Vec::new(),
+            &0u64.to_le_bytes(),
+        ));
+        // 6010 is InvalidAccountRange; the context is the iteration count that was rejected.
+        assert_eq!(custom_code(&rejected), Some(6010), "{rejected:#?}");
+        let one_row = context.process_instruction(&run_instruction(
+            strict,
+            metas[..1].to_vec(),
+            &100u64.to_le_bytes(),
+        ));
+        assert!(one_row.program_result.is_ok(), "{one_row:#?}");
+    }
+
+    /// A dynamic-offset read takes its offset from a register, so one template can read a field
+    /// whose position the caller supplies at run time.
+    #[test]
+    fn dynamic_offset_reads_use_the_register_value() {
+        let creator = Pubkey::new_unique();
+        let authority = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let token_account = Pubkey::new_unique();
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        accounts.insert(
+            token_account,
+            token::create_account_for_token_account(token_account_state(mint, authority, 4_242)),
+        );
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        let holder = builder.account(0, None, Some(token::ID.to_bytes()), 0);
+        let offset_input = builder.input(VALUE_U64, 0);
+        let expected_input = builder.input(VALUE_U64, 0);
+        let offset = builder.load_input(offset_input);
+        let expected = builder.load_input(expected_input);
+        let value = builder.read_dynamic(OP_READ_U64, holder, offset);
+        let matches = builder.binary(OP_EQ, value, expected);
+        builder.require(matches);
+        let payload = builder.build().expect("builds");
+        ProgramView::parse(&payload)
+            .and_then(|program| program.verify())
+            .expect("verifies");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 52, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 52);
+        let metas = vec![AccountMeta::new_readonly(token_account, false)];
+        let inputs = |offset: u64, expected: u64| {
+            let mut bytes = offset.to_le_bytes().to_vec();
+            bytes.extend_from_slice(&expected.to_le_bytes());
+            bytes
+        };
+
+        let amount_at_64 =
+            context.process_instruction(&run_instruction(template, metas.clone(), &inputs(64, 4_242)));
+        assert!(amount_at_64.program_result.is_ok(), "{amount_at_64:#?}");
+
+        let misaligned =
+            context.process_instruction(&run_instruction(template, metas.clone(), &inputs(65, 4_242)));
+        assert_eq!(custom_code(&misaligned), Some((4 << 16) | 6015), "{misaligned:#?}");
+
+        let past_the_end =
+            context.process_instruction(&run_instruction(template, metas, &inputs(200, 0)));
+        assert_eq!(custom_code(&past_the_end), Some((2 << 16) | 6009), "{past_the_end:#?}");
+    }
+
+    /// SPL Token's GetAccountDataSize sets the account size as return data. The template reads it
+    /// straight after the CPI; a callee that sets nothing leaves nothing to read.
+    #[test]
+    fn return_data_is_readable_right_after_the_invoke_that_set_it() {
+        let creator = Pubkey::new_unique();
+        let authority = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let recipient = Pubkey::new_unique();
+        let mut accounts = funded_accounts([creator, payer, recipient], 10_000_000_000);
+        accounts.insert(
+            mint,
+            token::create_account_for_mint(Mint {
+                mint_authority: COption::Some(authority),
+                supply: 0,
+                decimals: 6,
+                is_initialized: true,
+                freeze_authority: COption::None,
+            }),
+        );
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        let token_program = builder.account(ACCOUNT_EXECUTABLE, Some(token::ID.to_bytes()), None, 0);
+        let mint_account = builder.account(0, None, Some(token::ID.to_bytes()), 82);
+        let literal = builder.blob(&[21]);
+        let cpi = builder.cpi(token_program, &[(mint_account, 0)], &[Segment::Literal(literal)]);
+        builder.invoke(cpi, None);
+        let size = builder.return_data(OP_READ_U64, 0);
+        let expected = builder.const_u64(165);
+        let same = builder.binary(OP_EQ, size, expected);
+        builder.require(same);
+        let payload = builder.build().expect("builds");
+        ProgramView::parse(&payload)
+            .and_then(|program| program.verify())
+            .expect("verifies");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 60, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 60);
+        let result = context.process_instruction(&run_instruction(
+            template,
+            vec![
+                AccountMeta::new_readonly(token::ID, false),
+                AccountMeta::new_readonly(mint, false),
+            ],
+            &[],
+        ));
+        assert!(result.program_result.is_ok(), "{result:#?}");
+
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(
+            ACCOUNT_EXECUTABLE,
+            Some(system_program::id().to_bytes()),
+            None,
+            0,
+        );
+        let source = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let destination = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let mut data = vec![2, 0, 0, 0];
+        data.extend_from_slice(&1u64.to_le_bytes());
+        let literal = builder.blob(&data);
+        let cpi = builder.cpi(
+            system,
+            &[
+                (source, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                (destination, ACCOUNT_WRITABLE),
+            ],
+            &[Segment::Literal(literal)],
+        );
+        builder.invoke(cpi, None);
+        let value = builder.return_data(OP_READ_U64, 0);
+        let same = builder.binary(OP_EQ, value, value);
+        builder.require(same);
+        let payload = builder.build().expect("builds");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 61, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 61);
+        let result = context.process_instruction(&run_instruction(
+            template,
+            vec![
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new(recipient, false),
+            ],
+            &[],
+        ));
+        // Instruction 1 is the return-data read; 6018 is MissingReturnData.
+        assert_eq!(custom_code(&result), Some((1 << 16) | 6018), "{result:#?}");
+    }
+
+    /// The event flag adds one data log after a successful run and changes nothing else. Mollusk
+    /// does not expose program logs, so the layout is covered by a host unit test.
+    #[test]
+    fn event_flag_does_not_change_run_semantics() {
+        let creator = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let recipient = Pubkey::new_unique();
+        let context = context(funded_accounts([creator, payer, recipient], 10_000_000_000));
+
+        let mut builder = ProgramBuilder::new();
+        builder.flags(ballista_common::template::PROGRAM_FLAG_EMIT_EVENT);
+        let system = builder.account(
+            ACCOUNT_EXECUTABLE,
+            Some(system_program::id().to_bytes()),
+            None,
+            0,
+        );
+        let source = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let destination = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let amount = builder.const_u64(1_000);
+        let literal = builder.blob(&[2, 0, 0, 0]);
+        let cpi = builder.cpi(
+            system,
+            &[
+                (source, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                (destination, ACCOUNT_WRITABLE),
+            ],
+            &[
+                Segment::Literal(literal),
+                Segment::Register(DATA_REG_U64, amount),
+            ],
+        );
+        builder.invoke(cpi, None);
+        let payload = builder.build().expect("builds");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 62, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 62);
+        let before = lamports(&context, recipient);
+        let result = context.process_instruction(&run_instruction(
+            template,
+            vec![
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new(recipient, false),
+            ],
+            &[],
+        ));
+        assert!(result.program_result.is_ok(), "{result:#?}");
+        assert_eq!(lamports(&context, recipient), before + 1_000);
+        eprintln!(
+            "transfer with event compute units: {}",
+            result.compute_units_consumed
+        );
+    }
+
+    /// Anyone can send lamports to a predictable template address before it is created. Creation
+    /// must tolerate that instead of letting dust block the ID forever.
+    #[test]
+    fn create_template_succeeds_on_a_prefunded_pda() {
+        let creator = Pubkey::new_unique();
+        let (dusted, _) = find_template_pda(&creator, 77);
+        let (overfunded, _) = find_template_pda(&creator, 78);
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        accounts.insert(dusted, Account::new(1, 0, &system_program::id()));
+        accounts.insert(overfunded, Account::new(5_000_000_000, 0, &system_program::id()));
+        let context = context(accounts);
+        let payload = system_transfer_template(None, false);
+
+        let result = context.process_instruction(&create_template_instruction(creator, 77, &payload));
+        assert!(result.program_result.is_ok(), "{result:#?}");
+        {
+            let store = context.account_store.borrow();
+            let account = store.get(&dusted).expect("template account");
+            assert_eq!(account.owner(), &ID);
+            let decoded = TemplateAccount::parse(account.data()).expect("template parses");
+            assert!(decoded.finalized_program().is_ok());
+        }
+
+        // An address already holding more than rent exemption costs the creator nothing.
+        let before = lamports(&context, creator);
+        let result = context.process_instruction(&create_template_instruction(creator, 78, &payload));
+        assert!(result.program_result.is_ok(), "{result:#?}");
+        assert_eq!(lamports(&context, creator), before);
+        assert_eq!(lamports(&context, overfunded), 5_000_000_000);
+
+        // The chunked path takes the same route.
+        let (chunked, _) = find_template_pda(&creator, 79);
+        context
+            .account_store
+            .borrow_mut()
+            .insert(chunked, Account::new(1, 0, &system_program::id()));
+        let hash = template_hash(&payload);
+        assert!(context
+            .process_instruction(&begin_template_instruction(creator, 79, payload.len() as u32, hash))
+            .program_result
+            .is_ok());
+        assert!(context
+            .process_instruction(&write_template_chunk_instruction(creator, chunked, 0, &payload))
+            .program_result
+            .is_ok());
+        assert!(context
+            .process_instruction(&finalize_template_instruction(creator, chunked))
+            .program_result
+            .is_ok());
+    }
+
+    /// Fifty-eight system transfers each carrying 1,000 bytes of instruction data. The system
+    /// program's bincode decoder tolerates trailing bytes, so the padding is accepted. Per-CPI
+    /// allocation with a bump allocator would need about 60 KB against a 32 KB heap; scratch
+    /// reuse keeps it constant.
+    #[test]
+    fn many_large_cpis_fit_in_the_default_heap() {
+        let creator = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let rows: Vec<Pubkey> = (0..58).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator, payer], 10_000_000_000);
+        for row in &rows {
+            accounts.insert(*row, Account::new(0, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(
+            ACCOUNT_EXECUTABLE,
+            Some(system_program::id().to_bytes()),
+            None,
+            0,
+        );
+        let source = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let recipient = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
+        builder.batch(58, 0);
+        let mut data = vec![2, 0, 0, 0];
+        data.extend_from_slice(&0u64.to_le_bytes());
+        data.resize(1_000, 0);
+        let literal = builder.blob(&data);
+        let cpi = builder.cpi(
+            system,
+            &[
+                (source, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                (recipient, ACCOUNT_WRITABLE),
+            ],
+            &[Segment::Literal(literal)],
+        );
+        builder.for_each(0, |body| body.invoke(cpi, None));
+        let payload = builder.build().expect("builds");
+        ProgramView::parse(&payload)
+            .and_then(|program| program.verify())
+            .expect("verifies");
+
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 40, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 40);
+        let mut metas = vec![
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new(payer, true),
+        ];
+        metas.extend(rows.iter().map(|row| AccountMeta::new(*row, false)));
+        let result = context.process_instruction(&run_instruction(template, metas, &[]));
+        assert!(result.program_result.is_ok(), "{result:#?}");
+        eprintln!(
+            "58 transfers with 1000-byte data compute units: {}",
+            result.compute_units_consumed
+        );
+    }
+
+    /// Two fifteen-seed PDA derivations in each of 59 rows. Per-derivation seed vectors would
+    /// need well over 100 KB of bump-allocated heap.
+    #[test]
+    fn pda_derivation_in_every_row_fits_in_the_default_heap() {
+        let creator = Pubkey::new_unique();
+        let rows: Vec<Pubkey> = (0..59).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        for row in &rows {
+            accounts.insert(*row, Account::new(0, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(
+            ACCOUNT_EXECUTABLE,
+            Some(system_program::id().to_bytes()),
+            None,
+            0,
+        );
+        let row = builder.row_account(0, None, None, 0);
+        builder.batch(59, 0);
+        builder.for_each(0, |body| {
+            let key = body.account_key(row);
+            let seeds = vec![Segment::Register(DATA_REG_PUBKEY, key); MAX_PDA_SEEDS];
+            let first = body.derive_pda(system, &seeds);
+            let second = body.derive_pda(system, &seeds[..1]);
+            let first_differs = body.binary(OP_NE, first, key);
+            let second_differs = body.binary(OP_NE, second, key);
+            body.require(first_differs);
+            body.require(second_differs);
+        });
+        let payload = builder.build().expect("builds");
+        ProgramView::parse(&payload)
+            .and_then(|program| program.verify())
+            .expect("verifies");
+
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 41, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 41);
+        let mut metas = vec![AccountMeta::new_readonly(system_program::id(), false)];
+        metas.extend(rows.iter().map(|row| AccountMeta::new_readonly(*row, false)));
+        let result = context.process_instruction(&run_instruction(template, metas, &[]));
+        assert!(result.program_result.is_ok(), "{result:#?}");
+        eprintln!(
+            "118 PDA derivations compute units: {}",
+            result.compute_units_consumed
+        );
+    }
+
+    /// Templates compiled by the TypeScript SDK run unchanged on the Rust program. Each fixture is
+    /// exercised through a real scenario, so compiler and executor cannot drift apart silently.
+    #[test]
+    fn typescript_compiled_fixtures_run_end_to_end() {
+        let creator = Pubkey::new_unique();
+        let authority = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
+        let holder = Pubkey::new_unique();
+        let (ata, _) = associated_token::create_account_for_associated_token_account(
+            token_account_state(mint, owner, 0),
+        );
+        let rows: Vec<Pubkey> = (0..3).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator, payer, owner], 10_000_000_000);
+        accounts.insert(
+            mint,
+            token::create_account_for_mint(Mint {
+                mint_authority: COption::Some(authority),
+                supply: 0,
+                decimals: 6,
+                is_initialized: true,
+                freeze_authority: COption::None,
+            }),
+        );
+        accounts.insert(
+            holder,
+            token::create_account_for_token_account(token_account_state(mint, authority, 4_242)),
+        );
+        for (index, row) in rows.iter().enumerate() {
+            accounts.insert(*row, Account::new((index as u64 + 1) * 100, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        // ensure-ata: assert the ATA relationship, create when missing, and be a no-op afterwards.
+        let payload = fixture("ensure-ata");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 70, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 70);
+        let metas = vec![
+            AccountMeta::new_readonly(associated_token::ID, false),
+            AccountMeta::new_readonly(token::ID, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new_readonly(mint, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(owner, false),
+            AccountMeta::new(ata, false),
+        ];
+        let first = context.process_instruction(&run_instruction(template, metas.clone(), &[]));
+        assert!(first.program_result.is_ok(), "{first:#?}");
+        assert_eq!(token_amount(&context, ata), 0);
+        let repeat = context.process_instruction(&run_instruction(template, metas.clone(), &[]));
+        assert!(repeat.program_result.is_ok(), "{repeat:#?}");
+        assert!(
+            repeat.compute_units_consumed < first.compute_units_consumed / 3,
+            "the guarded repeat skips the CPI: {} vs {}",
+            repeat.compute_units_consumed,
+            first.compute_units_consumed
+        );
+        let mut wrong_owner = metas.clone();
+        wrong_owner[5] = AccountMeta::new_readonly(payer, false);
+        let mismatch = context.process_instruction(&run_instruction(template, wrong_owner, &[]));
+        // The assertion is instruction 4 (three key reads, one derivation, then the compare and require).
+        assert_eq!(custom_code(&mismatch), Some((6 << 16) | 6015), "{mismatch:#?}");
+
+        // carry-sum: total row lamports against a budget, with at least one row required.
+        let payload = fixture("carry-sum");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 71, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 71);
+        let row_metas: Vec<AccountMeta> = rows
+            .iter()
+            .map(|row| AccountMeta::new_readonly(*row, false))
+            .collect();
+        let within = context.process_instruction(&run_instruction(
+            template,
+            row_metas.clone(),
+            &600u64.to_le_bytes(),
+        ));
+        assert!(within.program_result.is_ok(), "{within:#?}");
+        let over = context.process_instruction(&run_instruction(
+            template,
+            row_metas,
+            &599u64.to_le_bytes(),
+        ));
+        assert_eq!(
+            decode_kind(&over),
+            Some(6015),
+            "budget breach is a failed require: {over:#?}"
+        );
+        let empty = context.process_instruction(&run_instruction(template, Vec::new(), &0u64.to_le_bytes()));
+        assert_eq!(custom_code(&empty), Some(6010), "min iterations of one rejects zero rows");
+
+        // return-data: read the token account size that GetAccountDataSize returns.
+        let payload = fixture("return-data");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 72, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 72);
+        let sized = context.process_instruction(&run_instruction(
+            template,
+            vec![
+                AccountMeta::new_readonly(token::ID, false),
+                AccountMeta::new_readonly(mint, false),
+            ],
+            &[],
+        ));
+        assert!(sized.program_result.is_ok(), "{sized:#?}");
+
+        // dynamic-read: the caller supplies the offset of the field to compare.
+        let payload = fixture("dynamic-read");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 73, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 73);
+        let mut inputs = 64u64.to_le_bytes().to_vec();
+        inputs.extend_from_slice(&4_242u64.to_le_bytes());
+        let read = context.process_instruction(&run_instruction(
+            template,
+            vec![AccountMeta::new_readonly(holder, false)],
+            &inputs,
+        ));
+        assert!(read.program_result.is_ok(), "{read:#?}");
+
+        // pinned-mint-read: a fixed-offset read whose minimum data length the compiler inferred.
+        let payload = fixture("pinned-mint-read");
+        let pinned_mint = Pubkey::new_from_array([4; 32]);
+        context.account_store.borrow_mut().insert(
+            pinned_mint,
+            token::create_account_for_mint(Mint {
+                mint_authority: COption::None,
+                supply: 0,
+                decimals: 6,
+                is_initialized: true,
+                freeze_authority: COption::None,
+            }),
+        );
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 74, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 74);
+        let decimals = context.process_instruction(&run_instruction(
+            template,
+            vec![AccountMeta::new_readonly(pinned_mint, false)],
+            &[],
+        ));
+        assert!(decimals.program_result.is_ok(), "{decimals:#?}");
+        let short = Pubkey::new_unique();
+        context
+            .account_store
+            .borrow_mut()
+            .insert(short, Account::new(1_000_000, 10, &token::ID));
+        let too_short = context.process_instruction(&run_instruction(
+            template,
+            vec![AccountMeta::new_readonly(pinned_mint, false)],
+            &[1],
+        ));
+        assert_eq!(custom_code(&too_short), Some(6008), "trailing input bytes are rejected");
+    }
+
+    /// Supplying the canonical bump turns the derivation into one `create_program_address` call
+    /// instead of a search down from 255, and a wrong bump still fails the assertion.
+    #[test]
+    fn a_supplied_bump_derives_once_and_still_rejects_substitutes() {
+        let creator = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        // A shallow owner finds its bump on the first attempt; a deep one costs several more.
+        let ata_of = |owner: &Pubkey| {
+            Pubkey::find_program_address(
+                &[owner.as_ref(), token::ID.as_ref(), mint.as_ref()],
+                &associated_token::ID,
+            )
+        };
+        let shallow = std::iter::repeat_with(Pubkey::new_unique)
+            .find(|owner| ata_of(owner).1 == 255)
+            .expect("a first-attempt bump exists");
+        let deep = std::iter::repeat_with(Pubkey::new_unique)
+            .find(|owner| ata_of(owner).1 <= 251)
+            .expect("a fourth-attempt bump exists");
+
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        accounts.insert(mint, Account::new(1_000_000, 0, &system_program::id()));
+        for owner in [shallow, deep] {
+            accounts.insert(owner, Account::new(1_000_000, 0, &system_program::id()));
+            accounts.insert(ata_of(&owner).0, Account::new(1_000_000, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        let searched = fixture("assert-ata");
+        let supplied = fixture("assert-ata-with-bump");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 90, &searched))
+            .program_result
+            .is_ok());
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 91, &supplied))
+            .program_result
+            .is_ok());
+        let (searched_template, _) = find_template_pda(&creator, 90);
+        let (supplied_template, _) = find_template_pda(&creator, 91);
+
+        let metas = |owner: Pubkey| {
+            vec![
+                AccountMeta::new_readonly(associated_token::ID, false),
+                AccountMeta::new_readonly(token::ID, false),
+                AccountMeta::new_readonly(owner, false),
+                AccountMeta::new_readonly(mint, false),
+                AccountMeta::new_readonly(ata_of(&owner).0, false),
+            ]
+        };
+        let run = |template: Pubkey, owner: Pubkey, inputs: &[u8]| {
+            let result = context.process_instruction(&run_instruction(template, metas(owner), inputs));
+            assert!(result.program_result.is_ok(), "{result:#?}");
+            result.compute_units_consumed
+        };
+
+        let shallow_bump = (ata_of(&shallow).1 as u64).to_le_bytes();
+        let deep_bump = (ata_of(&deep).1 as u64).to_le_bytes();
+        let shallow_searched = run(searched_template, shallow, &[]);
+        let deep_searched = run(searched_template, deep, &[]);
+        let shallow_supplied = run(supplied_template, shallow, &shallow_bump);
+        let deep_supplied = run(supplied_template, deep, &deep_bump);
+        eprintln!(
+            "ATA assertion compute units: searched {shallow_searched} (bump 255) /              {deep_searched} (bump {}), supplied {shallow_supplied} / {deep_supplied}",
+            ata_of(&deep).1
+        );
+
+        // One derivation costs the same however deep the canonical bump is.
+        assert!(
+            shallow_supplied.abs_diff(deep_supplied) < 50,
+            "a supplied bump is flat: {shallow_supplied} vs {deep_supplied}"
+        );
+        // The search pays about 1,500 units for every bump it rejects.
+        assert!(
+            deep_searched > shallow_searched + 4_000,
+            "the search grows with depth: {deep_searched} vs {shallow_searched}"
+        );
+        assert!(
+            deep_supplied + 5_000 < deep_searched,
+            "the supplied bump skips that search: {deep_supplied} vs {deep_searched}"
+        );
+
+        // A bump one below the canonical one either lands on the curve, which is not a valid
+        // program address, or derives a different one; both reject the substituted account.
+        let wrong = context.process_instruction(&run_instruction(
+            supplied_template,
+            metas(deep),
+            &(ata_of(&deep).1 as u64 - 1).to_le_bytes(),
+        ));
+        assert!(
+            matches!(decode_kind(&wrong), Some(6015 | 6017)),
+            "{wrong:#?}"
+        );
+
+        // A bump that does not fit in a byte is rejected before any derivation.
+        let oversized = context.process_instruction(&run_instruction(
+            supplied_template,
+            metas(deep),
+            &256u64.to_le_bytes(),
+        ));
+        assert_eq!(decode_kind(&oversized), Some(6017), "{oversized:#?}");
+    }
+
+    /// Errors raised by an invoked program reach the caller untouched, so they are never mistaken
+    /// for Ballista's own codes.
+    #[test]
+    fn callee_errors_pass_through_unchanged() {
+        let creator = Pubkey::new_unique();
+        let context = context(funded_accounts([creator], 10_000_000_000));
+
+        // An unpinned program account lets the caller substitute any executable.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, None, None, 0);
+        let literal = builder.blob(&[0xff, 0xfe]);
+        let cpi = builder.cpi(program, &[], &[Segment::Literal(literal)]);
+        builder.invoke(cpi, None);
+        let payload = builder.build().expect("builds");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 80, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 80);
+        let result = context.process_instruction(&run_instruction(
+            template,
+            vec![AccountMeta::new_readonly(memo::ID, false)],
+            &[],
+        ));
+        // Memo rejects invalid UTF-8 with the builtin InvalidInstructionData, not a custom code.
+        assert_eq!(
+            result.program_result,
+            mollusk_svm::result::ProgramResult::Failure(
+                solana_program_error::ProgramError::InvalidInstructionData
+            ),
+            "{result:#?}"
+        );
+        assert_eq!(custom_code(&result), None);
+    }
+
+    /// Ballista may invoke itself, so one template can run another as a step.
+    #[test]
+    fn nested_template_runs_through_cpi() {
+        let creator = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let recipient = Pubkey::new_unique();
+        let context = context(funded_accounts([creator, payer, recipient], 10_000_000_000));
+
+        let inner_payload = system_transfer_template(None, false);
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 81, &inner_payload))
+            .program_result
+            .is_ok());
+        let (inner, _) = find_template_pda(&creator, 81);
+
+        let mut builder = ProgramBuilder::new();
+        let ballista = builder.account(ACCOUNT_EXECUTABLE, Some(ID.to_bytes()), None, 0);
+        let template = builder.account(0, None, Some(ID.to_bytes()), 80);
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some(system_program::id().to_bytes()), None, 0);
+        let source = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let destination = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let mut data = vec![IX_RUN];
+        data.extend_from_slice(&2_500u64.to_le_bytes());
+        let literal = builder.blob(&data);
+        let cpi = builder.cpi(
+            ballista,
+            &[
+                (template, 0),
+                (system, 0),
+                (source, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                (destination, ACCOUNT_WRITABLE),
+            ],
+            &[Segment::Literal(literal)],
+        );
+        builder.invoke(cpi, None);
+        let outer_payload = builder.build().expect("builds");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 82, &outer_payload))
+            .program_result
+            .is_ok());
+        let (outer, _) = find_template_pda(&creator, 82);
+        let before = lamports(&context, recipient);
+        let result = context.process_instruction(&run_instruction(
+            outer,
+            vec![
+                AccountMeta::new_readonly(ID, false),
+                AccountMeta::new_readonly(inner, false),
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new(recipient, false),
+            ],
+            &[],
+        ));
+        assert!(result.program_result.is_ok(), "{result:#?}");
+        assert_eq!(lamports(&context, recipient), before + 2_500);
+        eprintln!(
+            "nested template run compute units: {}",
+            result.compute_units_consumed
+        );
+    }
+
+    /// Sixty runtime accounts are the ceiling; the sixty-first is rejected with the count.
+    #[test]
+    fn one_hundred_twenty_runtime_accounts_are_the_ceiling() {
+        let creator = Pubkey::new_unique();
+        let rows: Vec<Pubkey> = (0..120).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        for row in &rows {
+            accounts.insert(*row, Account::new(0, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 0);
+        builder.batch(120, 0);
+        builder.for_each(0, |body| {
+            let key = body.account_key(row);
+            let same = body.binary(OP_EQ, key, key);
+            body.require(same);
+        });
+        let payload = builder.build().expect("builds");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 83, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 83);
+        let metas: Vec<AccountMeta> = rows
+            .iter()
+            .map(|row| AccountMeta::new_readonly(*row, false))
+            .collect();
+        let full = context.process_instruction(&run_instruction(template, metas.clone(), &[]));
+        assert!(full.program_result.is_ok(), "{full:#?}");
+        let mut one_more = metas;
+        one_more.push(AccountMeta::new_readonly(creator, false));
+        let rejected = context.process_instruction(&run_instruction(template, one_more, &[]));
+        assert_eq!(custom_code(&rejected), Some((121 << 16) | 6010), "{rejected:#?}");
+    }
+
+    /// Each batch row carries its own input values, so one template pays a different amount to
+    /// each recipient without staging the amounts in an account.
+    #[test]
+    fn row_inputs_pay_a_different_amount_per_recipient() {
+        let creator = Pubkey::new_unique();
+        let treasury = Pubkey::new_unique();
+        let recipients: Vec<Pubkey> = (0..3).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator, treasury], 10_000_000_000);
+        for recipient in &recipients {
+            accounts.insert(*recipient, Account::new(1_000_000, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some([0; 32]), None, 0);
+        let from = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let recipient = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
+        builder.batch(3, 1);
+        let amount_input = builder.row_input(VALUE_U64, 0);
+        let discriminator = builder.blob(&[2, 0, 0, 0]);
+        builder.for_each(0, |body| {
+            let amount = body.load_input(amount_input);
+            let transfer = body.cpi(
+                system,
+                &[
+                    (from, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                    (recipient, ACCOUNT_WRITABLE),
+                ],
+                &[
+                    Segment::Literal(discriminator),
+                    Segment::Register(DATA_REG_U64, amount),
+                ],
+            );
+            body.invoke(transfer, None);
+        });
+        let payload = builder.build().expect("builds");
+        ProgramView::parse(&payload)
+            .and_then(|program| program.verify())
+            .expect("verifies");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 60, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 60);
+
+        let mut metas = vec![
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new(treasury, true),
+        ];
+        metas.extend(recipients.iter().map(|recipient| AccountMeta::new(*recipient, false)));
+        let amounts = [1_000u64, 2_000, 3_000];
+        let mut inputs = Vec::new();
+        for amount in amounts {
+            inputs.extend_from_slice(&amount.to_le_bytes());
+        }
+        let before = lamports(&context, treasury);
+        let run = context.process_instruction(&run_instruction(template, metas.clone(), &inputs));
+        assert!(run.program_result.is_ok(), "{run:#?}");
+        for (recipient, amount) in recipients.iter().zip(amounts) {
+            assert_eq!(lamports(&context, *recipient), 1_000_000 + amount);
+        }
+        assert_eq!(lamports(&context, treasury), before - 6_000);
+        eprintln!(
+            "row-input payroll compute units: {}",
+            run.compute_units_consumed
+        );
+
+        // Two rows of values for three rows of accounts: the third value (index 2) is missing.
+        let short = context.process_instruction(&run_instruction(template, metas, &inputs[..16]));
+        assert_eq!(custom_code(&short), Some((2 << 16) | 6008), "{short:#?}");
+    }
+
+    /// A batch reuses the invocation it built for the previous row only when nothing in the body
+    /// can change it. Here the amount is derived from the loop index, so every row must send
+    /// different bytes even though the account list and the program never change.
+    #[test]
+    fn invocation_data_derived_in_the_loop_is_rebuilt_every_row() {
+        let creator = Pubkey::new_unique();
+        let treasury = Pubkey::new_unique();
+        let recipients: Vec<Pubkey> = (0..4).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator, treasury], 10_000_000_000);
+        for recipient in &recipients {
+            accounts.insert(*recipient, Account::new(1_000_000, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some([0; 32]), None, 0);
+        let from = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let recipient = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
+        builder.batch(4, 1);
+        let base = builder.const_u64(1_000);
+        let discriminator = builder.blob(&[2, 0, 0, 0]);
+        builder.for_each(0, |body| {
+            let index = body.op(ballista_common::template::OP_LOOP_INDEX, NO_INDEX, NO_INDEX, NO_INDEX, 0);
+            let amount = body.binary(OP_ADD, base, index);
+            let transfer = body.cpi(
+                system,
+                &[
+                    (from, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                    (recipient, ACCOUNT_WRITABLE),
+                ],
+                &[
+                    Segment::Literal(discriminator),
+                    Segment::Register(DATA_REG_U64, amount),
+                ],
+            );
+            body.invoke(transfer, None);
+        });
+        let payload = builder.build().expect("builds");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 95, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 95);
+
+        let mut metas = vec![
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new(treasury, true),
+        ];
+        metas.extend(recipients.iter().map(|key| AccountMeta::new(*key, false)));
+        let run = context.process_instruction(&run_instruction(template, metas, &[]));
+        assert!(run.program_result.is_ok(), "{run:#?}");
+        for (index, key) in recipients.iter().enumerate() {
+            assert_eq!(
+                lamports(&context, *key),
+                1_000_000 + 1_000 + index as u64,
+                "row {index} received the previous row's amount"
+            );
+        }
+    }
+
+    /// The waterfall pays creditors in order until the money runs out: each row's payment is
+    /// capped by what the rows before it left, and the rows past the money are skipped rather
+    /// than failing the run. No instruction sequence expresses this, because every amount
+    /// depends on a balance that only exists during execution.
+    #[test]
+    fn waterfall_pays_in_order_and_stops_when_the_money_runs_out() {
+        let creator = Pubkey::new_unique();
+        let treasury = Pubkey::new_unique();
+        let creditors: Vec<Pubkey> = (0..4).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        accounts.insert(treasury, Account::new(5_000_000_000, 0, &system_program::id()));
+        for creditor in &creditors {
+            accounts.insert(*creditor, Account::new(1_000_000, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        let payload = fixture("waterfall-payout");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 96, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 96);
+
+        // Two and a half claims' worth of money against four claims of 1,000 each.
+        let reserve = 5_000_000_000u64 - 2_500;
+        let mut inputs = reserve.to_le_bytes().to_vec();
+        for _ in 0..creditors.len() {
+            inputs.extend_from_slice(&1_000u64.to_le_bytes());
+        }
+        let mut metas = vec![
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new(treasury, true),
+        ];
+        metas.extend(creditors.iter().map(|key| AccountMeta::new(*key, false)));
+        let run = context.process_instruction(&run_instruction(template, metas, &inputs));
+        assert!(run.program_result.is_ok(), "{run:#?}");
+
+        // Paid in full, in full, the remainder, then nothing.
+        let paid: Vec<u64> = creditors
+            .iter()
+            .map(|key| lamports(&context, *key) - 1_000_000)
+            .collect();
+        assert_eq!(paid, vec![1_000, 1_000, 500, 0], "waterfall order");
+        assert_eq!(lamports(&context, treasury), 5_000_000_000 - 2_500);
+    }
+
+    /// A CPI that names an account group receives the group's accounts after its declared ones.
+    /// The System Program ignores accounts past the two a transfer reads, which makes it a
+    /// convenient callee for observing the forwarding.
+    #[test]
+    fn account_groups_are_forwarded_after_declared_accounts() {
+        let creator = Pubkey::new_unique();
+        let runner = Pubkey::new_unique();
+        let recipient = Pubkey::new_unique();
+        let extras: Vec<Pubkey> = (0..2).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator, runner], 10_000_000_000);
+        accounts.insert(recipient, Account::new(1_000_000, 0, &system_program::id()));
+        for extra in &extras {
+            accounts.insert(*extra, Account::new(0, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        builder.account_groups(1);
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some([0; 32]), None, 0);
+        let from = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let to = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let amount_input = builder.input(VALUE_U64, 0);
+        let amount = builder.load_input(amount_input);
+        let discriminator = builder.blob(&[2, 0, 0, 0]);
+        let transfer = builder.cpi_with_group(
+            system,
+            &[
+                (from, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                (to, ACCOUNT_WRITABLE),
+            ],
+            &[
+                Segment::Literal(discriminator),
+                Segment::Register(DATA_REG_U64, amount),
+            ],
+            0,
+        );
+        builder.invoke(transfer, None);
+        let payload = builder.build().expect("builds");
+        ProgramView::parse(&payload)
+            .and_then(|program| program.verify())
+            .expect("verifies");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 61, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 61);
+
+        let declared = vec![
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new(runner, true),
+            AccountMeta::new(recipient, false),
+        ];
+        let mut with_group = declared.clone();
+        with_group.extend(extras.iter().map(|extra| AccountMeta::new_readonly(*extra, false)));
+        let mut inputs = vec![2u8];
+        inputs.extend_from_slice(&5_000u64.to_le_bytes());
+        let run = context.process_instruction(&run_instruction(template, with_group, &inputs));
+        assert!(run.program_result.is_ok(), "{run:#?}");
+        assert_eq!(lamports(&context, recipient), 1_005_000);
+
+        // An empty group is a valid run.
+        let mut empty = vec![0u8];
+        empty.extend_from_slice(&5_000u64.to_le_bytes());
+        let run = context.process_instruction(&run_instruction(template, declared.clone(), &empty));
+        assert!(run.program_result.is_ok(), "{run:#?}");
+
+        // Claiming a member that was not supplied fails the account layout (three accounts seen).
+        let mut claims_one = vec![1u8];
+        claims_one.extend_from_slice(&5_000u64.to_le_bytes());
+        let rejected =
+            context.process_instruction(&run_instruction(template, declared.clone(), &claims_one));
+        assert_eq!(custom_code(&rejected), Some((3 << 16) | 6010), "{rejected:#?}");
+
+        // Run data without the prefix is malformed input.
+        let missing = context.process_instruction(&run_instruction(template, declared, &[]));
+        assert_eq!(custom_code(&missing), Some(6008), "{missing:#?}");
+    }
+
+    /// Batch rows and account groups share the runtime account list: rows come first, the groups
+    /// after them, and the prefix tells them apart.
+    #[test]
+    fn account_groups_and_batch_rows_coexist() {
+        let creator = Pubkey::new_unique();
+        let runner = Pubkey::new_unique();
+        let recipients: Vec<Pubkey> = (0..2).map(|_| Pubkey::new_unique()).collect();
+        let extra = Pubkey::new_unique();
+        let mut accounts = funded_accounts([creator, runner], 10_000_000_000);
+        for recipient in &recipients {
+            accounts.insert(*recipient, Account::new(1_000_000, 0, &system_program::id()));
+        }
+        accounts.insert(extra, Account::new(0, 0, &system_program::id()));
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        builder.account_groups(1);
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some([0; 32]), None, 0);
+        let from = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let recipient = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
+        builder.batch(4, 1);
+        let amount_input = builder.input(VALUE_U64, 0);
+        let amount = builder.load_input(amount_input);
+        let discriminator = builder.blob(&[2, 0, 0, 0]);
+        builder.for_each(0, |body| {
+            let transfer = body.cpi_with_group(
+                system,
+                &[
+                    (from, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                    (recipient, ACCOUNT_WRITABLE),
+                ],
+                &[
+                    Segment::Literal(discriminator),
+                    Segment::Register(DATA_REG_U64, amount),
+                ],
+                0,
+            );
+            body.invoke(transfer, None);
+        });
+        let payload = builder.build().expect("builds");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 62, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 62);
+
+        let mut metas = vec![
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new(runner, true),
+        ];
+        metas.extend(recipients.iter().map(|recipient| AccountMeta::new(*recipient, false)));
+        metas.push(AccountMeta::new_readonly(extra, false));
+        let mut inputs = vec![1u8];
+        inputs.extend_from_slice(&7_000u64.to_le_bytes());
+        let run = context.process_instruction(&run_instruction(template, metas, &inputs));
+        assert!(run.program_result.is_ok(), "{run:#?}");
+        for recipient in &recipients {
+            assert_eq!(lamports(&context, *recipient), 1_007_000);
+        }
+    }
+
+    /// Group accounts are forwarded without signer status even when the transaction signed for
+    /// them, so a transfer whose payer arrives through a group is refused by the callee.
+    #[test]
+    fn account_group_members_never_sign() {
+        let creator = Pubkey::new_unique();
+        let runner = Pubkey::new_unique();
+        let recipient = Pubkey::new_unique();
+        let mut accounts = funded_accounts([creator, runner], 10_000_000_000);
+        accounts.insert(recipient, Account::new(1_000_000, 0, &system_program::id()));
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        builder.account_groups(1);
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some([0; 32]), None, 0);
+        let amount_input = builder.input(VALUE_U64, 0);
+        let amount = builder.load_input(amount_input);
+        let discriminator = builder.blob(&[2, 0, 0, 0]);
+        let transfer = builder.cpi_with_group(
+            system,
+            &[],
+            &[
+                Segment::Literal(discriminator),
+                Segment::Register(DATA_REG_U64, amount),
+            ],
+            0,
+        );
+        builder.invoke(transfer, None);
+        let payload = builder.build().expect("builds");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 63, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 63);
+
+        let metas = vec![
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new(runner, true),
+            AccountMeta::new(recipient, false),
+        ];
+        let mut inputs = vec![2u8];
+        inputs.extend_from_slice(&5_000u64.to_le_bytes());
+        let before = lamports(&context, runner);
+        let result = context.process_instruction(&run_instruction(template, metas, &inputs));
+        assert!(result.program_result.is_err(), "{result:#?}");
+        assert_eq!(custom_code(&result), None, "the callee, not Ballista, refused: {result:#?}");
+        assert_eq!(lamports(&context, runner), before);
+    }
+
+    /// Declared accounts plus the forwarded group must fit the 64-account CPI limit.
+    #[test]
+    fn cpi_account_limit_counts_the_group() {
+        let creator = Pubkey::new_unique();
+        let runner = Pubkey::new_unique();
+        let recipient = Pubkey::new_unique();
+        let extras: Vec<Pubkey> = (0..63).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator, runner], 10_000_000_000);
+        accounts.insert(recipient, Account::new(1_000_000, 0, &system_program::id()));
+        for extra in &extras {
+            accounts.insert(*extra, Account::new(0, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        builder.account_groups(1);
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some([0; 32]), None, 0);
+        let from = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let to = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let amount_input = builder.input(VALUE_U64, 0);
+        let amount = builder.load_input(amount_input);
+        let discriminator = builder.blob(&[2, 0, 0, 0]);
+        let transfer = builder.cpi_with_group(
+            system,
+            &[
+                (from, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                (to, ACCOUNT_WRITABLE),
+            ],
+            &[
+                Segment::Literal(discriminator),
+                Segment::Register(DATA_REG_U64, amount),
+            ],
+            0,
+        );
+        builder.invoke(transfer, None);
+        let payload = builder.build().expect("builds");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 64, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 64);
+
+        let mut metas = vec![
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new(runner, true),
+            AccountMeta::new(recipient, false),
+        ];
+        metas.extend(extras.iter().map(|extra| AccountMeta::new_readonly(*extra, false)));
+        let mut inputs = vec![63u8];
+        inputs.extend_from_slice(&5_000u64.to_le_bytes());
+        let result = context.process_instruction(&run_instruction(template, metas, &inputs));
+        // Instruction 1 is the invoke; 6021 is CpiAccountLimitExceeded with the total as context.
+        assert_eq!(custom_code(&result), Some((65 << 16) | 6021), "{result:#?}");
+    }
+
+    /// The TypeScript compiler's row-input and account-group fixtures run against the program.
+    #[test]
+    fn row_input_and_account_group_fixtures_run_end_to_end() {
+        let creator = Pubkey::new_unique();
+        let treasury = Pubkey::new_unique();
+        let recipients: Vec<Pubkey> = (0..3).map(|_| Pubkey::new_unique()).collect();
+        let extras: Vec<Pubkey> = (0..2).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator, treasury], 10_000_000_000);
+        for recipient in &recipients {
+            accounts.insert(*recipient, Account::new(1_000_000, 0, &system_program::id()));
+        }
+        for extra in &extras {
+            accounts.insert(*extra, Account::new(0, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        // payroll-row-amounts: each row's amount travels in the run data.
+        let payload = fixture("payroll-row-amounts");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 71, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 71);
+        let mut metas = vec![
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new(treasury, true),
+        ];
+        metas.extend(recipients.iter().map(|recipient| AccountMeta::new(*recipient, false)));
+        let mut inputs = Vec::new();
+        for amount in [100u64, 200, 300] {
+            inputs.extend_from_slice(&amount.to_le_bytes());
+        }
+        let run = context.process_instruction(&run_instruction(template, metas, &inputs));
+        assert!(run.program_result.is_ok(), "{run:#?}");
+        for (recipient, amount) in recipients.iter().zip([100u64, 200, 300]) {
+            assert_eq!(lamports(&context, *recipient), 1_000_000 + amount);
+        }
+
+        // group-forward-transfer: two extra accounts ride along behind the declared ones.
+        let payload = fixture("group-forward-transfer");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 72, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 72);
+        let mut metas = vec![
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new(treasury, true),
+            AccountMeta::new(recipients[0], false),
+        ];
+        metas.extend(extras.iter().map(|extra| AccountMeta::new_readonly(*extra, false)));
+        let mut inputs = vec![2u8];
+        inputs.extend_from_slice(&50u64.to_le_bytes());
+        let run = context.process_instruction(&run_instruction(template, metas, &inputs));
+        assert!(run.program_result.is_ok(), "{run:#?}");
+        assert_eq!(lamports(&context, recipients[0]), 1_000_150);
+    }
+
+    /// Account reads observe the state a CPI leaves behind, including a reallocated data length.
+    #[test]
+    fn data_length_reflects_reallocation_after_a_cpi() {
+        let creator = Pubkey::new_unique();
+        let authority = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
+        let (ata, _) = associated_token::create_account_for_associated_token_account(
+            token_account_state(mint, owner, 0),
+        );
+        let mut accounts = funded_accounts([creator, payer, owner], 10_000_000_000);
+        accounts.insert(
+            mint,
+            token::create_account_for_mint(Mint {
+                mint_authority: COption::Some(authority),
+                supply: 0,
+                decimals: 6,
+                is_initialized: true,
+                freeze_authority: COption::None,
+            }),
+        );
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        let ata_program = builder.account(ACCOUNT_EXECUTABLE, Some(associated_token::ID.to_bytes()), None, 0);
+        let token_program = builder.account(ACCOUNT_EXECUTABLE, Some(token::ID.to_bytes()), None, 0);
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some(system_program::id().to_bytes()), None, 0);
+        let payer_account = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let mint_account = builder.account(0, None, Some(token::ID.to_bytes()), 82);
+        let owner_account = builder.account(0, None, None, 0);
+        let ata_account = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let before = builder.account_data_len(ata_account);
+        let zero = builder.const_u64(0);
+        let was_empty = builder.binary(OP_EQ, before, zero);
+        builder.require(was_empty);
+        let cpi = builder.cpi(
+            ata_program,
+            &[
+                (payer_account, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                (ata_account, ACCOUNT_WRITABLE),
+                (owner_account, 0),
+                (mint_account, 0),
+                (system, 0),
+                (token_program, 0),
+            ],
+            &[],
+        );
+        builder.invoke(cpi, None);
+        let after = builder.account_data_len(ata_account);
+        let expected = builder.const_u64(165);
+        let grew = builder.binary(OP_EQ, after, expected);
+        builder.require(grew);
+        let slot = builder.clock_slot();
+        let timestamp = builder.clock_timestamp();
+        let epoch_start = builder.const_i64(0);
+        let sane_time = builder.binary(ballista_common::template::OP_GTE, timestamp, epoch_start);
+        builder.require(sane_time);
+        let some_slot = builder.binary(ballista_common::template::OP_GTE, slot, zero);
+        builder.require(some_slot);
+        let payload = builder.build().expect("builds");
+        ProgramView::parse(&payload)
+            .and_then(|program| program.verify())
+            .expect("verifies");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 84, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 84);
+        let result = context.process_instruction(&run_instruction(
+            template,
+            vec![
+                AccountMeta::new_readonly(associated_token::ID, false),
+                AccountMeta::new_readonly(token::ID, false),
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new_readonly(mint, false),
+                AccountMeta::new_readonly(owner, false),
+                AccountMeta::new(ata, false),
+            ],
+            &[],
+        ));
+        assert!(result.program_result.is_ok(), "{result:#?}");
+        assert_eq!(context.account_store.borrow()[&ata].data().len(), 165);
+    }
+
+    /// Anything the verifier accepts must execute without a structural error. Generated programs
+    /// contain no CPIs, so the only failures they may produce are value-dependent.
+    #[test]
+    fn generated_programs_never_hit_structural_errors() {
+        use ballista_common::template::generate::{
+            any_program, ALLOWED_RUNTIME_ERRORS, STRUCTURAL_RUNTIME_ERRORS,
+        };
+        use proptest::prelude::*;
+        use proptest::test_runner::{Config, TestRunner};
+
+        let cases = std::env::var("PROPTEST_CASES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(48);
+        let mut runner = TestRunner::new(Config {
+            cases,
+            ..Config::default()
+        });
+        runner
+            .run(&any_program(), |program| {
+                let creator = Pubkey::new_unique();
+                let group_lengths = &[1u8, 2][..program.account_groups];
+                let group_total: usize = group_lengths.iter().map(|len| *len as usize).sum();
+                let total = program.fixed_accounts + program.row_accounts * program.max_iterations + group_total;
+                let runtime: Vec<Pubkey> = (0..total).map(|_| Pubkey::new_unique()).collect();
+                let mut accounts = funded_accounts([creator], 10_000_000_000);
+                for (index, address) in runtime.iter().enumerate() {
+                    accounts.insert(*address, Account::new(index as u64 * 1_000, 0, &system_program::id()));
+                }
+                let context = context(accounts);
+                let created = context.process_instruction(&create_template_instruction(creator, 1, &program.bytes));
+                prop_assert!(created.program_result.is_ok(), "finalize rejected a generated program: {created:#?}");
+                let (template, _) = find_template_pda(&creator, 1);
+
+                for iterations in [program.min_iterations, program.max_iterations] {
+                    let count = program.fixed_accounts + program.row_accounts * iterations;
+                    // Fixed accounts and rows first, then the group members from the end of the pool.
+                    let metas: Vec<AccountMeta> = runtime[..count]
+                        .iter()
+                        .chain(runtime[total - group_total..].iter())
+                        .map(|address| AccountMeta::new_readonly(*address, false))
+                        .collect();
+                    let inputs = program.run_inputs(iterations, group_lengths);
+                    let result = context.process_instruction(&run_instruction(template, metas, &inputs));
+                    if result.program_result.is_ok() {
+                        continue;
+                    }
+                    let code = custom_code(&result);
+                    let kind = code.map(|code| code & 0xffff);
+                    prop_assert!(
+                        kind.is_some_and(|kind| ALLOWED_RUNTIME_ERRORS.contains(&kind)),
+                        "unexpected failure {code:?} (structural kinds are {STRUCTURAL_RUNTIME_ERRORS:?}): {result:#?}"
+                    );
+                }
+                Ok(())
+            })
+            .unwrap_or_else(|failure| panic!("{failure}"));
+    }
+
+    /// Loads a compiler fixture written by `pnpm fixtures`.
+    fn fixture(name: &str) -> Vec<u8> {
+        let hex = match name {
+            "ensure-ata" => include_str!("../../../fixtures/ensure-ata.hex"),
+            "assert-ata" => include_str!("../../../fixtures/assert-ata.hex"),
+            "assert-ata-with-bump" => include_str!("../../../fixtures/assert-ata-with-bump.hex"),
+            "carry-sum" => include_str!("../../../fixtures/carry-sum.hex"),
+            "waterfall-payout" => include_str!("../../../fixtures/waterfall-payout.hex"),
+            "return-data" => include_str!("../../../fixtures/return-data.hex"),
+            "dynamic-read" => include_str!("../../../fixtures/dynamic-read.hex"),
+            "pinned-mint-read" => include_str!("../../../fixtures/pinned-mint-read.hex"),
+            "system-transfer" => include_str!("../../../fixtures/system-transfer.hex"),
+            "batch-transfer-30" => include_str!("../../../fixtures/batch-transfer-30.hex"),
+            "payroll-row-amounts" => include_str!("../../../fixtures/payroll-row-amounts.hex"),
+            "group-forward-transfer" => include_str!("../../../fixtures/group-forward-transfer.hex"),
+            other => panic!("unknown fixture {other}"),
+        };
+        let bytes: Vec<u8> = hex
+            .trim()
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect();
+        ProgramView::parse(&bytes)
+            .and_then(|program| program.verify())
+            .unwrap_or_else(|error| panic!("fixture {name} does not verify: {error}"));
+        bytes
+    }
+
+    /// The error kind (low 16 bits) a run failed with, ignoring its context.
+    fn decode_kind(result: &mollusk_svm::result::InstructionResult) -> Option<u32> {
+        custom_code(result).map(|code| code & 0xffff)
+    }
+
+    /// The custom error code a run failed with, if it failed with one.
+    fn custom_code(result: &mollusk_svm::result::InstructionResult) -> Option<u32> {
+        match &result.program_result {
+            mollusk_svm::result::ProgramResult::Failure(
+                solana_program_error::ProgramError::Custom(code),
+            ) => Some(*code),
+            _ => None,
+        }
+    }
+
     fn context(accounts: HashMap<Pubkey, Account>) -> MolluskContext<HashMap<Pubkey, Account>> {
         let mut mollusk = Mollusk::default();
         mollusk.add_program_with_loader_and_elf(&ID, &LOADER_V3, BALLISTA_ELF);
         token::add_program(&mut mollusk);
         associated_token::add_program(&mut mollusk);
+        memo::add_program(&mut mollusk);
         mollusk.with_context(accounts)
     }
 
@@ -513,7 +2050,7 @@ mod tests {
         u64::from_le_bytes(data[64..72].try_into().expect("token amount"))
     }
 
-    fn token_account(mint: Pubkey, owner: Pubkey, amount: u64) -> TokenAccount {
+    fn token_account_state(mint: Pubkey, owner: Pubkey, amount: u64) -> TokenAccount {
         TokenAccount {
             mint,
             owner,
@@ -560,6 +2097,7 @@ mod tests {
             fixed_accounts,
             u8::from(batch),
             batch_max.unwrap_or(0),
+            0,
             input_count,
             register_count,
             instructions.len() as u8,
@@ -567,7 +2105,10 @@ mod tests {
             2,
             2,
             1,
+            0,
             4,
+            0,
+            0,
         );
         let mut account_constraints = vec![
             account_constraint(ACCOUNT_EXECUTABLE, 0),
@@ -590,7 +2131,7 @@ mod tests {
         let destination = if batch { ITERATION_ACCOUNT_BIT } else { 2 };
         let cpi = CpiDescriptor {
             program_account: 0,
-            reserved0: 0,
+            account_group: NO_INDEX,
             account_start_le: 0u16.to_le_bytes(),
             account_len: 2,
             segment_len: 2,
@@ -642,7 +2183,7 @@ mod tests {
     }
 
     fn token_transfer_template(batch_max: u8) -> Vec<u8> {
-        let header = ProgramHeader::new(3, 1, batch_max, 1, 1, 3, 1, 3, 2, 1, 1);
+        let header = ProgramHeader::new(3, 1, batch_max, 0, 1, 1, 3, 1, 3, 2, 1, 0, 1, 0, 0);
         let mut token_account_constraint = account_constraint(ACCOUNT_WRITABLE, NO_INDEX);
         token_account_constraint.owner_index = 0;
         let account_constraints = [
@@ -663,7 +2204,7 @@ mod tests {
         ];
         let cpis = [CpiDescriptor {
             program_account: 0,
-            reserved0: 0,
+            account_group: NO_INDEX,
             account_start_le: [0; 2],
             account_len: 3,
             segment_len: 2,
@@ -723,7 +2264,7 @@ mod tests {
     }
 
     fn ata_then_transfer_template(batch_max: u8) -> Vec<u8> {
-        let header = ProgramHeader::new(7, 2, batch_max, 1, 8, 12, 2, 9, 5, 3, 1);
+        let header = ProgramHeader::new(7, 2, batch_max, 0, 1, 8, 12, 2, 9, 5, 3, 0, 1, 0, 0);
         let account_constraints = [
             account_constraint(ACCOUNT_EXECUTABLE, 0),
             account_constraint(ACCOUNT_EXECUTABLE, 1),
@@ -757,7 +2298,7 @@ mod tests {
         let cpis = [
             CpiDescriptor {
                 program_account: 0,
-                reserved0: 0,
+                account_group: NO_INDEX,
                 account_start_le: [0; 2],
                 account_len: 6,
                 segment_len: 0,
@@ -767,7 +2308,7 @@ mod tests {
             },
             CpiDescriptor {
                 program_account: 1,
-                reserved0: 0,
+                account_group: NO_INDEX,
                 account_start_le: 6u16.to_le_bytes(),
                 account_len: 3,
                 segment_len: 2,

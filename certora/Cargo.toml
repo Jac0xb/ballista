@@ -1,0 +1,19 @@
+# Formal verification workspace. Kept out of the root workspace so the release build, its lock
+# file, and its dependency policy are untouched. Build with `cargo certora-sbf` from
+# `ballista-specs`, or `cargo check --features rt` here for a host typecheck.
+[workspace]
+resolver = "2"
+members = ["ballista-lib", "cvlr-pinocchio", "ballista-specs"]
+
+[workspace.dependencies]
+cvlr = "=0.6.1"
+pinocchio = { version = "=0.11.2", features = ["cpi"] }
+solana-address = { version = "=2.7.0", features = ["curve25519", "decode"] }
+ballista = { path = "ballista-lib", features = ["no-entrypoint", "spec-api"] }
+pinocchio-system = "=0.6.1"
+solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
+ballista-common = { path = "../common" }
+cvlr-pinocchio = { path = "cvlr-pinocchio" }
+
+[profile.release]
+overflow-checks = true

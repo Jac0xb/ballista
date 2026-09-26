@@ -463,6 +463,17 @@ pub fn validate_account(
     Ok(())
 }
 
+/// What every instruction of one run can read or write, gathered so the dispatch loop hands a
+/// step one pointer instead of five arguments: SBF passes only five arguments in registers and
+/// spills the rest to the stack on every call.
+struct Machine<'run, 'data> {
+    program: &'run ProgramView<'data>,
+    inputs: &'run [RuntimeValue<'data>],
+    accounts: &'data [AccountView],
+    registers: &'run mut [RuntimeValue<'data>],
+    scratch: &'run mut Scratch<'data>,
+}
+
 fn execute_root<'data>(
     program: &ProgramView<'data>,
     inputs: &[RuntimeValue<'data>],
@@ -471,6 +482,13 @@ fn execute_root<'data>(
     registers: &mut [RuntimeValue<'data>],
     scratch: &mut Scratch<'data>,
 ) -> ProgramResult {
+    let mut machine = Machine {
+        program,
+        inputs,
+        accounts,
+        registers,
+        scratch,
+    };
     let mut pc = 0usize;
     while pc < program.instructions.len() {
         let instruction = &program.instructions[pc];
@@ -485,87 +503,74 @@ fn execute_root<'data>(
             // Registers written inside the body are discarded after each iteration, except the
             // ones named in the carry mask, which flow into the next iteration and out of the loop.
             let carry = instruction.immediate();
-            let mut base_registers = registers.to_vec();
+            let mut base_registers = machine.registers.to_vec();
             let (cache_cpi, data_invariant) =
                 loop_cache_plan(program, &program.instructions[body_start..body_end]);
-            scratch.cache_cpi = cache_cpi;
-            scratch.data_invariant = data_invariant;
-            scratch.built = false;
+            machine.scratch.cache_cpi = cache_cpi;
+            machine.scratch.data_invariant = data_invariant;
+            machine.scratch.built = false;
             for iteration in 0..iterations {
-                registers.copy_from_slice(&base_registers);
+                machine.registers.copy_from_slice(&base_registers);
                 let row_base = program.header.fixed_account_count()
                     + iteration * program.header.batch_stride();
-                execute_range(
-                    program,
-                    inputs,
-                    accounts,
-                    registers,
-                    scratch,
-                    body_start,
-                    body_end,
-                    Some((iteration, row_base)),
-                )?;
+                execute_range(&mut machine, body_start, body_end, Some((iteration, row_base)))?;
                 if carry != 0 {
                     for (register, slot) in base_registers.iter_mut().enumerate() {
                         if register < 64 && carry & (1u64 << register) != 0 {
-                            *slot = registers[register];
+                            *slot = machine.registers[register];
                         }
                     }
                 }
             }
-            registers.copy_from_slice(&base_registers);
-            scratch.cache_cpi = None;
-            scratch.built = false;
-            scratch.data_invariant = false;
+            machine.registers.copy_from_slice(&base_registers);
+            machine.scratch.cache_cpi = None;
+            machine.scratch.built = false;
+            machine.scratch.data_invariant = false;
             pc = body_end;
             continue;
         }
-        execute_instruction(
-            program,
-            inputs,
-            accounts,
-            registers,
-            scratch,
-            instruction,
-            None,
-        )
-        .map_err(|error| error.at(pc, instruction))?;
+        step(&mut machine, instruction, None).map_err(|error| error.at(pc, instruction))?;
         pc += 1;
     }
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn execute_range<'data>(
-    program: &ProgramView<'data>,
-    inputs: &[RuntimeValue<'data>],
-    accounts: &'data [AccountView],
-    registers: &mut [RuntimeValue<'data>],
-    scratch: &mut Scratch<'data>,
+    machine: &mut Machine<'_, 'data>,
     start: usize,
     end: usize,
     loop_context: Option<(usize, usize)>,
 ) -> ProgramResult {
     for pc in start..end {
-        let instruction = &program.instructions[pc];
+        let instruction = &machine.program.instructions[pc];
         if instruction.opcode == OP_FOREACH {
             return Err(RunError::from(BallistaError::InvalidTemplateProgram).at(pc, instruction));
         }
-        execute_instruction(
-            program,
-            inputs,
-            accounts,
-            registers,
-            scratch,
-            instruction,
-            loop_context,
-        )
-        .map_err(|error| error.at(pc, instruction))?;
+        step(machine, instruction, loop_context).map_err(|error| error.at(pc, instruction))?;
     }
     Ok(())
 }
 
+/// One instruction, out of line, taking the machine by pointer.
+#[inline(never)]
+fn step<'data>(
+    machine: &mut Machine<'_, 'data>,
+    instruction: &InstructionRecord,
+    loop_context: Option<(usize, usize)>,
+) -> RunResult<()> {
+    execute_instruction(
+        machine.program,
+        machine.inputs,
+        machine.accounts,
+        machine.registers,
+        machine.scratch,
+        instruction,
+        loop_context,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
+#[inline(always)]
 pub fn execute_instruction<'data>(
     program: &ProgramView<'data>,
     inputs: &[RuntimeValue<'data>],

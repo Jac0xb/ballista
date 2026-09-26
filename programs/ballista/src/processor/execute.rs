@@ -750,7 +750,7 @@ pub fn execute_instruction<'data>(
             set(registers, dst, RuntimeValue::Bytes(bytes))?;
         }
         OP_ACCOUNT_KEY => {
-            let account = resolve_account(program, accounts, instruction.a, loop_context)?;
+            let account = resolve(program, accounts, instruction.a, loop_context)?;
             set(
                 registers,
                 dst,
@@ -758,7 +758,7 @@ pub fn execute_instruction<'data>(
             )?;
         }
         OP_ACCOUNT_OWNER => {
-            let account = resolve_account(program, accounts, instruction.a, loop_context)?;
+            let account = resolve(program, accounts, instruction.a, loop_context)?;
             set(
                 registers,
                 dst,
@@ -766,20 +766,20 @@ pub fn execute_instruction<'data>(
             )?;
         }
         OP_ACCOUNT_LAMPORTS => {
-            let account = resolve_account(program, accounts, instruction.a, loop_context)?;
+            let account = resolve(program, accounts, instruction.a, loop_context)?;
             set(registers, dst, RuntimeValue::U64(account.lamports()))?;
         }
         OP_ACCOUNT_DATA_LEN => {
-            let account = resolve_account(program, accounts, instruction.a, loop_context)?;
+            let account = resolve(program, accounts, instruction.a, loop_context)?;
             set(registers, dst, RuntimeValue::U64(account.data_len() as u64))?;
         }
         OP_ACCOUNT_IS_EMPTY => {
-            let account = resolve_account(program, accounts, instruction.a, loop_context)?;
+            let account = resolve(program, accounts, instruction.a, loop_context)?;
             set(registers, dst, RuntimeValue::Bool(account.is_data_empty()))?;
         }
         OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_U128
         | OP_READ_PUBKEY | OP_READ_BOOL => {
-            let account = resolve_account(program, accounts, instruction.a, loop_context)?;
+            let account = resolve(program, accounts, instruction.a, loop_context)?;
             let offset = if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
                 match registers.get(instruction.b as usize) {
                     Some(RuntimeValue::U64(value)) => usize::try_from(*value)
@@ -875,7 +875,7 @@ pub fn execute_instruction<'data>(
             if instruction.b != NO_INDEX && !read_bool(registers, instruction.b)? {
                 return Ok(());
             }
-            invoke_out_of_line(
+            invoke_cpi(
                 program,
                 accounts,
                 registers,
@@ -890,21 +890,6 @@ pub fn execute_instruction<'data>(
         _ => return Err(BallistaError::InvalidTemplateProgram.into()),
     }
     Ok(())
-}
-
-/// The invoke arm's call into `invoke_cpi`, kept out of line so the invocation's setup is never
-/// inlined into the dispatch loop, where its locals and register pressure would weigh on every
-/// other instruction.
-#[inline(never)]
-fn invoke_out_of_line<'data>(
-    program: &ProgramView<'data>,
-    accounts: &'data [AccountView],
-    registers: &[RuntimeValue<'data>],
-    cpi_index: usize,
-    loop_context: Option<(usize, usize)>,
-    scratch: &mut Scratch<'data>,
-) -> RunResult<()> {
-    invoke_cpi(program, accounts, registers, cpi_index, loop_context, scratch)
 }
 
 /// Derives the address a `DERIVE_PDA` or `CREATE_PDA` names. Out of line: its seed buffers are
@@ -1074,6 +1059,9 @@ fn decode_value<'data, T>(
     }
 }
 
+// Out of line so the invocation's setup is never inlined into the dispatch loop, where its locals
+// and register pressure would weigh on every other instruction.
+#[inline(never)]
 fn invoke_cpi<'data>(
     program: &ProgramView<'data>,
     accounts: &'data [AccountView],
@@ -1415,8 +1403,19 @@ pub fn encode_register_segment<'data, S: ByteSink>(
     }
 }
 
-#[inline(always)]
 pub fn resolve_account<'data>(
+    program: &ProgramView<'_>,
+    accounts: &'data [AccountView],
+    reference: u8,
+    loop_context: Option<(usize, usize)>,
+) -> RunResult<&'data AccountView> {
+    resolve(program, accounts, reference, loop_context)
+}
+
+/// `resolve_account`, always inlined, for the dispatch loop's account instructions. The
+/// invocation builder keeps calling `resolve_account` and its own inlining.
+#[inline(always)]
+fn resolve<'data>(
     program: &ProgramView<'_>,
     accounts: &'data [AccountView],
     reference: u8,
@@ -1574,9 +1573,11 @@ pub fn set<'data>(
     Ok(())
 }
 
-#[inline(always)]
 pub fn get<'data>(registers: &[RuntimeValue<'data>], index: u8) -> RunResult<RuntimeValue<'data>> {
-    read(registers, index).copied()
+    match registers.get(index as usize).copied() {
+        Some(RuntimeValue::Unset) | None => Err(BallistaError::InvalidRegister.into()),
+        Some(value) => Ok(value),
+    }
 }
 
 /// The initialized register at `index`, borrowed where it lives. Handlers match on the reference,
@@ -1637,7 +1638,6 @@ fn unset_first(error: RunError, left: &RuntimeValue<'_>, right: &RuntimeValue<'_
     }
 }
 
-#[inline(always)]
 pub fn as_bool(value: RuntimeValue<'_>) -> RunResult<bool> {
     match value {
         RuntimeValue::Bool(value) => Ok(value),

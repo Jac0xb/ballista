@@ -11,7 +11,12 @@ use solana_address::Address;
 use crate::error::{vm_error, BallistaError};
 
 /// A typed register value. Public for formal specifications; the module is private otherwise.
+///
+/// `repr(C, u8)` puts every payload at offset 8, after the one-byte tag. With Rust's default
+/// layout the byte-array payloads start at offset 1 while the integers start at 8, so the compiler
+/// split every copy and every store of a value into unaligned byte, half, and word pieces.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C, u8)]
 pub enum RuntimeValue<'data> {
     Unset,
     Bool(bool),
@@ -654,8 +659,8 @@ pub fn execute_instruction<'data>(
         | OP_READ_PUBKEY | OP_READ_BOOL => {
             let account = resolve_account(program, accounts, instruction.a, loop_context)?;
             let offset = if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
-                match get(registers, instruction.b)? {
-                    RuntimeValue::U64(value) => usize::try_from(value)
+                match read(registers, instruction.b)? {
+                    RuntimeValue::U64(value) => usize::try_from(*value)
                         .map_err(|_| BallistaError::InvalidRuntimeAccount)?,
                     _ => return Err(BallistaError::TypeMismatch.into()),
                 }
@@ -673,19 +678,19 @@ pub fn execute_instruction<'data>(
             RuntimeValue::I64(Clock::get()?.unix_timestamp),
         )?,
         OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_MIN | OP_MAX => {
-            let left = get(registers, instruction.a)?;
-            let right = get(registers, instruction.b)?;
+            let left = *read(registers, instruction.a)?;
+            let right = *read(registers, instruction.b)?;
             set(registers, dst, arithmetic(instruction.opcode, left, right)?)?;
         }
         OP_EQ | OP_NE | OP_LT | OP_LTE | OP_GT | OP_GTE => {
-            let left = get(registers, instruction.a)?;
-            let right = get(registers, instruction.b)?;
+            let left = *read(registers, instruction.a)?;
+            let right = *read(registers, instruction.b)?;
             let result = compare(instruction.opcode, left, right)?;
             set(registers, dst, RuntimeValue::Bool(result))?;
         }
         OP_AND | OP_OR => {
-            let left = as_bool(get(registers, instruction.a)?)?;
-            let right = as_bool(get(registers, instruction.b)?)?;
+            let left = read_bool(registers, instruction.a)?;
+            let right = read_bool(registers, instruction.b)?;
             set(
                 registers,
                 dst,
@@ -699,19 +704,19 @@ pub fn execute_instruction<'data>(
         OP_NOT => set(
             registers,
             dst,
-            RuntimeValue::Bool(!as_bool(get(registers, instruction.a)?)?),
+            RuntimeValue::Bool(!read_bool(registers, instruction.a)?),
         )?,
         OP_SELECT => {
-            let condition = as_bool(get(registers, instruction.a)?)?;
+            let condition = read_bool(registers, instruction.a)?;
             let selected = if condition {
-                get(registers, instruction.b)?
+                *read(registers, instruction.b)?
             } else {
-                get(registers, instruction.c)?
+                *read(registers, instruction.c)?
             };
             set(registers, dst, selected)?;
         }
         OP_CAST_U64 | OP_CAST_I64 | OP_CAST_U128 => {
-            let value = cast(instruction.opcode, get(registers, instruction.a)?)?;
+            let value = cast(instruction.opcode, *read(registers, instruction.a)?)?;
             set(registers, dst, value)?;
         }
         OP_LOOP_INDEX => {
@@ -719,7 +724,7 @@ pub fn execute_instruction<'data>(
             set(registers, dst, RuntimeValue::U64(iteration as u64))?;
         }
         OP_MOVE => {
-            let value = get(registers, instruction.a)?;
+            let value = *read(registers, instruction.a)?;
             set(registers, dst, value)?;
         }
         OP_DERIVE_PDA | OP_CREATE_PDA => {
@@ -768,7 +773,7 @@ pub fn execute_instruction<'data>(
             set(registers, dst, RuntimeValue::Pubkey(derived.to_bytes()))?;
         }
         OP_REQUIRE => {
-            if !as_bool(get(registers, instruction.a)?)? {
+            if !read_bool(registers, instruction.a)? {
                 return Err(BallistaError::RequirementFailed.into());
             }
         }
@@ -777,7 +782,7 @@ pub fn execute_instruction<'data>(
             let slot = scratch.expanded;
             scratch.expanded = scratch.expanded.saturating_add(1);
             scratch.last_invoked = None;
-            if instruction.b != NO_INDEX && !as_bool(get(registers, instruction.b)?)? {
+            if instruction.b != NO_INDEX && !read_bool(registers, instruction.b)? {
                 return Ok(());
             }
             invoke_cpi(
@@ -1256,6 +1261,7 @@ pub fn resolve_account<'data>(
         .ok_or_else(|| BallistaError::InvalidRuntimeAccount.into())
 }
 
+#[inline(always)]
 pub fn arithmetic<'data>(
     opcode: u8,
     left: RuntimeValue<'data>,
@@ -1297,6 +1303,7 @@ pub fn arithmetic<'data>(
     })
 }
 
+#[inline(always)]
 pub fn compare(opcode: u8, left: RuntimeValue<'_>, right: RuntimeValue<'_>) -> RunResult<bool> {
     macro_rules! compare_values {
         ($left:expr, $right:expr) => {
@@ -1339,6 +1346,7 @@ pub fn compare(opcode: u8, left: RuntimeValue<'_>, right: RuntimeValue<'_>) -> R
     })
 }
 
+#[inline(always)]
 pub fn cast(opcode: u8, value: RuntimeValue<'_>) -> RunResult<RuntimeValue<'_>> {
     match opcode {
         OP_CAST_U64 => Ok(RuntimeValue::U64(match value {
@@ -1371,6 +1379,7 @@ pub fn cast(opcode: u8, value: RuntimeValue<'_>) -> RunResult<RuntimeValue<'_>> 
     }
 }
 
+#[inline(always)]
 pub fn set<'data>(
     registers: &mut [RuntimeValue<'data>],
     index: usize,
@@ -1387,6 +1396,30 @@ pub fn get<'data>(registers: &[RuntimeValue<'data>], index: u8) -> RunResult<Run
     match registers.get(index as usize).copied() {
         Some(RuntimeValue::Unset) | None => Err(BallistaError::InvalidRegister.into()),
         Some(value) => Ok(value),
+    }
+}
+
+/// The initialized register at `index`, borrowed where it lives. Handlers match on the reference,
+/// so they load only the tag and the payload they use instead of copying a whole value out.
+#[inline(always)]
+fn read<'registers, 'data>(
+    registers: &'registers [RuntimeValue<'data>],
+    index: u8,
+) -> RunResult<&'registers RuntimeValue<'data>> {
+    match registers.get(index as usize) {
+        Some(RuntimeValue::Unset) | None => Err(BallistaError::InvalidRegister.into()),
+        Some(value) => Ok(value),
+    }
+}
+
+/// The boolean in register `index`: `InvalidRegister` if it is unset or out of range, then
+/// `TypeMismatch` if it holds another type, the same order `as_bool(get(..)?)` reports them in.
+#[inline(always)]
+fn read_bool(registers: &[RuntimeValue<'_>], index: u8) -> RunResult<bool> {
+    match registers.get(index as usize) {
+        Some(RuntimeValue::Bool(value)) => Ok(*value),
+        Some(RuntimeValue::Unset) | None => Err(BallistaError::InvalidRegister.into()),
+        Some(_) => Err(BallistaError::TypeMismatch.into()),
     }
 }
 

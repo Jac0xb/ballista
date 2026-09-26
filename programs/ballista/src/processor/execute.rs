@@ -149,8 +149,20 @@ pub struct Scratch<'data> {
     /// Whether that descriptor's data bytes are the same on every row, so `data` can be kept as
     /// well as the account list. Encoding them again costs more than resolving the accounts.
     data_invariant: bool,
-    /// Its program account, resolved once when it is not a row account.
-    built_program: Option<&'data AccountView>,
+    /// What the repeat pass needs from that descriptor, taken when its list was built.
+    built_call: Option<BuiltCall<'data>>,
+}
+
+/// The parts of a cached descriptor the repeat pass reads, looked up and checked once when its
+/// account list is built rather than again on every row.
+#[derive(Clone, Copy)]
+struct BuiltCall<'data> {
+    records: &'data [CpiAccountRecord],
+    segments: &'data [DataSegment],
+    max_data_len: usize,
+    program_account: u8,
+    /// The program account, resolved once when it is not a row account.
+    program: Option<&'data AccountView>,
 }
 
 impl<'data> Scratch<'data> {
@@ -173,7 +185,7 @@ impl<'data> Scratch<'data> {
             cache_cpi: None,
             built: false,
             data_invariant: false,
-            built_program: None,
+            built_call: None,
         }
     }
 
@@ -1123,107 +1135,146 @@ fn invoke_cpi<'data>(
     scratch: &mut Scratch<'data>,
 ) -> RunResult<()> {
     crate::profile::setup_begin();
-    let descriptor = program
-        .cpis
-        .get(cpi_index)
-        .ok_or(BallistaError::InvalidTemplateProgram)?;
-    let account_len = descriptor.account_len as usize;
-    if account_len > MAX_CPI_ACCOUNTS {
-        return Err(BallistaError::InvalidTemplateProgram.into());
-    }
-    let account_end = descriptor
-        .account_start()
-        .checked_add(account_len)
-        .ok_or(BallistaError::InvalidTemplateProgram)?;
-    let records = program
-        .cpi_accounts
-        .get(descriptor.account_start()..account_end)
-        .ok_or(BallistaError::InvalidTemplateProgram)?;
-    let segment_end = descriptor
-        .segment_start()
-        .checked_add(descriptor.segment_len as usize)
-        .ok_or(BallistaError::InvalidTemplateProgram)?;
-    let segments = program
-        .data_segments
-        .get(descriptor.segment_start()..segment_end)
-        .ok_or(BallistaError::InvalidTemplateProgram)?;
-
     // A batch invoking the same descriptor every row rebuilds an account list whose fixed entries
     // are identical each time. Resolving one costs about 93 compute units, so the repeat pass
-    // touches only the slots that name a row account.
+    // touches only the slots that name a row account, and takes what it needs from the descriptor
+    // from the pass that built the list, where the lookups were already checked.
     let cacheable = scratch.cache_cpi == Some(cpi_index);
-    let reused = cacheable && scratch.built;
-    if reused {
-        rebind_row_accounts(program, accounts, records, loop_context, scratch)?;
+    // Set together with `built`, once the list is complete, so present exactly when it can be
+    // reused.
+    let built_call = if cacheable && scratch.built {
+        scratch.built_call
     } else {
-        scratch.built = false;
-        scratch.metas.clear();
-        scratch.views.clear();
-        scratch.data.clear();
-        for record in records {
-            let account = resolve_account(program, accounts, record.account, loop_context)?;
-            scratch.metas.push(InstructionAccount::new(
-                account.address(),
-                record.flags & ACCOUNT_WRITABLE != 0,
-                record.flags & ACCOUNT_SIGNER != 0,
-            ));
-            scratch.views.push(account);
-        }
-        if let Some(group) = descriptor.account_group() {
-            // Group accounts are forwarded with the transaction's writable flag and never as
-            // signers: a template delegates signatures only through declared slots. Their range
-            // comes from the run layout, so it is the same on every iteration.
-            let (start, len) = *scratch
-                .groups
-                .get(group)
+        None
+    };
+    let reused = built_call.is_some();
+    let (records, segments, max_data_len, program_reference, known_program) =
+        if let Some(call) = built_call {
+            rebind_row_accounts(program, accounts, call.records, loop_context, scratch)?;
+            (
+                call.records,
+                call.segments,
+                call.max_data_len,
+                call.program_account,
+                call.program,
+            )
+        } else {
+            let descriptor = program
+                .cpis
+                .get(cpi_index)
                 .ok_or(BallistaError::InvalidTemplateProgram)?;
-            let total = account_len + len as usize;
-            if total > MAX_CPI_ACCOUNTS {
-                return Err(RunError::VmAt(
-                    BallistaError::CpiAccountLimitExceeded,
-                    clamp(total),
-                ));
+            let account_len = descriptor.account_len as usize;
+            if account_len > MAX_CPI_ACCOUNTS {
+                return Err(BallistaError::InvalidTemplateProgram.into());
             }
-            let range = start as usize..start as usize + len as usize;
-            let group_accounts = accounts
-                .get(range)
-                .ok_or(BallistaError::InvalidRuntimeAccount)?;
-            for account in group_accounts {
-                scratch.metas.push(InstructionAccount::new(
+            let account_end = descriptor
+                .account_start()
+                .checked_add(account_len)
+                .ok_or(BallistaError::InvalidTemplateProgram)?;
+            let records = program
+                .cpi_accounts
+                .get(descriptor.account_start()..account_end)
+                .ok_or(BallistaError::InvalidTemplateProgram)?;
+            let segment_end = descriptor
+                .segment_start()
+                .checked_add(descriptor.segment_len as usize)
+                .ok_or(BallistaError::InvalidTemplateProgram)?;
+            let segments = program
+                .data_segments
+                .get(descriptor.segment_start()..segment_end)
+                .ok_or(BallistaError::InvalidTemplateProgram)?;
+
+            scratch.built = false;
+            scratch.metas.clear();
+            scratch.views.clear();
+            // Both lists hold `MAX_CPI_ACCOUNTS` and `account_len` is at most that, so the records
+            // fit; writing the slots directly skips a capacity check and a length update per push.
+            let mut count = 0;
+            let slots = records
+                .iter()
+                .zip(scratch.metas.spare_capacity_mut())
+                .zip(scratch.views.spare_capacity_mut());
+            for ((record, meta), view) in slots {
+                let account = resolve_account(program, accounts, record.account, loop_context)?;
+                meta.write(InstructionAccount::new(
                     account.address(),
-                    account.is_writable(),
-                    false,
+                    record.flags & ACCOUNT_WRITABLE != 0,
+                    record.flags & ACCOUNT_SIGNER != 0,
                 ));
-                scratch.views.push(account);
+                view.write(account);
+                count += 1;
             }
-        }
-        scratch.built_program = None;
-        scratch.built = cacheable;
-    }
+            if count < records.len() {
+                return Err(BallistaError::InvalidTemplateProgram.into());
+            }
+            // SAFETY: the loop initialized the first `count` slots of both lists, which were empty.
+            unsafe {
+                scratch.metas.set_len(count);
+                scratch.views.set_len(count);
+            }
+            if let Some(group) = descriptor.account_group() {
+                // Group accounts are forwarded with the transaction's writable flag and never as
+                // signers: a template delegates signatures only through declared slots. Their range
+                // comes from the run layout, so it is the same on every iteration.
+                let (start, len) = *scratch
+                    .groups
+                    .get(group)
+                    .ok_or(BallistaError::InvalidTemplateProgram)?;
+                let total = account_len + len as usize;
+                if total > MAX_CPI_ACCOUNTS {
+                    return Err(RunError::VmAt(
+                        BallistaError::CpiAccountLimitExceeded,
+                        clamp(total),
+                    ));
+                }
+                let range = start as usize..start as usize + len as usize;
+                let group_accounts = accounts
+                    .get(range)
+                    .ok_or(BallistaError::InvalidRuntimeAccount)?;
+                for account in group_accounts {
+                    scratch.metas.push(InstructionAccount::new(
+                        account.address(),
+                        account.is_writable(),
+                        false,
+                    ));
+                    scratch.views.push(account);
+                }
+            }
+            (
+                records,
+                segments,
+                descriptor.max_data_len(),
+                descriptor.program_account,
+                None,
+            )
+        };
 
     if !(reused && scratch.data_invariant) {
         scratch.data.clear();
         for segment in segments {
             encode_segment(program, registers, segment, &mut scratch.data)?;
         }
-        if scratch.data.len() > descriptor.max_data_len() || scratch.data.len() > MAX_CPI_DATA_LEN {
+        if scratch.data.len() > max_data_len || scratch.data.len() > MAX_CPI_DATA_LEN {
             return Err(BallistaError::CpiDataTooLarge.into());
         }
     }
 
-    // A template that invokes once takes the same path it always did; only a cacheable batch
-    // consults the remembered program account.
-    let program_account = if !cacheable {
-        resolve_account(program, accounts, descriptor.program_account, loop_context)?
-    } else if let Some(account) = scratch.built_program {
-        account
-    } else {
-        let account = resolve_account(program, accounts, descriptor.program_account, loop_context)?;
-        if descriptor.program_account & ITERATION_ACCOUNT_BIT == 0 {
-            scratch.built_program = Some(account);
-        }
-        account
+    // The program account is resolved on every invocation except a batch's repeat pass, which
+    // remembers it when it is not a row account.
+    let program_account = match known_program {
+        Some(account) => account,
+        None => resolve_account(program, accounts, program_reference, loop_context)?,
     };
+    if cacheable && !reused {
+        scratch.built = true;
+        scratch.built_call = Some(BuiltCall {
+            records,
+            segments,
+            max_data_len,
+            program_account: program_reference,
+            program: (program_reference & ITERATION_ACCOUNT_BIT == 0).then_some(program_account),
+        });
+    }
     let instruction = InstructionView {
         program_id: program_account.address(),
         accounts: scratch.metas.as_slice(),
@@ -1318,21 +1369,18 @@ fn rebind_row_accounts<'data>(
     loop_context: Option<(usize, usize)>,
     scratch: &mut Scratch<'data>,
 ) -> RunResult<()> {
-    for (slot, record) in records.iter().enumerate() {
+    // The list was built from these same records, one entry each, so the three walk in step. A
+    // slot's flags come from its record and do not change between rows; only the account does.
+    let slots = records
+        .iter()
+        .zip(scratch.metas.iter_mut())
+        .zip(scratch.views.iter_mut());
+    for ((record, meta), view) in slots {
         if record.account & ITERATION_ACCOUNT_BIT == 0 {
             continue;
         }
         let account = resolve_account(program, accounts, record.account, loop_context)?;
-        let (meta, view) = scratch
-            .metas
-            .get_mut(slot)
-            .zip(scratch.views.get_mut(slot))
-            .ok_or(BallistaError::InvalidTemplateProgram)?;
-        *meta = InstructionAccount::new(
-            account.address(),
-            record.flags & ACCOUNT_WRITABLE != 0,
-            record.flags & ACCOUNT_SIGNER != 0,
-        );
+        meta.address = account.address();
         *view = account;
     }
     Ok(())
@@ -1380,7 +1428,9 @@ pub trait ByteSink {
 }
 
 impl ByteSink for Vec<u8> {
-    #[cfg_attr(feature = "spec-api", inline(never))] fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()> {
+    #[cfg_attr(feature = "spec-api", inline(never))]
+    #[cfg_attr(not(feature = "spec-api"), inline(always))]
+    fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()> {
         self.extend_from_slice(bytes);
         Ok(())
     }

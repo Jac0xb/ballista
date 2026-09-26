@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 0d8a49ba8cce4ebfc0cc966b56a93fb0adcb7e1c65414f24157f2c95eeda736e # shrinks to program = GeneratedProgram { bytes: [66, 86, 77, 50, 3, 0, 1, 1, 0, 14, 18, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 3, 0, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23, 1, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23, 2, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23, 3, 1, 1, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 36, 4, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 5, 1, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 40, 255, 5, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23, 6, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 36, 7, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 42, 255, 6, 255, 255, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 19, 8, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 19, 9, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 19, 10, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 49, 0, 10, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 11, 1, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 40, 255, 11, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 19, 12, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 35, 13, 8, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], run_inputs: [], fixed_accounts: 0, row_accounts: 1, max_iterations: 1, min_iterations: 0 }

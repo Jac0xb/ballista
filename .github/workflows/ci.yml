@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 6 * * *'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host:
+    name: Host checks and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: pnpm install --frozen-lockfile
+      - name: Fixtures are current
+        run: pnpm fixtures && git diff --exit-code fixtures
+      - run: pnpm check
+      - run: pnpm test
+      - run: git diff --check
+
+  integration:
+    name: SBF build and Mollusk suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            tests/ballista -> tests/ballista/target
+      - name: Install Solana platform tools
+        # Agave 4.1 ships platform tools v1.54 (rustc 1.89), which pinocchio 0.11 requires.
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v4.1.0/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - run: cargo build-sbf --manifest-path programs/ballista/Cargo.toml
+      - run: cargo test --manifest-path tests/ballista/Cargo.toml
+
+  nightly-properties:
+    name: Extended property tests
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    env:
+      PROPTEST_CASES: 4096
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p ballista-common --test no_panic --test generated

@@ -1,10 +1,20 @@
-# Ballista 0.3
+# Ballista
 
-Ballista is a bounded orchestration VM for reusable SVM transaction templates.
+Ballista is an on-chain transaction-template engine for Solana. Define a multi-program workflow
+once, compile it into bounded bytecode, store it in an immutable account, and let any caller execute
+it with fresh inputs and accounts—without deploying another custom program.
 
-A creator compiles a template, stores it in an immutable PDA, and anyone can run it with typed
-inputs and transaction accounts. The program validates flat bytecode before finalization, then
-executes directly from borrowed account memory without rebuilding an AST.
+It is designed for the space between a one-off transaction and a bespoke smart contract: payroll
+batches, guarded token operations, account setup, treasury flows, post-CPI invariants, and other
+complex but finite orchestration. Templates can read accounts and the clock, perform checked typed
+math, require conditions, invoke arbitrary programs, and iterate one statically bounded account
+range. They cannot keep mutable state, run unbounded loops, custody PDAs, or invent signer authority.
+
+The runtime validates the complete flat program before finalization and then executes fixed-size
+records directly from borrowed account memory. Developer names and `let` bindings disappear during
+compilation; there is no Borsh AST to allocate or deserialize during `Run`.
+
+Explore the [documentation and dual TypeScript/Rust examples](https://jac0xb.github.io/ballista/).
 
 Ballista is a clean break from the legacy Borsh task format. Old task accounts are not executable
 by the 0.3 runtime.
@@ -17,9 +27,10 @@ by the 0.3 runtime.
 - Deployed SBF: 78,192 bytes, SHA-256 `cd13bbf4d5e695ef9b50a2e6eaff749c0c9edd74c847efbc0cd5021ca2123b11`
 - Explorer IDL: [`JDQL78RmakzfYKcWzAC56CmUGNhCMtje3HvDCyiH2xCX`](https://explorer.solana.com/address/JDQL78RmakzfYKcWzAC56CmUGNhCMtje3HvDCyiH2xCX?cluster=devnet)
 
-That deployment predates the `derivePda` opcode in this branch. Snapshot templates use existing VM
-records, but templates containing `assertPda` or `assertAta` require the next program upgrade and
-IDL metadata refresh before they can run on devnet.
+That deployment is an earlier pre-release build and rejects templates compiled from this
+repository with `UnsupportedVersion`. The program is deployed once and immutably; until that
+deployment exists, run templates locally with `pnpm build:program && pnpm test:integration`. See
+the [deployment policy](https://jac0xb.github.io/ballista/guide/devnet).
 
 The checked-in [IDL](idl/ballista.json) is published through Solana's Program Metadata program.
 It describes Ballista's accounts and instructions for Explorer discovery; instruction fields marked
@@ -100,12 +111,21 @@ blocks. See Solana's [larger transaction migration guide](https://solana.com/upg
 
 ## Execution model
 
-- Guarded generic CPIs; protocol helpers exist only in the SDK.
+- Guarded generic CPIs; protocol helpers exist only in the SDK and declare the program they target.
 - Typed values: `bool`, `u64`, `i64`, `u128`, `pubkey`, and bounded `bytes`.
 - Checked arithmetic, comparisons, casts, account/clock reads, `select`, and `require`.
+- Fixed-offset data reads checked against the account's declared length at finalize, plus
+  dynamic-offset reads and a guarded read of the previous CPI's return data.
 - Lexical `let`/`snapshot` bindings for pre/post-CPI delta assertions without persistent state.
+- Loop-carried variables that survive across batch rows, so a template can enforce a total.
 - Canonical PDA derivation and SDK-level `assertPda` / `assertAta` relationship guards.
-- One optional bounded tail-account iterator with stride `1..=8` and at most 64 expanded CPIs.
+- One optional bounded tail-account iterator with stride `1..=8`, a minimum row count, and at most
+  64 expanded CPIs.
+- Constant heap per run: CPI scratch is allocated once and PDA seeds live on the stack.
+- Failures name their location: the error code carries the program counter, account index, or
+  input index, and the SDK maps it back to the authoring step. Invoked programs' errors pass
+  through untouched.
+- Programs and data reads must be pinned unless the author opts out with `unsafeUnpinned`.
 - Public, repeatable execution. CPI signers must already be outer transaction signers.
 - No PDA custody, mutable instance state, scheduler, replay policy, or unbounded control flow.
 
@@ -157,30 +177,39 @@ derivation, and run/upload instruction conversion.
 ## Commands
 
 ```bash
-pnpm test               # fast Rust core tests + TypeScript SDK tests
-pnpm check              # supported Rust crates + SDK typecheck
+pnpm test               # Rust core and property tests + TypeScript SDK tests
+pnpm check              # Rust, SDK typecheck, and docs build
+pnpm fixtures           # regenerate the shared compiler fixtures after a compiler change
 pnpm build:sdk          # ESM and declarations
 pnpm build:program      # Solana SBF program
-pnpm test:integration   # Agave-aligned SBF lifecycle/CPI suite (build program first)
+pnpm test:integration   # Agave-aligned Mollusk suite (build program first)
+pnpm docs:dev           # local documentation server
+
+cargo run -p ballista-sdk --example author_template   # author templates from Rust
+cargo run -p ballista-sdk --example run_template      # encode inputs and decode errors from Rust
 ```
 
 ## Template lifecycle
 
-Template PDAs use `['template-v2', creator, templateId]`. Small payloads use `CreateTemplate`;
+Template PDAs use `['template', creator, templateId]`. Small payloads use `CreateTemplate`;
 larger payloads use `BeginTemplate`, sequential `WriteTemplateChunk` calls, and `FinalizeTemplate`.
 Only uploading templates can be cancelled. Finalized bytes are immutable and cannot be closed.
 
 The 80-byte account header records creator, ID, upload state, lengths, bump, and SHA-256 payload
 hash. The payload is a canonical series of fixed-size Zerocopy record tables followed by constant
 pubkeys and literal bytes. See [the scope and limits](docs/scope.md) and the
-[25-use-case capability matrix](usecases.md). Current packet, compute, and heap observations are in
+[25-use-case capability matrix](docs/use-cases.md). Current packet, compute, and heap observations are in
 [the measurements note](docs/benchmarks.md).
 
 ## Repository layout
 
 - `programs/ballista`: Pinocchio on-chain program.
-- `common`: flat wire format, borrowed account view, and static verifier.
-- `clients/js`: Zod-first authoring SDK and codecs.
-- `clients/rust`: Rust instruction codecs and account/PDA helpers.
+- `common`: flat wire format, borrowed account view, static verifier, and the `ProgramBuilder`.
+- `clients/js`: Zod-first authoring compiler, codecs, error decoding, and the Kit adapter.
+- `clients/rust`: Rust authoring, instruction codecs, typed inputs, and error decoding.
+- `fixtures`: compiler output and error-name tables shared by the Rust and TypeScript suites.
+- `tests/ballista`: Mollusk integration suite against the compiled SBF program.
+- `certora`: Certora Solana Prover specifications and the `cvlr-pinocchio` adapter; see the
+  [formal verification guide](https://jac0xb.github.io/ballista/guide/formal-verification).
 
 Licensed under MIT.

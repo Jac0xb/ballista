@@ -5,19 +5,21 @@ use ballista_common::{
         TEMPLATE_ACCOUNT_HEADER_LEN, TEMPLATE_STATE_UPLOADING,
     },
 };
-use error::BallistaError;
+use error::{verifier_error, BallistaError};
 use pinocchio::{
     cpi::{Seed, Signer},
     error::ProgramError,
+    sysvars::{rent::Rent, Sysvar},
     AccountView, Address, ProgramResult,
 };
-use pinocchio_system::instructions::CreateAccount;
+use pinocchio_system::instructions::{Allocate, Assign, CreateAccount, Transfer};
 use solana_address::declare_id;
 use solana_sha256_hasher::hash;
 use utils::pda::{get_template_address, TEMPLATE_SEED};
 
 pub mod error;
 pub mod processor;
+mod profile;
 pub mod utils;
 
 declare_id!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
@@ -26,7 +28,8 @@ declare_id!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
 mod init {
     use crate::process_instruction;
     use pinocchio::entrypoint;
-    entrypoint!(process_instruction);
+    // Template account plus up to 120 runtime accounts, with room to spare.
+    entrypoint!(process_instruction, 128);
 }
 
 pub fn process_instruction(
@@ -34,8 +37,12 @@ pub fn process_instruction(
     accounts: &mut [AccountView],
     instruction_data: &[u8],
 ) -> ProgramResult {
+    // Back-to-back so the decoder can price the counter read itself.
+    profile::mark(profile::TAG_CALIBRATE_A);
+    profile::mark(profile::TAG_CALIBRATE_B);
     let instruction = BallistaInstruction::parse(instruction_data)
         .map_err(|_| BallistaError::InvalidInstructionData)?;
+    profile::mark(profile::TAG_DISPATCHED);
 
     match instruction {
         BallistaInstruction::CreateTemplate {
@@ -63,10 +70,8 @@ fn create_template(
     payload_hash: &[u8; 32],
     payload: &[u8],
 ) -> ProgramResult {
-    let program = ProgramView::parse(payload).map_err(|_| BallistaError::InvalidTemplateProgram)?;
-    program
-        .verify()
-        .map_err(|_| BallistaError::InvalidTemplateProgram)?;
+    let program = ProgramView::parse(payload).map_err(verifier_error)?;
+    program.verify().map_err(verifier_error)?;
     if hash(payload).to_bytes() != *payload_hash {
         return Err(BallistaError::HashMismatch.into());
     }
@@ -74,8 +79,7 @@ fn create_template(
     let [creator, template, system_program] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
-    validate_create_accounts(creator, template, system_program, template_id)?;
-    let (_, bump) = get_template_address(creator.address(), template_id);
+    let bump = validate_create_accounts(creator, template, system_program, template_id)?;
     create_template_account(
         creator,
         template,
@@ -105,8 +109,7 @@ fn begin_template(
     let [creator, template, system_program] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
-    validate_create_accounts(creator, template, system_program, template_id)?;
-    let (_, bump) = get_template_address(creator.address(), template_id);
+    let bump = validate_create_accounts(creator, template, system_program, template_id)?;
     create_template_account(
         creator,
         template,
@@ -171,7 +174,7 @@ fn finalize_template(accounts: &mut [AccountView]) -> ProgramResult {
         }
         ProgramView::parse(account.payload())
             .and_then(|program| program.verify())
-            .map_err(|_| BallistaError::InvalidTemplateProgram)?;
+            .map_err(verifier_error)?;
     }
 
     let mut data = template.try_borrow_mut()?;
@@ -220,29 +223,35 @@ fn run_template(accounts: &mut [AccountView], input_bytes: &[u8]) -> ProgramResu
     let program = account
         .finalized_program()
         .map_err(|_| BallistaError::TemplateNotFinalized)?;
-    processor::run(&program, input_bytes, runtime_accounts)
+    profile::mark(profile::TAG_TEMPLATE_LOADED);
+    let result = processor::run(&program, input_bytes, runtime_accounts, template.address());
+    profile::report();
+    result
 }
 
+/// Checks the accounts an upload needs and returns the template PDA's bump, so the caller does
+/// not pay for a second canonical derivation: the search costs 1,500 compute units per bump it
+/// rejects, which is the most expensive thing an upload does.
 fn validate_create_accounts(
     creator: &AccountView,
     template: &AccountView,
     system_program: &AccountView,
     template_id: u16,
-) -> ProgramResult {
+) -> Result<u8, ProgramError> {
     if !creator.is_signer() || !creator.is_writable() || !template.is_writable() {
         return Err(ProgramError::MissingRequiredSignature);
     }
     if system_program.address() != &pinocchio_system::ID || !system_program.executable() {
         return Err(ProgramError::IncorrectProgramId);
     }
-    let (expected, _) = get_template_address(creator.address(), template_id);
+    let (expected, bump) = get_template_address(creator.address(), template_id);
     if template.address() != &expected
         || !template.owned_by(&pinocchio_system::ID)
         || !template.is_data_empty()
     {
         return Err(BallistaError::InvalidTemplateAccount.into());
     }
-    Ok(())
+    Ok(bump)
 }
 
 fn validate_owned_writable_template(
@@ -298,14 +307,35 @@ fn create_template_account(
         Seed::from(bump_bytes.as_ref()),
     ];
     let signer = Signer::from(seeds.as_slice());
-    CreateAccount::with_minimum_balance(
-        creator,
-        template,
-        (TEMPLATE_ACCOUNT_HEADER_LEN + payload_len) as u64,
-        &crate::ID,
-        None,
-    )?
-    .invoke_signed(&[signer])?;
+    let space = TEMPLATE_ACCOUNT_HEADER_LEN + payload_len;
+    if template.lamports() == 0 {
+        CreateAccount::with_minimum_balance(creator, template, space as u64, &crate::ID, None)?
+            .invoke_signed(&[signer])?;
+    } else {
+        // Someone already sent lamports to this address. `CreateAccount` would reject it, which
+        // lets anyone block a template ID with dust. Top up to rent exemption if needed, then
+        // allocate and assign under the PDA signature exactly as the ATA program does.
+        let required = Rent::get()?.try_minimum_balance(space)?;
+        let shortfall = required.saturating_sub(template.lamports());
+        if shortfall > 0 {
+            Transfer {
+                from: creator,
+                to: template,
+                lamports: shortfall,
+            }
+            .invoke()?;
+        }
+        Allocate {
+            account: template,
+            space: space as u64,
+        }
+        .invoke_signed(&[signer.clone()])?;
+        Assign {
+            account: template,
+            owner: &crate::ID,
+        }
+        .invoke_signed(&[signer])?;
+    }
 
     let mut data = template.try_borrow_mut()?;
     data[..TEMPLATE_ACCOUNT_HEADER_LEN].copy_from_slice(header.as_bytes());

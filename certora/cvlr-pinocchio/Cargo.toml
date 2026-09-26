@@ -1,0 +1,18 @@
+[package]
+name = "cvlr-pinocchio"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "CVLR helpers for verifying pinocchio programs with the Certora Solana Prover"
+repository = "https://github.com/Jac0xb/ballista"
+publish = false
+
+[features]
+default = []
+## Host runtime: assertions become real assertions and nondeterministic values become defaults, so
+## specifications can be typechecked and smoke-run without the prover.
+rt = ["cvlr/rt"]
+
+[dependencies]
+cvlr = { workspace = true }
+pinocchio = { workspace = true }

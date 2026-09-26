@@ -1,0 +1,7353 @@
+{
+  "sweep-above-a-reserve": {
+    "page": "runtime-values",
+    "anchor": "sweep-above-a-reserve",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d3101030000010406010200020001000400000000000400ff000000000003ffff000000000002ffff000000000002000000010000ffff00000000000000000000000a0101ffff00000000000000000000001b020100ff000000000000000000000028ff02ffff000000000000000000000014030100ff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000403000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 216,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient"
+    ],
+    "runData": "80841e0000000000",
+    "ballistaTransactionBytes": 283,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "The balance at execution is not known when the transaction is signed. A fixed amount either leaves dust behind or overdraws and fails, and anything that arrives between signing and execution is stranded.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 492,
+      "accountBytes": 296,
+      "rentLamports": 2153920
+    },
+    "stats": {
+      "payloadBytes": 216,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 4,
+      "instructions": 6,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "forward-the-whole-token-balance": {
+    "page": "runtime-values",
+    "anchor": "forward-the-whole-token-balance",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d3101040000000305010300020001000100000000000400ff000000000002ff0000a500000002ff0000a500000001ffff00000000000300ffffff00000000000000000000000d0101ffff00400000000000000000001b020100ff000000000000000000000028ff02ffff000000000000000000000029ff00ffff000000000000000000000000ff0000030200000900000001020202030100ff000001000000040100000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a903",
+    "payloadBytes": 203,
+    "runtimeAccounts": [
+      "token-program",
+      "source-tokens",
+      "recipient-tokens",
+      "signer"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 308,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": true,
+        "writable": false
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "A Transfer carries a fixed amount. Emptying an account whose balance is still moving — fees accruing, a swap landing — needs the figure read during execution.",
+      "instructions": [
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        }
+      ],
+      "transactionBytes": 250,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 479,
+      "accountBytes": 283,
+      "rentLamports": 2087880
+    },
+    "stats": {
+      "payloadBytes": 203,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 0,
+      "registers": 3,
+      "instructions": 5,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 9,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "repay-exactly-what-is-owed": {
+    "page": "runtime-values",
+    "anchor": "repay-exactly-what-is-owed",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101040000000304010200020001000400000000000400ff000000000000ff00008000000003ffff000000000002ffff00000000000d0001ffff00080000000000000000000a0102ffff000000000000000000000020020001ff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000203030200ff0000040000000402000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 188,
+    "runtimeAccounts": [
+      "system-program",
+      "state-account",
+      "signer",
+      "recipient"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 308,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "Debt accrues every slot, so the figure the client quoted is stale by the time the transaction lands. Repaying a fixed amount leaves a remainder or overpays.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 464,
+      "accountBytes": 268,
+      "rentLamports": 2011680
+    },
+    "stats": {
+      "payloadBytes": 188,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 0,
+      "registers": 3,
+      "instructions": 4,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "split-what-arrived": {
+    "page": "runtime-values",
+    "anchor": "split-what-arrived",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d310104000002080a020400040001000800000000000400ff000000000003ffff000000000002ffff000000000002ffff00000000000200000002000000010000ffff0000000000000000000000010101ffff00000000000000000000000302ffffff00102700000000000000000a0301ffff000000000000000000000014040300ff000000000000000000000015050401ff000000000000000000000016060502ff000000000000000000000029ff00ffff000000000000000000000014070406ff000000000000000000000029ff01ffff000000000000000000000000ff0000020200000c00000000ff0200020202000c000000010302020103030200ff000004000000040600000000000000ff040004000000040700000000000000000000000000000000000000000000000000000000000000000000000000000200000002000000",
+    "payloadBytes": 328,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient",
+      "recipient"
+    ],
+    "runData": "80841e0000000000b80b000000000000",
+    "ballistaTransactionBytes": 324,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "The split is a percentage of a balance nobody can read until execution. Two transfers with client-computed amounts divide a number that has already changed.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 270,
+      "instructionCount": 2
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 604,
+      "accountBytes": 408,
+      "rentLamports": 2722880
+    },
+    "stats": {
+      "payloadBytes": 328,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 2,
+      "registers": 8,
+      "instructions": 10,
+      "cpis": 2,
+      "maxExpandedCpis": 2,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "claim-only-when-there-is-something": {
+    "page": "conditional",
+    "anchor": "claim-only-when-there-is-something",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101040000000405010200020001000400000000000400ff000000000000ff00008000000003ffff000000000002ffff00000000000300ffffff00102700000000000000000301ffffff00000000000000000000000d0201ffff00080000000000000000001b030201ff000000000000000000000029ff0003ff000000000000000000000000ff0000020200000c0000000203030200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 204,
+    "runtimeAccounts": [
+      "system-program",
+      "state-account",
+      "signer",
+      "recipient"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 308,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "Claiming nothing is an error in most protocols, and an error reverts the transaction. A keeper that guesses wrong pays the fee and lands nothing, including the work batched alongside it.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 480,
+      "accountBytes": 284,
+      "rentLamports": 2092960
+    },
+    "stats": {
+      "payloadBytes": 204,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 0,
+      "registers": 4,
+      "instructions": 5,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "liquidate-only-when-unhealthy": {
+    "page": "conditional",
+    "anchor": "liquidate-only-when-unhealthy",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101040000010405010200020001000400000000000400ff000000000000ff00008000000003ffff000000000002ffff000000000002000000010000ffff00000000000000000000000301ffffff00102700000000000000000d0201ffff000800000000000000000019030200ff000000000000000000000029ff0003ff000000000000000000000000ff0000020200000c0000000203030200ff0000040000000401000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 208,
+    "runtimeAccounts": [
+      "system-program",
+      "state-account",
+      "signer",
+      "recipient"
+    ],
+    "runData": "0200000000000000",
+    "ballistaTransactionBytes": 316,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "Health is read from the position at execution. A liquidation sent on a stale read reverts when someone else got there first, and reverts again for every keeper racing the same block.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 484,
+      "accountBytes": 288,
+      "rentLamports": 2113280
+    },
+    "stats": {
+      "payloadBytes": 208,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 4,
+      "instructions": 5,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "top-up-only-when-low": {
+    "page": "conditional",
+    "anchor": "top-up-only-when-low",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d3101030000020405010200020001000400000000000400ff000000000003ffff000000000002ffff00000000000200000002000000010000ffff0000000000000000000000010101ffff00000000000000000000000a0202ffff000000000000000000000019030200ff000000000000000000000029ff0003ff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000401000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 204,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient"
+    ],
+    "runData": "00943577000000001027000000000000",
+    "ballistaTransactionBytes": 291,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "A cron that tops up unconditionally drains the funder; one that checks first has read a balance that may have changed by the time the transfer lands.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 480,
+      "accountBytes": 284,
+      "rentLamports": 2092960
+    },
+    "stats": {
+      "payloadBytes": 204,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 2,
+      "registers": 4,
+      "instructions": 5,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "initialize-only-if-missing": {
+    "page": "conditional",
+    "anchor": "initialize-only-if-missing",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101030000000203010200020001000400000000000400ff000000000003ffff000000000002ffff00000000000300ffffff00102700000000000000000c0102ffff000000000000000000000029ff0001ff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 164,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "empty-account"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 275,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "Only a handful of programs ship an idempotent Create. For the rest the caller must know whether the account exists, and be right about it at execution, or the whole transaction fails.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 440,
+      "accountBytes": 244,
+      "rentLamports": 1889760
+    },
+    "stats": {
+      "payloadBytes": 164,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 0,
+      "registers": 2,
+      "instructions": 3,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "waterfall-until-the-money-runs-out": {
+    "page": "loops",
+    "anchor": "waterfall-until-the-money-runs-out",
+    "standIn": false,
+    "rowCount": 8,
+    "templateHex": "42564d310102010801080b010200020001000400010100000400ff000000000003ffff000000000002ffff00000000000200000002000000010000ffff00000000000000000000000301ffffff00000000000000000000000a0201ffff000000000000000000000014030200ff00000000000000000000002aff06ffff0008000000000000000000010480ffff000000000000000000000020050304ff00000000000000000000001b060501ff000000000000000000000029ff0006ff000000000000000000000014070305ff0000000000000000000000310307ffff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000405000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 300,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient"
+    ],
+    "runData": "80841e0000000000e803000000000000e803000000000000e803000000000000e803000000000000e803000000000000e803000000000000e803000000000000e803000000000000",
+    "ballistaTransactionBytes": 578,
+    "ballistaAccountKeys": 12,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "Paying creditors in priority order until the money runs out means each payment depends on the ones before it and on a balance read at execution. A fixed list of transfers either overdraws or stops early.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        }
+      ],
+      "transactionBytes": 570,
+      "instructionCount": 8
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 576,
+      "accountBytes": 380,
+      "rentLamports": 2580640
+    },
+    "stats": {
+      "payloadBytes": 300,
+      "fixedAccounts": 2,
+      "batchStride": 1,
+      "batchMaxIterations": 8,
+      "batchMinIterations": 1,
+      "inputs": 1,
+      "registers": 8,
+      "instructions": 11,
+      "cpis": 1,
+      "maxExpandedCpis": 8,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 1,
+      "accountGroups": 0
+    }
+  },
+  "consolidate-only-the-funded-accounts": {
+    "page": "loops",
+    "anchor": "consolidate-only-the-funded-accounts",
+    "standIn": false,
+    "rowCount": 8,
+    "templateHex": "42564d3101030108000305010300020001000100010000000400ff000000000002ff0000a500000001ffff000000000002ff0000a50000000300ffffff00000000000000000000002aff03ffff00000000000000000000000d0180ffff00400000000000000000001b020100ff000000000000000000000029ff0002ff000000000000000000000000ff0000030200000900000080020102020100ff000001000000040100000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a903",
+    "payloadBytes": 203,
+    "runtimeAccounts": [
+      "token-program",
+      "recipient-tokens",
+      "signer",
+      "source-tokens",
+      "source-tokens",
+      "source-tokens",
+      "source-tokens",
+      "source-tokens",
+      "source-tokens",
+      "source-tokens",
+      "source-tokens"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 539,
+    "ballistaAccountKeys": 13,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": true,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "Each account moves its own balance, which nobody knows until execution, and an empty one must be skipped rather than fail. A fixed list of transfers needs every amount up front and reverts on the first empty account.",
+      "instructions": [
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        }
+      ],
+      "transactionBytes": 586,
+      "instructionCount": 8
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 479,
+      "accountBytes": 283,
+      "rentLamports": 2087880
+    },
+    "stats": {
+      "payloadBytes": 203,
+      "fixedAccounts": 3,
+      "batchStride": 1,
+      "batchMaxIterations": 8,
+      "batchMinIterations": 1,
+      "inputs": 0,
+      "registers": 3,
+      "instructions": 5,
+      "cpis": 1,
+      "maxExpandedCpis": 8,
+      "maxCpiDataLength": 9,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "crank-only-the-ripe-entries": {
+    "page": "loops",
+    "anchor": "crank-only-the-ripe-entries",
+    "standIn": true,
+    "rowCount": 8,
+    "templateHex": "42564d3101020108000406010200020001000400010000000400ff000000000003ffff000000000002ff0000800000000300ffffff00102700000000000000002aff04ffff00000000000000000000000e0180ffff00080000000000000000001202ffffff00000000000000000000001a030102ff000000000000000000000029ff0003ff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 212,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "state-account",
+      "state-account",
+      "state-account",
+      "state-account",
+      "state-account",
+      "state-account",
+      "state-account",
+      "state-account"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 506,
+    "ballistaAccountKeys": 12,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "Which entries are due depends on the clock at execution. Sending one instruction per entry reverts the whole batch on the first one that is not ready yet, and filtering beforehand races the block.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 570,
+      "instructionCount": 8
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 488,
+      "accountBytes": 292,
+      "rentLamports": 2133600
+    },
+    "stats": {
+      "payloadBytes": 212,
+      "fixedAccounts": 2,
+      "batchStride": 1,
+      "batchMaxIterations": 8,
+      "batchMinIterations": 1,
+      "inputs": 0,
+      "registers": 4,
+      "instructions": 6,
+      "cpis": 1,
+      "maxExpandedCpis": 8,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "distribute-a-runtime-pot-pro-rata": {
+    "page": "loops",
+    "anchor": "distribute-a-runtime-pot-pro-rata",
+    "standIn": false,
+    "rowCount": 8,
+    "templateHex": "42564d3101020108010709010200020001000400010100000400ff000000000003ffff000000000002ffff00000000000200000002000000010000ffff00000000000000000000000301ffffff00102700000000000000000a0201ffff000000000000000000000014030200ff00000000000000000000002aff04ffff0000000000000000000000010480ffff000000000000000000000015050304ff000000000000000000000016060501ff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000406000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 268,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient"
+    ],
+    "runData": "80841e000000000064000000000000006400000000000000640000000000000064000000000000006400000000000000640000000000000064000000000000006400000000000000",
+    "ballistaTransactionBytes": 578,
+    "ballistaAccountKeys": 12,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "Shares are a fraction of a pot that is still filling. Transfers computed off chain divide yesterday’s number, and the rounding remainder has to go somewhere the caller cannot predict.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 570,
+      "instructionCount": 8
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 544,
+      "accountBytes": 348,
+      "rentLamports": 2418080
+    },
+    "stats": {
+      "payloadBytes": 268,
+      "fixedAccounts": 2,
+      "batchStride": 1,
+      "batchMaxIterations": 8,
+      "batchMinIterations": 1,
+      "inputs": 1,
+      "registers": 7,
+      "instructions": 9,
+      "cpis": 1,
+      "maxExpandedCpis": 8,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 1,
+      "accountGroups": 0
+    }
+  },
+  "bounded-sol-payroll": {
+    "page": "payments",
+    "anchor": "bounded-sol-payroll",
+    "standIn": false,
+    "rowCount": 30,
+    "templateHex": "42564d310102011e010103010200020001000400010000000400ff000000000003ffff000000000002ffff000000000002000000010000ffff00000000000000000000002aff01ffff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 168,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient"
+    ],
+    "runData": "1027000000000000",
+    "ballistaTransactionBytes": 1240,
+    "ballistaAccountKeys": 34,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "equivalent",
+      "note": "One System transfer per recipient does the same work.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 11,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 12,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 13,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 14,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 15,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 16,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 17,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 18,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 19,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 20,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 21,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 22,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 23,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 24,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 25,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 26,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 27,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 28,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 29,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 30,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 31,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 1670,
+      "instructionCount": 30
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 444,
+      "accountBytes": 248,
+      "rentLamports": 1910080
+    },
+    "stats": {
+      "payloadBytes": 168,
+      "fixedAccounts": 2,
+      "batchStride": 1,
+      "batchMaxIterations": 30,
+      "batchMinIterations": 1,
+      "inputs": 1,
+      "registers": 1,
+      "instructions": 3,
+      "cpis": 1,
+      "maxExpandedCpis": 30,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "basis-point-revenue-split": {
+    "page": "payments",
+    "anchor": "basis-point-revenue-split",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d310104000002070a020400040001000800000000000400ff000000000003ffff000000000002ffff000000000002ffff00000000000200000002000000010000ffff0000000000000000000000010101ffff00000000000000000000000302ffffff00102700000000000000001a030102ff000000000000000000000028ff03ffff000000000000000000000015040001ff000000000000000000000016050402ff000000000000000000000029ff00ffff000000000000000000000014060005ff000000000000000000000029ff01ffff000000000000000000000000ff0000020200000c00000000ff0200020202000c000000010302020103030200ff000004000000040500000000000000ff040004000000040600000000000000000000000000000000000000000000000000000000000000000000000000000200000002000000",
+    "payloadBytes": 328,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient",
+      "recipient"
+    ],
+    "runData": "40420f0000000000fa00000000000000",
+    "ballistaTransactionBytes": 324,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "Two transfers with client-computed amounts settle the same way, but nothing on chain ties the two amounts to one total or bounds the share.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000a861000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "0200000098e00e0000000000"
+        }
+      ],
+      "transactionBytes": 270,
+      "instructionCount": 2
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 604,
+      "accountBytes": 408,
+      "rentLamports": 2722880
+    },
+    "stats": {
+      "payloadBytes": 328,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 2,
+      "registers": 7,
+      "instructions": 10,
+      "cpis": 2,
+      "maxExpandedCpis": 2,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "index-weighted-rewards": {
+    "page": "payments",
+    "anchor": "index-weighted-rewards",
+    "standIn": false,
+    "rowCount": 30,
+    "templateHex": "42564d310102011e010507010200020001000400010000000400ff000000000003ffff000000000002ffff000000000002000000010000ffff00000000000000000000000301ffffff00010000000000000000002aff04ffff00000000000000000000002602ffffff000000000000000000000013030201ff000000000000000000000015040300ff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000404000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 232,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient"
+    ],
+    "runData": "e803000000000000",
+    "ballistaTransactionBytes": 1240,
+    "ballistaAccountKeys": 34,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "Transfers with client-computed weights settle the same way; the weighting rule itself is not enforced on chain.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000d007000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000b80b000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000a00f000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000008813000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000007017000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000581b000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000401f000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000002823000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 11,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 12,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000f82a000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 13,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e02e000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 14,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000c832000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 15,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000b036000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 16,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000983a000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 17,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000803e000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 18,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000006842000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 19,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000005046000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 20,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000384a000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 21,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000204e000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 22,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000000852000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 23,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000f055000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 24,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000d859000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 25,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000c05d000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 26,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000a861000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 27,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000009065000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 28,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000007869000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 29,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000606d000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 30,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000004871000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 31,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000003075000000000000"
+        }
+      ],
+      "transactionBytes": 1670,
+      "instructionCount": 30
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 508,
+      "accountBytes": 312,
+      "rentLamports": 2235200
+    },
+    "stats": {
+      "payloadBytes": 232,
+      "fixedAccounts": 2,
+      "batchStride": 1,
+      "batchMaxIterations": 30,
+      "batchMinIterations": 1,
+      "inputs": 1,
+      "registers": 5,
+      "instructions": 7,
+      "cpis": 1,
+      "maxExpandedCpis": 30,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "deadline-refund": {
+    "page": "payments",
+    "anchor": "deadline-refund",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d3101030000020405010200020001000400000000000400ff000000000003ffff000000000002ffff00000000000200000003000000010000ffff0000000000000000000000010101ffff00000000000000000000001202ffffff00000000000000000000001a030201ff000000000000000000000029ff0003ff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 204,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient"
+    ],
+    "runData": "1027000000000000001a711802000000",
+    "ballistaTransactionBytes": 291,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "A bare transfer refunds unconditionally; the deadline is only checked by whoever builds the transaction.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 480,
+      "accountBytes": 284,
+      "rentLamports": 2092960
+    },
+    "stats": {
+      "payloadBytes": 204,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 2,
+      "registers": 4,
+      "instructions": 5,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "reserve-preserving-sweep": {
+    "page": "payments",
+    "anchor": "reserve-preserving-sweep",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d310103000002080b010200020001000400000000000400ff000000000003ffff000000000002ffff00000000000200000002000000010000ffff0000000000000000000000010101ffff00000000000000000000000a0201ffff00000000000000000000001c030200ff000000000000000000000028ff03ffff000000000000000000000014040200ff000000000000000000000020050401ff000000000000000000000029ff00ffff00000000000000000000000a0601ffff00000000000000000000001c070600ff000000000000000000000028ff07ffff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000405000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 300,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient"
+    ],
+    "runData": "00ca9a3b0000000050c3000000000000",
+    "ballistaTransactionBytes": 291,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "A transfer of a client-computed amount can be built, but no on-chain check proves the reserve survived.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "0200000050c3000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 576,
+      "accountBytes": 380,
+      "rentLamports": 2580640
+    },
+    "stats": {
+      "payloadBytes": 300,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 2,
+      "registers": 8,
+      "instructions": 11,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "assert-create-then-transfer": {
+    "page": "token-accounts",
+    "anchor": "assert-create-then-transfer",
+    "standIn": false,
+    "rowCount": 8,
+    "templateHex": "42564d310107020801080c020900050003000100010000000400ff00000000000401ff00000000000402ff000000000000ff01005200000003ffff000000000001ffff000000000002ff0100a500000000ffff000000000002ffff000000000002000000010000ffff00000000000000000000002aff0affff0000000000000000000000080181ffff0000000000000000000000080280ffff0000000000000000000000080301ffff0000000000000000000000080403ffff00000000000000000000002f0500ffff000000000003000000000017060105ff000000000000000000000028ff06ffff00000000000000000000000c0781ffff000000000000000000000029ff0007ff000000000000000000000029ff01ffff000000000000000000000000ff0000060003000000000001ff0600030203000900000004038102800003000200010006028102050107020000000000000703000000000000070400000000000000ff00000100000004000000000000008c97258f4e2489f1bb3d1029148e0d830b5a1399daff1084048e7bd8dbe9f85906ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9000000000000000000000000000000000000000000000000000000000000000003",
+    "payloadBytes": 471,
+    "runtimeAccounts": [
+      "ata-program",
+      "token-program",
+      "system-program",
+      "mint",
+      "signer",
+      "signer",
+      "source-tokens",
+      "recipient",
+      "recipient-ata",
+      "recipient",
+      "recipient-ata",
+      "recipient",
+      "recipient-ata",
+      "recipient",
+      "recipient-ata",
+      "recipient",
+      "recipient-ata",
+      "recipient",
+      "recipient-ata",
+      "recipient",
+      "recipient-ata",
+      "recipient",
+      "recipient-ata"
+    ],
+    "runData": "e803000000000000",
+    "ballistaTransactionBytes": 1007,
+    "ballistaAccountKeys": 25,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": true,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "equivalent",
+      "note": "ATA CreateIdempotent then Transfer per recipient. The ATA program derives the address itself, so the guarantee matches.",
+      "instructions": [
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 12,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 11,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 12,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 14,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 13,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 14,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 16,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 15,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 16,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 18,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 17,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 18,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 20,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 19,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 20,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 22,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 21,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 22,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        }
+      ],
+      "transactionBytes": 1122,
+      "instructionCount": 16
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 747,
+      "accountBytes": 551,
+      "rentLamports": 3449320
+    },
+    "stats": {
+      "payloadBytes": 471,
+      "fixedAccounts": 7,
+      "batchStride": 2,
+      "batchMaxIterations": 8,
+      "batchMinIterations": 1,
+      "inputs": 1,
+      "registers": 8,
+      "instructions": 12,
+      "cpis": 2,
+      "maxExpandedCpis": 16,
+      "maxCpiDataLength": 9,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "existing-account-token-payroll": {
+    "page": "token-accounts",
+    "anchor": "existing-account-token-payroll",
+    "standIn": false,
+    "rowCount": 32,
+    "templateHex": "42564d3101030120010103010300020001000100010000000400ff000000000002ff0000a500000001ffff000000000002ff0000a500000002000000010000ffff00000000000000000000002aff01ffff000000000000000000000029ff00ffff000000000000000000000000ff0000030200000900000001028002020100ff000001000000040000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a903",
+    "payloadBytes": 175,
+    "runtimeAccounts": [
+      "token-program",
+      "source-tokens",
+      "signer",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens"
+    ],
+    "runData": "e803000000000000",
+    "ballistaTransactionBytes": 1339,
+    "ballistaAccountKeys": 37,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": true,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "equivalent",
+      "note": "One SPL Token transfer per destination does the same work.",
+      "instructions": [
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 11,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 12,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 13,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 14,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 15,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 16,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 17,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 18,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 19,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 20,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 21,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 22,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 23,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 24,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 25,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 26,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 27,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 28,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 29,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 30,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 31,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 32,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 33,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 34,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        }
+      ],
+      "transactionBytes": 1738,
+      "instructionCount": 32
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 451,
+      "accountBytes": 255,
+      "rentLamports": 1945640
+    },
+    "stats": {
+      "payloadBytes": 175,
+      "fixedAccounts": 3,
+      "batchStride": 1,
+      "batchMaxIterations": 32,
+      "batchMinIterations": 1,
+      "inputs": 1,
+      "registers": 1,
+      "instructions": 3,
+      "cpis": 1,
+      "maxExpandedCpis": 32,
+      "maxCpiDataLength": 9,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "conditional-ata-setup": {
+    "page": "token-accounts",
+    "anchor": "conditional-ata-setup",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d3101070000000102010600000003000000000000000400ff00000000000401ff00000000000402ff000000000000ff01005200000003ffff000000000000ffff000000000002ffff00000000000c0006ffff000000000000000000000029ff0000ff000000000000000000000000ff000006000000000000000403060205000300020001008c97258f4e2489f1bb3d1029148e0d830b5a1399daff1084048e7bd8dbe9f85906ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a90000000000000000000000000000000000000000000000000000000000000000",
+    "payloadBytes": 232,
+    "runtimeAccounts": [
+      "ata-program",
+      "token-program",
+      "system-program",
+      "mint",
+      "signer",
+      "recipient",
+      "recipient-ata"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 407,
+    "ballistaAccountKeys": 9,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "equivalent",
+      "note": "ATA CreateIdempotent is the same behavior in one instruction.",
+      "instructions": [
+        {
+          "program": "ata-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": false
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": false
+            }
+          ],
+          "data": "01"
+        }
+      ],
+      "transactionBytes": 341,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 508,
+      "accountBytes": 312,
+      "rentLamports": 2235200
+    },
+    "stats": {
+      "payloadBytes": 232,
+      "fixedAccounts": 7,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 0,
+      "registers": 1,
+      "instructions": 2,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 0,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "close-empty-token-accounts": {
+    "page": "token-accounts",
+    "anchor": "close-empty-token-accounts",
+    "standIn": false,
+    "rowCount": 16,
+    "templateHex": "42564d3101030110000305010300010001000100010000000400ff000000000002ffff000000000001ffff000000000002ff0000a50000000300ffffff00000000000000000000002aff03ffff00000000000000000000000d0180ffff004000000000000000000017020100ff000000000000000000000029ff0002ff000000000000000000000000ff0000030100000100000080020102020100ff00000100000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a909",
+    "payloadBytes": 195,
+    "runtimeAccounts": [
+      "token-program",
+      "recipient",
+      "signer",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens",
+      "empty-tokens"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 803,
+    "ballistaAccountKeys": 21,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": true,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "CloseAccount per candidate works only while every candidate is empty: SPL Token rejects a funded account, which fails the whole transaction instead of skipping that row.",
+      "instructions": [
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 11,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 12,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 13,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 14,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 15,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 16,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 17,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 18,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "09"
+        }
+      ],
+      "transactionBytes": 842,
+      "instructionCount": 16
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 471,
+      "accountBytes": 275,
+      "rentLamports": 2047240
+    },
+    "stats": {
+      "payloadBytes": 195,
+      "fixedAccounts": 3,
+      "batchStride": 1,
+      "batchMaxIterations": 16,
+      "batchMinIterations": 1,
+      "inputs": 0,
+      "registers": 3,
+      "instructions": 5,
+      "cpis": 1,
+      "maxExpandedCpis": 16,
+      "maxCpiDataLength": 1,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "exact-token-debit": {
+    "page": "token-accounts",
+    "anchor": "exact-token-debit",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d3101040000010507010300020001000100000000000400ff000000000002ff0000a500000002ff0000a500000001ffff000000000002000000010000ffff00000000000000000000000d0101ffff004000000000000000000029ff00ffff00000000000000000000000d0201ffff004000000000000000000014030100ff000000000000000000000017040203ff000000000000000000000028ff04ffff000000000000000000000000ff0000030200000900000001020202030100ff000001000000040000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a903",
+    "payloadBytes": 239,
+    "runtimeAccounts": [
+      "token-program",
+      "source-tokens",
+      "recipient-tokens",
+      "signer"
+    ],
+    "runData": "e803000000000000",
+    "ballistaTransactionBytes": 316,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": true,
+        "writable": false
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "A bare transfer moves the tokens; nothing proves the source was debited by exactly that amount and no more.",
+      "instructions": [
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        }
+      ],
+      "transactionBytes": 250,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 515,
+      "accountBytes": 319,
+      "rentLamports": 2270760
+    },
+    "stats": {
+      "payloadBytes": 239,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 5,
+      "instructions": 7,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 9,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "deadline-and-minimum-output": {
+    "page": "guardrails",
+    "anchor": "deadline-and-minimum-output",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d310103000004070a010200010001000000000000000400ff000000000003ffff000000000002ffff000000000003000000020000000200000006000001010000ffff0000000000000000000000010101ffff0000000000000000000000010202ffff0000000000000000000000010303ffff00000000000000000000001204ffffff00000000000000000000001a050400ff000000000000000000000028ff05ffff00000000000000000000001c060102ff000000000000000000000028ff06ffff000000000000000000000029ff00ffff000000000000000000000000ff000002010000000100000103020209030000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "payloadBytes": 280,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient"
+    ],
+    "runData": "001a711802000000e803000000000000840300000000000020000200000010270000000000000000000000000000000000000000000000000000",
+    "ballistaTransactionBytes": 333,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "The route instruction alone. Deadline and minimum output are whatever the client checked before signing.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "0200000010270000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "transactionBytes": 240,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 556,
+      "accountBytes": 360,
+      "rentLamports": 2479040
+    },
+    "stats": {
+      "payloadBytes": 280,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 4,
+      "registers": 7,
+      "instructions": 10,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 256,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "pinned-program-and-owner": {
+    "page": "guardrails",
+    "anchor": "pinned-program-and-owner",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101030000010102010200020001000400000000000400ff000000000003ffff000000000002ff00008000000002000000010000ffff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 152,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "state-account"
+    ],
+    "runData": "1027000000000000",
+    "ballistaTransactionBytes": 283,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "The same instruction with no schema: a substituted program ID or a wrong-owner account is accepted as far as the transaction is concerned.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 428,
+      "accountBytes": 232,
+      "rentLamports": 1828800
+    },
+    "stats": {
+      "payloadBytes": 152,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 1,
+      "instructions": 2,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "oracle-price-band": {
+    "page": "guardrails",
+    "anchor": "oracle-price-band",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d310104000002070a0102000200010004000000000000ff0000800000000400ff000000000003ffff000000000002ffff00000000000300000003000000010000ffff0000000000000000000000010101ffff00000000000000000000000302ffffff00102700000000000000000e0300ffff00080000000000000000001c040300ff000000000000000000000028ff04ffff00000000000000000000000e0500ffff00080000000000000000001a060501ff000000000000000000000028ff06ffff000000000000000000000029ff00ffff000000000000000000000001ff0000020200000c0000000203030200ff0000040000000402000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 292,
+    "runtimeAccounts": [
+      "state-account",
+      "system-program",
+      "signer",
+      "recipient"
+    ],
+    "runData": "010000000000000040420f0000000000",
+    "ballistaTransactionBytes": 324,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "No instruction sequence reads an oracle account and refuses to continue. Enforcing a band on chain needs a program.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 568,
+      "accountBytes": 372,
+      "rentLamports": 2540000
+    },
+    "stats": {
+      "payloadBytes": 292,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 2,
+      "registers": 7,
+      "instructions": 10,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "maximum-lamport-spend": {
+    "page": "guardrails",
+    "anchor": "maximum-lamport-spend",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101030000010608010200020001000400000000000400ff000000000003ffff000000000002ffff000000000002000000010000ffff00000000000000000000000301ffffff00102700000000000000000a0201ffff000000000000000000000029ff00ffff00000000000000000000000a0301ffff000000000000000000000014040203ff00000000000000000000001a050400ff000000000000000000000028ff05ffff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000401000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 248,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient"
+    ],
+    "runData": "40420f0000000000",
+    "ballistaTransactionBytes": 283,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "A transaction cannot compare a balance before and after one of its own instructions. Capping the debit on chain needs a program.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 524,
+      "accountBytes": 328,
+      "rentLamports": 2316480
+    },
+    "stats": {
+      "payloadBytes": 248,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 6,
+      "instructions": 8,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "canonical-position-account": {
+    "page": "guardrails",
+    "anchor": "canonical-position-account",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101030000010709010200050001000c00000000000400ff000000000003ffff000000000002ff00008000000006000800010000ffff00000000000000000000000701ffffff00000000000800000000000302ffffff0010270000000000000000080302ffff0000000000000000000000080401ffff00000000000000000000002f0500ffff000000000003000000000017060305ff000000000000000000000028ff06ffff000000000000000000000029ff00ffff000000000000000000000000ff0000020203000c0000000103020209010000000000000704000000000000090000000000000000ff08000400000004020000000000000000000000000000000000000000000000000000000000000000000000000000706f736974696f6e02000000",
+    "payloadBytes": 296,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "position-pda"
+    ],
+    "runData": "08000700000000000000",
+    "ballistaTransactionBytes": 285,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "A transaction cannot derive a PDA and compare it to a supplied account. Rejecting a substituted account on chain needs a program.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 572,
+      "accountBytes": 376,
+      "rentLamports": 2560320
+    },
+    "stats": {
+      "payloadBytes": 296,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 7,
+      "instructions": 9,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "swap-then-deposit": {
+    "page": "composition",
+    "anchor": "swap-then-deposit",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d310105000003070a020400020002000000000000000400ff00000000000400ff000000000003ffff000000000002ffff000000000002ff0100a5000000020000000600000106000001010000ffff0000000000000000000000010101ffff0000000000000000000000010202ffff00000000000000000000000d0304ffff004000000000000000000029ff00ffff00000000000000000000000d0404ffff004000000000000000000014050403ff00000000000000000000001c060500ff000000000000000000000028ff06ffff000000000000000000000029ff01ffff000000000000000000000000ff0000020100000001000001ff02000201010000010000020303020203030209010000000000000902000000000000000000000000000000000000000000000000000000000000000000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9",
+    "payloadBytes": 348,
+    "runtimeAccounts": [
+      "system-program",
+      "system-program",
+      "signer",
+      "recipient",
+      "source-tokens"
+    ],
+    "runData": "00000000000000002000020000001027000000000000000000000000000000000000000000000000000020000200000010270000000000000000000000000000000000000000000000000000",
+    "ballistaTransactionBytes": 385,
+    "ballistaAccountKeys": 7,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "Both instructions can be sent back to back, but the intermediate token delta is never checked, so a bad fill still deposits.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "0200000010270000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "0200000010270000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "transactionBytes": 278,
+      "instructionCount": 2
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 624,
+      "accountBytes": 428,
+      "rentLamports": 2824480
+    },
+    "stats": {
+      "payloadBytes": 348,
+      "fixedAccounts": 5,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 3,
+      "registers": 7,
+      "instructions": 10,
+      "cpis": 2,
+      "maxExpandedCpis": 2,
+      "maxCpiDataLength": 256,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "claim-then-distribute": {
+    "page": "composition",
+    "anchor": "claim-then-distribute",
+    "standIn": true,
+    "rowCount": 16,
+    "templateHex": "42564d3101060110010205020500040002000500010000000400ff00000000000401ff000000000003ffff000000000002ffff000000000002ff0100a500000001ffff000000000002ff0100a500000002000000010000ffff00000000000000000000000301ffffff001027000000000000000029ff00ffff00000000000000000000002aff01ffff000000000000000000000029ff01ffff000000000000000000000000ff0000020200000c00000001ff020003020200090000000203030204028002050100ff000004000000040100000000000000ff0400010000000400000000000000000000000000000000000000000000000000000000000000000000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a90200000003",
+    "payloadBytes": 299,
+    "runtimeAccounts": [
+      "system-program",
+      "token-program",
+      "signer",
+      "recipient",
+      "source-tokens",
+      "signer",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens",
+      "recipient-tokens"
+    ],
+    "runData": "e803000000000000",
+    "ballistaTransactionBytes": 974,
+    "ballistaAccountKeys": 24,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": true,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "equivalent",
+      "note": "A claim instruction followed by one token transfer per recipient does the same work.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 11,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 12,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 13,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 14,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 15,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 16,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 17,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 18,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 19,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 20,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 21,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "03e803000000000000"
+        }
+      ],
+      "transactionBytes": 1148,
+      "instructionCount": 17
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 575,
+      "accountBytes": 379,
+      "rentLamports": 2575560
+    },
+    "stats": {
+      "payloadBytes": 299,
+      "fixedAccounts": 6,
+      "batchStride": 1,
+      "batchMaxIterations": 16,
+      "batchMinIterations": 1,
+      "inputs": 1,
+      "registers": 2,
+      "instructions": 5,
+      "cpis": 2,
+      "maxExpandedCpis": 17,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "primary-or-fallback-route": {
+    "page": "composition",
+    "anchor": "primary-or-fallback-route",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101040000030406020400020001000000000000000400ff00000000000400ff000000000003ffff000000000002ffff0000000000010000000600000106000001010000ffff0000000000000000000000010101ffff0000000000000000000000010202ffff000000000000000000000029ff0000ff00000000000000000000001f0300ffff000000000000000000000029ff0103ff000000000000000000000000ff0000020100000001000001ff020002010100000100000203030202030302090100000000000009020000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "payloadBytes": 244,
+    "runtimeAccounts": [
+      "system-program",
+      "system-program",
+      "signer",
+      "recipient"
+    ],
+    "runData": "012000020000001027000000000000000000000000000000000000000000000000000020000200000010270000000000000000000000000000000000000000000000000000",
+    "ballistaTransactionBytes": 345,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "weaker",
+      "note": "The client picks a route and sends that one instruction. The choice is made before signing, not from state at execution time.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "0200000010270000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "transactionBytes": 240,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 520,
+      "accountBytes": 324,
+      "rentLamports": 2296160
+    },
+    "stats": {
+      "payloadBytes": 244,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 3,
+      "registers": 4,
+      "instructions": 6,
+      "cpis": 2,
+      "maxExpandedCpis": 2,
+      "maxCpiDataLength": 256,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "time-gated-governance-execution": {
+    "page": "composition",
+    "anchor": "time-gated-governance-execution",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101040000010508010200010001000000000000000400ff000000000000ff00008000000003ffff000000000002ffff000000000006000001010000ffff00000000000000000000002e0101ffff000000000000000000000028ff01ffff00000000000000000000001202ffffff00000000000000000000000e0301ffff00080000000000000000001c040203ff000000000000000000000028ff04ffff000000000000000000000029ff00ffff000000000000000000000000ff000002010000000100000203030209000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "payloadBytes": 244,
+    "runtimeAccounts": [
+      "system-program",
+      "state-account",
+      "signer",
+      "recipient"
+    ],
+    "runData": "20000200000010270000000000000000000000000000000000000000000000000000",
+    "ballistaTransactionBytes": 342,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "A transaction cannot read a proposal flag and a timestamp and refuse to execute. Gating on chain needs a program.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "0200000010270000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "transactionBytes": 240,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 520,
+      "accountBytes": 324,
+      "rentLamports": 2296160
+    },
+    "stats": {
+      "payloadBytes": 244,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 5,
+      "instructions": 8,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 256,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "bounded-keeper-crank": {
+    "page": "composition",
+    "anchor": "bounded-keeper-crank",
+    "standIn": true,
+    "rowCount": 24,
+    "templateHex": "42564d3101020218000103010300020001000400010000000400ff000000000003ffff000000000002ffff000000000002ffff00000000000300ffffff00e80300000000000000002aff01ffff000000000000000000000029ff00ffff000000000000000000000000ff0000030200000c00000001038002810200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 174,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 1826,
+    "ballistaAccountKeys": 52,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "equivalent",
+      "note": "One crank instruction per row does the same work.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 11,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 12,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 13,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 14,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 15,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 16,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 17,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 18,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 19,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 20,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 21,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 22,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 23,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 24,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 25,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 26,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 27,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 28,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 29,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 30,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 31,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 32,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 33,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 34,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 35,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 36,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 37,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 38,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 39,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 40,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 41,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 42,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 43,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 44,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 45,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 46,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 47,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 48,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 49,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        }
+      ],
+      "transactionBytes": 2162,
+      "instructionCount": 24
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 450,
+      "accountBytes": 254,
+      "rentLamports": 1940560
+    },
+    "stats": {
+      "payloadBytes": 174,
+      "fixedAccounts": 2,
+      "batchStride": 2,
+      "batchMaxIterations": 24,
+      "batchMinIterations": 1,
+      "inputs": 0,
+      "registers": 1,
+      "instructions": 3,
+      "cpis": 1,
+      "maxExpandedCpis": 24,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  }
+}

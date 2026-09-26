@@ -1,0 +1,162 @@
+{
+  "32-byte bytes input": {
+    "computeUnits": 78,
+    "group": "Inputs",
+    "note": "decoded before execution"
+  },
+  "Account data read": {
+    "computeUnits": 174,
+    "group": "Instructions",
+    "note": "u64 at a fixed offset"
+  },
+  "Account data read, dynamic offset": {
+    "computeUnits": 186,
+    "group": "Instructions",
+    "note": "offset from a register"
+  },
+  "Account emptiness read": {
+    "computeUnits": 104,
+    "group": "Instructions",
+    "note": "bool header field"
+  },
+  "Account key read": {
+    "computeUnits": 115,
+    "group": "Instructions",
+    "note": "32 bytes into a register"
+  },
+  "Account lamports read": {
+    "computeUnits": 103,
+    "group": "Instructions",
+    "note": "u64 header field"
+  },
+  "Account length read": {
+    "computeUnits": 103,
+    "group": "Instructions",
+    "note": "u64 header field"
+  },
+  "Account passed to an invocation": {
+    "computeUnits": 136,
+    "group": "Invocations",
+    "note": "resolved and given a meta"
+  },
+  "Account pinned to an address": {
+    "computeUnits": 67,
+    "group": "Accounts",
+    "note": "32-byte comparison"
+  },
+  "Account pinned to an owner": {
+    "computeUnits": 67,
+    "group": "Accounts",
+    "note": "32-byte comparison"
+  },
+  "Account with a minimum length": {
+    "computeUnits": 46,
+    "group": "Accounts",
+    "note": "length comparison"
+  },
+  "Assertion": {
+    "computeUnits": 80,
+    "group": "Instructions",
+    "note": "reads a bool register and continues"
+  },
+  "Boolean and": {
+    "computeUnits": 119,
+    "group": "Instructions",
+    "note": "bool && bool"
+  },
+  "Byte of invocation data": {
+    "computeUnits": 0.0,
+    "group": "Invocations",
+    "note": "measured across 1,000 extra bytes"
+  },
+  "Cast": {
+    "computeUnits": 126,
+    "group": "Instructions",
+    "note": "u64 to u128"
+  },
+  "Checked add": {
+    "computeUnits": 164,
+    "group": "Instructions",
+    "note": "u64 + u64"
+  },
+  "Clock slot": {
+    "computeUnits": 204,
+    "group": "Instructions",
+    "note": "sysvar read"
+  },
+  "Clock timestamp": {
+    "computeUnits": 207,
+    "group": "Instructions",
+    "note": "sysvar read"
+  },
+  "Comparison": {
+    "computeUnits": 158,
+    "group": "Instructions",
+    "note": "u64 < u64"
+  },
+  "Constant": {
+    "computeUnits": 86,
+    "group": "Instructions",
+    "note": "const u64"
+  },
+  "Cross-program invocation": {
+    "computeUnits": 1730,
+    "group": "Invocations",
+    "note": "System transfer, 2 accounts, 12 bytes"
+  },
+  "Declared register, per iteration": {
+    "computeUnits": 0.0,
+    "group": "Batches",
+    "note": "restored from the pre-loop snapshot whether or not the body writes it"
+  },
+  "Fixed cost of any run": {
+    "computeUnits": 1014,
+    "group": "Run",
+    "note": "parse, validate, allocate, one assertion"
+  },
+  "Fixed invocation account, per iteration": {
+    "computeUnits": 57,
+    "group": "Batches",
+    "note": "resolved again every row"
+  },
+  "Iteration with one invocation": {
+    "computeUnits": 1671,
+    "group": "Batches",
+    "note": "the shape a payroll run repeats"
+  },
+  "Iteration, three instructions": {
+    "computeUnits": 478,
+    "group": "Batches",
+    "note": "one account read, compare, assert"
+  },
+  "Move": {
+    "computeUnits": 105,
+    "group": "Instructions",
+    "note": "copy a register"
+  },
+  "PDA derivation": {
+    "computeUnits": 4852,
+    "group": "Instructions",
+    "note": "one literal seed, bump search"
+  },
+  "PDA derivation, supplied bump": {
+    "computeUnits": 1898,
+    "group": "Instructions",
+    "note": "one literal seed, no search"
+  },
+  "Unconstrained account": {
+    "computeUnits": 46,
+    "group": "Accounts",
+    "note": "declared and supplied, nothing checked"
+  },
+  "pubkey input": {
+    "computeUnits": 78,
+    "group": "Inputs",
+    "note": "decoded before execution"
+  },
+  "u64 input": {
+    "computeUnits": 63,
+    "group": "Inputs",
+    "note": "decoded before execution"
+  }
+}

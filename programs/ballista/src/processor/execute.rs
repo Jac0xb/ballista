@@ -1,6 +1,8 @@
+use core::mem::MaybeUninit;
+
 use ballista_common::template::*;
 use pinocchio::{
-    cpi::invoke_with_bounds,
+    cpi::{invoke_signed_unchecked, CpiAccount},
     error::ProgramError,
     instruction::{InstructionAccount, InstructionView},
     sysvars::{clock::Clock, Sysvar},
@@ -1336,12 +1338,39 @@ fn rebind_row_accounts<'data>(
     Ok(())
 }
 
-/// Performs the CPI in its own stack frame. `invoke_with_bounds` places a `MAX_CPI_ACCOUNTS`-slot
-/// account array on the stack; combined with the caller's locals that exceeded the fixed 4 KiB
-/// frame of SBPF version 0, so the array gets a frame to itself.
+/// Performs the CPI in its own stack frame. The call needs a `MAX_CPI_ACCOUNTS`-slot account
+/// array on the stack; combined with the caller's locals that exceeded the fixed 4 KiB frame of
+/// SBPF version 0, so the array gets a frame to itself.
+///
+/// This is `invoke_with_bounds` without its first check on each account: that the view's address
+/// matches the meta's. Ballista writes each meta from the very view beside it, so the pair always
+/// matches. A writable account whose data is borrowed is still refused, with the same error.
 #[inline(never)]
 fn bounded_invoke(instruction: &InstructionView, views: &[&AccountView]) -> ProgramResult {
-    invoke_with_bounds::<MAX_CPI_ACCOUNTS, _>(instruction, views)
+    let count = instruction.accounts.len();
+    if count > MAX_CPI_ACCOUNTS {
+        return Err(ProgramError::InvalidArgument);
+    }
+    if views.len() < count {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+    let mut infos = [const { MaybeUninit::<CpiAccount>::uninit() }; MAX_CPI_ACCOUNTS];
+    for ((info, meta), view) in infos.iter_mut().zip(instruction.accounts).zip(views) {
+        if meta.is_writable {
+            view.check_borrow_mut()?;
+        }
+        CpiAccount::init_from_account_view(view, info);
+    }
+    // SAFETY: the loop initialized the first `count` slots, since `count` is at most the length
+    // of all three sequences, and no writable account's data is borrowed.
+    unsafe {
+        invoke_signed_unchecked(
+            instruction,
+            core::slice::from_raw_parts(infos.as_ptr().cast::<CpiAccount>(), count),
+            &[],
+        );
+    }
+    Ok(())
 }
 
 /// Destination for encoded segment bytes: a `Vec` for CPI data or a fixed stack buffer for PDA

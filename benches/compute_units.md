@@ -1,3 +1,19 @@
+#### 2026-09-26 22:28:56.668325 UTC
+
+Solana CLI Version: solana-cli 4.1.0 (src:d3f1f55c; feat:c763ae0a, client:Agave)
+
+| Name | CUs | Delta |
+|------|------|-------|
+| run, empty template | 595 | -419 |
+| run, one system transfer | 2403 | -535 |
+| run, payroll 8 rows | 13371 | -1,618 |
+| run, payroll 30 rows | 46713 | -5,028 |
+| run, sum 30 rows, no cpi | 11017 | -7,191 |
+| run, oracle band, no cpi | 1082 | -850 |
+| run, pda derivation, bump search | 2012 | -4,003 |
+| run, pda derivation, bump supplied | 1514 | -1,633 |
+| create template, payroll 30 rows | 4443 | -2,374 |
+
 #### 2026-09-21 02:50:02.559900 UTC
 
 Solana CLI Version: solana-cli 4.1.0 (src:d3f1f55c; feat:c763ae0a, client:Agave)

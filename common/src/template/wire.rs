@@ -137,6 +137,23 @@ pub const OP_MOVE: u8 = 49;
 /// Derives a PDA from the seeds in the immediate range plus the bump held in register `b`. Unlike
 /// [`OP_DERIVE_PDA`] this performs a single derivation instead of searching for the canonical bump.
 pub const OP_CREATE_PDA: u8 = 50;
+/// `a × b ÷ c` for three `u64`s or three `u128`s, rounded down, with the product computed exactly.
+pub const OP_MUL_DIV: u8 = 51;
+/// As `OP_MUL_DIV`, rounded up.
+pub const OP_MUL_DIV_CEIL: u8 = 52;
+/// `a mod b` for matching `u64`, `i64` or `u128`; the result takes the dividend's sign.
+pub const OP_REM: u8 = 53;
+/// `a << b` for a `u64` or `u128` `a` and a `u64` `b`; fails rather than drop a set bit.
+pub const OP_SHL: u8 = 54;
+/// `a >> b`, rounding down; a shift of the full width or more gives zero.
+pub const OP_SHR: u8 = 55;
+pub const OP_BIT_AND: u8 = 56;
+pub const OP_BIT_OR: u8 = 57;
+pub const OP_BIT_XOR: u8 = 58;
+/// `10^a` for a `u64` `a` of at most 38, as a `u128`.
+pub const OP_POW10: u8 = 59;
+/// A four-byte signed read, sign-extended into an `i64` register.
+pub const OP_READ_I32: u8 = 60;
 
 pub const DATA_LITERAL: u8 = 0;
 pub const DATA_REG_U8: u8 = 1;

@@ -349,7 +349,7 @@ impl ProgramView<'_> {
                 self.write_register(registers, instruction.dst, scalar(VALUE_BOOL))?;
             }
             OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_U128
-            | OP_READ_PUBKEY | OP_READ_BOOL => {
+            | OP_READ_PUBKEY | OP_READ_BOOL | OP_READ_I32 => {
                 if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
                     self.require_account(instruction.a, in_loop)?;
                     self.require_type(registers, instruction.b, VALUE_U64)?;
@@ -360,7 +360,7 @@ impl ProgramView<'_> {
                     self.verify_read_bounds(instruction, instruction_index, in_loop)?;
                 }
                 let value_type = match instruction.opcode {
-                    OP_READ_I64 => VALUE_I64,
+                    OP_READ_I64 | OP_READ_I32 => VALUE_I64,
                     OP_READ_U128 => VALUE_U128,
                     OP_READ_PUBKEY => VALUE_PUBKEY,
                     OP_READ_BOOL => VALUE_BOOL,
@@ -379,6 +379,43 @@ impl ProgramView<'_> {
                     return Err(TemplateError::TypeMismatch);
                 }
                 self.write_register(registers, instruction.dst, left)?;
+            }
+            OP_REM => {
+                let left = self.read_register(registers, instruction.a)?;
+                let right = self.read_register(registers, instruction.b)?;
+                if left != right || !left.is_numeric() {
+                    return Err(TemplateError::TypeMismatch);
+                }
+                self.write_register(registers, instruction.dst, left)?;
+            }
+            OP_BIT_AND | OP_BIT_OR | OP_BIT_XOR => {
+                let left = self.read_register(registers, instruction.a)?;
+                let right = self.read_register(registers, instruction.b)?;
+                if left != right || !matches!(left.value_type, VALUE_U64 | VALUE_U128) {
+                    return Err(TemplateError::TypeMismatch);
+                }
+                self.write_register(registers, instruction.dst, left)?;
+            }
+            OP_SHL | OP_SHR => {
+                let value = self.read_register(registers, instruction.a)?;
+                self.require_type(registers, instruction.b, VALUE_U64)?;
+                if !matches!(value.value_type, VALUE_U64 | VALUE_U128) {
+                    return Err(TemplateError::TypeMismatch);
+                }
+                self.write_register(registers, instruction.dst, value)?;
+            }
+            OP_MUL_DIV | OP_MUL_DIV_CEIL => {
+                let a = self.read_register(registers, instruction.a)?;
+                let b = self.read_register(registers, instruction.b)?;
+                let c = self.read_register(registers, instruction.c)?;
+                if a != b || a != c || !matches!(a.value_type, VALUE_U64 | VALUE_U128) {
+                    return Err(TemplateError::TypeMismatch);
+                }
+                self.write_register(registers, instruction.dst, a)?;
+            }
+            OP_POW10 => {
+                self.require_type(registers, instruction.a, VALUE_U64)?;
+                self.write_register(registers, instruction.dst, scalar(VALUE_U128))?;
             }
             OP_EQ | OP_NE => {
                 let left = self.read_register(registers, instruction.a)?;
@@ -455,7 +492,7 @@ impl ProgramView<'_> {
                     return Err(TemplateError::InvalidReturnData(instruction_index));
                 }
                 let value_type = match instruction.a {
-                    OP_READ_I64 => VALUE_I64,
+                    OP_READ_I64 | OP_READ_I32 => VALUE_I64,
                     OP_READ_U128 => VALUE_U128,
                     OP_READ_PUBKEY => VALUE_PUBKEY,
                     OP_READ_BOOL => VALUE_BOOL,
@@ -809,7 +846,7 @@ pub const fn read_width(opcode: u8) -> usize {
     match opcode {
         OP_READ_U8 | OP_READ_BOOL => 1,
         OP_READ_U16 => 2,
-        OP_READ_U32 => 4,
+        OP_READ_U32 | OP_READ_I32 => 4,
         OP_READ_U64 | OP_READ_I64 => 8,
         OP_READ_U128 => 16,
         OP_READ_PUBKEY => 32,
@@ -1008,6 +1045,23 @@ mod tests {
             (OP_REQUIRE, None, None, Err(TemplateError::RegisterNotInitialized(0))),
             (OP_LOAD_INPUT, None, None, Err(TemplateError::InvalidInstruction(0))),
             (OP_LOOP_INDEX, None, None, Err(TemplateError::InvalidInstruction(0))),
+            (OP_REM, Some(VALUE_I64), Some(VALUE_I64), Ok(())),
+            (OP_REM, Some(VALUE_U128), Some(VALUE_U128), Ok(())),
+            (OP_REM, Some(VALUE_U64), Some(VALUE_I64), Err(TemplateError::TypeMismatch)),
+            (OP_REM, Some(VALUE_BOOL), Some(VALUE_BOOL), Err(TemplateError::TypeMismatch)),
+            (OP_SHL, Some(VALUE_U64), Some(VALUE_U64), Ok(())),
+            (OP_SHR, Some(VALUE_U128), Some(VALUE_U64), Ok(())),
+            (OP_SHL, Some(VALUE_I64), Some(VALUE_U64), Err(TemplateError::TypeMismatch)),
+            (OP_SHR, Some(VALUE_U64), Some(VALUE_U128), Err(TemplateError::TypeMismatch)),
+            (OP_SHL, Some(VALUE_U64), None, Err(TemplateError::RegisterNotInitialized(1))),
+            (OP_BIT_AND, Some(VALUE_U64), Some(VALUE_U64), Ok(())),
+            (OP_BIT_OR, Some(VALUE_U128), Some(VALUE_U128), Ok(())),
+            (OP_BIT_XOR, Some(VALUE_I64), Some(VALUE_I64), Err(TemplateError::TypeMismatch)),
+            (OP_BIT_AND, Some(VALUE_U64), Some(VALUE_U128), Err(TemplateError::TypeMismatch)),
+            (OP_BIT_OR, Some(VALUE_BOOL), Some(VALUE_BOOL), Err(TemplateError::TypeMismatch)),
+            (OP_POW10, Some(VALUE_U64), None, Ok(())),
+            (OP_POW10, Some(VALUE_U128), None, Err(TemplateError::TypeMismatch)),
+            (OP_POW10, None, None, Err(TemplateError::RegisterNotInitialized(0))),
             (39, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
             (0xfe, Some(VALUE_U64), Some(VALUE_U64), Err(TemplateError::InvalidInstruction(2))),
         ];
@@ -1023,6 +1077,68 @@ mod tests {
             let result = verify_builder(&builder).map(|_| ());
             assert_eq!(&result, expected, "opcode {opcode} with a={a:?} b={b:?}");
         }
+    }
+
+    #[test]
+    fn multiply_divide_takes_three_matching_unsigned_operands() {
+        let cases: &[(u8, [Option<u8>; 3], Result<(), TemplateError>)] = &[
+            (OP_MUL_DIV, [Some(VALUE_U64); 3], Ok(())),
+            (OP_MUL_DIV_CEIL, [Some(VALUE_U128); 3], Ok(())),
+            (OP_MUL_DIV, [Some(VALUE_I64); 3], Err(TemplateError::TypeMismatch)),
+            (
+                OP_MUL_DIV,
+                [Some(VALUE_U64), Some(VALUE_U64), Some(VALUE_U128)],
+                Err(TemplateError::TypeMismatch),
+            ),
+            (
+                OP_MUL_DIV_CEIL,
+                [Some(VALUE_U128), Some(VALUE_U64), Some(VALUE_U128)],
+                Err(TemplateError::TypeMismatch),
+            ),
+            (
+                OP_MUL_DIV,
+                [Some(VALUE_U64), Some(VALUE_U64), None],
+                Err(TemplateError::RegisterNotInitialized(2)),
+            ),
+        ];
+        for (opcode, types, expected) in cases {
+            let mut builder = ProgramBuilder::new();
+            let a = typed_register(&mut builder, types[0]);
+            let b = typed_register(&mut builder, types[1]);
+            let c = typed_register(&mut builder, types[2]);
+            let result = builder.op(*opcode, a, b, c, 0);
+            // Use the result so a mistyped destination would also show up.
+            let _ = result;
+            let outcome = verify_builder(&builder).map(|_| ());
+            assert_eq!(&outcome, expected, "opcode {opcode} with {types:?}");
+        }
+    }
+
+    #[test]
+    fn i32_reads_sign_extend_into_i64() {
+        // A fixed-offset i32 read is typed i64: it adds to an i64 and not to a u64.
+        let mut builder = ProgramBuilder::new();
+        let feed = builder.account(0, None, Some([7; 32]), 8);
+        let exponent = builder.read(OP_READ_I32, feed, 4);
+        let one = builder.const_i64(1);
+        builder.binary(OP_ADD, exponent, one);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()));
+
+        let mut builder = ProgramBuilder::new();
+        let feed = builder.account(0, None, Some([7; 32]), 8);
+        let exponent = builder.read(OP_READ_I32, feed, 4);
+        let one = builder.const_u64(1);
+        builder.binary(OP_ADD, exponent, one);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(TemplateError::TypeMismatch));
+
+        // The four bytes must fit the declared minimum data length, as for every fixed read.
+        let mut builder = ProgramBuilder::new();
+        let feed = builder.account(0, None, Some([7; 32]), 8);
+        builder.read(OP_READ_I32, feed, 5);
+        assert!(matches!(verify_builder(&builder), Err(TemplateError::ReadOutOfBounds(_))));
+
+        // As a return-data width selector it is typed i64 too.
+        assert_eq!(read_width(OP_READ_I32), 4);
     }
 
     #[test]

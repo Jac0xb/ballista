@@ -17,6 +17,8 @@ The cookbook is ordered that way. The patterns at the top are the ones with no p
 - [Loops that read as they go](/examples/loops) — each row decides from what it finds
 - [Safety guardrails](/examples/guardrails) — prove something after the call returns
 - [Protocol composition](/examples/composition) — chain protocols on runtime values
+- [Live protocols](/examples/protocols/) — twelve of these against Jupiter, Kamino, Pyth, Orca,
+  Drift, marginfi and Jito, with real instruction names and offsets checked against live accounts
 
 Below those come the patterns a transaction can already express, kept because they are common and
 because the measurements are the honest answer to "should I use this here": [payments](/examples/payments),

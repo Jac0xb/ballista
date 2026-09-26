@@ -2212,6 +2212,23 @@ mod tests {
                 .unwrap_or_else(|error| panic!("{name}: {error}"));
             assert_eq!(program.header.version(), TEMPLATE_PROGRAM_VERSION, "{name}");
         }
+
+        // The live-protocol examples in `clients/js/examples/protocols` are compiled by the
+        // TypeScript suite into this file. They target programs no test can invoke, but the
+        // verifier is exactly the check that matters for them: it is what the chain runs before
+        // a template is allowed to be stored.
+        let protocols = include_str!("../../../fixtures/protocol-examples.json");
+        let mut examples = 0usize;
+        for entry in protocols.split('"').filter(|part| part.len() > 64) {
+            let bytes = decode_hex(entry);
+            let program = ProgramView::parse(&bytes)
+                .unwrap_or_else(|error| panic!("protocol example {examples}: {error}"));
+            program
+                .verify()
+                .unwrap_or_else(|error| panic!("protocol example {examples}: {error}"));
+            examples += 1;
+        }
+        assert_eq!(examples, 12, "every protocol example is verified");
         let carry = decode_hex(include_str!("../../../fixtures/carry-sum.hex"));
         let program = ProgramView::parse(&carry).unwrap();
         assert_eq!(program.header.batch_min_iterations(), 1);

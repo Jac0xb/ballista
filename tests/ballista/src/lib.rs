@@ -1421,6 +1421,66 @@ mod tests {
         assert_eq!(custom_code(&short), Some((2 << 16) | 6008), "{short:#?}");
     }
 
+    /// A batch reuses the invocation it built for the previous row only when nothing in the body
+    /// can change it. Here the amount is derived from the loop index, so every row must send
+    /// different bytes even though the account list and the program never change.
+    #[test]
+    fn invocation_data_derived_in_the_loop_is_rebuilt_every_row() {
+        let creator = Pubkey::new_unique();
+        let treasury = Pubkey::new_unique();
+        let recipients: Vec<Pubkey> = (0..4).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator, treasury], 10_000_000_000);
+        for recipient in &recipients {
+            accounts.insert(*recipient, Account::new(1_000_000, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some([0; 32]), None, 0);
+        let from = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let recipient = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
+        builder.batch(4, 1);
+        let base = builder.const_u64(1_000);
+        let discriminator = builder.blob(&[2, 0, 0, 0]);
+        builder.for_each(0, |body| {
+            let index = body.op(ballista_common::template::OP_LOOP_INDEX, NO_INDEX, NO_INDEX, NO_INDEX, 0);
+            let amount = body.binary(OP_ADD, base, index);
+            let transfer = body.cpi(
+                system,
+                &[
+                    (from, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                    (recipient, ACCOUNT_WRITABLE),
+                ],
+                &[
+                    Segment::Literal(discriminator),
+                    Segment::Register(DATA_REG_U64, amount),
+                ],
+            );
+            body.invoke(transfer, None);
+        });
+        let payload = builder.build().expect("builds");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 95, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 95);
+
+        let mut metas = vec![
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new(treasury, true),
+        ];
+        metas.extend(recipients.iter().map(|key| AccountMeta::new(*key, false)));
+        let run = context.process_instruction(&run_instruction(template, metas, &[]));
+        assert!(run.program_result.is_ok(), "{run:#?}");
+        for (index, key) in recipients.iter().enumerate() {
+            assert_eq!(
+                lamports(&context, *key),
+                1_000_000 + 1_000 + index as u64,
+                "row {index} received the previous row's amount"
+            );
+        }
+    }
+
     /// A CPI that names an account group receives the group's accounts after its declared ones.
     /// The System Program ignores accounts past the two a transfer reads, which makes it a
     /// convenient callee for observing the forwarding.

@@ -124,6 +124,18 @@ pub struct Scratch<'data> {
     executed: u64,
     /// `(start, len)` of each account group within the runtime accounts, from the run layout.
     groups: [(u8, u8); MAX_ACCOUNT_GROUPS],
+    /// The one descriptor a batch body invokes, when it invokes exactly one. Resolving an
+    /// account costs about 30 compute units and a batch rebuilds the same list on every row, so
+    /// the repeat pass re-resolves only the slots naming a row account. A body that invokes more
+    /// than one descriptor would overwrite the list each time, so it opts out instead.
+    cache_cpi: Option<usize>,
+    /// Whether `metas` and `views` currently hold that descriptor's accounts.
+    built: bool,
+    /// Whether that descriptor's data bytes are the same on every row, so `data` can be kept as
+    /// well as the account list. Encoding them again costs more than resolving the accounts.
+    data_invariant: bool,
+    /// Its program account, resolved once when it is not a row account.
+    built_program: Option<&'data AccountView>,
 }
 
 impl<'data> Scratch<'data> {
@@ -143,6 +155,10 @@ impl<'data> Scratch<'data> {
             expanded: 0,
             executed: 0,
             groups: [(0, 0); MAX_ACCOUNT_GROUPS],
+            cache_cpi: None,
+            built: false,
+            data_invariant: false,
+            built_program: None,
         }
     }
 
@@ -458,6 +474,11 @@ fn execute_root<'data>(
             // ones named in the carry mask, which flow into the next iteration and out of the loop.
             let carry = instruction.immediate();
             let mut base_registers = registers.to_vec();
+            let (cache_cpi, data_invariant) =
+                loop_cache_plan(program, &program.instructions[body_start..body_end]);
+            scratch.cache_cpi = cache_cpi;
+            scratch.data_invariant = data_invariant;
+            scratch.built = false;
             for iteration in 0..iterations {
                 registers.copy_from_slice(&base_registers);
                 let row_base = program.header.fixed_account_count()
@@ -481,6 +502,9 @@ fn execute_root<'data>(
                 }
             }
             registers.copy_from_slice(&base_registers);
+            scratch.cache_cpi = None;
+            scratch.built = false;
+            scratch.data_invariant = false;
             pc = body_end;
             continue;
         }
@@ -882,54 +906,82 @@ fn invoke_cpi<'data>(
         .get(descriptor.segment_start()..segment_end)
         .ok_or(BallistaError::InvalidTemplateProgram)?;
 
-    scratch.metas.clear();
-    scratch.views.clear();
-    scratch.data.clear();
-    for record in records {
-        let account = resolve_account(program, accounts, record.account, loop_context)?;
-        scratch.metas.push(InstructionAccount::new(
-            account.address(),
-            record.flags & ACCOUNT_WRITABLE != 0,
-            record.flags & ACCOUNT_SIGNER != 0,
-        ));
-        scratch.views.push(account);
-    }
-    if let Some(group) = descriptor.account_group() {
-        // Group accounts are forwarded with the transaction's writable flag and never as
-        // signers: a template delegates signatures only through declared slots.
-        let (start, len) = *scratch
-            .groups
-            .get(group)
-            .ok_or(BallistaError::InvalidTemplateProgram)?;
-        let total = account_len + len as usize;
-        if total > MAX_CPI_ACCOUNTS {
-            return Err(RunError::VmAt(
-                BallistaError::CpiAccountLimitExceeded,
-                clamp(total),
-            ));
-        }
-        let range = start as usize..start as usize + len as usize;
-        let group_accounts = accounts
-            .get(range)
-            .ok_or(BallistaError::InvalidRuntimeAccount)?;
-        for account in group_accounts {
+    // A batch invoking the same descriptor every row rebuilds an account list whose fixed entries
+    // are identical each time. Resolving one costs about 93 compute units, so the repeat pass
+    // touches only the slots that name a row account.
+    let cacheable = scratch.cache_cpi == Some(cpi_index);
+    let reused = cacheable && scratch.built;
+    if reused {
+        rebind_row_accounts(program, accounts, records, loop_context, scratch)?;
+    } else {
+        scratch.built = false;
+        scratch.metas.clear();
+        scratch.views.clear();
+        scratch.data.clear();
+        for record in records {
+            let account = resolve_account(program, accounts, record.account, loop_context)?;
             scratch.metas.push(InstructionAccount::new(
                 account.address(),
-                account.is_writable(),
-                false,
+                record.flags & ACCOUNT_WRITABLE != 0,
+                record.flags & ACCOUNT_SIGNER != 0,
             ));
             scratch.views.push(account);
         }
-    }
-    for segment in segments {
-        encode_segment(program, registers, segment, &mut scratch.data)?;
-    }
-    if scratch.data.len() > descriptor.max_data_len() || scratch.data.len() > MAX_CPI_DATA_LEN {
-        return Err(BallistaError::CpiDataTooLarge.into());
+        if let Some(group) = descriptor.account_group() {
+            // Group accounts are forwarded with the transaction's writable flag and never as
+            // signers: a template delegates signatures only through declared slots. Their range
+            // comes from the run layout, so it is the same on every iteration.
+            let (start, len) = *scratch
+                .groups
+                .get(group)
+                .ok_or(BallistaError::InvalidTemplateProgram)?;
+            let total = account_len + len as usize;
+            if total > MAX_CPI_ACCOUNTS {
+                return Err(RunError::VmAt(
+                    BallistaError::CpiAccountLimitExceeded,
+                    clamp(total),
+                ));
+            }
+            let range = start as usize..start as usize + len as usize;
+            let group_accounts = accounts
+                .get(range)
+                .ok_or(BallistaError::InvalidRuntimeAccount)?;
+            for account in group_accounts {
+                scratch.metas.push(InstructionAccount::new(
+                    account.address(),
+                    account.is_writable(),
+                    false,
+                ));
+                scratch.views.push(account);
+            }
+        }
+        scratch.built_program = None;
+        scratch.built = cacheable;
     }
 
-    let program_account =
-        resolve_account(program, accounts, descriptor.program_account, loop_context)?;
+    if !(reused && scratch.data_invariant) {
+        scratch.data.clear();
+        for segment in segments {
+            encode_segment(program, registers, segment, &mut scratch.data)?;
+        }
+        if scratch.data.len() > descriptor.max_data_len() || scratch.data.len() > MAX_CPI_DATA_LEN {
+            return Err(BallistaError::CpiDataTooLarge.into());
+        }
+    }
+
+    // A template that invokes once takes the same path it always did; only a cacheable batch
+    // consults the remembered program account.
+    let program_account = if !cacheable {
+        resolve_account(program, accounts, descriptor.program_account, loop_context)?
+    } else if let Some(account) = scratch.built_program {
+        account
+    } else {
+        let account = resolve_account(program, accounts, descriptor.program_account, loop_context)?;
+        if descriptor.program_account & ITERATION_ACCOUNT_BIT == 0 {
+            scratch.built_program = Some(account);
+        }
+        account
+    };
     let instruction = InstructionView {
         program_id: program_account.address(),
         accounts: scratch.metas.as_slice(),
@@ -937,6 +989,106 @@ fn invoke_cpi<'data>(
     };
     bounded_invoke(&instruction, scratch.views.as_slice())?;
     scratch.last_invoked = Some(program_account.address().to_bytes());
+    Ok(())
+}
+
+/// The descriptor a loop body invokes, when every invoke in it names the same one. A body with
+/// two invocations would rebuild the shared account list on each, so caching would cost without
+/// ever paying back.
+fn sole_invoked_cpi(body: &[InstructionRecord]) -> Option<usize> {
+    let mut only = None;
+    for record in body {
+        if record.opcode != OP_INVOKE {
+            continue;
+        }
+        match only {
+            None => only = Some(record.a as usize),
+            Some(index) if index == record.a as usize => {}
+            Some(_) => return None,
+        }
+    }
+    only
+}
+
+/// What a batch can reuse between rows: the descriptor every invoke in the body names, if they
+/// all name the same one, and whether its data bytes are the same on every row. Decided once, at
+/// loop entry, and out of line so the decision does not bloat the interpreter's own loop.
+#[inline(never)]
+fn loop_cache_plan(program: &ProgramView<'_>, body: &[InstructionRecord]) -> (Option<usize>, bool) {
+    let Some(index) = sole_invoked_cpi(body) else {
+        return (None, false);
+    };
+    let invariant = program
+        .cpis
+        .get(index)
+        .is_some_and(|descriptor| {
+            cpi_data_is_loop_invariant(program, descriptor, registers_written(body))
+        });
+    (Some(index), invariant)
+}
+
+/// The registers a loop body can write. Every other register is restored from the pre-loop
+/// snapshot each iteration, so its value is the same on every row.
+fn registers_written(body: &[InstructionRecord]) -> u64 {
+    let mut written = 0u64;
+    for record in body {
+        if record.dst != NO_INDEX && (record.dst as usize) < MAX_REGISTERS {
+            written |= 1u64 << record.dst;
+        }
+    }
+    written
+}
+
+/// Whether a descriptor's data bytes are identical on every row: each segment is either a
+/// literal, or reads a register the body never writes.
+fn cpi_data_is_loop_invariant(
+    program: &ProgramView<'_>,
+    descriptor: &CpiDescriptor,
+    written: u64,
+) -> bool {
+    let Some(end) = descriptor
+        .segment_start()
+        .checked_add(descriptor.segment_len as usize)
+    else {
+        return false;
+    };
+    let Some(segments) = program.data_segments.get(descriptor.segment_start()..end) else {
+        return false;
+    };
+    segments.iter().all(|segment| {
+        segment.kind == DATA_LITERAL
+            || ((segment.register as usize) < MAX_REGISTERS
+                && written & (1u64 << segment.register) == 0)
+    })
+}
+
+/// The repeat pass over a cached account list: only the slots naming a row account can differ
+/// from the previous iteration.
+#[inline(always)]
+fn rebind_row_accounts<'data>(
+    program: &ProgramView<'data>,
+    accounts: &'data [AccountView],
+    records: &[CpiAccountRecord],
+    loop_context: Option<(usize, usize)>,
+    scratch: &mut Scratch<'data>,
+) -> RunResult<()> {
+    for (slot, record) in records.iter().enumerate() {
+        if record.account & ITERATION_ACCOUNT_BIT == 0 {
+            continue;
+        }
+        let account = resolve_account(program, accounts, record.account, loop_context)?;
+        let (meta, view) = scratch
+            .metas
+            .get_mut(slot)
+            .zip(scratch.views.get_mut(slot))
+            .ok_or(BallistaError::InvalidTemplateProgram)?;
+        *meta = InstructionAccount::new(
+            account.address(),
+            record.flags & ACCOUNT_WRITABLE != 0,
+            record.flags & ACCOUNT_SIGNER != 0,
+        );
+        *view = account;
+    }
     Ok(())
 }
 

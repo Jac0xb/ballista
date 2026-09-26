@@ -74,8 +74,7 @@ fn create_template(
     let [creator, template, system_program] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
-    validate_create_accounts(creator, template, system_program, template_id)?;
-    let (_, bump) = get_template_address(creator.address(), template_id);
+    let bump = validate_create_accounts(creator, template, system_program, template_id)?;
     create_template_account(
         creator,
         template,
@@ -105,8 +104,7 @@ fn begin_template(
     let [creator, template, system_program] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
-    validate_create_accounts(creator, template, system_program, template_id)?;
-    let (_, bump) = get_template_address(creator.address(), template_id);
+    let bump = validate_create_accounts(creator, template, system_program, template_id)?;
     create_template_account(
         creator,
         template,
@@ -223,26 +221,29 @@ fn run_template(accounts: &mut [AccountView], input_bytes: &[u8]) -> ProgramResu
     processor::run(&program, input_bytes, runtime_accounts, template.address())
 }
 
+/// Checks the accounts an upload needs and returns the template PDA's bump, so the caller does
+/// not pay for a second canonical derivation: the search costs 1,500 compute units per bump it
+/// rejects, which is the most expensive thing an upload does.
 fn validate_create_accounts(
     creator: &AccountView,
     template: &AccountView,
     system_program: &AccountView,
     template_id: u16,
-) -> ProgramResult {
+) -> Result<u8, ProgramError> {
     if !creator.is_signer() || !creator.is_writable() || !template.is_writable() {
         return Err(ProgramError::MissingRequiredSignature);
     }
     if system_program.address() != &pinocchio_system::ID || !system_program.executable() {
         return Err(ProgramError::IncorrectProgramId);
     }
-    let (expected, _) = get_template_address(creator.address(), template_id);
+    let (expected, bump) = get_template_address(creator.address(), template_id);
     if template.address() != &expected
         || !template.owned_by(&pinocchio_system::ID)
         || !template.is_data_empty()
     {
         return Err(BallistaError::InvalidTemplateAccount.into());
     }
-    Ok(())
+    Ok(bump)
 }
 
 fn validate_owned_writable_template(

@@ -218,11 +218,16 @@ fn run_template(accounts: &mut [AccountView], input_bytes: &[u8]) -> ProgramResu
         return Err(BallistaError::InvalidTemplateAccount.into());
     }
     let data = template.try_borrow()?;
-    let account =
-        TemplateAccount::parse(&data).map_err(|_| BallistaError::InvalidTemplateAccount)?;
-    let program = account
-        .finalized_program()
-        .map_err(|_| BallistaError::TemplateNotFinalized)?;
+    // The account is ours, so a finalized one holds a payload that was verified on upload and
+    // never written since: read it without repeating those checks. Anything else takes the full
+    // parse, which reports exactly why it cannot run.
+    let program = match TemplateAccount::finalized_program_unchecked(&data) {
+        Some(program) => program,
+        None => TemplateAccount::parse(&data)
+            .map_err(|_| BallistaError::InvalidTemplateAccount)?
+            .finalized_program()
+            .map_err(|_| BallistaError::TemplateNotFinalized)?,
+    };
     profile::mark(profile::TAG_TEMPLATE_LOADED);
     let result = processor::run(&program, input_bytes, runtime_accounts, template.address());
     profile::report();

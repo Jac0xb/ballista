@@ -182,6 +182,29 @@ impl<'data> TemplateAccount<'data> {
         }
         ProgramView::parse(self.payload).map_err(TemplateAccountError::InvalidProgram)
     }
+
+    /// The program in a finalized template account, read without repeating what finalization
+    /// already established.
+    ///
+    /// Only for data of an account the program owns. Such an account reaches the finalized state
+    /// only through the program's own upload path, which verified the payload and fixed the
+    /// account's length first, and nothing writes a template after that. So this reads just what
+    /// tells a finalized template of this layout apart (the discriminator, the version and the
+    /// state) and then the section boundaries, which [`ProgramView::parse_finalized`] still
+    /// checks against the payload length. Anything else returns `None`, and the caller falls back
+    /// to [`TemplateAccount::parse`] and [`TemplateAccount::finalized_program`], which name the
+    /// failure exactly as before.
+    #[inline(always)]
+    pub fn finalized_program_unchecked(data: &'data [u8]) -> Option<ProgramView<'data>> {
+        let (header, payload) = TemplateAccountHeader::ref_from_prefix(data).ok()?;
+        if header.discriminator != TEMPLATE_ACCOUNT_DISCRIMINATOR
+            || header.version != TEMPLATE_ACCOUNT_VERSION
+            || header.state != TEMPLATE_STATE_FINALIZED
+        {
+            return None;
+        }
+        ProgramView::parse_finalized(payload)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

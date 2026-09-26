@@ -45,9 +45,29 @@ fn representative_program() -> Vec<u8> {
 }
 
 fn parse_and_verify(bytes: &[u8]) {
+    // The run path's reader must not panic either, and must see exactly the sections `parse` sees
+    // wherever `parse` succeeds.
+    let finalized = ProgramView::parse_finalized(bytes);
     if let Ok(program) = ProgramView::parse(bytes) {
+        let finalized = finalized.expect("parse_finalized accepts what parse accepts");
+        assert!(
+            same_sections(&program, &finalized),
+            "parse_finalized splits the payload as parse does"
+        );
         let _ = program.verify();
     }
+}
+
+fn same_sections(left: &ProgramView<'_>, right: &ProgramView<'_>) -> bool {
+    core::ptr::eq(left.header, right.header)
+        && core::ptr::eq(left.accounts, right.accounts)
+        && core::ptr::eq(left.inputs, right.inputs)
+        && core::ptr::eq(left.instructions, right.instructions)
+        && core::ptr::eq(left.cpis, right.cpis)
+        && core::ptr::eq(left.cpi_accounts, right.cpi_accounts)
+        && core::ptr::eq(left.data_segments, right.data_segments)
+        && core::ptr::eq(left.pubkeys, right.pubkeys)
+        && core::ptr::eq(left.blob, right.blob)
 }
 
 proptest! {

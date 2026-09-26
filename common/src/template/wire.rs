@@ -481,6 +481,49 @@ impl<'data> ProgramView<'data> {
         })
     }
 
+    /// Splits a payload that [`ProgramView::parse`] and [`ProgramView::verify`] already accepted,
+    /// as they did for every finalized template.
+    ///
+    /// It checks the magic and version, so a payload of another layout is never read as this
+    /// one, and that the sections the header declares fill the payload exactly, which keeps every
+    /// slice in bounds. It skips the checks on reserved bytes, flags and the size cap, which
+    /// verification settled when the template was finalized. Returns `None` where `parse` would
+    /// fail on the structure.
+    #[inline(always)]
+    pub fn parse_finalized(data: &'data [u8]) -> Option<Self> {
+        let (header, mut remaining) = ProgramHeader::ref_from_prefix(data).ok()?;
+        if header.magic != TEMPLATE_PROGRAM_MAGIC || header.version != TEMPLATE_PROGRAM_VERSION {
+            return None;
+        }
+        let accounts = take_prefix::<AccountConstraint>(
+            &mut remaining,
+            header.fixed_account_count() + header.batch_stride(),
+        )?;
+        let inputs = take_prefix::<InputDescriptor>(&mut remaining, header.total_input_count())?;
+        let instructions =
+            take_prefix::<InstructionRecord>(&mut remaining, header.instruction_count())?;
+        let cpis = take_prefix::<CpiDescriptor>(&mut remaining, header.cpi_count())?;
+        let cpi_accounts =
+            take_prefix::<CpiAccountRecord>(&mut remaining, header.cpi_account_count())?;
+        let data_segments =
+            take_prefix::<DataSegment>(&mut remaining, header.data_segment_count())?;
+        let pubkeys = take_prefix::<PubkeyRecord>(&mut remaining, header.pubkey_count())?;
+        if remaining.len() != header.blob_len() {
+            return None;
+        }
+        Some(Self {
+            header,
+            accounts,
+            inputs,
+            instructions,
+            cpis,
+            cpi_accounts,
+            data_segments,
+            pubkeys,
+            blob: remaining,
+        })
+    }
+
     pub fn account_constraint(&self, reference: u8, in_loop: bool) -> Option<&AccountConstraint> {
         if reference & ITERATION_ACCOUNT_BIT == 0 {
             return self
@@ -516,6 +559,18 @@ impl<'data> ProgramView<'data> {
         }
         self.inputs.get(self.header.input_count() + offset)
     }
+}
+
+/// Splits `count` records off the front of `data`. Every count a header holds fits in 16 bits and
+/// every record in 32 bytes, so the byte length cannot overflow.
+#[inline(always)]
+fn take_prefix<'data, T>(data: &mut &'data [u8], count: usize) -> Option<&'data [T]>
+where
+    T: FromBytes + KnownLayout + Immutable,
+{
+    let (records, suffix) = <[T]>::ref_from_prefix_with_elems(*data, count).ok()?;
+    *data = suffix;
+    Some(records)
 }
 
 fn take_records<T>(data: &[u8], count: usize) -> Result<(&[T], &[u8]), TemplateError>

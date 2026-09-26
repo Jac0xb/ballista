@@ -1,6 +1,8 @@
 //! Generated programs verify by construction. Run with `--features proptest`.
 
-use ballista_common::template::{generate::any_program, ProgramView};
+use ballista_common::template::{
+    generate::any_program, ProgramView, TemplateAccount, TemplateAccountHeader,
+};
 use proptest::prelude::*;
 
 proptest! {
@@ -20,5 +22,32 @@ proptest! {
             program.run_inputs(program.max_iterations, &vec![0; program.account_groups]).len(),
             program.account_groups + program.fixed_inputs.len() + program.max_iterations * program.row_input_bytes.len()
         );
+
+        // The run path reads a finalized account without the full parse. It must find the same
+        // program, and must not take an account that is still uploading.
+        let mut header =
+            TemplateAccountHeader::new_uploading([3; 32], 7, 254, program.bytes.len(), [9; 32])
+                .expect("header");
+        let mut account = header.as_bytes().to_vec();
+        account.extend_from_slice(&program.bytes);
+        prop_assert!(TemplateAccount::finalized_program_unchecked(&account).is_none());
+        header.set_written_len(program.bytes.len()).expect("written");
+        header.finalize().expect("finalize");
+        account[..header.as_bytes().len()].copy_from_slice(header.as_bytes());
+        let slow = TemplateAccount::parse(&account)
+            .expect("account parses")
+            .finalized_program()
+            .expect("finalized program parses");
+        let fast = TemplateAccount::finalized_program_unchecked(&account)
+            .expect("the fast path reads a finalized account");
+        prop_assert!(core::ptr::eq(slow.header, fast.header));
+        prop_assert!(core::ptr::eq(slow.accounts, fast.accounts));
+        prop_assert!(core::ptr::eq(slow.inputs, fast.inputs));
+        prop_assert!(core::ptr::eq(slow.instructions, fast.instructions));
+        prop_assert!(core::ptr::eq(slow.cpis, fast.cpis));
+        prop_assert!(core::ptr::eq(slow.cpi_accounts, fast.cpi_accounts));
+        prop_assert!(core::ptr::eq(slow.data_segments, fast.data_segments));
+        prop_assert!(core::ptr::eq(slow.pubkeys, fast.pubkeys));
+        prop_assert!(core::ptr::eq(slow.blob, fast.blob));
     }
 }

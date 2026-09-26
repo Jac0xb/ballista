@@ -94,7 +94,8 @@ pub fn rule_verifier_error_codes_are_distinct_and_in_range() {
         24 => TemplateError::ReadOutOfBounds(nondet()),
         25 => TemplateError::TooManyCpiAccounts(nondet()),
         26 => TemplateError::InvalidReturnData(nondet()),
-        _ => TemplateError::InvalidMinIterations,
+        27 => TemplateError::InvalidMinIterations,
+        _ => TemplateError::TooManyAccountGroups,
     };
     let (code, _) = error.code();
     cvlr_assert!(code == VERIFIER_ERROR_BASE + index as u32);

@@ -62,7 +62,8 @@ fn check_typing_preservation(with_account: bool, accounts: &[AccountView]) {
     } else {
         None
     };
-    let inputs: [RuntimeValue; 0] = [];
+    // Heap-backed so the empty slice is not a dangling pointer the pointer analysis cannot classify.
+    let inputs: Vec<RuntimeValue> = Vec::with_capacity(1);
     let outcome = execute_instruction(
         &program,
         &inputs,
@@ -108,7 +109,11 @@ fn check_typing_preservation(with_account: bool, accounts: &[AccountView]) {
 /// against this program and therefore fall outside the assumed set.
 #[rule]
 pub fn rule_verified_pure_instructions_preserve_register_typing() {
-    check_typing_preservation(false, &[]);
+    // The pure program declares no accounts, so the verifier rejects every account reference and
+    // this view is never reached. It exists so the account slice is heap memory rather than a
+    // dangling empty-slice pointer, which the prover's pointer analysis cannot classify.
+    let accounts = nondet_account_views::<1, 0>();
+    check_typing_preservation(false, &accounts[..]);
 }
 
 /// The same property with one unconstrained runtime account, which admits the account header

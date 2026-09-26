@@ -1,5 +1,6 @@
 pub mod accounts;
 pub mod arithmetic;
+pub mod diagnostics;
 pub mod errors;
 pub mod lifecycle;
 pub mod parser;

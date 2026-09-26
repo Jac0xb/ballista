@@ -136,7 +136,8 @@ pub fn rule_account_header_reads_return_the_account_fields() {
     let instruction = record(opcode, dst, 0, NO_INDEX, NO_INDEX, 0, 0);
     let mut registers = unset_registers();
     let mut scratch = Scratch::new(&program);
-    let inputs: [RuntimeValue; 0] = [];
+    // Heap-backed so the empty slice is not a dangling pointer the pointer analysis cannot classify.
+    let inputs: Vec<RuntimeValue> = Vec::with_capacity(1);
     let outcome = execute_instruction(
         &program,
         &inputs,

@@ -12,6 +12,13 @@ fn arithmetic_opcode() -> u8 {
     pick!(OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MIN, OP_MAX)
 }
 
+/// The arithmetic opcodes other than division. Signed division compiles to a compiler-rt routine
+/// the prover treats as an uninterpreted function, so its quotient is checked separately by the
+/// unit tests and only its error conditions are proved here.
+fn non_division_opcode() -> u8 {
+    pick!(OP_ADD, OP_SUB, OP_MUL, OP_MIN, OP_MAX)
+}
+
 /// One of the six comparison opcodes.
 fn comparison_opcode() -> u8 {
     pick!(OP_EQ, OP_NE, OP_LT, OP_LTE, OP_GT, OP_GTE)
@@ -67,7 +74,7 @@ pub fn rule_u64_arithmetic_is_checked() {
 
 #[rule]
 pub fn rule_i64_arithmetic_is_checked() {
-    let op = arithmetic_opcode();
+    let op = non_division_opcode();
     let a: i64 = nondet();
     let b: i64 = nondet();
     let expected = checked_result!(op, a, b);
@@ -82,6 +89,24 @@ pub fn rule_i64_arithmetic_is_checked() {
             // Includes i64::MIN / -1, which Rust reports as overflow rather than division by zero.
             cvlr_assert!(expected.is_none() && !(op == OP_DIV && b == 0))
         }
+        Err(_) => cvlr_assert!(false),
+    }
+}
+
+/// Signed division reports division by zero and the one overflowing quotient, and otherwise
+/// returns an `i64`. The quotient's value is outside what the prover models.
+#[rule]
+pub fn rule_i64_division_reports_zero_and_overflow() {
+    let a: i64 = nondet();
+    let b: i64 = nondet();
+    clog!(a, b);
+    let outcome = arithmetic(OP_DIV, RuntimeValue::I64(a), RuntimeValue::I64(b));
+    log_outcome(&outcome, b != 0 && !(a == i64::MIN && b == -1), 0);
+    match outcome {
+        Ok(RuntimeValue::I64(_)) => cvlr_assert!(b != 0 && !(a == i64::MIN && b == -1)),
+        Ok(_) => cvlr_assert!(false),
+        Err(RunError::Vm(BallistaError::DivisionByZero)) => cvlr_assert!(b == 0),
+        Err(RunError::Vm(BallistaError::ArithmeticOverflow)) => cvlr_assert!(a == i64::MIN && b == -1),
         Err(_) => cvlr_assert!(false),
     }
 }

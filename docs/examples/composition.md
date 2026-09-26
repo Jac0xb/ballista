@@ -47,9 +47,9 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 
 | Cost | Ballista | Plain instructions, weaker | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 5,721 | 300 | +5,421 |
+| Compute units, every run | 5,783 | 300 | +5,483 |
 | Transaction bytes, every run | 385 | 278 | +107 |
-| Compute units, upload once | 9,881 | none | — |
+| Compute units, upload once | 6,895 | none | — |
 | Transaction bytes, upload once | 624 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00282 SOL for 428 bytes | none | — |
 
@@ -94,9 +94,9 @@ let run = ballista_sdk::run_instruction(template, metas, &amount.to_le_bytes());
 
 | Cost | Ballista | Plain instructions | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 34,827 | 1,366 | +33,461 |
+| Compute units, every run | 30,432 | 1,366 | +29,066 |
 | Transaction bytes, every run | 974 | 1,148 | −174 |
-| Compute units, upload once | 10,402 | none | — |
+| Compute units, upload once | 7,394 | none | — |
 | Transaction bytes, upload once | 575 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00258 SOL for 379 bytes | none | — |
 
@@ -142,11 +142,11 @@ let run = ballista_sdk::run_instruction(template, both_route_metas, &inputs);
 
 | Cost | Ballista | Plain instructions, weaker | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 3,582 | 150 | +3,432 |
+| Compute units, every run | 3,512 | 150 | +3,362 |
 | Transaction bytes, every run | 345 | 240 | +105 |
-| Compute units, upload once | 15,499 | none | — |
-| Transaction bytes, upload once | 536 in 1 transaction | none | — |
-| Rent locked in the template account | 0.00238 SOL for 340 bytes | none | — |
+| Compute units, upload once | 4,907 | none | — |
+| Transaction bytes, upload once | 520 in 1 transaction | none | — |
+| Rent locked in the template account | 0.0023 SOL for 324 bytes | none | — |
 
 One Ballista instruction against 1 plain instruction, measured with Mollusk. The protocol call is stood in by a System transfer, so neither row includes the protocol's own work. The client picks a route and sends that one instruction. The choice is made before signing, not from state at execution time. Enforcing that on chain any other way means deploying your own program.
 
@@ -186,9 +186,9 @@ let run = ballista_sdk::run_instruction(template, governance_metas, &inputs);
 
 | Cost | Ballista | Plain instructions, not equivalent | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 3,834 | 150 | +3,684 |
+| Compute units, every run | 3,828 | 150 | +3,678 |
 | Transaction bytes, every run | 342 | 240 | +102 |
-| Compute units, upload once | 6,380 | none | — |
+| Compute units, upload once | 7,835 | none | — |
 | Transaction bytes, upload once | 520 in 1 transaction | none | — |
 | Rent locked in the template account | 0.0023 SOL for 324 bytes | none | — |
 
@@ -241,9 +241,9 @@ Ballista does not wake itself. A bot, user, or keeper service still decides when
 
 | Cost | Ballista | Plain instructions | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 51,028 | 3,600 | +47,428 |
+| Compute units, every run | 45,396 | 3,600 | +41,796 |
 | Transaction bytes, every run | 1,826 | 2,162 | −336 |
-| Compute units, upload once | 6,845 | none | — |
+| Compute units, upload once | 14,322 | none | — |
 | Transaction bytes, upload once | 450 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00194 SOL for 254 bytes | none | — |
 

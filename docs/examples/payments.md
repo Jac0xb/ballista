@@ -1,5 +1,14 @@
 # Payment patterns
 
+::: warning Batching alone is not a reason
+Thirty transfers fit in a 1,240-byte transaction, comfortably inside the 4,096-byte limit. Where
+the table below says **Yes, same guarantees**, a plain transaction already does the job for a
+fraction of the compute and no rent; the template buys one instruction and a stored, verified
+shape, and nothing else. The patterns worth reaching for are the ones whose amounts or decisions
+only exist during execution — see [amounts nobody knows at signing](/examples/runtime-values) and
+[loops that read as they go](/examples/loops).
+:::
+
 ## Bounded SOL payroll
 
 Pay up to 30 recipients the same amount while sending only one Ballista instruction.
@@ -72,9 +81,9 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 
 | Cost | Ballista | Plain instructions | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 59,338 | 4,500 | +54,838 |
+| Compute units, every run | 51,741 | 4,500 | +47,241 |
 | Transaction bytes, every run | 1,240 | 1,670 | −430 |
-| Compute units, upload once | 6,826 | none | — |
+| Compute units, upload once | 9,817 | none | — |
 | Transaction bytes, upload once | 444 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00191 SOL for 248 bytes | none | — |
 
@@ -125,11 +134,11 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 
 | Cost | Ballista | Plain instructions, weaker | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 5,948 | 300 | +5,648 |
+| Compute units, every run | 5,729 | 300 | +5,429 |
 | Transaction bytes, every run | 324 | 270 | +54 |
-| Compute units, upload once | 13,173 | none | — |
-| Transaction bytes, upload once | 652 in 1 transaction | none | — |
-| Rent locked in the template account | 0.00297 SOL for 456 bytes | none | — |
+| Compute units, upload once | 5,367 | none | — |
+| Transaction bytes, upload once | 604 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00272 SOL for 408 bytes | none | — |
 
 One Ballista instruction against 2 plain instructions, measured with Mollusk. Two transfers with client-computed amounts settle the same way, but nothing on chain ties the two amounts to one total or bounds the share. Enforcing that on chain any other way means deploying your own program.
 
@@ -167,9 +176,9 @@ let run = ballista_sdk::run_instruction(template, ordered_recipient_metas, &inpu
 
 | Cost | Ballista | Plain instructions, weaker | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 73,400 | 4,500 | +68,900 |
+| Compute units, every run | 68,356 | 4,500 | +63,856 |
 | Transaction bytes, every run | 1,240 | 1,670 | −430 |
-| Compute units, upload once | 16,243 | none | — |
+| Compute units, upload once | 5,742 | none | — |
 | Transaction bytes, upload once | 508 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00224 SOL for 312 bytes | none | — |
 
@@ -212,9 +221,9 @@ downstream program must authorize the operation from its own state.
 
 | Cost | Ballista | Plain instructions, weaker | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 3,450 | 150 | +3,300 |
+| Compute units, every run | 3,480 | 150 | +3,330 |
 | Transaction bytes, every run | 291 | 220 | +71 |
-| Compute units, upload once | 6,051 | none | — |
+| Compute units, upload once | 4,550 | none | — |
 | Transaction bytes, upload once | 480 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00209 SOL for 284 bytes | none | — |
 
@@ -258,11 +267,11 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 
 | Cost | Ballista | Plain instructions, weaker | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 4,257 | 150 | +4,107 |
+| Compute units, every run | 4,097 | 150 | +3,947 |
 | Transaction bytes, every run | 291 | 220 | +71 |
-| Compute units, upload once | 9,922 | none | — |
-| Transaction bytes, upload once | 608 in 1 transaction | none | — |
-| Rent locked in the template account | 0.00274 SOL for 412 bytes | none | — |
+| Compute units, upload once | 15,710 | none | — |
+| Transaction bytes, upload once | 576 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00258 SOL for 380 bytes | none | — |
 
 One Ballista instruction against 1 plain instruction, measured with Mollusk. A transfer of a client-computed amount can be built, but no on-chain check proves the reserve survived. Enforcing that on chain any other way means deploying your own program.
 

@@ -82,12 +82,35 @@ fn associated_token_address(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
     .0
 }
 
+/// A case's own slice of the key space, from its name rather than its position. Deriving it from
+/// the position would renumber every later case whenever one is inserted, and a renumbered
+/// address changes how deep its PDA bump search goes — 1,500 compute units per step — which the
+/// ceilings would report as a regression in an unrelated example.
+fn case_seed(name: &str) -> u32 {
+    let mut hash: u32 = 2_166_136_261;
+    for byte in name.as_bytes() {
+        hash ^= *byte as u32;
+        hash = hash.wrapping_mul(16_777_619);
+    }
+    (hash % 1_000_000) * 1_000 + 1
+}
+
+/// Addresses from a fixed sequence. `Pubkey::new_unique` counts globally and is shared with every
+/// other test in the binary, so a role's address — and with it the depth of any PDA bump search
+/// it causes — would depend on what else happened to run first. These numbers are published, so
+/// they have to be the same on every machine.
+fn key(index: u32) -> Pubkey {
+    let mut bytes = [11u8; 32];
+    bytes[..4].copy_from_slice(&index.to_le_bytes());
+    Pubkey::new_from_array(bytes)
+}
+
 /// Turns the manifest's role list into concrete accounts. Every `signer` role resolves to the same
 /// key, which lets one account own the token accounts it transfers from and closes.
-fn materialize(roles: &[String], signer: Pubkey, mint: Pubkey) -> Vec<Materialized> {
+fn materialize(roles: &[String], signer: Pubkey, mint: Pubkey, seed: u32) -> Vec<Materialized> {
     let mut out: Vec<Materialized> = Vec::with_capacity(roles.len());
     for (index, role) in roles.iter().enumerate() {
-        let fresh = Pubkey::new_unique();
+        let fresh = key(seed + index as u32 + 2);
         let entry = match role.as_str() {
             "system-program" => Materialized { address: system_program::id(), account: None },
             "token-program" => Materialized { address: token::ID, account: None },
@@ -121,6 +144,11 @@ fn materialize(roles: &[String], signer: Pubkey, mint: Pubkey) -> Vec<Materializ
                 }
             }
             "state-account" => Materialized { address: fresh, account: Some(state_account()) },
+            // Zero data, so `isEmpty` is true and a conditional initialize fires.
+            "empty-account" => Materialized {
+                address: fresh,
+                account: Some(Account::new(0, 0, &system_program::id())),
+            },
             "position-pda" => {
                 let (address, _) = Pubkey::find_program_address(
                     &[b"position", signer.as_ref(), &7u64.to_le_bytes()],
@@ -159,17 +187,22 @@ fn measure_every_example() {
     let cases = manifest.as_object().expect("manifest is an object");
     let mut results = serde_json::Map::new();
     let mut failures: Vec<String> = Vec::new();
+    let mut seeds: std::collections::HashSet<u32> = std::collections::HashSet::new();
 
     for (template_id, (name, case)) in cases.iter().enumerate() {
-        let signer = Pubkey::new_unique();
-        let mint_address = Pubkey::new_unique();
+        // A disjoint slice of the key space per case, so one case's accounts cannot collide with
+        // another's and every address is the same on every run.
+        let seed = case_seed(name);
+        assert!(seeds.insert(seed), "{name}: key-space seed collides with another case");
+        let signer = key(seed);
+        let mint_address = key(seed + 1);
         let roles: Vec<String> = case["runtimeAccounts"]
             .as_array()
             .unwrap()
             .iter()
             .map(|value| value.as_str().unwrap().to_string())
             .collect();
-        let accounts = materialize(&roles, signer, mint_address);
+        let accounts = materialize(&roles, signer, mint_address, seed);
 
         let mut store: HashMap<Pubkey, Account> = HashMap::new();
         store.insert(signer, Account::new(100_000_000_000, 0, &system_program::id()));
@@ -299,7 +332,8 @@ fn measure_every_example() {
     assert_eq!(results.len(), cases.len());
     // Running the examples is a regression check on every build; the recorded numbers are only
     // rewritten on request, so a CI run leaves the tree clean.
-    if std::env::var("UPDATE_BENCHMARKS").as_deref() == Ok("1") {
+    let update = std::env::var("UPDATE_BENCHMARKS").as_deref() == Ok("1");
+    if update {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/benchmark-results.json");
         std::fs::write(
             path,
@@ -307,6 +341,7 @@ fn measure_every_example() {
         )
         .expect("write benchmark results");
     }
+    check_example_ceilings(&results, update);
     for (name, entry) in &results {
         eprintln!(
             "{name}: ballista {} CU, baseline {} CU",
@@ -315,3 +350,54 @@ fn measure_every_example() {
     }
 }
 
+
+/// The same ratchet the hand-built cases use, over every cookbook example.
+///
+/// The bench cases are built straight from `ProgramBuilder`, so they measure the executor and are
+/// blind to the compiler. These come from compiled templates, which is where a change to the SDK
+/// shows up. `pnpm benchmarks` lowers a ceiling an improvement has beaten and never raises one.
+fn check_example_ceilings(results: &serde_json::Map<String, serde_json::Value>, update: bool) {
+    const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/example-ceilings.json");
+    let ceilings: std::collections::BTreeMap<String, u64> = std::fs::read_to_string(PATH)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    let measured: std::collections::BTreeMap<String, u64> = results
+        .iter()
+        .map(|(name, entry)| (name.clone(), entry["ballistaComputeUnits"].as_u64().unwrap()))
+        .collect();
+
+    if update {
+        let lowered: std::collections::BTreeMap<String, u64> = measured
+            .iter()
+            .map(|(name, units)| {
+                (
+                    name.clone(),
+                    ceilings.get(name).copied().unwrap_or(u64::MAX).min(*units),
+                )
+            })
+            .collect();
+        std::fs::write(
+            PATH,
+            format!("{}\n", serde_json::to_string_pretty(&lowered).unwrap()),
+        )
+        .expect("write example ceilings");
+        return;
+    }
+
+    let over: Vec<String> = measured
+        .iter()
+        .filter_map(|(name, units)| {
+            let ceiling = *ceilings.get(name)?;
+            (*units > ceiling)
+                .then(|| format!("  {name}: {units} CU, ceiling {ceiling}, over by {}", units - ceiling))
+        })
+        .collect();
+    assert!(
+        over.is_empty(),
+        "example compute units regressed against fixtures/example-ceilings.json:\n{}\n\nIf the \
+         increase is intended, raise the ceiling in that file in the same commit so the cost is \
+         reviewed.",
+        over.join("\n")
+    );
+}

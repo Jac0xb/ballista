@@ -1486,6 +1486,52 @@ mod tests {
         }
     }
 
+    /// The waterfall pays creditors in order until the money runs out: each row's payment is
+    /// capped by what the rows before it left, and the rows past the money are skipped rather
+    /// than failing the run. No instruction sequence expresses this, because every amount
+    /// depends on a balance that only exists during execution.
+    #[test]
+    fn waterfall_pays_in_order_and_stops_when_the_money_runs_out() {
+        let creator = Pubkey::new_unique();
+        let treasury = Pubkey::new_unique();
+        let creditors: Vec<Pubkey> = (0..4).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        accounts.insert(treasury, Account::new(5_000_000_000, 0, &system_program::id()));
+        for creditor in &creditors {
+            accounts.insert(*creditor, Account::new(1_000_000, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        let payload = fixture("waterfall-payout");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 96, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 96);
+
+        // Two and a half claims' worth of money against four claims of 1,000 each.
+        let reserve = 5_000_000_000u64 - 2_500;
+        let mut inputs = reserve.to_le_bytes().to_vec();
+        for _ in 0..creditors.len() {
+            inputs.extend_from_slice(&1_000u64.to_le_bytes());
+        }
+        let mut metas = vec![
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new(treasury, true),
+        ];
+        metas.extend(creditors.iter().map(|key| AccountMeta::new(*key, false)));
+        let run = context.process_instruction(&run_instruction(template, metas, &inputs));
+        assert!(run.program_result.is_ok(), "{run:#?}");
+
+        // Paid in full, in full, the remainder, then nothing.
+        let paid: Vec<u64> = creditors
+            .iter()
+            .map(|key| lamports(&context, *key) - 1_000_000)
+            .collect();
+        assert_eq!(paid, vec![1_000, 1_000, 500, 0], "waterfall order");
+        assert_eq!(lamports(&context, treasury), 5_000_000_000 - 2_500);
+    }
+
     /// A CPI that names an account group receives the group's accounts after its declared ones.
     /// The System Program ignores accounts past the two a transfer reads, which makes it a
     /// convenient callee for observing the forwarding.
@@ -1938,6 +1984,7 @@ mod tests {
             "assert-ata" => include_str!("../../../fixtures/assert-ata.hex"),
             "assert-ata-with-bump" => include_str!("../../../fixtures/assert-ata-with-bump.hex"),
             "carry-sum" => include_str!("../../../fixtures/carry-sum.hex"),
+            "waterfall-payout" => include_str!("../../../fixtures/waterfall-payout.hex"),
             "return-data" => include_str!("../../../fixtures/return-data.hex"),
             "dynamic-read" => include_str!("../../../fixtures/dynamic-read.hex"),
             "pinned-mint-read" => include_str!("../../../fixtures/pinned-mint-read.hex"),

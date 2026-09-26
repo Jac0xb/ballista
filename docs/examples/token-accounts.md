@@ -3,6 +3,11 @@
 Offsets below use the legacy SPL Token account layout. Pin the Token Program address, account owner,
 and minimum data length whenever reading raw fields.
 
+Several patterns here are conveniences: a plain transaction sends the same instructions with the
+same guarantees, and the measured tables say so. The ones that earn a template read a balance or
+a flag mid-run — [forward the whole token balance](/examples/runtime-values#forward-the-whole-token-balance)
+and [consolidate only the funded accounts](/examples/loops#consolidate-only-the-funded-accounts).
+
 ## Assert, create, then transfer
 
 Validate that the destination is the recipient's canonical ATA, create it only when empty, then
@@ -53,9 +58,9 @@ let run = ballista_sdk::run_instruction(template, metas, &amount.to_le_bytes());
 
 | Cost | Ballista | Plain instructions | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 167,396 | 111,752 | +55,644 |
+| Compute units, every run | 191,260 | 123,752 | +67,508 |
 | Transaction bytes, every run | 1,007 | 1,122 | −115 |
-| Compute units, upload once | 8,478 | none | — |
+| Compute units, upload once | 6,938 | none | — |
 | Transaction bytes, upload once | 747 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00345 SOL for 551 bytes | none | — |
 
@@ -97,9 +102,9 @@ let run = ballista_sdk::run_instruction(template, metas, &amount.to_le_bytes());
 
 | Cost | Ballista | Plain instructions | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 64,465 | 2,432 | +62,033 |
+| Compute units, every run | 55,183 | 2,432 | +52,751 |
 | Transaction bytes, every run | 1,339 | 1,738 | −399 |
-| Compute units, upload once | 6,875 | none | — |
+| Compute units, upload once | 5,366 | none | — |
 | Transaction bytes, upload once | 451 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00195 SOL for 255 bytes | none | — |
 
@@ -150,9 +155,9 @@ let run = ballista_sdk::run_instruction(
 
 | Cost | Ballista | Plain instructions | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 16,648 | 13,518 | +3,130 |
+| Compute units, every run | 16,658 | 13,518 | +3,140 |
 | Transaction bytes, every run | 407 | 341 | +66 |
-| Compute units, upload once | 8,817 | none | — |
+| Compute units, upload once | 7,286 | none | — |
 | Transaction bytes, upload once | 508 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00224 SOL for 312 bytes | none | — |
 
@@ -196,9 +201,9 @@ let run = ballista_sdk::run_instruction(template, metas, &[]);
 
 | Cost | Ballista | Plain instructions, weaker | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 37,047 | 1,888 | +35,159 |
+| Compute units, every run | 34,064 | 1,888 | +32,176 |
 | Transaction bytes, every run | 803 | 842 | −39 |
-| Compute units, upload once | 7,079 | none | — |
+| Compute units, upload once | 8,575 | none | — |
 | Transaction bytes, upload once | 471 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00205 SOL for 275 bytes | none | — |
 
@@ -230,11 +235,11 @@ let run = ballista_sdk::run_instruction(template, token_metas, &amount.to_le_byt
 
 | Cost | Ballista | Plain instructions, weaker | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 3,849 | 76 | +3,773 |
+| Compute units, every run | 3,780 | 76 | +3,704 |
 | Transaction bytes, every run | 316 | 250 | +66 |
-| Compute units, upload once | 6,440 | none | — |
-| Transaction bytes, upload once | 531 in 1 transaction | none | — |
-| Rent locked in the template account | 0.00235 SOL for 335 bytes | none | — |
+| Compute units, upload once | 6,338 | none | — |
+| Transaction bytes, upload once | 515 in 1 transaction | none | — |
+| Rent locked in the template account | 0.00227 SOL for 319 bytes | none | — |
 
 One Ballista instruction against 1 plain instruction, measured with Mollusk. A bare transfer moves the tokens; nothing proves the source was debited by exactly that amount and no more. Enforcing that on chain any other way means deploying your own program.
 

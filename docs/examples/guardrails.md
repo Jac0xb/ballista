@@ -44,9 +44,9 @@ actual destination token-account amount after the CPI.
 
 | Cost | Ballista | Plain instructions, weaker | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 4,069 | 150 | +3,919 |
+| Compute units, every run | 4,064 | 150 | +3,914 |
 | Transaction bytes, every run | 333 | 240 | +93 |
-| Compute units, upload once | 9,580 | none | — |
+| Compute units, upload once | 8,079 | none | — |
 | Transaction bytes, upload once | 556 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00248 SOL for 360 bytes | none | — |
 
@@ -89,9 +89,9 @@ let run = ballista_sdk::run_instruction(
 
 | Cost | Ballista | Plain instructions, weaker | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 2,934 | 150 | +2,784 |
+| Compute units, every run | 2,959 | 150 | +2,809 |
 | Transaction bytes, every run | 283 | 220 | +63 |
-| Compute units, upload once | 8,673 | none | — |
+| Compute units, upload once | 4,158 | none | — |
 | Transaction bytes, upload once | 428 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00183 SOL for 232 bytes | none | — |
 
@@ -132,9 +132,9 @@ published slot or timestamp. Ballista has no built-in oracle evaluator.
 
 | Cost | Ballista | Plain instructions, not equivalent | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 4,086 | 150 | +3,936 |
+| Compute units, every run | 4,081 | 150 | +3,931 |
 | Transaction bytes, every run | 324 | 220 | +104 |
-| Compute units, upload once | 9,664 | none | — |
+| Compute units, upload once | 5,134 | none | — |
 | Transaction bytes, upload once | 568 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00254 SOL for 372 bytes | none | — |
 
@@ -174,9 +174,9 @@ let run = ballista_sdk::run_instruction(
 
 | Cost | Ballista | Plain instructions, not equivalent | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 3,589 | 150 | +3,439 |
+| Compute units, every run | 3,624 | 150 | +3,474 |
 | Transaction bytes, every run | 283 | 220 | +63 |
-| Compute units, upload once | 9,327 | none | — |
+| Compute units, upload once | 4,814 | none | — |
 | Transaction bytes, upload once | 524 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00232 SOL for 328 bytes | none | — |
 
@@ -216,9 +216,9 @@ let run = ballista_sdk::run_instruction(template, position_metas, &position_id.t
 
 | Cost | Ballista | Plain instructions, not equivalent | Difference |
 | --- | ---: | ---: | ---: |
-| Compute units, every run | 5,590 | 150 | +5,440 |
+| Compute units, every run | 5,630 | 150 | +5,480 |
 | Transaction bytes, every run | 285 | 220 | +65 |
-| Compute units, upload once | 9,659 | none | — |
+| Compute units, upload once | 11,109 | none | — |
 | Transaction bytes, upload once | 572 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00256 SOL for 376 bytes | none | — |
 

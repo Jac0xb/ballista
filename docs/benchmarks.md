@@ -51,30 +51,46 @@ during execution.
 
 | Pattern | CU per run | Plain CU | Bytes per run | Plain bytes | Template rent | Without a program? |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| [Bounded SOL payroll](/examples/payments#bounded-sol-payroll) | 59,338 | 4,500 | 1,240 | 1,670 | 0.00191 SOL | Yes, same guarantees |
-| [Basis-point revenue split](/examples/payments#basis-point-revenue-split) | 5,948 | 300 | 324 | 270 | 0.00297 SOL | Yes, weaker guarantees |
-| [Index-weighted rewards](/examples/payments#index-weighted-rewards) | 73,400 | 4,500 | 1,240 | 1,670 | 0.00224 SOL | Yes, weaker guarantees |
-| [Deadline refund](/examples/payments#deadline-refund) | 3,450 | 150 | 291 | 220 | 0.00209 SOL | Yes, weaker guarantees |
-| [Reserve-preserving sweep](/examples/payments#reserve-preserving-sweep) | 4,257 | 150 | 291 | 220 | 0.00274 SOL | Yes, weaker guarantees |
-| [Assert, create, then transfer](/examples/token-accounts#assert-create-then-transfer) | 167,396 | 111,752 | 1,007 | 1,122 | 0.00345 SOL | Yes, same guarantees |
-| [Existing-account token payroll](/examples/token-accounts#existing-account-token-payroll) | 64,465 | 2,432 | 1,339 | 1,738 | 0.00195 SOL | Yes, same guarantees |
-| [Conditional ATA setup](/examples/token-accounts#conditional-ata-setup) | 16,648 | 13,518 | 407 | 341 | 0.00224 SOL | Yes, same guarantees |
-| [Close empty token accounts](/examples/token-accounts#close-empty-token-accounts) | 37,047 | 1,888 | 803 | 842 | 0.00205 SOL | Yes, weaker guarantees |
-| [Exact token debit](/examples/token-accounts#exact-token-debit) | 3,849 | 76 | 316 | 250 | 0.00235 SOL | Yes, weaker guarantees |
-| [Deadline and minimum output](/examples/guardrails#deadline-and-minimum-output) | 4,069 | 150 | 333 | 240 | 0.00248 SOL | Yes, weaker guarantees |
-| [Pinned program and owner](/examples/guardrails#pinned-program-and-owner) | 2,934 | 150 | 283 | 220 | 0.00183 SOL | Yes, weaker guarantees |
-| [Oracle price band](/examples/guardrails#oracle-price-band) | 4,086 | 150 | 324 | 220 | 0.00254 SOL | No, needs a program |
-| [Maximum lamport spend](/examples/guardrails#maximum-lamport-spend) | 3,589 | 150 | 283 | 220 | 0.00232 SOL | No, needs a program |
-| [Canonical position account](/examples/guardrails#canonical-position-account) | 5,590 | 150 | 285 | 220 | 0.00256 SOL | No, needs a program |
-| [Swap then deposit](/examples/composition#swap-then-deposit) | 5,721 | 300 | 385 | 278 | 0.00282 SOL | Yes, weaker guarantees |
-| [Claim then distribute](/examples/composition#claim-then-distribute) | 34,827 | 1,366 | 974 | 1,148 | 0.00258 SOL | Yes, same guarantees |
-| [Primary or fallback route](/examples/composition#primary-or-fallback-route) | 3,582 | 150 | 345 | 240 | 0.00238 SOL | Yes, weaker guarantees |
-| [Time-gated governance execution](/examples/composition#time-gated-governance-execution) | 3,834 | 150 | 342 | 240 | 0.0023 SOL | No, needs a program |
-| [Bounded keeper crank](/examples/composition#bounded-keeper-crank) | 51,028 | 3,600 | 1,826 | 2,162 | 0.00194 SOL | Yes, same guarantees |
+| [Sweep above a reserve](/examples/runtime-values#sweep-above-a-reserve) | 3,437 | 150 | 283 | 220 | 0.00215 SOL | No, needs a program |
+| [Forward the whole token balance](/examples/runtime-values#forward-the-whole-token-balance) | 3,350 | 76 | 308 | 250 | 0.00209 SOL | No, needs a program |
+| [Repay exactly what is owed](/examples/runtime-values#repay-exactly-what-is-owed) | 3,252 | 150 | 308 | 220 | 0.00201 SOL | No, needs a program |
+| [Split what arrived](/examples/runtime-values#split-what-arrived) | 5,754 | 300 | 324 | 270 | 0.00272 SOL | No, needs a program |
+| [Claim only when there is something](/examples/conditional#claim-only-when-there-is-something) | 3,336 | 150 | 308 | 220 | 0.00209 SOL | No, needs a program |
+| [Liquidate only when unhealthy](/examples/conditional#liquidate-only-when-unhealthy) | 3,435 | 150 | 316 | 220 | 0.00211 SOL | No, needs a program |
+| [Top up only when low](/examples/conditional#top-up-only-when-low) | 3,376 | 150 | 291 | 220 | 0.00209 SOL | No, needs a program |
+| [Initialize only if missing](/examples/conditional#initialize-only-if-missing) | 2,956 | 150 | 275 | 220 | 0.00189 SOL | No, needs a program |
+| [Waterfall until the money runs out](/examples/loops#waterfall-until-the-money-runs-out) | 23,452 | 1,200 | 578 | 570 | 0.00258 SOL | No, needs a program |
+| [Consolidate only the funded accounts](/examples/loops#consolidate-only-the-funded-accounts) | 18,611 | 608 | 539 | 586 | 0.00209 SOL | No, needs a program |
+| [Crank only the ripe entries](/examples/loops#crank-only-the-ripe-entries) | 19,209 | 1,200 | 506 | 570 | 0.00213 SOL | No, needs a program |
+| [Distribute a runtime pot pro rata](/examples/loops#distribute-a-runtime-pot-pro-rata) | 21,022 | 1,200 | 578 | 570 | 0.00242 SOL | No, needs a program |
+| [Oracle price band](/examples/guardrails#oracle-price-band) | 4,081 | 150 | 324 | 220 | 0.00254 SOL | No, needs a program |
+| [Maximum lamport spend](/examples/guardrails#maximum-lamport-spend) | 3,624 | 150 | 283 | 220 | 0.00232 SOL | No, needs a program |
+| [Canonical position account](/examples/guardrails#canonical-position-account) | 5,630 | 150 | 285 | 220 | 0.00256 SOL | No, needs a program |
+| [Time-gated governance execution](/examples/composition#time-gated-governance-execution) | 3,828 | 150 | 342 | 240 | 0.0023 SOL | No, needs a program |
+| [Basis-point revenue split](/examples/payments#basis-point-revenue-split) | 5,729 | 300 | 324 | 270 | 0.00272 SOL | Yes, weaker guarantees |
+| [Index-weighted rewards](/examples/payments#index-weighted-rewards) | 68,356 | 4,500 | 1,240 | 1,670 | 0.00224 SOL | Yes, weaker guarantees |
+| [Deadline refund](/examples/payments#deadline-refund) | 3,480 | 150 | 291 | 220 | 0.00209 SOL | Yes, weaker guarantees |
+| [Reserve-preserving sweep](/examples/payments#reserve-preserving-sweep) | 4,097 | 150 | 291 | 220 | 0.00258 SOL | Yes, weaker guarantees |
+| [Close empty token accounts](/examples/token-accounts#close-empty-token-accounts) | 34,064 | 1,888 | 803 | 842 | 0.00205 SOL | Yes, weaker guarantees |
+| [Exact token debit](/examples/token-accounts#exact-token-debit) | 3,780 | 76 | 316 | 250 | 0.00227 SOL | Yes, weaker guarantees |
+| [Deadline and minimum output](/examples/guardrails#deadline-and-minimum-output) | 4,064 | 150 | 333 | 240 | 0.00248 SOL | Yes, weaker guarantees |
+| [Pinned program and owner](/examples/guardrails#pinned-program-and-owner) | 2,959 | 150 | 283 | 220 | 0.00183 SOL | Yes, weaker guarantees |
+| [Swap then deposit](/examples/composition#swap-then-deposit) | 5,783 | 300 | 385 | 278 | 0.00282 SOL | Yes, weaker guarantees |
+| [Primary or fallback route](/examples/composition#primary-or-fallback-route) | 3,512 | 150 | 345 | 240 | 0.0023 SOL | Yes, weaker guarantees |
+| [Bounded SOL payroll](/examples/payments#bounded-sol-payroll) | 51,741 | 4,500 | 1,240 | 1,670 | 0.00191 SOL | Yes, same guarantees |
+| [Assert, create, then transfer](/examples/token-accounts#assert-create-then-transfer) | 191,260 | 123,752 | 1,007 | 1,122 | 0.00345 SOL | Yes, same guarantees |
+| [Existing-account token payroll](/examples/token-accounts#existing-account-token-payroll) | 55,183 | 2,432 | 1,339 | 1,738 | 0.00195 SOL | Yes, same guarantees |
+| [Conditional ATA setup](/examples/token-accounts#conditional-ata-setup) | 16,658 | 13,518 | 407 | 341 | 0.00224 SOL | Yes, same guarantees |
+| [Claim then distribute](/examples/composition#claim-then-distribute) | 30,432 | 1,366 | 974 | 1,148 | 0.00258 SOL | Yes, same guarantees |
+| [Bounded keeper crank](/examples/composition#bounded-keeper-crank) | 45,396 | 3,600 | 1,826 | 2,162 | 0.00194 SOL | Yes, same guarantees |
 
 <!-- /benchmark -->
 
 ### Where the bytes go
+
+Bytes are the weakest argument for a template, so read this section as a bound rather than a
+pitch: a 30-recipient batch already fits a plain transaction with room to spare, and the saving
+below never decides anything on its own.
 
 A recipient's address has to appear in the transaction either way. What a plain transaction adds on
 top, for every row, is another instruction envelope: the program index, the account index list, and
@@ -131,8 +147,9 @@ runtime account against its schema, and allocating the register file. Each call 
 ways: Solana charges a flat 1,000 units for any cross-program invocation, the callee still costs
 its 150, and the remaining 600 or so is Ballista assembling the call from the template.
 
-[The compute profile](/cu-profile) breaks this down further, one feature at a time, and names where
-the cost could come out. The 1,000-unit charge is what any composing program pays. A hand-written Rust program that made the
+[The compute profile](/cu-profile) breaks this down three ways: what one more of each feature
+costs, where a single run's budget goes phase by phase, and a tracked table of whole instructions
+produced by Anza's Mollusk bencher. The 1,000-unit charge is what any composing program pays. A hand-written Rust program that made the
 same calls would pay it too, so it is the price of doing the work inside a program at all rather
 than the price of a template. What a template adds on top is the fixed 1,300 and roughly 600 per
 call, plus a few hundred per batch row and more where a pattern derives a PDA.

@@ -110,10 +110,21 @@ for (const [page, items] of pages) {
   console.log(`${page}.md: ${items.length} tables`);
 }
 
+// Most useful first: what no transaction can express, then what one expresses without enforcing,
+// then what it already does. Within a group the cookbook's own order is kept.
+const verdictRank = { impossible: 0, weaker: 1, equivalent: 2 };
 const summary = [
   '| Pattern | CU per run | Plain CU | Bytes per run | Plain bytes | Template rent | Without a program? |',
   '| --- | ---: | ---: | ---: | ---: | ---: | --- |',
-  ...Object.entries(benchmarks).map(([name, item]) => {
+  ...Object.entries(benchmarks)
+    .map((entry, index) => ({ entry, index }))
+    .sort(
+      (left, right) =>
+        verdictRank[left.entry[1].baseline.verdict] - verdictRank[right.entry[1].baseline.verdict] ||
+        left.index - right.index,
+    )
+    .map(({ entry }) => entry)
+    .map(([name, item]) => {
     const measured = results[name];
     const verdict = {
       equivalent: 'Yes, same guarantees',

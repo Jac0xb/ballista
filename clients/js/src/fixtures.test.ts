@@ -151,6 +151,44 @@ export const fixtures: Record<string, () => Template> = {
       ],
     }),
 
+  'waterfall-payout': () =>
+    defineTemplate({
+      inputs: { reserve: { type: 'u64' } },
+      accounts: { ...systemPrograms, treasury: { signer: true, writable: true } },
+      batch: {
+        maxIterations: 4,
+        minIterations: 1,
+        row: { creditor: { writable: true } },
+        rowInputs: { owed: { type: 'u64' } },
+      },
+      steps: [
+        step.let(
+          'remaining',
+          expression.subtract(
+            expression.accountField(account.fixed('treasury'), 'lamports'),
+            expression.input('reserve'),
+          ),
+        ),
+        step.forEach(
+          [
+            step.let('pay', expression.min(expression.variable('remaining'), expression.rowInput('owed'))),
+            systemTransfer({
+              systemProgram: account.fixed('systemProgram'),
+              from: account.fixed('treasury'),
+              to: account.iteration('creditor'),
+              lamports: expression.variable('pay'),
+              when: expression.greaterThan(expression.variable('pay'), expression.u64(0)),
+            }),
+            step.assign(
+              'remaining',
+              expression.subtract(expression.variable('remaining'), expression.variable('pay')),
+            ),
+          ],
+          { carry: ['remaining'] },
+        ),
+      ],
+    }),
+
   'checked-transfer-snapshot': () =>
     defineTemplate({
       inputs: { amount: { type: 'u64' } },

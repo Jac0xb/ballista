@@ -229,6 +229,71 @@
       }
     ]
   },
+  "waterfall-payout": {
+    "hash": "4b399fe817dcf6ccaf58cf193ed6c1ed71c3fa1b8a366ccf75f0672bfa1efd39",
+    "stats": {
+      "payloadBytes": 300,
+      "fixedAccounts": 2,
+      "batchStride": 1,
+      "batchMaxIterations": 4,
+      "batchMinIterations": 1,
+      "inputs": 1,
+      "registers": 8,
+      "instructions": 11,
+      "cpis": 1,
+      "maxExpandedCpis": 4,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 1,
+      "accountGroups": 0
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "inputs.reserve"
+      },
+      {
+        "pc": 1,
+        "path": "constants[0]"
+      },
+      {
+        "pc": 2,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 3,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 4,
+        "path": "steps[1]"
+      },
+      {
+        "pc": 5,
+        "path": "steps[1].steps[0]"
+      },
+      {
+        "pc": 6,
+        "path": "steps[1].steps[0]"
+      },
+      {
+        "pc": 7,
+        "path": "steps[1].steps[1]"
+      },
+      {
+        "pc": 8,
+        "path": "steps[1].steps[1]"
+      },
+      {
+        "pc": 9,
+        "path": "steps[1].steps[2]"
+      },
+      {
+        "pc": 10,
+        "path": "steps[1].steps[2]"
+      }
+    ]
+  },
   "checked-transfer-snapshot": {
     "hash": "0ea06030dbc2e94055b115118c9e91f01b8fedd974f34c811b2a0f9cc1e3d593",
     "stats": {

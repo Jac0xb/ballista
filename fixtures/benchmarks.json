@@ -1,10 +1,1601 @@
 {
+  "sweep-above-a-reserve": {
+    "page": "runtime-values",
+    "anchor": "sweep-above-a-reserve",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d3101030000010406010200020001000400000000000400ff000000000003ffff000000000002ffff000000000002000000010000ffff00000000000000000000000a0101ffff00000000000000000000001b020100ff000000000000000000000028ff02ffff000000000000000000000014030100ff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000403000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 216,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient"
+    ],
+    "runData": "80841e0000000000",
+    "ballistaTransactionBytes": 283,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "The balance at execution is not known when the transaction is signed. A fixed amount either leaves dust behind or overdraws and fails, and anything that arrives between signing and execution is stranded.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 492,
+      "accountBytes": 296,
+      "rentLamports": 2153920
+    },
+    "stats": {
+      "payloadBytes": 216,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 4,
+      "instructions": 6,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "forward-the-whole-token-balance": {
+    "page": "runtime-values",
+    "anchor": "forward-the-whole-token-balance",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d3101040000000305010300020001000100000000000400ff000000000002ff0000a500000002ff0000a500000001ffff00000000000300ffffff00000000000000000000000d0101ffff00400000000000000000001b020100ff000000000000000000000028ff02ffff000000000000000000000029ff00ffff000000000000000000000000ff0000030200000900000001020202030100ff000001000000040100000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a903",
+    "payloadBytes": 203,
+    "runtimeAccounts": [
+      "token-program",
+      "source-tokens",
+      "recipient-tokens",
+      "signer"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 308,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": true,
+        "writable": false
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "A Transfer carries a fixed amount. Emptying an account whose balance is still moving — fees accruing, a swap landing — needs the figure read during execution.",
+      "instructions": [
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        }
+      ],
+      "transactionBytes": 250,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 479,
+      "accountBytes": 283,
+      "rentLamports": 2087880
+    },
+    "stats": {
+      "payloadBytes": 203,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 0,
+      "registers": 3,
+      "instructions": 5,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 9,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "repay-exactly-what-is-owed": {
+    "page": "runtime-values",
+    "anchor": "repay-exactly-what-is-owed",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101040000000304010200020001000400000000000400ff000000000000ff00008000000003ffff000000000002ffff00000000000d0001ffff00080000000000000000000a0102ffff000000000000000000000020020001ff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000203030200ff0000040000000402000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 188,
+    "runtimeAccounts": [
+      "system-program",
+      "state-account",
+      "signer",
+      "recipient"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 308,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "Debt accrues every slot, so the figure the client quoted is stale by the time the transaction lands. Repaying a fixed amount leaves a remainder or overpays.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 464,
+      "accountBytes": 268,
+      "rentLamports": 2011680
+    },
+    "stats": {
+      "payloadBytes": 188,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 0,
+      "registers": 3,
+      "instructions": 4,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "split-what-arrived": {
+    "page": "runtime-values",
+    "anchor": "split-what-arrived",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d310104000002080a020400040001000800000000000400ff000000000003ffff000000000002ffff000000000002ffff00000000000200000002000000010000ffff0000000000000000000000010101ffff00000000000000000000000302ffffff00102700000000000000000a0301ffff000000000000000000000014040300ff000000000000000000000015050401ff000000000000000000000016060502ff000000000000000000000029ff00ffff000000000000000000000014070406ff000000000000000000000029ff01ffff000000000000000000000000ff0000020200000c00000000ff0200020202000c000000010302020103030200ff000004000000040600000000000000ff040004000000040700000000000000000000000000000000000000000000000000000000000000000000000000000200000002000000",
+    "payloadBytes": 328,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient",
+      "recipient"
+    ],
+    "runData": "80841e0000000000b80b000000000000",
+    "ballistaTransactionBytes": 324,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "The split is a percentage of a balance nobody can read until execution. Two transfers with client-computed amounts divide a number that has already changed.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 270,
+      "instructionCount": 2
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 604,
+      "accountBytes": 408,
+      "rentLamports": 2722880
+    },
+    "stats": {
+      "payloadBytes": 328,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 2,
+      "registers": 8,
+      "instructions": 10,
+      "cpis": 2,
+      "maxExpandedCpis": 2,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "claim-only-when-there-is-something": {
+    "page": "conditional",
+    "anchor": "claim-only-when-there-is-something",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101040000000405010200020001000400000000000400ff000000000000ff00008000000003ffff000000000002ffff00000000000300ffffff00102700000000000000000301ffffff00000000000000000000000d0201ffff00080000000000000000001b030201ff000000000000000000000029ff0003ff000000000000000000000000ff0000020200000c0000000203030200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 204,
+    "runtimeAccounts": [
+      "system-program",
+      "state-account",
+      "signer",
+      "recipient"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 308,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "Claiming nothing is an error in most protocols, and an error reverts the transaction. A keeper that guesses wrong pays the fee and lands nothing, including the work batched alongside it.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 480,
+      "accountBytes": 284,
+      "rentLamports": 2092960
+    },
+    "stats": {
+      "payloadBytes": 204,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 0,
+      "registers": 4,
+      "instructions": 5,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "liquidate-only-when-unhealthy": {
+    "page": "conditional",
+    "anchor": "liquidate-only-when-unhealthy",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101040000010405010200020001000400000000000400ff000000000000ff00008000000003ffff000000000002ffff000000000002000000010000ffff00000000000000000000000301ffffff00102700000000000000000d0201ffff000800000000000000000019030200ff000000000000000000000029ff0003ff000000000000000000000000ff0000020200000c0000000203030200ff0000040000000401000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 208,
+    "runtimeAccounts": [
+      "system-program",
+      "state-account",
+      "signer",
+      "recipient"
+    ],
+    "runData": "0200000000000000",
+    "ballistaTransactionBytes": 316,
+    "ballistaAccountKeys": 6,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "Health is read from the position at execution. A liquidation sent on a stale read reverts when someone else got there first, and reverts again for every keeper racing the same block.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 2,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 484,
+      "accountBytes": 288,
+      "rentLamports": 2113280
+    },
+    "stats": {
+      "payloadBytes": 208,
+      "fixedAccounts": 4,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 4,
+      "instructions": 5,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "top-up-only-when-low": {
+    "page": "conditional",
+    "anchor": "top-up-only-when-low",
+    "standIn": false,
+    "rowCount": 0,
+    "templateHex": "42564d3101030000020405010200020001000400000000000400ff000000000003ffff000000000002ffff00000000000200000002000000010000ffff0000000000000000000000010101ffff00000000000000000000000a0202ffff000000000000000000000019030200ff000000000000000000000029ff0003ff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000401000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 204,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient"
+    ],
+    "runData": "00943577000000001027000000000000",
+    "ballistaTransactionBytes": 291,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "A cron that tops up unconditionally drains the funder; one that checks first has read a balance that may have changed by the time the transfer lands.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 480,
+      "accountBytes": 284,
+      "rentLamports": 2092960
+    },
+    "stats": {
+      "payloadBytes": 204,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 2,
+      "registers": 4,
+      "instructions": 5,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "initialize-only-if-missing": {
+    "page": "conditional",
+    "anchor": "initialize-only-if-missing",
+    "standIn": true,
+    "rowCount": 0,
+    "templateHex": "42564d3101030000000203010200020001000400000000000400ff000000000003ffff000000000002ffff00000000000300ffffff00102700000000000000000c0102ffff000000000000000000000029ff0001ff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 164,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "empty-account"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 275,
+    "ballistaAccountKeys": 5,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "Only a handful of programs ship an idempotent Create. For the rest the caller must know whether the account exists, and be right about it at execution, or the whole transaction fails.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 220,
+      "instructionCount": 1
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 440,
+      "accountBytes": 244,
+      "rentLamports": 1889760
+    },
+    "stats": {
+      "payloadBytes": 164,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 0,
+      "registers": 2,
+      "instructions": 3,
+      "cpis": 1,
+      "maxExpandedCpis": 1,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "waterfall-until-the-money-runs-out": {
+    "page": "loops",
+    "anchor": "waterfall-until-the-money-runs-out",
+    "standIn": false,
+    "rowCount": 8,
+    "templateHex": "42564d310102010801080b010200020001000400010100000400ff000000000003ffff000000000002ffff00000000000200000002000000010000ffff00000000000000000000000301ffffff00000000000000000000000a0201ffff000000000000000000000014030200ff00000000000000000000002aff06ffff0008000000000000000000010480ffff000000000000000000000020050304ff00000000000000000000001b060501ff000000000000000000000029ff0006ff000000000000000000000014070305ff0000000000000000000000310307ffff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000405000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 300,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient"
+    ],
+    "runData": "80841e0000000000e803000000000000e803000000000000e803000000000000e803000000000000e803000000000000e803000000000000e803000000000000e803000000000000",
+    "ballistaTransactionBytes": 578,
+    "ballistaAccountKeys": 12,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "Paying creditors in priority order until the money runs out means each payment depends on the ones before it and on a balance read at execution. A fixed list of transfers either overdraws or stops early.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "02000000e803000000000000"
+        }
+      ],
+      "transactionBytes": 570,
+      "instructionCount": 8
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 576,
+      "accountBytes": 380,
+      "rentLamports": 2580640
+    },
+    "stats": {
+      "payloadBytes": 300,
+      "fixedAccounts": 2,
+      "batchStride": 1,
+      "batchMaxIterations": 8,
+      "batchMinIterations": 1,
+      "inputs": 1,
+      "registers": 8,
+      "instructions": 11,
+      "cpis": 1,
+      "maxExpandedCpis": 8,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 1,
+      "accountGroups": 0
+    }
+  },
+  "consolidate-only-the-funded-accounts": {
+    "page": "loops",
+    "anchor": "consolidate-only-the-funded-accounts",
+    "standIn": false,
+    "rowCount": 8,
+    "templateHex": "42564d3101030108000305010300020001000100010000000400ff000000000002ff0000a500000001ffff000000000002ff0000a50000000300ffffff00000000000000000000002aff03ffff00000000000000000000000d0180ffff00400000000000000000001b020100ff000000000000000000000029ff0002ff000000000000000000000000ff0000030200000900000080020102020100ff000001000000040100000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a903",
+    "payloadBytes": 203,
+    "runtimeAccounts": [
+      "token-program",
+      "recipient-tokens",
+      "signer",
+      "source-tokens",
+      "source-tokens",
+      "source-tokens",
+      "source-tokens",
+      "source-tokens",
+      "source-tokens",
+      "source-tokens",
+      "source-tokens"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 539,
+    "ballistaAccountKeys": 13,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": true,
+        "writable": false
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "Each account moves its own balance, which nobody knows until execution, and an empty one must be skipped rather than fail. A fixed list of transfers needs every amount up front and reverts on the first empty account.",
+      "instructions": [
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        },
+        {
+          "program": "token-program",
+          "accounts": [
+            {
+              "index": 10,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 1,
+              "signer": false,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": true,
+              "writable": false
+            }
+          ],
+          "data": "031027000000000000"
+        }
+      ],
+      "transactionBytes": 586,
+      "instructionCount": 8
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 479,
+      "accountBytes": 283,
+      "rentLamports": 2087880
+    },
+    "stats": {
+      "payloadBytes": 203,
+      "fixedAccounts": 3,
+      "batchStride": 1,
+      "batchMaxIterations": 8,
+      "batchMinIterations": 1,
+      "inputs": 0,
+      "registers": 3,
+      "instructions": 5,
+      "cpis": 1,
+      "maxExpandedCpis": 8,
+      "maxCpiDataLength": 9,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "crank-only-the-ripe-entries": {
+    "page": "loops",
+    "anchor": "crank-only-the-ripe-entries",
+    "standIn": true,
+    "rowCount": 8,
+    "templateHex": "42564d3101020108000406010200020001000400010000000400ff000000000003ffff000000000002ff0000800000000300ffffff00102700000000000000002aff04ffff00000000000000000000000e0180ffff00080000000000000000001202ffffff00000000000000000000001a030102ff000000000000000000000029ff0003ff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 212,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "state-account",
+      "state-account",
+      "state-account",
+      "state-account",
+      "state-account",
+      "state-account",
+      "state-account",
+      "state-account"
+    ],
+    "runData": "",
+    "ballistaTransactionBytes": 506,
+    "ballistaAccountKeys": 12,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "Which entries are due depends on the clock at execution. Sending one instruction per entry reverts the whole batch on the first one that is not ready yet, and filtering beforehand races the block.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 570,
+      "instructionCount": 8
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 488,
+      "accountBytes": 292,
+      "rentLamports": 2133600
+    },
+    "stats": {
+      "payloadBytes": 212,
+      "fixedAccounts": 2,
+      "batchStride": 1,
+      "batchMaxIterations": 8,
+      "batchMinIterations": 1,
+      "inputs": 0,
+      "registers": 4,
+      "instructions": 6,
+      "cpis": 1,
+      "maxExpandedCpis": 8,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    }
+  },
+  "distribute-a-runtime-pot-pro-rata": {
+    "page": "loops",
+    "anchor": "distribute-a-runtime-pot-pro-rata",
+    "standIn": false,
+    "rowCount": 8,
+    "templateHex": "42564d3101020108010709010200020001000400010100000400ff000000000003ffff000000000002ffff00000000000200000002000000010000ffff00000000000000000000000301ffffff00102700000000000000000a0201ffff000000000000000000000014030200ff00000000000000000000002aff04ffff0000000000000000000000010480ffff000000000000000000000015050304ff000000000000000000000016060501ff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000406000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 268,
+    "runtimeAccounts": [
+      "system-program",
+      "signer",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient",
+      "recipient"
+    ],
+    "runData": "80841e000000000064000000000000006400000000000000640000000000000064000000000000006400000000000000640000000000000064000000000000006400000000000000",
+    "ballistaTransactionBytes": 578,
+    "ballistaAccountKeys": 12,
+    "runtimeAccountFlags": [
+      {
+        "signer": false,
+        "writable": false
+      },
+      {
+        "signer": true,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      },
+      {
+        "signer": false,
+        "writable": true
+      }
+    ],
+    "baseline": {
+      "verdict": "impossible",
+      "note": "Shares are a fraction of a pot that is still filling. Transfers computed off chain divide yesterday’s number, and the rounding remainder has to go somewhere the caller cannot predict.",
+      "instructions": [
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 2,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 3,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 4,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 5,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 6,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 7,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 8,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        },
+        {
+          "program": "system-program",
+          "accounts": [
+            {
+              "index": 1,
+              "signer": true,
+              "writable": true
+            },
+            {
+              "index": 9,
+              "signer": false,
+              "writable": true
+            }
+          ],
+          "data": "020000001027000000000000"
+        }
+      ],
+      "transactionBytes": 570,
+      "instructionCount": 8
+    },
+    "upload": {
+      "transactionCount": 1,
+      "transactionBytes": 544,
+      "accountBytes": 348,
+      "rentLamports": 2418080
+    },
+    "stats": {
+      "payloadBytes": 268,
+      "fixedAccounts": 2,
+      "batchStride": 1,
+      "batchMaxIterations": 8,
+      "batchMinIterations": 1,
+      "inputs": 1,
+      "registers": 7,
+      "instructions": 9,
+      "cpis": 1,
+      "maxExpandedCpis": 8,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 1,
+      "accountGroups": 0
+    }
+  },
   "bounded-sol-payroll": {
     "page": "payments",
     "anchor": "bounded-sol-payroll",
     "standIn": false,
     "rowCount": 30,
-    "templateHex": "42564d310102011e010103010200020001000400010000000400ff000000000003ffff000000000002ffff0000000000020000002aff02ffff0000000000000000000000010000ffff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "templateHex": "42564d310102011e010103010200020001000400010000000400ff000000000003ffff000000000002ffff000000000002000000010000ffff00000000000000000000002aff01ffff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
     "payloadBytes": 168,
     "runtimeAccounts": [
       "system-program",
@@ -689,8 +2280,8 @@
     "anchor": "basis-point-revenue-split",
     "standIn": false,
     "rowCount": 0,
-    "templateHex": "42564d3101040000020a0d020400040001000800000000000400ff000000000003ffff000000000002ffff000000000002ffff00000000000200000002000000010001ffff00000000000000000000000301ffffff00102700000000000000001a020001ff000000000000000000000028ff02ffff0000000000000000000000010300ffff0000000000000000000000010401ffff000000000000000000000015050304ff00000000000000000000000306ffffff001027000000000000000016070506ff000000000000000000000029ff00ffff0000000000000000000000010800ffff000000000000000000000014090807ff000000000000000000000029ff01ffff000000000000000000000000ff0000020200000c00000000ff0200020202000c000000010302020103030200ff000004000000040700000000000000ff040004000000040900000000000000000000000000000000000000000000000000000000000000000000000000000200000002000000",
-    "payloadBytes": 376,
+    "templateHex": "42564d310104000002070a020400040001000800000000000400ff000000000003ffff000000000002ffff000000000002ffff00000000000200000002000000010000ffff0000000000000000000000010101ffff00000000000000000000000302ffffff00102700000000000000001a030102ff000000000000000000000028ff03ffff000000000000000000000015040001ff000000000000000000000016050402ff000000000000000000000029ff00ffff000000000000000000000014060005ff000000000000000000000029ff01ffff000000000000000000000000ff0000020200000c00000000ff0200020202000c000000010302020103030200ff000004000000040500000000000000ff040004000000040600000000000000000000000000000000000000000000000000000000000000000000000000000200000002000000",
+    "payloadBytes": 328,
     "runtimeAccounts": [
       "system-program",
       "signer",
@@ -760,19 +2351,19 @@
     },
     "upload": {
       "transactionCount": 1,
-      "transactionBytes": 652,
-      "accountBytes": 456,
-      "rentLamports": 2966720
+      "transactionBytes": 604,
+      "accountBytes": 408,
+      "rentLamports": 2722880
     },
     "stats": {
-      "payloadBytes": 376,
+      "payloadBytes": 328,
       "fixedAccounts": 4,
       "batchStride": 0,
       "batchMaxIterations": 0,
       "batchMinIterations": 0,
       "inputs": 2,
-      "registers": 10,
-      "instructions": 13,
+      "registers": 7,
+      "instructions": 10,
       "cpis": 2,
       "maxExpandedCpis": 2,
       "maxCpiDataLength": 12,
@@ -786,7 +2377,7 @@
     "anchor": "index-weighted-rewards",
     "standIn": false,
     "rowCount": 30,
-    "templateHex": "42564d310102011e010507010200020001000400010000000400ff000000000003ffff000000000002ffff0000000000020000002aff06ffff00000000000000000000002600ffffff00000000000000000000000301ffffff000100000000000000000013020001ff0000000000000000000000010300ffff000000000000000000000015040203ff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000404000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "templateHex": "42564d310102011e010507010200020001000400010000000400ff000000000003ffff000000000002ffff000000000002000000010000ffff00000000000000000000000301ffffff00010000000000000000002aff04ffff00000000000000000000002602ffffff000000000000000000000013030201ff000000000000000000000015040300ff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000103800200ff0000040000000404000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
     "payloadBytes": 232,
     "runtimeAccounts": [
       "system-program",
@@ -1471,7 +3062,7 @@
     "anchor": "deadline-refund",
     "standIn": false,
     "rowCount": 0,
-    "templateHex": "42564d3101030000020405010200020001000400000000000400ff000000000003ffff000000000002ffff00000000000200000003000000010000ffff00000000000000000000001201ffffff0000000000000000000000010201ffff00000000000000000000001a030102ff000000000000000000000029ff0003ff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "templateHex": "42564d3101030000020405010200020001000400000000000400ff000000000003ffff000000000002ffff00000000000200000003000000010000ffff0000000000000000000000010101ffff00000000000000000000001202ffffff00000000000000000000001a030201ff000000000000000000000029ff0003ff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
     "payloadBytes": 204,
     "runtimeAccounts": [
       "system-program",
@@ -1547,8 +3138,8 @@
     "anchor": "reserve-preserving-sweep",
     "standIn": false,
     "rowCount": 0,
-    "templateHex": "42564d3101030000020a0d010200020001000400000000000400ff000000000003ffff000000000002ffff000000000002000000020000000a0001ffff0000000000000000000000010100ffff00000000000000000000001c020001ff000000000000000000000028ff02ffff0000000000000000000000010300ffff000000000000000000000014040003ff0000000000000000000000010501ffff000000000000000000000020060405ff000000000000000000000029ff00ffff00000000000000000000000a0701ffff0000000000000000000000010800ffff00000000000000000000001c090708ff000000000000000000000028ff09ffff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000406000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
-    "payloadBytes": 332,
+    "templateHex": "42564d310103000002080b010200020001000400000000000400ff000000000003ffff000000000002ffff00000000000200000002000000010000ffff0000000000000000000000010101ffff00000000000000000000000a0201ffff00000000000000000000001c030200ff000000000000000000000028ff03ffff000000000000000000000014040200ff000000000000000000000020050401ff000000000000000000000029ff00ffff00000000000000000000000a0601ffff00000000000000000000001c070600ff000000000000000000000028ff07ffff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000405000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 300,
     "runtimeAccounts": [
       "system-program",
       "signer",
@@ -1597,19 +3188,19 @@
     },
     "upload": {
       "transactionCount": 1,
-      "transactionBytes": 608,
-      "accountBytes": 412,
-      "rentLamports": 2743200
+      "transactionBytes": 576,
+      "accountBytes": 380,
+      "rentLamports": 2580640
     },
     "stats": {
-      "payloadBytes": 332,
+      "payloadBytes": 300,
       "fixedAccounts": 3,
       "batchStride": 0,
       "batchMaxIterations": 0,
       "batchMinIterations": 0,
       "inputs": 2,
-      "registers": 10,
-      "instructions": 13,
+      "registers": 8,
+      "instructions": 11,
       "cpis": 1,
       "maxExpandedCpis": 1,
       "maxCpiDataLength": 12,
@@ -1623,7 +3214,7 @@
     "anchor": "assert-create-then-transfer",
     "standIn": false,
     "rowCount": 8,
-    "templateHex": "42564d310107020801080c020900050003000100010000000400ff00000000000401ff00000000000402ff000000000000ff01005200000003ffff000000000001ffff000000000002ff0100a500000000ffff000000000002ffff0000000000020000002aff0bffff0000000000000000000000080081ffff0000000000000000000000080180ffff0000000000000000000000080201ffff0000000000000000000000080303ffff00000000000000000000002f0400ffff000000000003000000000017050004ff000000000000000000000028ff05ffff00000000000000000000000c0681ffff000000000000000000000029ff0006ff0000000000000000000000010700ffff000000000000000000000029ff01ffff000000000000000000000000ff0000060003000000000001ff0600030203000900000004038102800003000200010006028102050107010000000000000702000000000000070300000000000000ff00000100000004070000000000008c97258f4e2489f1bb3d1029148e0d830b5a1399daff1084048e7bd8dbe9f85906ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9000000000000000000000000000000000000000000000000000000000000000003",
+    "templateHex": "42564d310107020801080c020900050003000100010000000400ff00000000000401ff00000000000402ff000000000000ff01005200000003ffff000000000001ffff000000000002ff0100a500000000ffff000000000002ffff000000000002000000010000ffff00000000000000000000002aff0affff0000000000000000000000080181ffff0000000000000000000000080280ffff0000000000000000000000080301ffff0000000000000000000000080403ffff00000000000000000000002f0500ffff000000000003000000000017060105ff000000000000000000000028ff06ffff00000000000000000000000c0781ffff000000000000000000000029ff0007ff000000000000000000000029ff01ffff000000000000000000000000ff0000060003000000000001ff0600030203000900000004038102800003000200010006028102050107020000000000000703000000000000070400000000000000ff00000100000004000000000000008c97258f4e2489f1bb3d1029148e0d830b5a1399daff1084048e7bd8dbe9f85906ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9000000000000000000000000000000000000000000000000000000000000000003",
     "payloadBytes": 471,
     "runtimeAccounts": [
       "ata-program",
@@ -2239,7 +3830,7 @@
     "anchor": "existing-account-token-payroll",
     "standIn": false,
     "rowCount": 32,
-    "templateHex": "42564d3101030120010103010300020001000100010000000400ff000000000002ff0000a500000001ffff000000000002ff0000a5000000020000002aff02ffff0000000000000000000000010000ffff000000000000000000000029ff00ffff000000000000000000000000ff0000030200000900000001028002020100ff000001000000040000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a903",
+    "templateHex": "42564d3101030120010103010300020001000100010000000400ff000000000002ff0000a500000001ffff000000000002ff0000a500000002000000010000ffff00000000000000000000002aff01ffff000000000000000000000029ff00ffff000000000000000000000000ff0000030200000900000001028002020100ff000001000000040000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a903",
     "payloadBytes": 175,
     "runtimeAccounts": [
       "token-program",
@@ -3247,7 +4838,7 @@
     "anchor": "close-empty-token-accounts",
     "standIn": false,
     "rowCount": 16,
-    "templateHex": "42564d3101030110000305010300010001000100010000000400ff000000000002ffff000000000001ffff000000000002ff0000a50000002aff04ffff00000000000000000000000d0080ffff00400000000000000000000301ffffff000000000000000000000017020001ff000000000000000000000029ff0002ff000000000000000000000000ff0000030100000100000080020102020100ff00000100000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a909",
+    "templateHex": "42564d3101030110000305010300010001000100010000000400ff000000000002ffff000000000001ffff000000000002ff0000a50000000300ffffff00000000000000000000002aff03ffff00000000000000000000000d0180ffff004000000000000000000017020100ff000000000000000000000029ff0002ff000000000000000000000000ff0000030100000100000080020102020100ff00000100000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a909",
     "payloadBytes": 195,
     "runtimeAccounts": [
       "token-program",
@@ -3723,8 +5314,8 @@
     "anchor": "exact-token-debit",
     "standIn": false,
     "rowCount": 0,
-    "templateHex": "42564d3101040000010608010300020001000100000000000400ff000000000002ff0000a500000002ff0000a500000001ffff0000000000020000000d0001ffff0040000000000000000000010100ffff000000000000000000000029ff00ffff00000000000000000000000d0201ffff0040000000000000000000010300ffff000000000000000000000014040003ff000000000000000000000017050204ff000000000000000000000028ff05ffff000000000000000000000000ff0000030200000900000001020202030100ff000001000000040100000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a903",
-    "payloadBytes": 255,
+    "templateHex": "42564d3101040000010507010300020001000100000000000400ff000000000002ff0000a500000002ff0000a500000001ffff000000000002000000010000ffff00000000000000000000000d0101ffff004000000000000000000029ff00ffff00000000000000000000000d0201ffff004000000000000000000014030100ff000000000000000000000017040203ff000000000000000000000028ff04ffff000000000000000000000000ff0000030200000900000001020202030100ff000001000000040000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a903",
+    "payloadBytes": 239,
     "runtimeAccounts": [
       "token-program",
       "source-tokens",
@@ -3783,19 +5374,19 @@
     },
     "upload": {
       "transactionCount": 1,
-      "transactionBytes": 531,
-      "accountBytes": 335,
-      "rentLamports": 2352040
+      "transactionBytes": 515,
+      "accountBytes": 319,
+      "rentLamports": 2270760
     },
     "stats": {
-      "payloadBytes": 255,
+      "payloadBytes": 239,
       "fixedAccounts": 4,
       "batchStride": 0,
       "batchMaxIterations": 0,
       "batchMinIterations": 0,
       "inputs": 1,
-      "registers": 6,
-      "instructions": 8,
+      "registers": 5,
+      "instructions": 7,
       "cpis": 1,
       "maxExpandedCpis": 1,
       "maxCpiDataLength": 9,
@@ -3809,7 +5400,7 @@
     "anchor": "deadline-and-minimum-output",
     "standIn": true,
     "rowCount": 0,
-    "templateHex": "42564d310103000004080a010200010001000000000000000400ff000000000003ffff000000000002ffff0000000000030000000200000002000000060000011200ffffff0000000000000000000000010100ffff00000000000000000000001a020001ff0000000000000000000000010301ffff0000000000000000000000010402ffff00000000000000000000001c050304ff00000000000000000000001d060205ff000000000000000000000028ff06ffff0000000000000000000000010703ffff000000000000000000000029ff00ffff000000000000000000000000ff000002010000000100000103020209070000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "templateHex": "42564d310103000004070a010200010001000000000000000400ff000000000003ffff000000000002ffff000000000003000000020000000200000006000001010000ffff0000000000000000000000010101ffff0000000000000000000000010202ffff0000000000000000000000010303ffff00000000000000000000001204ffffff00000000000000000000001a050400ff000000000000000000000028ff05ffff00000000000000000000001c060102ff000000000000000000000028ff06ffff000000000000000000000029ff00ffff000000000000000000000000ff000002010000000100000103020209030000000000000000000000000000000000000000000000000000000000000000000000000000",
     "payloadBytes": 280,
     "runtimeAccounts": [
       "system-program",
@@ -3870,7 +5461,7 @@
       "batchMaxIterations": 0,
       "batchMinIterations": 0,
       "inputs": 4,
-      "registers": 8,
+      "registers": 7,
       "instructions": 10,
       "cpis": 1,
       "maxExpandedCpis": 1,
@@ -3961,7 +5552,7 @@
     "anchor": "oracle-price-band",
     "standIn": true,
     "rowCount": 0,
-    "templateHex": "42564d310104000002080a0102000200010004000000000000ff0000800000000400ff000000000003ffff000000000002ffff000000000003000000030000000e0000ffff0008000000000000000000010100ffff00000000000000000000001c020001ff00000000000000000000000e0300ffff0008000000000000000000010401ffff00000000000000000000001a050304ff00000000000000000000001d060205ff000000000000000000000028ff06ffff00000000000000000000000307ffffff001027000000000000000029ff00ffff000000000000000000000001ff0000020200000c0000000203030200ff0000040000000407000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "templateHex": "42564d310104000002070a0102000200010004000000000000ff0000800000000400ff000000000003ffff000000000002ffff00000000000300000003000000010000ffff0000000000000000000000010101ffff00000000000000000000000302ffffff00102700000000000000000e0300ffff00080000000000000000001c040300ff000000000000000000000028ff04ffff00000000000000000000000e0500ffff00080000000000000000001a060501ff000000000000000000000028ff06ffff000000000000000000000029ff00ffff000000000000000000000001ff0000020200000c0000000203030200ff0000040000000402000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
     "payloadBytes": 292,
     "runtimeAccounts": [
       "state-account",
@@ -4027,7 +5618,7 @@
       "batchMaxIterations": 0,
       "batchMinIterations": 0,
       "inputs": 2,
-      "registers": 8,
+      "registers": 7,
       "instructions": 10,
       "cpis": 1,
       "maxExpandedCpis": 1,
@@ -4042,7 +5633,7 @@
     "anchor": "maximum-lamport-spend",
     "standIn": true,
     "rowCount": 0,
-    "templateHex": "42564d3101030000010608010200020001000400000000000400ff000000000003ffff000000000002ffff0000000000020000000a0001ffff00000000000000000000000301ffffff001027000000000000000029ff00ffff00000000000000000000000a0201ffff000000000000000000000014030002ff0000000000000000000000010400ffff00000000000000000000001a050304ff000000000000000000000028ff05ffff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000401000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "templateHex": "42564d3101030000010608010200020001000400000000000400ff000000000003ffff000000000002ffff000000000002000000010000ffff00000000000000000000000301ffffff00102700000000000000000a0201ffff000000000000000000000029ff00ffff00000000000000000000000a0301ffff000000000000000000000014040203ff00000000000000000000001a050400ff000000000000000000000028ff05ffff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000401000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
     "payloadBytes": 248,
     "runtimeAccounts": [
       "system-program",
@@ -4118,7 +5709,7 @@
     "anchor": "canonical-position-account",
     "standIn": true,
     "rowCount": 0,
-    "templateHex": "42564d3101030000010709010200050001000c00000000000400ff000000000003ffff000000000002ff00008000000006000800080002ffff00000000000000000000000701ffffff0000000000080000000000080201ffff0000000000000000000000010300ffff00000000000000000000002f0400ffff000000000003000000000017050004ff000000000000000000000028ff05ffff00000000000000000000000306ffffff001027000000000000000029ff00ffff000000000000000000000000ff0000020203000c0000000103020209010000000000000702000000000000090300000000000000ff08000400000004060000000000000000000000000000000000000000000000000000000000000000000000000000706f736974696f6e02000000",
+    "templateHex": "42564d3101030000010709010200050001000c00000000000400ff000000000003ffff000000000002ff00008000000006000800010000ffff00000000000000000000000701ffffff00000000000800000000000302ffffff0010270000000000000000080302ffff0000000000000000000000080401ffff00000000000000000000002f0500ffff000000000003000000000017060305ff000000000000000000000028ff06ffff000000000000000000000029ff00ffff000000000000000000000000ff0000020203000c0000000103020209010000000000000704000000000000090000000000000000ff08000400000004020000000000000000000000000000000000000000000000000000000000000000000000000000706f736974696f6e02000000",
     "payloadBytes": 296,
     "runtimeAccounts": [
       "system-program",
@@ -4194,7 +5785,7 @@
     "anchor": "swap-then-deposit",
     "standIn": true,
     "rowCount": 0,
-    "templateHex": "42564d310105000003070a020400020002000000000000000400ff00000000000400ff000000000003ffff000000000002ffff000000000002ff0100a50000000200000006000001060000010d0004ffff0040000000000000000000010101ffff000000000000000000000029ff00ffff00000000000000000000000d0204ffff004000000000000000000014030200ff0000000000000000000000010400ffff00000000000000000000001c050304ff000000000000000000000028ff05ffff0000000000000000000000010602ffff000000000000000000000029ff01ffff000000000000000000000000ff0000020100000001000001ff02000201010000010000020303020203030209010000000000000906000000000000000000000000000000000000000000000000000000000000000000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9",
+    "templateHex": "42564d310105000003070a020400020002000000000000000400ff00000000000400ff000000000003ffff000000000002ffff000000000002ff0100a5000000020000000600000106000001010000ffff0000000000000000000000010101ffff0000000000000000000000010202ffff00000000000000000000000d0304ffff004000000000000000000029ff00ffff00000000000000000000000d0404ffff004000000000000000000014050403ff00000000000000000000001c060500ff000000000000000000000028ff06ffff000000000000000000000029ff01ffff000000000000000000000000ff0000020100000001000001ff02000201010000010000020303020203030209010000000000000902000000000000000000000000000000000000000000000000000000000000000000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9",
     "payloadBytes": 348,
     "runtimeAccounts": [
       "system-program",
@@ -4296,7 +5887,7 @@
     "anchor": "claim-then-distribute",
     "standIn": true,
     "rowCount": 16,
-    "templateHex": "42564d3101060110010205020500040002000500010000000400ff00000000000401ff000000000003ffff000000000002ffff000000000002ff0100a500000001ffff000000000002ff0100a5000000020000000300ffffff001027000000000000000029ff00ffff00000000000000000000002aff02ffff0000000000000000000000010100ffff000000000000000000000029ff01ffff000000000000000000000000ff0000020200000c00000001ff020003020200090000000203030204028002050100ff000004000000040000000000000000ff0400010000000401000000000000000000000000000000000000000000000000000000000000000000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a90200000003",
+    "templateHex": "42564d3101060110010205020500040002000500010000000400ff00000000000401ff000000000003ffff000000000002ffff000000000002ff0100a500000001ffff000000000002ff0100a500000002000000010000ffff00000000000000000000000301ffffff001027000000000000000029ff00ffff00000000000000000000002aff01ffff000000000000000000000029ff01ffff000000000000000000000000ff0000020200000c00000001ff020003020200090000000203030204028002050100ff000004000000040100000000000000ff0400010000000400000000000000000000000000000000000000000000000000000000000000000000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a90200000003",
     "payloadBytes": 299,
     "runtimeAccounts": [
       "system-program",
@@ -4803,8 +6394,8 @@
     "anchor": "primary-or-fallback-route",
     "standIn": true,
     "rowCount": 0,
-    "templateHex": "42564d3101040000030507020400020001000000000000000400ff00000000000400ff000000000003ffff000000000002ffff0000000000010000000600000106000001010001ffff0000000000000000000000010100ffff000000000000000000000029ff0001ff0000000000000000000000010202ffff0000000000000000000000010300ffff00000000000000000000001f0403ffff000000000000000000000029ff0104ff000000000000000000000000ff0000020100000001000001ff020002010100000100000203030202030302090000000000000009020000000000000000000000000000000000000000000000000000000000000000000000000000",
-    "payloadBytes": 260,
+    "templateHex": "42564d3101040000030406020400020001000000000000000400ff00000000000400ff000000000003ffff000000000002ffff0000000000010000000600000106000001010000ffff0000000000000000000000010101ffff0000000000000000000000010202ffff000000000000000000000029ff0000ff00000000000000000000001f0300ffff000000000000000000000029ff0103ff000000000000000000000000ff0000020100000001000001ff020002010100000100000203030202030302090100000000000009020000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "payloadBytes": 244,
     "runtimeAccounts": [
       "system-program",
       "system-program",
@@ -4858,19 +6449,19 @@
     },
     "upload": {
       "transactionCount": 1,
-      "transactionBytes": 536,
-      "accountBytes": 340,
-      "rentLamports": 2377440
+      "transactionBytes": 520,
+      "accountBytes": 324,
+      "rentLamports": 2296160
     },
     "stats": {
-      "payloadBytes": 260,
+      "payloadBytes": 244,
       "fixedAccounts": 4,
       "batchStride": 0,
       "batchMaxIterations": 0,
       "batchMinIterations": 0,
       "inputs": 3,
-      "registers": 5,
-      "instructions": 7,
+      "registers": 4,
+      "instructions": 6,
       "cpis": 2,
       "maxExpandedCpis": 2,
       "maxCpiDataLength": 256,
@@ -4884,7 +6475,7 @@
     "anchor": "time-gated-governance-execution",
     "standIn": true,
     "rowCount": 0,
-    "templateHex": "42564d3101040000010608010200010001000000000000000400ff000000000000ff00008000000003ffff000000000002ffff0000000000060000012e0001ffff00000000000000000000001201ffffff00000000000000000000000e0201ffff00080000000000000000001c030102ff00000000000000000000001d040003ff000000000000000000000028ff04ffff0000000000000000000000010500ffff000000000000000000000029ff00ffff000000000000000000000000ff000002010000000100000203030209050000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "templateHex": "42564d3101040000010508010200010001000000000000000400ff000000000000ff00008000000003ffff000000000002ffff000000000006000001010000ffff00000000000000000000002e0101ffff000000000000000000000028ff01ffff00000000000000000000001202ffffff00000000000000000000000e0301ffff00080000000000000000001c040203ff000000000000000000000028ff04ffff000000000000000000000029ff00ffff000000000000000000000000ff000002010000000100000203030209000000000000000000000000000000000000000000000000000000000000000000000000000000",
     "payloadBytes": 244,
     "runtimeAccounts": [
       "system-program",
@@ -4950,7 +6541,7 @@
       "batchMaxIterations": 0,
       "batchMinIterations": 0,
       "inputs": 1,
-      "registers": 6,
+      "registers": 5,
       "instructions": 8,
       "cpis": 1,
       "maxExpandedCpis": 1,
@@ -4965,7 +6556,7 @@
     "anchor": "bounded-keeper-crank",
     "standIn": true,
     "rowCount": 24,
-    "templateHex": "42564d3101020218000103010300020001000400010000000400ff000000000003ffff000000000002ffff000000000002ffff00000000002aff02ffff00000000000000000000000300ffffff00e803000000000000000029ff00ffff000000000000000000000000ff0000030200000c00000001038002810200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "templateHex": "42564d3101020218000103010300020001000400010000000400ff000000000003ffff000000000002ffff000000000002ffff00000000000300ffffff00e80300000000000000002aff01ffff000000000000000000000029ff00ffff000000000000000000000000ff0000030200000c00000001038002810200ff0000040000000400000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
     "payloadBytes": 174,
     "runtimeAccounts": [
       "system-program",

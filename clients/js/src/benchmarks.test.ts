@@ -81,7 +81,8 @@ type Role =
   | 'recipient'
   | 'recipient-ata'
   | 'state-account'
-  | 'position-pda';
+  | 'position-pda'
+  | 'empty-account';
 
 interface BaselineAccount {
   index: number;
@@ -112,6 +113,8 @@ interface BenchmarkCase {
   accounts: Record<string, Role>;
   rows?: Record<string, Role>[];
   inputs?: Record<string, RunInputValue>;
+  /** One record per batch row when the template declares row inputs. */
+  rowInputValues?: Record<string, RunInputValue>[];
   baseline: Baseline;
 }
 
@@ -153,6 +156,616 @@ const DISTRIBUTE_ROWS = 16;
 const CRANK_ROWS = 24;
 
 const cases: BenchmarkCase[] = [];
+
+// --------------------------------------------------- amounts read at run time
+//
+// Every case below reads a number out of an account during execution and feeds it to a call. A
+// transaction is signed before that number exists, so there is nothing to compare against: the
+// closest plain sequence has to guess, and a guess is either stale or wrong.
+
+const RUNTIME_FLOOR = 2_000_000n;
+
+cases.push({
+  name: 'sweep-above-a-reserve',
+  page: 'runtime-values',
+  anchor: 'sweep-above-a-reserve',
+  template: defineTemplate({
+    inputs: { reserve: { type: 'u64' } },
+    accounts: { ...systemPrograms, vault: { signer: true, writable: true }, destination: { writable: true } },
+    steps: [
+      step.let('balance', expression.accountField(account.fixed('vault'), 'lamports')),
+      step.require(expression.greaterThan(expression.variable('balance'), expression.input('reserve'))),
+      systemTransfer({
+        systemProgram: account.fixed('systemProgram'),
+        from: account.fixed('vault'),
+        to: account.fixed('destination'),
+        lamports: expression.subtract(expression.variable('balance'), expression.input('reserve')),
+      }),
+    ],
+  }),
+  accounts: { systemProgram: 'system-program', vault: 'signer', destination: 'recipient' },
+  inputs: { reserve: RUNTIME_FLOOR },
+  baseline: {
+    verdict: 'impossible',
+    note: 'The balance at execution is not known when the transaction is signed. A fixed amount either leaves dust behind or overdraws and fails, and anything that arrives between signing and execution is stranded.',
+    instructions: [
+      {
+        program: 'system-program',
+        accounts: [
+          { index: 1, signer: true, writable: true },
+          { index: 2, signer: false, writable: true },
+        ],
+        data: transferData(AMOUNT),
+      },
+    ],
+  },
+});
+
+cases.push({
+  name: 'forward-the-whole-token-balance',
+  page: 'runtime-values',
+  anchor: 'forward-the-whole-token-balance',
+  template: defineTemplate({
+    accounts: {
+      ...tokenPrograms,
+      source: { writable: true, owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: 165 },
+      destination: { writable: true, owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: 165 },
+      authority: { signer: true },
+    },
+    steps: [
+      step.let('balance', expression.accountData(account.fixed('source'), 64, 'u64')),
+      step.require(expression.greaterThan(expression.variable('balance'), expression.u64(0))),
+      tokenTransfer({
+        tokenProgram: account.fixed('tokenProgram'),
+        source: account.fixed('source'),
+        destination: account.fixed('destination'),
+        authority: account.fixed('authority'),
+        amount: expression.variable('balance'),
+      }),
+    ],
+  }),
+  accounts: {
+    tokenProgram: 'token-program',
+    source: 'source-tokens',
+    destination: 'recipient-tokens',
+    authority: 'signer',
+  },
+  baseline: {
+    verdict: 'impossible',
+    note: 'A Transfer carries a fixed amount. Emptying an account whose balance is still moving — fees accruing, a swap landing — needs the figure read during execution.',
+    instructions: [
+      {
+        program: 'token-program',
+        accounts: [
+          { index: 1, signer: false, writable: true },
+          { index: 2, signer: false, writable: true },
+          { index: 3, signer: true, writable: false },
+        ],
+        data: tokenTransferData(AMOUNT),
+      },
+    ],
+  },
+});
+
+cases.push({
+  name: 'repay-exactly-what-is-owed',
+  page: 'runtime-values',
+  anchor: 'repay-exactly-what-is-owed',
+  standIn: true,
+  template: defineTemplate({
+    accounts: {
+      protocolProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
+      loan: { owner: SYSTEM_PROGRAM_ADDRESS_BYTES, minDataLength: 128 },
+      borrower: { signer: true, writable: true },
+      pool: { writable: true },
+    },
+    steps: [
+      step.let('owed', expression.accountData(account.fixed('loan'), 8, 'u64')),
+      step.let('available', expression.accountField(account.fixed('borrower'), 'lamports')),
+      step.invoke({
+        program: account.fixed('protocolProgram'),
+        accounts: [
+          { account: account.fixed('borrower'), signer: true, writable: true },
+          { account: account.fixed('pool'), signer: false, writable: true },
+        ],
+        data: [
+          data.literal(Uint8Array.of(2, 0, 0, 0)),
+          data.encode('u64', expression.min(expression.variable('owed'), expression.variable('available'))),
+        ],
+      }),
+    ],
+  }),
+  accounts: {
+    protocolProgram: 'system-program',
+    loan: 'state-account',
+    borrower: 'signer',
+    pool: 'recipient',
+  },
+  baseline: {
+    verdict: 'impossible',
+    note: 'Debt accrues every slot, so the figure the client quoted is stale by the time the transaction lands. Repaying a fixed amount leaves a remainder or overpays.',
+    instructions: [
+      {
+        program: 'system-program',
+        accounts: [
+          { index: 2, signer: true, writable: true },
+          { index: 3, signer: false, writable: true },
+        ],
+        data: transferData(AMOUNT),
+      },
+    ],
+  },
+});
+
+cases.push({
+  name: 'split-what-arrived',
+  page: 'runtime-values',
+  anchor: 'split-what-arrived',
+  template: defineTemplate({
+    inputs: { reserve: { type: 'u64' }, shareBps: { type: 'u64' } },
+    accounts: {
+      ...systemPrograms,
+      vault: { signer: true, writable: true },
+      partner: { writable: true },
+      treasury: { writable: true },
+    },
+    steps: [
+      step.let(
+        'distributable',
+        expression.subtract(
+          expression.accountField(account.fixed('vault'), 'lamports'),
+          expression.input('reserve'),
+        ),
+      ),
+      step.let(
+        'partnerShare',
+        expression.divide(
+          expression.multiply(expression.variable('distributable'), expression.input('shareBps')),
+          expression.u64(10_000),
+        ),
+      ),
+      systemTransfer({
+        systemProgram: account.fixed('systemProgram'),
+        from: account.fixed('vault'),
+        to: account.fixed('partner'),
+        lamports: expression.variable('partnerShare'),
+      }),
+      systemTransfer({
+        systemProgram: account.fixed('systemProgram'),
+        from: account.fixed('vault'),
+        to: account.fixed('treasury'),
+        lamports: expression.subtract(
+          expression.variable('distributable'),
+          expression.variable('partnerShare'),
+        ),
+      }),
+    ],
+  }),
+  accounts: {
+    systemProgram: 'system-program',
+    vault: 'signer',
+    partner: 'recipient',
+    treasury: 'recipient',
+  },
+  inputs: { reserve: RUNTIME_FLOOR, shareBps: 3_000n },
+  baseline: {
+    verdict: 'impossible',
+    note: 'The split is a percentage of a balance nobody can read until execution. Two transfers with client-computed amounts divide a number that has already changed.',
+    instructions: [
+      {
+        program: 'system-program',
+        accounts: [
+          { index: 1, signer: true, writable: true },
+          { index: 2, signer: false, writable: true },
+        ],
+        data: transferData(AMOUNT),
+      },
+      {
+        program: 'system-program',
+        accounts: [
+          { index: 1, signer: true, writable: true },
+          { index: 3, signer: false, writable: true },
+        ],
+        data: transferData(AMOUNT),
+      },
+    ],
+  },
+});
+
+// ------------------------------------------------ work that should not always happen
+//
+// A transaction cannot skip one of its own instructions. If a call would fail, the whole
+// transaction reverts and the fee is spent for nothing. These templates read the chain and
+// decide.
+
+cases.push({
+  name: 'claim-only-when-there-is-something',
+  page: 'conditional',
+  anchor: 'claim-only-when-there-is-something',
+  standIn: true,
+  template: defineTemplate({
+    accounts: {
+      protocolProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
+      rewards: { owner: SYSTEM_PROGRAM_ADDRESS_BYTES, minDataLength: 128 },
+      claimant: { signer: true, writable: true },
+      destination: { writable: true },
+    },
+    steps: [
+      step.invoke({
+        program: account.fixed('protocolProgram'),
+        accounts: [
+          { account: account.fixed('claimant'), signer: true, writable: true },
+          { account: account.fixed('destination'), signer: false, writable: true },
+        ],
+        data: [data.literal(Uint8Array.of(2, 0, 0, 0)), data.encode('u64', expression.u64(AMOUNT))],
+        when: expression.greaterThan(
+          expression.accountData(account.fixed('rewards'), 8, 'u64'),
+          expression.u64(0),
+        ),
+      }),
+    ],
+  }),
+  accounts: {
+    protocolProgram: 'system-program',
+    rewards: 'state-account',
+    claimant: 'signer',
+    destination: 'recipient',
+  },
+  baseline: {
+    verdict: 'impossible',
+    note: 'Claiming nothing is an error in most protocols, and an error reverts the transaction. A keeper that guesses wrong pays the fee and lands nothing, including the work batched alongside it.',
+    instructions: [
+      {
+        program: 'system-program',
+        accounts: [
+          { index: 2, signer: true, writable: true },
+          { index: 3, signer: false, writable: true },
+        ],
+        data: transferData(AMOUNT),
+      },
+    ],
+  },
+});
+
+cases.push({
+  name: 'liquidate-only-when-unhealthy',
+  page: 'conditional',
+  anchor: 'liquidate-only-when-unhealthy',
+  standIn: true,
+  template: defineTemplate({
+    inputs: { threshold: { type: 'u64' } },
+    accounts: {
+      protocolProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
+      position: { owner: SYSTEM_PROGRAM_ADDRESS_BYTES, minDataLength: 128 },
+      liquidator: { signer: true, writable: true },
+      vault: { writable: true },
+    },
+    steps: [
+      step.invoke({
+        program: account.fixed('protocolProgram'),
+        accounts: [
+          { account: account.fixed('liquidator'), signer: true, writable: true },
+          { account: account.fixed('vault'), signer: false, writable: true },
+        ],
+        data: [data.literal(Uint8Array.of(2, 0, 0, 0)), data.encode('u64', expression.u64(AMOUNT))],
+        when: expression.lessThan(
+          expression.accountData(account.fixed('position'), 8, 'u64'),
+          expression.input('threshold'),
+        ),
+      }),
+    ],
+  }),
+  accounts: {
+    protocolProgram: 'system-program',
+    position: 'state-account',
+    liquidator: 'signer',
+    vault: 'recipient',
+  },
+  inputs: { threshold: 2n },
+  baseline: {
+    verdict: 'impossible',
+    note: 'Health is read from the position at execution. A liquidation sent on a stale read reverts when someone else got there first, and reverts again for every keeper racing the same block.',
+    instructions: [
+      {
+        program: 'system-program',
+        accounts: [
+          { index: 2, signer: true, writable: true },
+          { index: 3, signer: false, writable: true },
+        ],
+        data: transferData(AMOUNT),
+      },
+    ],
+  },
+});
+
+cases.push({
+  name: 'top-up-only-when-low',
+  page: 'conditional',
+  anchor: 'top-up-only-when-low',
+  template: defineTemplate({
+    inputs: { floor: { type: 'u64' }, topUp: { type: 'u64' } },
+    accounts: { ...systemPrograms, funder: { signer: true, writable: true }, bot: { writable: true } },
+    steps: [
+      systemTransfer({
+        systemProgram: account.fixed('systemProgram'),
+        from: account.fixed('funder'),
+        to: account.fixed('bot'),
+        lamports: expression.input('topUp'),
+        when: expression.lessThan(
+          expression.accountField(account.fixed('bot'), 'lamports'),
+          expression.input('floor'),
+        ),
+      }),
+    ],
+  }),
+  accounts: { systemProgram: 'system-program', funder: 'signer', bot: 'recipient' },
+  inputs: { floor: 2_000_000_000n, topUp: AMOUNT },
+  baseline: {
+    verdict: 'impossible',
+    note: 'A cron that tops up unconditionally drains the funder; one that checks first has read a balance that may have changed by the time the transfer lands.',
+    instructions: [
+      {
+        program: 'system-program',
+        accounts: [
+          { index: 1, signer: true, writable: true },
+          { index: 2, signer: false, writable: true },
+        ],
+        data: transferData(AMOUNT),
+      },
+    ],
+  },
+});
+
+cases.push({
+  name: 'initialize-only-if-missing',
+  page: 'conditional',
+  anchor: 'initialize-only-if-missing',
+  standIn: true,
+  template: defineTemplate({
+    accounts: {
+      protocolProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
+      payer: { signer: true, writable: true },
+      position: { writable: true },
+    },
+    steps: [
+      step.invoke({
+        program: account.fixed('protocolProgram'),
+        accounts: [
+          { account: account.fixed('payer'), signer: true, writable: true },
+          { account: account.fixed('position'), signer: false, writable: true },
+        ],
+        data: [data.literal(Uint8Array.of(2, 0, 0, 0)), data.encode('u64', expression.u64(AMOUNT))],
+        when: expression.accountField(account.fixed('position'), 'isEmpty'),
+      }),
+    ],
+  }),
+  accounts: { protocolProgram: 'system-program', payer: 'signer', position: 'empty-account' },
+  baseline: {
+    verdict: 'impossible',
+    note: 'Only a handful of programs ship an idempotent Create. For the rest the caller must know whether the account exists, and be right about it at execution, or the whole transaction fails.',
+    instructions: [
+      {
+        program: 'system-program',
+        accounts: [
+          { index: 1, signer: true, writable: true },
+          { index: 2, signer: false, writable: true },
+        ],
+        data: transferData(AMOUNT),
+      },
+    ],
+  },
+});
+
+// ------------------------------------------------------ loops that read as they go
+//
+// The row count is fixed by the account list, but what each row does is not: it depends on what
+// the previous rows left behind, or on the row's own state.
+
+const WATERFALL_ROWS = 8;
+const DUST_ROWS = 8;
+const RIPE_ROWS = 8;
+const PRO_RATA_ROWS = 8;
+
+cases.push({
+  name: 'waterfall-until-the-money-runs-out',
+  page: 'loops',
+  anchor: 'waterfall-until-the-money-runs-out',
+  template: defineTemplate({
+    inputs: { reserve: { type: 'u64' } },
+    accounts: { ...systemPrograms, treasury: { signer: true, writable: true } },
+    batch: {
+      maxIterations: WATERFALL_ROWS,
+      minIterations: 1,
+      row: { creditor: { writable: true } },
+      rowInputs: { owed: { type: 'u64' } },
+    },
+    steps: [
+      step.let(
+        'remaining',
+        expression.subtract(
+          expression.accountField(account.fixed('treasury'), 'lamports'),
+          expression.input('reserve'),
+        ),
+      ),
+      step.forEach(
+        [
+          step.let('pay', expression.min(expression.variable('remaining'), expression.rowInput('owed'))),
+          systemTransfer({
+            systemProgram: account.fixed('systemProgram'),
+            from: account.fixed('treasury'),
+            to: account.iteration('creditor'),
+            lamports: expression.variable('pay'),
+            when: expression.greaterThan(expression.variable('pay'), expression.u64(0)),
+          }),
+          step.assign('remaining', expression.subtract(expression.variable('remaining'), expression.variable('pay'))),
+        ],
+        { carry: ['remaining'] },
+      ),
+    ],
+  }),
+  accounts: { systemProgram: 'system-program', treasury: 'signer' },
+  rows: Array.from({ length: WATERFALL_ROWS }, () => ({ creditor: 'recipient' as Role })),
+  inputs: { reserve: RUNTIME_FLOOR },
+  rowInputValues: Array.from({ length: WATERFALL_ROWS }, () => ({ owed: 1_000n })),
+  baseline: {
+    verdict: 'impossible',
+    note: 'Paying creditors in priority order until the money runs out means each payment depends on the ones before it and on a balance read at execution. A fixed list of transfers either overdraws or stops early.',
+    instructions: Array.from({ length: WATERFALL_ROWS }, (_, index) => ({
+      program: 'system-program' as Role,
+      accounts: [
+        { index: 1, signer: true, writable: true },
+        { index: 2 + index, signer: false, writable: true },
+      ],
+      data: transferData(1_000n),
+    })),
+  },
+});
+
+cases.push({
+  name: 'consolidate-only-the-funded-accounts',
+  page: 'loops',
+  anchor: 'consolidate-only-the-funded-accounts',
+  template: defineTemplate({
+    accounts: {
+      ...tokenPrograms,
+      vault: { writable: true, owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: 165 },
+      authority: { signer: true },
+    },
+    batch: {
+      maxIterations: DUST_ROWS,
+      minIterations: 1,
+      row: { source: { writable: true, owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: 165 } },
+    },
+    steps: [
+      step.forEach([
+        step.let('amount', expression.accountData(account.iteration('source'), 64, 'u64')),
+        tokenTransfer({
+          tokenProgram: account.fixed('tokenProgram'),
+          source: account.iteration('source'),
+          destination: account.fixed('vault'),
+          authority: account.fixed('authority'),
+          amount: expression.variable('amount'),
+          when: expression.greaterThan(expression.variable('amount'), expression.u64(0)),
+        }),
+      ]),
+    ],
+  }),
+  accounts: { tokenProgram: 'token-program', vault: 'recipient-tokens', authority: 'signer' },
+  rows: Array.from({ length: DUST_ROWS }, () => ({ source: 'source-tokens' as Role })),
+  baseline: {
+    verdict: 'impossible',
+    note: 'Each account moves its own balance, which nobody knows until execution, and an empty one must be skipped rather than fail. A fixed list of transfers needs every amount up front and reverts on the first empty account.',
+    instructions: Array.from({ length: DUST_ROWS }, (_, index) => ({
+      program: 'token-program' as Role,
+      accounts: [
+        { index: 3 + index, signer: false, writable: true },
+        { index: 1, signer: false, writable: true },
+        { index: 2, signer: true, writable: false },
+      ],
+      data: tokenTransferData(AMOUNT),
+    })),
+  },
+});
+
+cases.push({
+  name: 'crank-only-the-ripe-entries',
+  page: 'loops',
+  anchor: 'crank-only-the-ripe-entries',
+  standIn: true,
+  template: defineTemplate({
+    accounts: {
+      protocolProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
+      keeper: { signer: true, writable: true },
+    },
+    batch: {
+      maxIterations: RIPE_ROWS,
+      minIterations: 1,
+      row: { entry: { writable: true, owner: SYSTEM_PROGRAM_ADDRESS_BYTES, minDataLength: 128 } },
+    },
+    steps: [
+      step.forEach([
+        step.invoke({
+          program: account.fixed('protocolProgram'),
+          accounts: [
+            { account: account.fixed('keeper'), signer: true, writable: true },
+            { account: account.iteration('entry'), signer: false, writable: true },
+          ],
+          data: [data.literal(Uint8Array.of(2, 0, 0, 0)), data.encode('u64', expression.u64(AMOUNT))],
+          when: expression.lessThanOrEqual(
+            expression.accountData(account.iteration('entry'), 8, 'i64'),
+            expression.clockUnixTimestamp(),
+          ),
+        }),
+      ]),
+    ],
+  }),
+  accounts: { protocolProgram: 'system-program', keeper: 'signer' },
+  rows: Array.from({ length: RIPE_ROWS }, () => ({ entry: 'state-account' as Role })),
+  baseline: {
+    verdict: 'impossible',
+    note: 'Which entries are due depends on the clock at execution. Sending one instruction per entry reverts the whole batch on the first one that is not ready yet, and filtering beforehand races the block.',
+    instructions: Array.from({ length: RIPE_ROWS }, (_, index) => ({
+      program: 'system-program' as Role,
+      accounts: [
+        { index: 1, signer: true, writable: true },
+        { index: 2 + index, signer: false, writable: true },
+      ],
+      data: transferData(AMOUNT),
+    })),
+  },
+});
+
+cases.push({
+  name: 'distribute-a-runtime-pot-pro-rata',
+  page: 'loops',
+  anchor: 'distribute-a-runtime-pot-pro-rata',
+  template: defineTemplate({
+    inputs: { reserve: { type: 'u64' } },
+    accounts: { ...systemPrograms, vault: { signer: true, writable: true } },
+    batch: {
+      maxIterations: PRO_RATA_ROWS,
+      minIterations: 1,
+      row: { holder: { writable: true } },
+      rowInputs: { weightBps: { type: 'u64' } },
+    },
+    steps: [
+      step.let(
+        'pot',
+        expression.subtract(
+          expression.accountField(account.fixed('vault'), 'lamports'),
+          expression.input('reserve'),
+        ),
+      ),
+      step.forEach([
+        systemTransfer({
+          systemProgram: account.fixed('systemProgram'),
+          from: account.fixed('vault'),
+          to: account.iteration('holder'),
+          lamports: expression.divide(
+            expression.multiply(expression.variable('pot'), expression.rowInput('weightBps')),
+            expression.u64(10_000),
+          ),
+        }),
+      ]),
+    ],
+  }),
+  accounts: { systemProgram: 'system-program', vault: 'signer' },
+  rows: Array.from({ length: PRO_RATA_ROWS }, () => ({ holder: 'recipient' as Role })),
+  inputs: { reserve: RUNTIME_FLOOR },
+  rowInputValues: Array.from({ length: PRO_RATA_ROWS }, () => ({ weightBps: 100n })),
+  baseline: {
+    verdict: 'impossible',
+    note: 'Shares are a fraction of a pot that is still filling. Transfers computed off chain divide yesterday’s number, and the rounding remainder has to go somewhere the caller cannot predict.',
+    instructions: Array.from({ length: PRO_RATA_ROWS }, (_, index) => ({
+      program: 'system-program' as Role,
+      accounts: [
+        { index: 1, signer: true, writable: true },
+        { index: 2 + index, signer: false, writable: true },
+      ],
+      data: transferData(AMOUNT),
+    })),
+  },
+});
 
 // ---------------------------------------------------------------- payments
 
@@ -1438,6 +2051,7 @@ describe('example benchmarks', () => {
         ...(item.inputs ? { inputs: item.inputs } : {}),
         accounts,
         ...(batchRows.length > 0 ? { batchRows } : {}),
+        ...(item.rowInputValues ? { batchInputs: item.rowInputValues } : {}),
       });
 
       const baselineInstructions: Instruction[] = item.baseline.instructions.map((instruction) => ({
@@ -1469,7 +2083,9 @@ describe('example benchmarks', () => {
         templateHex: hex(compiled.bytes),
         payloadBytes: compiled.bytes.length,
         runtimeAccounts: roles,
-        runData: hex(encodeRunInputs(compiled, item.inputs ?? {})),
+        runData: hex(
+          encodeRunInputs(compiled, item.inputs ?? {}, { rows: item.rowInputValues ?? [] }),
+        ),
         ballistaTransactionBytes: measure([runInstruction], feePayer),
         ballistaAccountKeys: (runInstruction.accounts ?? []).length + 1,
         // Privileges the schema requires of each runtime account, template account excluded.

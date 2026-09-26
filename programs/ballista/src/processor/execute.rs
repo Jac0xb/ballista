@@ -468,15 +468,17 @@ pub fn validate_account(
     Ok(())
 }
 
-/// What every instruction of one run can read or write, gathered so the dispatch loop hands a
-/// step one pointer instead of five arguments: SBF passes only five arguments in registers and
-/// spills the rest to the stack on every call.
+/// What every instruction of one run can read or write, gathered so the dispatch loop takes one
+/// pointer instead of seven arguments: SBF passes only five in registers and spills the rest to
+/// the stack on every call.
 struct Machine<'run, 'data> {
     program: &'run ProgramView<'data>,
     inputs: &'run [RuntimeValue<'data>],
     accounts: &'data [AccountView],
     registers: &'run mut [RuntimeValue<'data>],
     scratch: &'run mut Scratch<'data>,
+    /// Batch rows supplied to this run.
+    iterations: usize,
 }
 
 fn execute_root<'data>(
@@ -493,85 +495,198 @@ fn execute_root<'data>(
         accounts,
         registers,
         scratch,
+        iterations,
     };
+    dispatch(&mut machine)
+}
+
+/// The dispatch loop, for the whole program including the batch body. `execute_instruction` is
+/// inlined here, so an instruction costs a dispatch rather than a call. The FOREACH body runs in
+/// this same loop: reaching the end of the body hands over to `next_iteration`, which rewinds to
+/// the body's first instruction until every row has run, so a row costs no call and no frame.
+#[inline(never)]
+fn dispatch<'data>(machine: &mut Machine<'_, 'data>) -> ProgramResult {
+    let instructions = machine.program.instructions;
     let mut pc = 0usize;
-    while pc < program.instructions.len() {
-        let instruction = &program.instructions[pc];
-        if instruction.opcode == OP_FOREACH {
-            let body_start = pc + 1;
-            let body_end = body_start
-                .checked_add(instruction.a as usize)
-                .filter(|end| *end <= program.instructions.len())
-                .ok_or_else(|| {
-                    RunError::from(BallistaError::InvalidTemplateProgram).at(pc, instruction)
-                })?;
-            // Registers written inside the body are discarded after each iteration, except the
-            // ones named in the carry mask, which flow into the next iteration and out of the loop.
-            let carry = instruction.immediate();
-            let mut base_registers = machine.registers.to_vec();
-            let (cache_cpi, data_invariant) =
-                loop_cache_plan(program, &program.instructions[body_start..body_end]);
-            machine.scratch.cache_cpi = cache_cpi;
-            machine.scratch.data_invariant = data_invariant;
-            machine.scratch.built = false;
-            for iteration in 0..iterations {
-                machine.registers.copy_from_slice(&base_registers);
-                let row_base = program.header.fixed_account_count()
-                    + iteration * program.header.batch_stride();
-                execute_range(&mut machine, body_start, body_end, Some((iteration, row_base)))?;
-                if carry != 0 {
-                    for (register, slot) in base_registers.iter_mut().enumerate() {
-                        if register < 64 && carry & (1u64 << register) != 0 {
-                            *slot = machine.registers[register];
-                        }
-                    }
-                }
+    let mut rest = instructions;
+    let mut batch: Option<Batch<'data>> = None;
+    let mut loop_context: Option<(usize, usize)> = None;
+    loop {
+        let [instruction, tail @ ..] = rest else {
+            // The end of the program, or of one pass over the batch body.
+            let Some(active) = &mut batch else {
+                return Ok(());
+            };
+            loop_context = next_iteration(machine, active);
+            pc = if loop_context.is_some() {
+                active.body_start
+            } else {
+                active.body_end
+            };
+            rest = &instructions[pc..active.resume_end];
+            if loop_context.is_none() {
+                batch = None;
             }
-            machine.registers.copy_from_slice(&base_registers);
-            machine.scratch.cache_cpi = None;
-            machine.scratch.built = false;
-            machine.scratch.data_invariant = false;
-            pc = body_end;
+            continue;
+        };
+        // Only the root can hold a loop. Inside a body, FOREACH reaches the dispatch and is
+        // rejected there like any opcode the executor does not run, with the same error.
+        if instruction.opcode == OP_FOREACH && loop_context.is_none() {
+            let active = enter_batch(machine, pc, instruction)?;
+            loop_context = active.first_row(machine);
+            pc = if loop_context.is_some() {
+                active.body_start
+            } else {
+                active.body_end
+            };
+            rest = if loop_context.is_some() {
+                &instructions[active.body_start..active.body_end]
+            } else {
+                &instructions[active.body_end..]
+            };
+            if loop_context.is_some() {
+                batch = Some(active);
+            }
             continue;
         }
-        step(&mut machine, instruction, None).map_err(|error| error.at(pc, instruction))?;
-        pc += 1;
-    }
-    Ok(())
-}
-
-fn execute_range<'data>(
-    machine: &mut Machine<'_, 'data>,
-    start: usize,
-    end: usize,
-    loop_context: Option<(usize, usize)>,
-) -> ProgramResult {
-    for pc in start..end {
-        let instruction = &machine.program.instructions[pc];
-        if instruction.opcode == OP_FOREACH {
-            return Err(RunError::from(BallistaError::InvalidTemplateProgram).at(pc, instruction));
+        if let Err(error) = execute_instruction(
+            machine.program,
+            machine.inputs,
+            machine.accounts,
+            machine.registers,
+            machine.scratch,
+            instruction,
+            loop_context,
+        ) {
+            return Err(error.at(pc, instruction));
         }
-        step(machine, instruction, loop_context).map_err(|error| error.at(pc, instruction))?;
+        rest = tail;
+        // `pc` indexes `rest`'s first element, which exists, so it is below the instruction count
+        // and the increment cannot wrap.
+        pc = pc.wrapping_add(1);
     }
-    Ok(())
 }
 
-/// One instruction, out of line, taking the machine by pointer.
+/// A FOREACH in progress.
+struct Batch<'data> {
+    body_start: usize,
+    body_end: usize,
+    /// Where the current pass stops: the body's end while rows remain, the program's end after.
+    resume_end: usize,
+    /// The registers the carry mask names, in ascending order: the first `carried_len` entries.
+    /// Listed once at loop entry so a row copies just these instead of testing every register.
+    carried: [u8; MAX_REGISTERS],
+    carried_len: usize,
+    /// Whether the body names a destination outside the carry mask. When it does not, every
+    /// register already equals its snapshot at the end of a row (the carried ones were just
+    /// copied into it), so the restore would copy the file onto itself and is skipped.
+    restore: bool,
+    /// The registers as the loop found them, plus every carried value so far. Each row starts
+    /// from this snapshot.
+    base_registers: Vec<RuntimeValue<'data>>,
+    iteration: usize,
+    row_base: usize,
+}
+
+impl Batch<'_> {
+    /// The loop context of the first row, or `None` when the run supplied no rows.
+    fn first_row(&self, machine: &mut Machine<'_, '_>) -> Option<(usize, usize)> {
+        if machine.iterations == 0 {
+            finish_batch(machine);
+            return None;
+        }
+        Some((self.iteration, self.row_base))
+    }
+}
+
+/// Starts the FOREACH at `pc`: checks its body range, snapshots the registers, and decides what
+/// the batch's invocations can reuse between rows.
 #[inline(never)]
-fn step<'data>(
+fn enter_batch<'data>(
     machine: &mut Machine<'_, 'data>,
+    pc: usize,
     instruction: &InstructionRecord,
-    loop_context: Option<(usize, usize)>,
-) -> RunResult<()> {
-    execute_instruction(
-        machine.program,
-        machine.inputs,
-        machine.accounts,
-        machine.registers,
-        machine.scratch,
-        instruction,
-        loop_context,
-    )
+) -> Result<Batch<'data>, ProgramError> {
+    let program = machine.program;
+    let body_start = pc + 1;
+    let body_end = body_start
+        .checked_add(instruction.a as usize)
+        .filter(|end| *end <= program.instructions.len())
+        .ok_or_else(|| RunError::from(BallistaError::InvalidTemplateProgram).at(pc, instruction))?;
+    // Registers written inside the body are discarded after each iteration, except the ones named
+    // in the carry mask, which flow into the next iteration and out of the loop.
+    let carry = instruction.immediate();
+    let mut carried = [0u8; MAX_REGISTERS];
+    let mut carried_len = 0;
+    for register in 0..machine.registers.len().min(MAX_REGISTERS) {
+        if carry & (1u64 << register) != 0 {
+            carried[carried_len] = register as u8;
+            carried_len += 1;
+        }
+    }
+    // Every write goes through an instruction's `dst`, whatever its opcode, so a body whose
+    // destinations are all carried registers, or not registers at all, leaves nothing to restore.
+    let register_count = machine.registers.len();
+    let restore = program.instructions[body_start..body_end].iter().any(|record| {
+        let dst = record.dst as usize;
+        dst < register_count && (dst >= MAX_REGISTERS || carry & (1u64 << dst) == 0)
+    });
+    let base_registers = machine.registers.to_vec();
+    let (cache_cpi, data_invariant) =
+        loop_cache_plan(program, &program.instructions[body_start..body_end]);
+    machine.scratch.cache_cpi = cache_cpi;
+    machine.scratch.data_invariant = data_invariant;
+    machine.scratch.built = false;
+    // The first row starts from registers equal to the snapshot, so it needs no restore.
+    Ok(Batch {
+        body_start,
+        body_end,
+        resume_end: body_end,
+        carried,
+        carried_len,
+        restore,
+        base_registers,
+        iteration: 0,
+        row_base: program.header.fixed_account_count(),
+    })
+}
+
+/// Ends one pass over the batch body: keeps the carried registers, then either restores the
+/// snapshot for the next row and returns its loop context, or restores it for the code after the
+/// loop and returns `None`.
+#[inline(never)]
+fn next_iteration<'data>(
+    machine: &mut Machine<'_, 'data>,
+    batch: &mut Batch<'data>,
+) -> Option<(usize, usize)> {
+    for &register in &batch.carried[..batch.carried_len] {
+        let register = register as usize;
+        batch.base_registers[register] = machine.registers[register];
+    }
+    if batch.restore {
+        machine.registers.copy_from_slice(&batch.base_registers);
+    }
+    // Both stay below the row count and the runtime account count, which are at most 255.
+    batch.iteration = batch.iteration.wrapping_add(1);
+    if batch.iteration < machine.iterations {
+        // Row `n` starts at `fixed + n * stride`; stepping by the stride avoids a checked
+        // multiplication, which SBF implements with a 128-bit multiply routine of about fifty
+        // instructions.
+        batch.row_base = batch
+            .row_base
+            .wrapping_add(machine.program.header.batch_stride());
+        return Some((batch.iteration, batch.row_base));
+    }
+    batch.resume_end = machine.program.instructions.len();
+    finish_batch(machine);
+    None
+}
+
+/// Clears the per-batch invocation cache once the loop is over.
+fn finish_batch(machine: &mut Machine<'_, '_>) {
+    machine.scratch.cache_cpi = None;
+    machine.scratch.built = false;
+    machine.scratch.data_invariant = false;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -728,49 +843,8 @@ pub fn execute_instruction<'data>(
             set(registers, dst, value)?;
         }
         OP_DERIVE_PDA | OP_CREATE_PDA => {
-            let program_account = resolve_account(program, accounts, instruction.a, loop_context)?;
-            let (start, count) = instruction.blob_range();
-            if count == 0 || count > MAX_PDA_SEEDS {
-                return Err(BallistaError::InvalidTemplateProgram.into());
-            }
-            let end = start
-                .checked_add(count)
-                .ok_or(BallistaError::InvalidTemplateProgram)?;
-            let segments = program
-                .data_segments
-                .get(start..end)
-                .ok_or(BallistaError::InvalidTemplateProgram)?;
-            let mut storage = [[0u8; MAX_PDA_SEED_LEN]; MAX_PDA_SEEDS];
-            let mut lengths = [0usize; MAX_PDA_SEEDS];
-            for (slot, segment) in segments.iter().enumerate() {
-                let mut sink = FixedSink::new(&mut storage[slot]);
-                encode_segment(program, registers, segment, &mut sink)?;
-                lengths[slot] = sink.len;
-            }
-            // One extra slot holds the caller-supplied bump for CREATE_PDA.
-            let mut bump = [0u8; 1];
-            let mut seeds: [&[u8]; MAX_PDA_SEEDS + 1] = [&[]; MAX_PDA_SEEDS + 1];
-            let derived = if instruction.opcode == OP_CREATE_PDA {
-                let RuntimeValue::U64(value) = get(registers, instruction.b)? else {
-                    return Err(BallistaError::TypeMismatch.into());
-                };
-                bump[0] = u8::try_from(value).map_err(|_| BallistaError::InvalidPdaDerivation)?;
-                for slot in 0..count {
-                    seeds[slot] = &storage[slot][..lengths[slot]];
-                }
-                seeds[count] = &bump;
-                Address::create_program_address(&seeds[..count + 1], program_account.address())
-                    .map_err(|_| BallistaError::InvalidPdaDerivation)?
-            } else {
-                for slot in 0..count {
-                    seeds[slot] = &storage[slot][..lengths[slot]];
-                }
-                let (derived, _) =
-                    Address::try_find_program_address(&seeds[..count], program_account.address())
-                        .ok_or(BallistaError::InvalidPdaDerivation)?;
-                derived
-            };
-            set(registers, dst, RuntimeValue::Pubkey(derived.to_bytes()))?;
+            let derived = derive_pda(program, accounts, registers, instruction, loop_context)?;
+            set(registers, dst, RuntimeValue::Pubkey(derived))?;
         }
         OP_REQUIRE => {
             if !read_bool(registers, instruction.a)? {
@@ -785,7 +859,7 @@ pub fn execute_instruction<'data>(
             if instruction.b != NO_INDEX && !read_bool(registers, instruction.b)? {
                 return Ok(());
             }
-            invoke_cpi(
+            invoke_out_of_line(
                 program,
                 accounts,
                 registers,
@@ -800,6 +874,77 @@ pub fn execute_instruction<'data>(
         _ => return Err(BallistaError::InvalidTemplateProgram.into()),
     }
     Ok(())
+}
+
+/// The invoke arm's call into `invoke_cpi`, kept out of line so the invocation's setup is never
+/// inlined into the dispatch loop, where its locals and register pressure would weigh on every
+/// other instruction.
+#[inline(never)]
+fn invoke_out_of_line<'data>(
+    program: &ProgramView<'data>,
+    accounts: &'data [AccountView],
+    registers: &[RuntimeValue<'data>],
+    cpi_index: usize,
+    loop_context: Option<(usize, usize)>,
+    scratch: &mut Scratch<'data>,
+) -> RunResult<()> {
+    invoke_cpi(program, accounts, registers, cpi_index, loop_context, scratch)
+}
+
+/// Derives the address a `DERIVE_PDA` or `CREATE_PDA` names. Out of line: its seed buffers are
+/// most of a kilobyte, and inlined into the dispatch loop they cost every other instruction a
+/// larger frame to set up.
+#[inline(never)]
+fn derive_pda<'data>(
+    program: &ProgramView<'data>,
+    accounts: &'data [AccountView],
+    registers: &[RuntimeValue<'data>],
+    instruction: &InstructionRecord,
+    loop_context: Option<(usize, usize)>,
+) -> RunResult<[u8; 32]> {
+    let program_account = resolve_account(program, accounts, instruction.a, loop_context)?;
+    let (start, count) = instruction.blob_range();
+    if count == 0 || count > MAX_PDA_SEEDS {
+        return Err(BallistaError::InvalidTemplateProgram.into());
+    }
+    let end = start
+        .checked_add(count)
+        .ok_or(BallistaError::InvalidTemplateProgram)?;
+    let segments = program
+        .data_segments
+        .get(start..end)
+        .ok_or(BallistaError::InvalidTemplateProgram)?;
+    let mut storage = [[0u8; MAX_PDA_SEED_LEN]; MAX_PDA_SEEDS];
+    let mut lengths = [0usize; MAX_PDA_SEEDS];
+    for (slot, segment) in segments.iter().enumerate() {
+        let mut sink = FixedSink::new(&mut storage[slot]);
+        encode_segment(program, registers, segment, &mut sink)?;
+        lengths[slot] = sink.len;
+    }
+    // One extra slot holds the caller-supplied bump for CREATE_PDA.
+    let mut bump = [0u8; 1];
+    let mut seeds: [&[u8]; MAX_PDA_SEEDS + 1] = [&[]; MAX_PDA_SEEDS + 1];
+    let derived = if instruction.opcode == OP_CREATE_PDA {
+        let RuntimeValue::U64(value) = get(registers, instruction.b)? else {
+            return Err(BallistaError::TypeMismatch.into());
+        };
+        bump[0] = u8::try_from(value).map_err(|_| BallistaError::InvalidPdaDerivation)?;
+        for slot in 0..count {
+            seeds[slot] = &storage[slot][..lengths[slot]];
+        }
+        seeds[count] = &bump;
+        Address::create_program_address(&seeds[..count + 1], program_account.address())
+            .map_err(|_| BallistaError::InvalidPdaDerivation)?
+    } else {
+        for slot in 0..count {
+            seeds[slot] = &storage[slot][..lengths[slot]];
+        }
+        let (derived, _) =
+            Address::try_find_program_address(&seeds[..count], program_account.address())
+                .ok_or(BallistaError::InvalidPdaDerivation)?;
+        derived
+    };
+    Ok(derived.to_bytes())
 }
 
 /// Reads a typed value from the return data of the CPI that just ran.
@@ -1236,6 +1381,7 @@ pub fn encode_register_segment<'data, S: ByteSink>(
     }
 }
 
+#[inline(always)]
 pub fn resolve_account<'data>(
     program: &ProgramView<'_>,
     accounts: &'data [AccountView],
@@ -1392,11 +1538,9 @@ pub fn set<'data>(
     Ok(())
 }
 
+#[inline(always)]
 pub fn get<'data>(registers: &[RuntimeValue<'data>], index: u8) -> RunResult<RuntimeValue<'data>> {
-    match registers.get(index as usize).copied() {
-        Some(RuntimeValue::Unset) | None => Err(BallistaError::InvalidRegister.into()),
-        Some(value) => Ok(value),
-    }
+    read(registers, index).copied()
 }
 
 /// The initialized register at `index`, borrowed where it lives. Handlers match on the reference,
@@ -1416,13 +1560,13 @@ fn read<'registers, 'data>(
 /// `TypeMismatch` if it holds another type, the same order `as_bool(get(..)?)` reports them in.
 #[inline(always)]
 fn read_bool(registers: &[RuntimeValue<'_>], index: u8) -> RunResult<bool> {
-    match registers.get(index as usize) {
-        Some(RuntimeValue::Bool(value)) => Ok(*value),
-        Some(RuntimeValue::Unset) | None => Err(BallistaError::InvalidRegister.into()),
-        Some(_) => Err(BallistaError::TypeMismatch.into()),
+    match read(registers, index)? {
+        RuntimeValue::Bool(value) => Ok(*value),
+        _ => Err(BallistaError::TypeMismatch.into()),
     }
 }
 
+#[inline(always)]
 pub fn as_bool(value: RuntimeValue<'_>) -> RunResult<bool> {
     match value {
         RuntimeValue::Bool(value) => Ok(value),

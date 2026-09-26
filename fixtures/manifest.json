@@ -20,7 +20,7 @@
     "sourceMap": [
       {
         "pc": 0,
-        "path": "steps[0]"
+        "path": "inputs.amount"
       },
       {
         "pc": 1,
@@ -29,7 +29,7 @@
     ]
   },
   "batch-transfer-30": {
-    "hash": "0502f9322eb24b7d96270e63f7998c9416f1e1d24550ab2e1b0de26c3ce4ea0a",
+    "hash": "8c0b24a4bc8c18dd92399b950c67c1fdb4f21c28b019e41c30e057142f5c66d2",
     "stats": {
       "payloadBytes": 168,
       "fixedAccounts": 2,
@@ -49,11 +49,11 @@
     "sourceMap": [
       {
         "pc": 0,
-        "path": "steps[0]"
+        "path": "inputs.amount"
       },
       {
         "pc": 1,
-        "path": "steps[0].steps[0]"
+        "path": "steps[0]"
       },
       {
         "pc": 2,
@@ -177,7 +177,7 @@
     ]
   },
   "assert-ata-with-bump": {
-    "hash": "a89e3e6bb7288b3253caf38481437db00eebbbc263a20b1803dae90469cb22fc",
+    "hash": "03f1cfd386ae6beeb3a1c39d6c46ef5c019f4691879c507f0ce30f7e9f1fa047",
     "stats": {
       "payloadBytes": 284,
       "fixedAccounts": 5,
@@ -197,7 +197,7 @@
     "sourceMap": [
       {
         "pc": 0,
-        "path": "steps[0]"
+        "path": "inputs.bump"
       },
       {
         "pc": 1,
@@ -230,16 +230,16 @@
     ]
   },
   "checked-transfer-snapshot": {
-    "hash": "933048fa95d02378f65ded959a6e3e626f3152fd3cd00aa508f39da6cdd77a1f",
+    "hash": "0ea06030dbc2e94055b115118c9e91f01b8fedd974f34c811b2a0f9cc1e3d593",
     "stats": {
-      "payloadBytes": 248,
+      "payloadBytes": 232,
       "fixedAccounts": 3,
       "batchStride": 0,
       "batchMaxIterations": 0,
       "batchMinIterations": 0,
       "inputs": 1,
-      "registers": 6,
-      "instructions": 8,
+      "registers": 5,
+      "instructions": 7,
       "cpis": 1,
       "maxExpandedCpis": 1,
       "maxCpiDataLength": 12,
@@ -250,11 +250,11 @@
     "sourceMap": [
       {
         "pc": 0,
-        "path": "steps[0]"
+        "path": "inputs.amount"
       },
       {
         "pc": 1,
-        "path": "steps[1]"
+        "path": "steps[0]"
       },
       {
         "pc": 2,
@@ -278,16 +278,11 @@
         "pc": 6,
         "path": "steps[3]",
         "label": "balanceDropsByAmount"
-      },
-      {
-        "pc": 7,
-        "path": "steps[3]",
-        "label": "balanceDropsByAmount"
       }
     ]
   },
   "carry-sum": {
-    "hash": "84dfc418a3b432da1c110c482bd077693f17f8e157d0ea45c42b72a6e2429f04",
+    "hash": "16c992c6a4f320ce07739abf0355f5035c1668751e5b0fa6d031bae934b260d5",
     "stats": {
       "payloadBytes": 164,
       "fixedAccounts": 0,
@@ -307,15 +302,15 @@
     "sourceMap": [
       {
         "pc": 0,
-        "path": "steps[0]"
+        "path": "inputs.budget"
       },
       {
         "pc": 1,
-        "path": "steps[1]"
+        "path": "constants[0]"
       },
       {
         "pc": 2,
-        "path": "steps[1].steps[0]"
+        "path": "steps[1]"
       },
       {
         "pc": 3,
@@ -327,8 +322,7 @@
       },
       {
         "pc": 5,
-        "path": "steps[2]",
-        "label": "withinBudget"
+        "path": "steps[1].steps[0]"
       },
       {
         "pc": 6,
@@ -396,7 +390,7 @@
     "sourceMap": [
       {
         "pc": 0,
-        "path": "steps[0]"
+        "path": "inputs.amount"
       },
       {
         "pc": 1,
@@ -405,7 +399,7 @@
     ]
   },
   "dynamic-read": {
-    "hash": "544ed47f7be77b96c115a27aad46b4b9bc035f0105ccc2eb5ae4b2fbc58791aa",
+    "hash": "c8e98ec18749c9702e09f7bc7126d339c4cf51dbfe8d0d897c1bc9507e08e2bd",
     "stats": {
       "payloadBytes": 152,
       "fixedAccounts": 1,
@@ -425,13 +419,11 @@
     "sourceMap": [
       {
         "pc": 0,
-        "path": "steps[0]",
-        "label": "fieldMatches"
+        "path": "inputs.offset"
       },
       {
         "pc": 1,
-        "path": "steps[0]",
-        "label": "fieldMatches"
+        "path": "inputs.expected"
       },
       {
         "pc": 2,
@@ -451,7 +443,7 @@
     ]
   },
   "return-data": {
-    "hash": "339e4e894e2c98e25f0d0492600450afb091c8d178768b4ebe612ce0d118fab4",
+    "hash": "5bfabdb94fbbdd8990689415bfaf3cb223c655d88a96a49195968ca1cbb59808",
     "stats": {
       "payloadBytes": 175,
       "fixedAccounts": 2,
@@ -471,17 +463,16 @@
     "sourceMap": [
       {
         "pc": 0,
+        "path": "constants[0]"
+      },
+      {
+        "pc": 1,
         "path": "steps[0]",
         "label": "getAccountDataSize"
       },
       {
-        "pc": 1,
-        "path": "steps[1]"
-      },
-      {
         "pc": 2,
-        "path": "steps[2]",
-        "label": "sizeIs165"
+        "path": "steps[1]"
       },
       {
         "pc": 3,
@@ -516,7 +507,7 @@
     "sourceMap": [
       {
         "pc": 0,
-        "path": "steps[0]"
+        "path": "inputs.amount"
       },
       {
         "pc": 1,
@@ -525,7 +516,7 @@
     ]
   },
   "pinned-mint-read": {
-    "hash": "ec7e83f18b19c6e45429cf602d5e1ba1627e3b781b707d887c0b396362768bf8",
+    "hash": "4b488823e719c1badf3afe80f299617616d8a1a4dd9684ba4cb56506a6f4cbd5",
     "stats": {
       "payloadBytes": 160,
       "fixedAccounts": 1,
@@ -545,8 +536,7 @@
     "sourceMap": [
       {
         "pc": 0,
-        "path": "steps[0]",
-        "label": "sixDecimals"
+        "path": "constants[0]"
       },
       {
         "pc": 1,

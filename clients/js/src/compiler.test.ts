@@ -70,7 +70,8 @@ describe('Ballista compiler', () => {
     expect(compiled.bytes[4]).toBe(1);
     expect(inspectTemplate(compiled.bytes)).toEqual(compiled.stats);
     expect(compiled.sourceMap).toEqual([
-      { pc: 0, path: 'steps[0]' },
+      // The input loads before the first step, so it carries its own path.
+      { pc: 0, path: 'inputs.amount' },
       { pc: 1, path: 'steps[0]' },
     ]);
   });
@@ -207,7 +208,8 @@ describe('Ballista compiler', () => {
       ],
     });
 
-    expect(compileTemplate(checkedTransfer).stats).toMatchObject({ instructions: 8, registers: 6 });
+    // The amount input is read twice but loads once, before the first step.
+    expect(compileTemplate(checkedTransfer).stats).toMatchObject({ instructions: 7, registers: 5 });
     expect(() =>
       compileTemplate(
         defineTemplate({
@@ -443,10 +445,11 @@ describe('Ballista compiler', () => {
     const record = instructionOffset(compiled, forEachPc);
     expect(compiled.bytes[record]).toBe(42);
     expect(compiled.bytes[record + 2]).toBe(3);
-    expect(readU64(compiled.bytes, record + 6)).toBe(1n << 0n);
+    // Register 0 holds the hoisted budget input, so the carried total is register 1.
+    expect(readU64(compiled.bytes, record + 6)).toBe(1n << 1n);
     const move = instructionOffset(compiled, forEachPc + 3);
     expect(compiled.bytes[move]).toBe(49);
-    expect(compiled.bytes[move + 1]).toBe(0);
+    expect(compiled.bytes[move + 1]).toBe(1);
     expect(compiled.sourceMap.at(-1)).toEqual({ pc: 7, path: 'steps[2]', label: 'withinBudget' });
 
     expect(() =>
@@ -531,7 +534,9 @@ describe('Ballista compiler', () => {
         ],
       }),
     );
-    const read = instructionOffset(compiled, 1);
+    // Both inputs load first, so the read is the third instruction and takes its offset from
+    // register 0, where the offset input landed.
+    const read = instructionOffset(compiled, 2);
     expect(compiled.bytes[read]).toBe(13);
     expect(compiled.bytes[read + 3]).toBe(0);
     expect(compiled.bytes[read + 5]).toBe(1);
@@ -573,7 +578,9 @@ describe('Ballista compiler', () => {
       ],
     });
     const compiled = compileTemplate(sized);
-    const read = instructionOffset(compiled, 1);
+    // The comparison's constant is hoisted ahead of the invoke, so the read still follows it
+    // directly, which is what the verifier requires.
+    const read = instructionOffset(compiled, 2);
     expect(compiled.bytes[read]).toBe(48);
     expect(compiled.bytes[read + 2]).toBe(13);
     expect(compiled.stats.instructions).toBe(5);
@@ -647,9 +654,11 @@ describe('Ballista compiler', () => {
       }),
     );
     expect(compiled.sourceMap).toEqual([
-      { pc: 0, path: 'steps[0]', label: 'loadAmount' },
-      { pc: 1, path: 'steps[1]', label: 'payEveryone' },
-      { pc: 2, path: 'steps[1].steps[0]', label: 'positive' },
+      // Inputs and constants are materialized once, before the loop, so the body is three
+      // instructions instead of five.
+      { pc: 0, path: 'inputs.amount' },
+      { pc: 1, path: 'constants[0]' },
+      { pc: 2, path: 'steps[1]', label: 'payEveryone' },
       { pc: 3, path: 'steps[1].steps[0]', label: 'positive' },
       { pc: 4, path: 'steps[1].steps[0]', label: 'positive' },
       { pc: 5, path: 'steps[1].steps[1]', label: 'pay' },

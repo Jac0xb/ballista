@@ -7,6 +7,7 @@ import {
   type DataPart,
   type Expression,
   type InputDefinition,
+  type Literal,
   type ReadType,
   type Step,
   type Template,
@@ -95,6 +96,56 @@ export const opcode = {
   move: 49,
   createPda: 50,
 } as const;
+
+/** The conjuncts of a requirement: `and(and(a, b), c)` is three separate assertions. */
+function flattenConjunction(condition: Expression, into: Expression[] = []): Expression[] {
+  if (condition.kind === 'binary' && condition.op === 'and') {
+    flattenConjunction(condition.left, into);
+    flattenConjunction(condition.right, into);
+    return into;
+  }
+  into.push(condition);
+  return into;
+}
+
+/** A constant's identity, so two uses of the same value share one register. */
+function literalKey(value: Literal): string {
+  const inner: unknown = value.value;
+  if (inner instanceof Uint8Array) {
+    return `${value.type}:${[...inner].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+  }
+  return `${value.type}:${String(inner)}`;
+}
+
+/** Every literal expression in the steps, in the order they appear, deduplicated by value. */
+function collectLiterals(value: unknown, into = new Map<string, Literal>()): Map<string, Literal> {
+  if (Array.isArray(value)) {
+    for (const item of value) collectLiterals(item, into);
+    return into;
+  }
+  if (value === null || typeof value !== 'object') return into;
+  const record = value as Record<string, unknown>;
+  const inner = record.value as Literal | undefined;
+  // `data.literal(bytes)` is a CPI data part, not an expression, and has no typed value.
+  if (record.kind === 'literal' && inner !== undefined && typeof inner === 'object' && 'type' in inner) {
+    const key = literalKey(inner);
+    if (!into.has(key)) into.set(key, inner);
+  }
+  for (const item of Object.values(record)) collectLiterals(item, into);
+  return into;
+}
+
+/** Every fixed input the steps refer to, found by walking the plain object tree. */
+function collectInputNames(value: unknown, into: Set<string>): void {
+  if (Array.isArray(value)) {
+    for (const item of value) collectInputNames(item, into);
+    return;
+  }
+  if (value === null || typeof value !== 'object') return;
+  const record = value as Record<string, unknown>;
+  if (record.kind === 'input' && typeof record.name === 'string') into.add(record.name);
+  for (const item of Object.values(record)) collectInputNames(item, into);
+}
 
 const readOpcode: Record<ReadType, number> = {
   bool: opcode.readBool,
@@ -233,6 +284,10 @@ class Compiler {
   readonly batchEntries: [string, AccountConstraint][];
   readonly inputIndices = new Map<string, number>();
   readonly rowInputIndices = new Map<string, number>();
+  /// The register each referenced fixed input was loaded into, before the first step.
+  readonly fixedInputs = new Map<string, ExpressionResult>();
+  /// The register each distinct constant was materialized into, likewise before the first step.
+  readonly constants = new Map<string, ExpressionResult>();
   readonly fixedIndices = new Map<string, number>();
   readonly batchIndices = new Map<string, number>();
   readonly accountGroupIndices = new Map<string, number>();
@@ -266,6 +321,31 @@ class Compiler {
   }
 
   compile(): CompiledTemplate {
+    // Fixed inputs load once, before any step. Their value cannot change during a run, so a load
+    // inside a batch body would repeat the same work on every row — and, because the loop
+    // restores every register the body writes, it would also stop the executor from reusing the
+    // invocation data it built for the previous row.
+    const used = new Set<string>();
+    collectInputNames(this.template.steps, used);
+    for (const [name, definition] of this.inputEntries) {
+      if (!used.has(name)) continue;
+      const index = this.inputIndices.get(name)!;
+      this.location = { path: `inputs.${name}` };
+      this.fixedInputs.set(
+        name,
+        this.emit(opcode.loadInput, definition.type, definition.type === 'bytes' ? definition.maxLength : 0, index),
+      );
+    }
+    // Constants are hoisted for the same reasons, and shared between uses: a literal inside a
+    // batch body would otherwise be rebuilt on every row.
+    let constantIndex = 0;
+    for (const [key, value] of collectLiterals(this.template.steps)) {
+      if (this.constants.has(key)) continue;
+      this.location = { path: `constants[${constantIndex}]` };
+      constantIndex += 1;
+      this.constants.set(key, this.emitLiteral(value));
+    }
+    this.location = { path: 'template' };
     // Steps compile first so every static read has already raised its account's data floor.
     this.compileSteps(this.template.steps, false, new Map(), new Set(), 'steps');
     for (const [name, constraint] of this.fixedEntries) {
@@ -426,9 +506,14 @@ class Compiler {
         }
         this.pushInstruction(instructionRecord(opcode.move, binding.register, value.register));
       } else if (current.kind === 'require') {
-        const condition = this.compileExpression(current.condition, inLoop, bindings);
-        requireType(condition, 'bool', 'require condition');
-        this.pushInstruction(instructionRecord(opcode.require, NO_INDEX, condition.register));
+        // `require(and(a, b))` is `require(a); require(b)`, which drops the `and` instruction
+        // and the register it wrote. Nested ands flatten the same way. The failure is still one
+        // error: whichever conjunct is false stops the run.
+        for (const conjunct of flattenConjunction(current.condition)) {
+          const condition = this.compileExpression(conjunct, inLoop, bindings);
+          requireType(condition, 'bool', 'require condition');
+          this.pushInstruction(instructionRecord(opcode.require, NO_INDEX, condition.register));
+        }
       } else {
         this.compileInvoke(current, inLoop, bindings);
       }
@@ -548,6 +633,8 @@ class Compiler {
 
   compileExpression(current: Expression, inLoop: boolean, bindings: Bindings): ExpressionResult {
     if (current.kind === 'input') {
+      const loaded = this.fixedInputs.get(current.name);
+      if (loaded !== undefined) return loaded;
       const index = this.inputIndices.get(current.name);
       if (index === undefined) throw new TypeError(`Unknown input: ${current.name}`);
       const definition = this.inputEntries[index]![1];
@@ -571,25 +658,12 @@ class Compiler {
       return value;
     }
     if (current.kind === 'literal') {
-      switch (current.value.type) {
-        case 'bool':
-          return this.emit(opcode.constBool, 'bool', 0, current.value.value ? 1 : 0);
-        case 'u64':
-          return this.emit(opcode.constU64, 'u64', 0, NO_INDEX, NO_INDEX, NO_INDEX, current.value.value);
-        case 'i64':
-          return this.emit(opcode.constI64, 'i64', 0, NO_INDEX, NO_INDEX, NO_INDEX, current.value.value);
-        case 'u128': {
-          const encoded = encodeBigint(current.value.value, 16);
-          const offset = this.addBlob(encoded);
-          return this.emit(opcode.constU128, 'u128', 0, NO_INDEX, NO_INDEX, NO_INDEX, blobImmediate(offset, 16));
-        }
-        case 'pubkey':
-          return this.emit(opcode.constPubkey, 'pubkey', 0, this.addPubkey(current.value.value));
-        case 'bytes': {
-          const offset = this.addBlob(current.value.value);
-          return this.emit(opcode.constBytes, 'bytes', current.value.value.length, NO_INDEX, NO_INDEX, NO_INDEX, blobImmediate(offset, current.value.value.length));
-        }
-      }
+      const key = literalKey(current.value);
+      const loaded = this.constants.get(key);
+      if (loaded !== undefined) return loaded;
+      const result = this.emitLiteral(current.value);
+      this.constants.set(key, result);
+      return result;
     }
     if (current.kind === 'accountField') {
       const accountReference = this.encodeAccountReference(current.account, inLoop);
@@ -765,6 +839,27 @@ class Compiler {
     if (register >= MAX_REGISTERS) throw new RangeError('Template uses more than 64 registers');
     this.pushInstruction(instructionRecord(operation, register, a, b, c, immediate, flags));
     return { register, type, maxLength };
+  }
+
+  emitLiteral(value: Literal): ExpressionResult {
+    switch (value.type) {
+      case 'bool':
+        return this.emit(opcode.constBool, 'bool', 0, value.value ? 1 : 0);
+      case 'u64':
+        return this.emit(opcode.constU64, 'u64', 0, NO_INDEX, NO_INDEX, NO_INDEX, value.value);
+      case 'i64':
+        return this.emit(opcode.constI64, 'i64', 0, NO_INDEX, NO_INDEX, NO_INDEX, value.value);
+      case 'u128': {
+        const offset = this.addBlob(encodeBigint(value.value, 16));
+        return this.emit(opcode.constU128, 'u128', 0, NO_INDEX, NO_INDEX, NO_INDEX, blobImmediate(offset, 16));
+      }
+      case 'pubkey':
+        return this.emit(opcode.constPubkey, 'pubkey', 0, this.addPubkey(value.value));
+      case 'bytes': {
+        const offset = this.addBlob(value.value);
+        return this.emit(opcode.constBytes, 'bytes', value.value.length, NO_INDEX, NO_INDEX, NO_INDEX, blobImmediate(offset, value.value.length));
+      }
+    }
   }
 
   encodeAccountReference(reference: AccountReference, inLoop: boolean): number {

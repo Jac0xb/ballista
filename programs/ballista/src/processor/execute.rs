@@ -695,6 +695,10 @@ fn enter_batch<'data>(
         finish_batch(machine);
         return Ok((body_end, program.instructions.len()));
     }
+    // `run` allocates exactly the header's one-byte count of registers. Sliced by that count
+    // rather than by the file's own length, the copy is visibly small and needs no overflow
+    // check, which on SBF is a 128-bit multiply.
+    let snapshot = machine.registers[..program.header.register_count()].to_vec();
     // Built in place: moving a finished batch into the slot would copy it with a syscall.
     let active = batch.insert(Batch {
         body_start,
@@ -702,7 +706,7 @@ fn enter_batch<'data>(
         carried: [0; MAX_REGISTERS],
         carried_len: 0,
         restore,
-        base_registers: machine.registers.to_vec(),
+        base_registers: snapshot,
         iteration: 0,
         row_base: program.header.fixed_account_count(),
     });

@@ -19,6 +19,7 @@ use utils::pda::{get_template_address, TEMPLATE_SEED};
 
 pub mod error;
 pub mod processor;
+mod profile;
 pub mod utils;
 
 declare_id!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
@@ -36,8 +37,12 @@ pub fn process_instruction(
     accounts: &mut [AccountView],
     instruction_data: &[u8],
 ) -> ProgramResult {
+    // Back-to-back so the decoder can price the counter read itself.
+    profile::mark(profile::TAG_CALIBRATE_A);
+    profile::mark(profile::TAG_CALIBRATE_B);
     let instruction = BallistaInstruction::parse(instruction_data)
         .map_err(|_| BallistaError::InvalidInstructionData)?;
+    profile::mark(profile::TAG_DISPATCHED);
 
     match instruction {
         BallistaInstruction::CreateTemplate {
@@ -218,7 +223,10 @@ fn run_template(accounts: &mut [AccountView], input_bytes: &[u8]) -> ProgramResu
     let program = account
         .finalized_program()
         .map_err(|_| BallistaError::TemplateNotFinalized)?;
-    processor::run(&program, input_bytes, runtime_accounts, template.address())
+    profile::mark(profile::TAG_TEMPLATE_LOADED);
+    let result = processor::run(&program, input_bytes, runtime_accounts, template.address());
+    profile::report();
+    result
 }
 
 /// Checks the accounts an upload needs and returns the template PDA's bump, so the caller does

@@ -6,11 +6,16 @@ publish = false
 
 [workspace]
 
+[features]
+# Loads `target/deploy/ballista-cu-profile.so` and prints the phase breakdown.
+cu-profile = []
+
 [dependencies]
 ballista-common = { path = "../../common", features = ["proptest"] }
 proptest = "1.11"
 mollusk-svm = { version = "=0.14.0", features = ["inner-instructions"] }
 mollusk-svm-programs-token = { version = "=0.14.0", default-features = false, features = ["associated-token", "token"] }
+mollusk-svm-bencher = "=0.14.0"
 mollusk-svm-programs-memo = "=0.14.0"
 solana-account = "=4.3.1"
 solana-address = "=2.6.1"
@@ -33,3 +38,7 @@ solana-transaction = "=4.1.2"
 spl-token-interface = "=2.0.0"
 wincode = "=0.5.4"
 zerocopy = "=0.8.56"
+
+[[bench]]
+name = "compute_units"
+harness = false

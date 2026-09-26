@@ -199,11 +199,15 @@ pub fn run<'data>(
         split_group_prefix(program, input_bytes).map_err(RunError::before_execution)?;
     let layout = validate_runtime_accounts(program, runtime_accounts, group_lengths)
         .map_err(RunError::before_execution)?;
+    crate::profile::mark(crate::profile::TAG_ACCOUNTS_VALIDATED);
     let inputs = parse_run_inputs(program, input_bytes, layout.iterations)
         .map_err(RunError::before_execution)?;
+    crate::profile::mark(crate::profile::TAG_INPUTS_PARSED);
     let mut registers = vec![RuntimeValue::Unset; program.header.register_count()];
+    crate::profile::mark(crate::profile::TAG_REGISTERS_ALLOCATED);
     let mut scratch = Scratch::new(program);
     scratch.set_groups(&layout);
+    crate::profile::mark(crate::profile::TAG_STATE_ALLOCATED);
     execute_root(
         program,
         &inputs,
@@ -212,6 +216,7 @@ pub fn run<'data>(
         &mut registers,
         &mut scratch,
     )?;
+    crate::profile::mark(crate::profile::TAG_EXECUTED);
     if program.header.flags() & PROGRAM_FLAG_EMIT_EVENT != 0 {
         emit_event(&encode_event(
             layout.iterations,
@@ -881,6 +886,7 @@ fn invoke_cpi<'data>(
     loop_context: Option<(usize, usize)>,
     scratch: &mut Scratch<'data>,
 ) -> RunResult<()> {
+    crate::profile::setup_begin();
     let descriptor = program
         .cpis
         .get(cpi_index)
@@ -987,7 +993,11 @@ fn invoke_cpi<'data>(
         accounts: scratch.metas.as_slice(),
         data: scratch.data.as_slice(),
     };
-    bounded_invoke(&instruction, scratch.views.as_slice())?;
+    crate::profile::setup_end();
+    crate::profile::cpi_begin();
+    let invoked = bounded_invoke(&instruction, scratch.views.as_slice());
+    crate::profile::cpi_end();
+    invoked?;
     scratch.last_invoked = Some(program_account.address().to_bytes());
     Ok(())
 }

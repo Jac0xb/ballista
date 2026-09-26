@@ -1,0 +1,11 @@
+{
+  "create template, payroll 30 rows": 6817,
+  "run, empty template": 1014,
+  "run, one system transfer": 2938,
+  "run, oracle band, no cpi": 1932,
+  "run, payroll 30 rows": 51741,
+  "run, payroll 8 rows": 14989,
+  "run, pda derivation, bump search": 6015,
+  "run, pda derivation, bump supplied": 3147,
+  "run, sum 30 rows, no cpi": 18208
+}

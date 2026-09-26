@@ -18,6 +18,9 @@ no-entrypoint = []
 # Exposes the executor's pure functions for formal specifications (see certora/). No effect on
 # generated code; the module stays private in every other build.
 spec-api = []
+# Samples `sol_remaining_compute_units` at each phase boundary and emits one record per run. Only
+# for profiling builds; the deployed binary never enables it.
+cu-profile = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }

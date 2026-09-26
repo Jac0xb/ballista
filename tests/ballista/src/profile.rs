@@ -383,6 +383,21 @@ fn profile_compute_units() {
         "one literal seed, no search",
     );
 
+    // An assertion is its own dispatch, on top of the comparison that feeds it.
+    let per_require = harness.marginal(1, 21, |_harness, n| {
+        let mut builder = ProgramBuilder::new();
+        let flag = builder.const_bool(true);
+        for _ in 0..n {
+            builder.require(flag);
+        }
+        Case {
+            payload: builder.build().expect("builds"),
+            accounts: Vec::new(),
+            inputs: Vec::new(),
+        }
+    });
+    record("Instructions", "Assertion", per_require, "reads a bool register and continues");
+
     // ---- cross-program invocations ----------------------------------------
     let per_cpi = harness.marginal(1, 11, |harness, n| {
         let mut builder = ProgramBuilder::new();
@@ -516,6 +531,94 @@ fn profile_compute_units() {
         }
     });
     record("Batches", "Iteration with one invocation", per_row_cpi, "the shape a payroll run repeats");
+
+    // A fixed account in a batched invocation's list is resolved again on every iteration, even
+    // though nothing about it changes. This is what hoisting it out of the loop would recover.
+    const HOIST_ROWS: usize = 20;
+    let per_fixed_account_per_row = harness.marginal(2, 8, |harness, n| {
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some(system_program::id().to_bytes()), None, 0);
+        let from = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let row = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
+        // Extra fixed accounts, read-only, so the invoked transfer still behaves the same.
+        let spare: Vec<u8> = (0..n - 2)
+            .map(|_| builder.account(0, None, None, 0))
+            .collect();
+        builder.batch(HOIST_ROWS as u8, 0);
+        let amount = builder.const_u64(1);
+        let discriminator = builder.blob(&[2, 0, 0, 0]);
+        let mut cpi_accounts = vec![
+            (from, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+            (row, ACCOUNT_WRITABLE),
+        ];
+        cpi_accounts.extend(spare.iter().map(|account| (*account, 0)));
+        let cpi = builder.cpi(
+            system,
+            &cpi_accounts,
+            &[Segment::Literal(discriminator), Segment::Register(DATA_REG_U64, amount)],
+        );
+        builder.for_each(0, |body| body.invoke(cpi, None));
+        let mut accounts = vec![
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new(harness.signer, true),
+        ];
+        accounts.extend(
+            harness.plain[32..32 + n - 2]
+                .iter()
+                .map(|key| AccountMeta::new_readonly(*key, false)),
+        );
+        accounts.extend(
+            harness.plain[..HOIST_ROWS]
+                .iter()
+                .map(|key| AccountMeta::new(*key, false)),
+        );
+        Case {
+            payload: builder.build().expect("builds"),
+            accounts,
+            inputs: Vec::new(),
+        }
+    });
+    record(
+        "Batches",
+        "Fixed invocation account, per iteration",
+        per_fixed_account_per_row / HOIST_ROWS as f64,
+        "resolved again every row",
+    );
+
+    // Every iteration restores the register file from a snapshot taken before the loop, so a
+    // template pays for registers it declared even when the loop body never touches them. Two
+    // per-row costs, measured at different register counts, isolate that copy.
+    let per_row_at = |harness: &mut Harness, registers: usize| {
+        harness.marginal(2, 20, |harness, rows| {
+            let mut builder = ProgramBuilder::new();
+            let row = builder.row_account(0, None, None, 0);
+            for value in 0..registers {
+                builder.const_u64(value as u64);
+            }
+            builder.batch(rows as u8, 0);
+            builder.for_each(0, |body| {
+                let key = body.op(OP_ACCOUNT_KEY, row, NO_INDEX, NO_INDEX, 0);
+                let same = body.binary(ballista_common::template::OP_EQ, key, key);
+                body.require(same);
+            });
+            Case {
+                payload: builder.build().expect("builds"),
+                accounts: harness.plain[..rows]
+                    .iter()
+                    .map(|key| AccountMeta::new_readonly(*key, false))
+                    .collect(),
+                inputs: Vec::new(),
+            }
+        })
+    };
+    let few = per_row_at(&mut harness, 4);
+    let many = per_row_at(&mut harness, 40);
+    record(
+        "Batches",
+        "Declared register, per iteration",
+        (many - few) / 36.0,
+        "restored from the pre-loop snapshot whether or not the body writes it",
+    );
 
     let mut out = serde_json::Map::new();
     for (group, name, value, note) in &rows {

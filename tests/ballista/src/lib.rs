@@ -1,4 +1,9 @@
+pub mod cases;
+mod ceilings;
+
 mod benchmarks;
+#[cfg(feature = "cu-profile")]
+mod phases;
 mod profile;
 
 #[cfg(test)]

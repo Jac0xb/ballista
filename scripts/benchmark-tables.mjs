@@ -7,7 +7,7 @@
  *
  * Usage: node scripts/benchmark-tables.mjs
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const root = new URL('../', import.meta.url);
@@ -261,17 +261,49 @@ for (const groupName of profileOrder) {
   }
 }
 const profilePath = fileURLToPath(new URL('docs/cu-profile.md', root));
-const profileText = readFileSync(profilePath, 'utf8');
+let profileText = readFileSync(profilePath, 'utf8');
 const profileMarker = /<!-- profile:table -->[\s\S]*?<!-- \/profile -->/;
 if (profileMarker.test(profileText)) {
-  writeFileSync(
-    profilePath,
-    profileText.replace(profileMarker, `<!-- profile:table -->\n\n${profileRows.join('\n')}\n\n<!-- /profile -->`),
+  profileText = profileText.replace(
+    profileMarker,
+    `<!-- profile:table -->\n\n${profileRows.join('\n')}\n\n<!-- /profile -->`,
   );
   console.log('cu-profile.md: profile table');
 } else {
   console.log('cu-profile.md: no profile marker, skipped');
 }
+
+// The phase breakdown, one table per measured run, written by `pnpm cu:phases`.
+const phasesPath = fileURLToPath(new URL('fixtures/cu-phases.json', root));
+const phasesMarker = /<!-- profile:phases -->[\s\S]*?<!-- \/phases -->/;
+if (existsSync(phasesPath) && phasesMarker.test(profileText)) {
+  const phases = JSON.parse(readFileSync(phasesPath, 'utf8'));
+  const blocks = phases.map((entry) => {
+    const lines = [
+      `#### ${entry.case}`,
+      '',
+      `${group(entry.total)} compute units in total${entry.invokes > 0 ? `, across ${entry.invokes} invoke${entry.invokes === 1 ? '' : 's'}` : ', with no invoke'}.`,
+      '',
+      '| Phase | Compute units | Share |',
+      '| --- | ---: | ---: |',
+    ];
+    for (const row of entry.rows) {
+      const share = ((row.units * 100) / entry.total).toFixed(1);
+      lines.push(`| ${row.phase} | ${group(row.units)} | ${share}% |`);
+    }
+    return lines.join('\n');
+  });
+  profileText = profileText.replace(
+    phasesMarker,
+    `<!-- profile:phases -->\n\n${blocks.join('\n\n')}\n\n<!-- /phases -->`,
+  );
+  console.log('cu-profile.md: phase tables');
+} else if (!existsSync(phasesPath)) {
+  console.log('cu-profile.md: no fixtures/cu-phases.json, phase tables skipped');
+} else {
+  console.log('cu-profile.md: no phases marker, skipped');
+}
+writeFileSync(profilePath, profileText);
 
 function slug(heading) {
   return heading

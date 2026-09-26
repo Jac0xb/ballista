@@ -17,12 +17,19 @@ export function assertPda(input: {
   account: AccountReference;
   program: AccountReference;
   seeds: Expression[];
+  /**
+   * The canonical bump, usually `expression.input('bump')`. Supplying it derives the address once
+   * instead of searching down from 255, which is the difference between about 4,800 and 1,500
+   * compute units. A wrong bump makes the derivation fail or produce a different address, so the
+   * assertion still rejects a substituted account.
+   */
+  bump?: Expression;
   label?: string;
 }): Step {
   return step.require(
     expression.equal(
       expression.accountField(input.account, 'key'),
-      expression.pda(input.program, input.seeds),
+      expression.pda(input.program, input.seeds, input.bump),
     ),
     input.label,
   );
@@ -34,6 +41,7 @@ export function assertAta(input: {
   mint: AccountReference;
   tokenProgram: AccountReference;
   associatedTokenProgram: AccountReference;
+  bump?: Expression;
   label?: string;
 }): Step {
   return assertPda({
@@ -44,6 +52,7 @@ export function assertAta(input: {
       expression.accountField(input.tokenProgram, 'key'),
       expression.accountField(input.mint, 'key'),
     ],
+    ...(input.bump ? { bump: input.bump } : {}),
     ...(input.label ? { label: input.label } : {}),
   });
 }

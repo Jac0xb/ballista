@@ -104,7 +104,7 @@ export type Expression =
     }
   | { kind: 'clock'; field: 'slot' | 'unixTimestamp' }
   | { kind: 'loopIndex' }
-  | { kind: 'pda'; program: AccountReference; seeds: Expression[] }
+  | { kind: 'pda'; program: AccountReference; seeds: Expression[]; bump?: Expression }
   | {
       kind: 'binary';
       op:
@@ -164,6 +164,7 @@ export const ExpressionSchema: z.ZodType<Expression> = z.lazy(() =>
         kind: z.literal('pda'),
         program: AccountReferenceSchema,
         seeds: z.array(ExpressionSchema).min(1).max(15),
+        bump: ExpressionSchema.optional(),
       })
       .strict(),
     z
@@ -425,7 +426,8 @@ export const expression = {
   clockSlot: (): Expression => ({ kind: 'clock', field: 'slot' }),
   clockUnixTimestamp: (): Expression => ({ kind: 'clock', field: 'unixTimestamp' }),
   loopIndex: (): Expression => ({ kind: 'loopIndex' }),
-  pda: (program: AccountReference, seeds: Expression[]): Expression => ({ kind: 'pda', program, seeds }),
+  pda: (program: AccountReference, seeds: Expression[], bump?: Expression): Expression =>
+    bump === undefined ? { kind: 'pda', program, seeds } : { kind: 'pda', program, seeds, bump },
   add: binary('add'),
   subtract: binary('subtract'),
   multiply: binary('multiply'),

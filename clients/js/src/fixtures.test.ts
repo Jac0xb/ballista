@@ -129,6 +129,28 @@ export const fixtures: Record<string, () => Template> = {
       ],
     }),
 
+  'assert-ata-with-bump': () =>
+    defineTemplate({
+      inputs: { bump: { type: 'u64' } },
+      accounts: {
+        associatedTokenProgram: { executable: true, address: ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES },
+        tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
+        owner: {},
+        mint: {},
+        associatedTokenAccount: {},
+      },
+      steps: [
+        assertAta({
+          associatedTokenAccount: account.fixed('associatedTokenAccount'),
+          owner: account.fixed('owner'),
+          mint: account.fixed('mint'),
+          tokenProgram: account.fixed('tokenProgram'),
+          associatedTokenProgram: account.fixed('associatedTokenProgram'),
+          bump: expression.input('bump'),
+        }),
+      ],
+    }),
+
   'checked-transfer-snapshot': () =>
     defineTemplate({
       inputs: { amount: { type: 'u64' } },

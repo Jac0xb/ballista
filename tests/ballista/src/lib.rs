@@ -1114,6 +1114,109 @@ mod tests {
         assert_eq!(custom_code(&too_short), Some(6008), "trailing input bytes are rejected");
     }
 
+    /// Supplying the canonical bump turns the derivation into one `create_program_address` call
+    /// instead of a search down from 255, and a wrong bump still fails the assertion.
+    #[test]
+    fn a_supplied_bump_derives_once_and_still_rejects_substitutes() {
+        let creator = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        // A shallow owner finds its bump on the first attempt; a deep one costs several more.
+        let ata_of = |owner: &Pubkey| {
+            Pubkey::find_program_address(
+                &[owner.as_ref(), token::ID.as_ref(), mint.as_ref()],
+                &associated_token::ID,
+            )
+        };
+        let shallow = std::iter::repeat_with(Pubkey::new_unique)
+            .find(|owner| ata_of(owner).1 == 255)
+            .expect("a first-attempt bump exists");
+        let deep = std::iter::repeat_with(Pubkey::new_unique)
+            .find(|owner| ata_of(owner).1 <= 251)
+            .expect("a fourth-attempt bump exists");
+
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        accounts.insert(mint, Account::new(1_000_000, 0, &system_program::id()));
+        for owner in [shallow, deep] {
+            accounts.insert(owner, Account::new(1_000_000, 0, &system_program::id()));
+            accounts.insert(ata_of(&owner).0, Account::new(1_000_000, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        let searched = fixture("assert-ata");
+        let supplied = fixture("assert-ata-with-bump");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 90, &searched))
+            .program_result
+            .is_ok());
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 91, &supplied))
+            .program_result
+            .is_ok());
+        let (searched_template, _) = find_template_pda(&creator, 90);
+        let (supplied_template, _) = find_template_pda(&creator, 91);
+
+        let metas = |owner: Pubkey| {
+            vec![
+                AccountMeta::new_readonly(associated_token::ID, false),
+                AccountMeta::new_readonly(token::ID, false),
+                AccountMeta::new_readonly(owner, false),
+                AccountMeta::new_readonly(mint, false),
+                AccountMeta::new_readonly(ata_of(&owner).0, false),
+            ]
+        };
+        let run = |template: Pubkey, owner: Pubkey, inputs: &[u8]| {
+            let result = context.process_instruction(&run_instruction(template, metas(owner), inputs));
+            assert!(result.program_result.is_ok(), "{result:#?}");
+            result.compute_units_consumed
+        };
+
+        let shallow_bump = (ata_of(&shallow).1 as u64).to_le_bytes();
+        let deep_bump = (ata_of(&deep).1 as u64).to_le_bytes();
+        let shallow_searched = run(searched_template, shallow, &[]);
+        let deep_searched = run(searched_template, deep, &[]);
+        let shallow_supplied = run(supplied_template, shallow, &shallow_bump);
+        let deep_supplied = run(supplied_template, deep, &deep_bump);
+        eprintln!(
+            "ATA assertion compute units: searched {shallow_searched} (bump 255) /              {deep_searched} (bump {}), supplied {shallow_supplied} / {deep_supplied}",
+            ata_of(&deep).1
+        );
+
+        // One derivation costs the same however deep the canonical bump is.
+        assert!(
+            shallow_supplied.abs_diff(deep_supplied) < 50,
+            "a supplied bump is flat: {shallow_supplied} vs {deep_supplied}"
+        );
+        // The search pays about 1,500 units for every bump it rejects.
+        assert!(
+            deep_searched > shallow_searched + 4_000,
+            "the search grows with depth: {deep_searched} vs {shallow_searched}"
+        );
+        assert!(
+            deep_supplied + 5_000 < deep_searched,
+            "the supplied bump skips that search: {deep_supplied} vs {deep_searched}"
+        );
+
+        // A bump one below the canonical one either lands on the curve, which is not a valid
+        // program address, or derives a different one; both reject the substituted account.
+        let wrong = context.process_instruction(&run_instruction(
+            supplied_template,
+            metas(deep),
+            &(ata_of(&deep).1 as u64 - 1).to_le_bytes(),
+        ));
+        assert!(
+            matches!(decode_kind(&wrong), Some(6015 | 6017)),
+            "{wrong:#?}"
+        );
+
+        // A bump that does not fit in a byte is rejected before any derivation.
+        let oversized = context.process_instruction(&run_instruction(
+            supplied_template,
+            metas(deep),
+            &256u64.to_le_bytes(),
+        ));
+        assert_eq!(decode_kind(&oversized), Some(6017), "{oversized:#?}");
+    }
+
     /// Errors raised by an invoked program reach the caller untouched, so they are never mistaken
     /// for Ballista's own codes.
     #[test]
@@ -1767,6 +1870,8 @@ mod tests {
     fn fixture(name: &str) -> Vec<u8> {
         let hex = match name {
             "ensure-ata" => include_str!("../../../fixtures/ensure-ata.hex"),
+            "assert-ata" => include_str!("../../../fixtures/assert-ata.hex"),
+            "assert-ata-with-bump" => include_str!("../../../fixtures/assert-ata-with-bump.hex"),
             "carry-sum" => include_str!("../../../fixtures/carry-sum.hex"),
             "return-data" => include_str!("../../../fixtures/return-data.hex"),
             "dynamic-read" => include_str!("../../../fixtures/dynamic-read.hex"),

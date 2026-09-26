@@ -681,7 +681,7 @@ pub fn execute_instruction<'data>(
             let value = get(registers, instruction.a)?;
             set(registers, dst, value)?;
         }
-        OP_DERIVE_PDA => {
+        OP_DERIVE_PDA | OP_CREATE_PDA => {
             let program_account = resolve_account(program, accounts, instruction.a, loop_context)?;
             let (start, count) = instruction.blob_range();
             if count == 0 || count > MAX_PDA_SEEDS {
@@ -701,13 +701,29 @@ pub fn execute_instruction<'data>(
                 encode_segment(program, registers, segment, &mut sink)?;
                 lengths[slot] = sink.len;
             }
-            let mut seeds: [&[u8]; MAX_PDA_SEEDS] = [&[]; MAX_PDA_SEEDS];
-            for slot in 0..count {
-                seeds[slot] = &storage[slot][..lengths[slot]];
-            }
-            let (derived, _) =
-                Address::try_find_program_address(&seeds[..count], program_account.address())
-                    .ok_or(BallistaError::InvalidPdaDerivation)?;
+            // One extra slot holds the caller-supplied bump for CREATE_PDA.
+            let mut bump = [0u8; 1];
+            let mut seeds: [&[u8]; MAX_PDA_SEEDS + 1] = [&[]; MAX_PDA_SEEDS + 1];
+            let derived = if instruction.opcode == OP_CREATE_PDA {
+                let RuntimeValue::U64(value) = get(registers, instruction.b)? else {
+                    return Err(BallistaError::TypeMismatch.into());
+                };
+                bump[0] = u8::try_from(value).map_err(|_| BallistaError::InvalidPdaDerivation)?;
+                for slot in 0..count {
+                    seeds[slot] = &storage[slot][..lengths[slot]];
+                }
+                seeds[count] = &bump;
+                Address::create_program_address(&seeds[..count + 1], program_account.address())
+                    .map_err(|_| BallistaError::InvalidPdaDerivation)?
+            } else {
+                for slot in 0..count {
+                    seeds[slot] = &storage[slot][..lengths[slot]];
+                }
+                let (derived, _) =
+                    Address::try_find_program_address(&seeds[..count], program_account.address())
+                        .ok_or(BallistaError::InvalidPdaDerivation)?;
+                derived
+            };
             set(registers, dst, RuntimeValue::Pubkey(derived.to_bytes()))?;
         }
         OP_REQUIRE => {

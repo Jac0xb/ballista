@@ -66,13 +66,15 @@ Every VM instruction is 16 bytes:
 | immediate | 8 | scalar, packed offset/length, or carry mask |
 | reserved | 2 | must be zero |
 
-Batch, return-data, and move opcodes:
+Batch, return-data, move, and derivation opcodes:
 
 | Opcode | Name | Operands |
 | ---: | --- | --- |
 | 42 | `FOREACH` | `a` body length; immediate is a 64-bit carry mask of registers that survive iterations |
+| 47 | `DERIVE_PDA` | `a` the executable program account; immediate a packed seed-segment range; searches for the canonical bump |
 | 48 | `RETURN_DATA` | `a` a read opcode selecting width and type; immediate the byte offset; must directly follow an unconditional `INVOKE` |
 | 49 | `MOVE` | copies register `a` into the destination |
+| 50 | `CREATE_PDA` | as `DERIVE_PDA`, plus `b` a `u64` register holding the bump; derives once, and fails with `InvalidPdaDerivation` if the bump exceeds 255 or the result is on the curve |
 
 Read opcodes (`13` to `16`, `43` to `46`) with the dynamic-offset flag take their offset from the
 `u64` register in `b` and must have a zero immediate. Without the flag, the immediate offset plus

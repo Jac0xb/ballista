@@ -93,6 +93,7 @@ export const opcode = {
   derivePda: 47,
   returnData: 48,
   move: 49,
+  createPda: 50,
 } as const;
 
 const readOpcode: Record<ReadType, number> = {
@@ -634,6 +635,14 @@ class Compiler {
       if (current.seeds.length < 1 || current.seeds.length > MAX_PDA_SEEDS) {
         throw new RangeError(`PDA derivation requires 1 to ${MAX_PDA_SEEDS} seeds`);
       }
+      // A supplied bump turns the canonical-bump search into a single derivation, which is the
+      // difference between about 4,800 and 1,500 compute units.
+      let bumpRegister = NO_INDEX;
+      if (current.bump !== undefined) {
+        const bump = this.compileExpression(current.bump, inLoop, bindings);
+        requireType(bump, 'u64', 'PDA bump');
+        bumpRegister = bump.register;
+      }
       const segmentStart = this.dataSegments.length;
       for (const seed of current.seeds) {
         const value = this.compileExpression(seed, inLoop, bindings);
@@ -644,11 +653,11 @@ class Compiler {
         this.dataSegments.push(this.compileSeedSegment(value));
       }
       return this.emit(
-        opcode.derivePda,
+        current.bump === undefined ? opcode.derivePda : opcode.createPda,
         'pubkey',
         0,
         programAccount,
-        NO_INDEX,
+        bumpRegister,
         NO_INDEX,
         rangeImmediate(segmentStart, current.seeds.length),
       );

@@ -282,6 +282,50 @@ describe('Ballista compiler', () => {
     expect(() => compileTemplate(nonExecutableProgram)).toThrow('PDA program account must require executable=true');
   });
 
+  test('a supplied bump compiles to CREATE_PDA and must be a u64', () => {
+    const withBump = defineTemplate({
+      inputs: { bump: { type: 'u64' } },
+      accounts: {
+        associatedTokenProgram: { executable: true, address: ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES },
+        tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
+        mint: {},
+        owner: {},
+        ata: {},
+      },
+      steps: [
+        assertAta({
+          associatedTokenAccount: account.fixed('ata'),
+          owner: account.fixed('owner'),
+          mint: account.fixed('mint'),
+          tokenProgram: account.fixed('tokenProgram'),
+          associatedTokenProgram: account.fixed('associatedTokenProgram'),
+          bump: expression.input('bump'),
+        }),
+      ],
+    });
+    const compiled = compileTemplate(withBump);
+    // Load the bump, three account keys, CREATE_PDA, the candidate key, the comparison, require.
+    expect(compiled.stats).toMatchObject({ instructions: 8, registers: 7, cpis: 0 });
+    expect(compiled.bytes[instructionOffset(compiled, 5)]).toBe(50);
+
+    const pubkeyBump = defineTemplate({
+      accounts: { program: { executable: true, address: address(9) }, candidate: {} },
+      steps: [
+        step.require(
+          expression.equal(
+            expression.accountField(account.fixed('candidate'), 'key'),
+            expression.pda(
+              account.fixed('program'),
+              [expression.bytes(Uint8Array.of(1))],
+              expression.accountField(account.fixed('candidate'), 'key'),
+            ),
+          ),
+        ),
+      ],
+    });
+    expect(() => compileTemplate(pubkeyBump)).toThrow('PDA bump');
+  });
+
   test('requires pins for programs and data reads unless the author opts out', () => {
     const unpinnedInvoke = defineTemplate({
       accounts: { program: { executable: true } },

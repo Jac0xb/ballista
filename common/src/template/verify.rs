@@ -464,32 +464,14 @@ impl ProgramView<'_> {
                 self.write_register(registers, instruction.dst, scalar(value_type))?;
             }
             OP_DERIVE_PDA => {
-                let program = self
-                    .account_constraint(instruction.a, in_loop)
-                    .ok_or(TemplateError::InvalidInstruction(instruction_index))?;
-                if program.flags & ACCOUNT_EXECUTABLE == 0 {
-                    return Err(TemplateError::InvalidInstruction(instruction_index));
-                }
-                let (segment_start, segment_len) = instruction.blob_range();
-                let segment_end = segment_start
-                    .checked_add(segment_len)
-                    .ok_or(TemplateError::CountOverflow)?;
-                if segment_len == 0
-                    || segment_len > MAX_PDA_SEEDS
-                    || segment_end > self.data_segments.len()
-                {
-                    return Err(TemplateError::InvalidInstruction(instruction_index));
-                }
-                for (offset, segment) in self.data_segments[segment_start..segment_end]
-                    .iter()
-                    .enumerate()
-                {
-                    let seed_len =
-                        self.verify_pda_seed_segment(segment_start + offset, segment, registers)?;
-                    if seed_len > MAX_PDA_SEED_LEN {
-                        return Err(TemplateError::InvalidDataSegment(segment_start + offset));
-                    }
-                }
+                self.verify_pda_seeds(instruction, instruction_index, in_loop, registers)?;
+                self.write_register(registers, instruction.dst, scalar(VALUE_PUBKEY))?;
+            }
+            OP_CREATE_PDA => {
+                // The bump completes the seed list, so it is a plain u64 the template computed or
+                // read from an input; the executor rejects one that does not fit in a byte.
+                self.require_type(registers, instruction.b, VALUE_U64)?;
+                self.verify_pda_seeds(instruction, instruction_index, in_loop, registers)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_PUBKEY))?;
             }
             OP_REQUIRE => self.require_type(registers, instruction.a, VALUE_BOOL)?,
@@ -504,6 +486,42 @@ impl ProgramView<'_> {
             _ => return Err(TemplateError::InvalidInstruction(instruction_index)),
         }
         Ok((0, 0))
+    }
+
+    /// Shared by `DERIVE_PDA` and `CREATE_PDA`: the program account must be executable and the
+    /// immediate must name a non-empty, in-bounds run of seed segments no longer than a seed.
+    fn verify_pda_seeds(
+        &self,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
+        in_loop: bool,
+        registers: &[Option<RegisterInfo>; MAX_REGISTERS],
+    ) -> Result<(), TemplateError> {
+        let program = self
+            .account_constraint(instruction.a, in_loop)
+            .ok_or(TemplateError::InvalidInstruction(instruction_index))?;
+        if program.flags & ACCOUNT_EXECUTABLE == 0 {
+            return Err(TemplateError::InvalidInstruction(instruction_index));
+        }
+        let (segment_start, segment_len) = instruction.blob_range();
+        let segment_end = segment_start
+            .checked_add(segment_len)
+            .ok_or(TemplateError::CountOverflow)?;
+        if segment_len == 0 || segment_len > MAX_PDA_SEEDS || segment_end > self.data_segments.len()
+        {
+            return Err(TemplateError::InvalidInstruction(instruction_index));
+        }
+        for (offset, segment) in self.data_segments[segment_start..segment_end]
+            .iter()
+            .enumerate()
+        {
+            let seed_len =
+                self.verify_pda_seed_segment(segment_start + offset, segment, registers)?;
+            if seed_len > MAX_PDA_SEED_LEN {
+                return Err(TemplateError::InvalidDataSegment(segment_start + offset));
+            }
+        }
+        Ok(())
     }
 
     fn verify_pda_seed_segment(
@@ -1400,6 +1418,47 @@ mod tests {
     }
 
     #[test]
+    fn create_pda_requires_a_u64_bump() {
+        // A u64 bump and one seed verify.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let owner = builder.account(0, None, None, 0);
+        let key = builder.account_key(owner);
+        let bump = builder.const_u64(255);
+        let literal = builder.blob(b"position");
+        let created = builder.create_pda(
+            program,
+            bump,
+            &[Segment::Literal(literal), Segment::Register(DATA_REG_PUBKEY, key)],
+        );
+        let matches = builder.binary(OP_EQ, created, key);
+        builder.require(matches);
+        assert!(verify_builder(&builder).is_ok());
+
+        // A pubkey bump register is rejected by typing.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let owner = builder.account(0, None, None, 0);
+        let key = builder.account_key(owner);
+        let literal = builder.blob(b"position");
+        builder.create_pda(program, key, &[Segment::Literal(literal)]);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TypeMismatch));
+
+        // A non-executable program account is rejected, as for DERIVE_PDA.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(0, Some([1; 32]), None, 0);
+        let bump = builder.const_u64(254);
+        let literal = builder.blob(b"position");
+        let created = builder.create_pda(program, bump, &[Segment::Literal(literal)]);
+        let matches = builder.binary(OP_EQ, created, created);
+        builder.require(matches);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidInstruction(1))
+        );
+    }
+
+    #[test]
     fn select_and_loop_register_typing() {
         // Select widens bytes to the larger branch; a CPI bytes segment must declare that width.
         let mut builder = ProgramBuilder::new();
@@ -2122,11 +2181,15 @@ mod tests {
     /// Every compiler fixture must parse and verify; the TypeScript suite keeps the files current.
     #[test]
     fn every_shared_fixture_parses_and_verifies() {
-        let fixtures: [(&str, &str); 12] = [
+        let fixtures: [(&str, &str); 13] = [
             ("system-transfer", include_str!("../../../fixtures/system-transfer.hex")),
             ("batch-transfer-30", include_str!("../../../fixtures/batch-transfer-30.hex")),
             ("ensure-ata", include_str!("../../../fixtures/ensure-ata.hex")),
             ("assert-ata", include_str!("../../../fixtures/assert-ata.hex")),
+            (
+                "assert-ata-with-bump",
+                include_str!("../../../fixtures/assert-ata-with-bump.hex"),
+            ),
             (
                 "checked-transfer-snapshot",
                 include_str!("../../../fixtures/checked-transfer-snapshot.hex"),

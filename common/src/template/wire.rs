@@ -134,6 +134,9 @@ pub const OP_DERIVE_PDA: u8 = 47;
 pub const OP_RETURN_DATA: u8 = 48;
 /// Copies register `a` into `dst`; used to assign loop-carried registers.
 pub const OP_MOVE: u8 = 49;
+/// Derives a PDA from the seeds in the immediate range plus the bump held in register `b`. Unlike
+/// [`OP_DERIVE_PDA`] this performs a single derivation instead of searching for the canonical bump.
+pub const OP_CREATE_PDA: u8 = 50;
 
 pub const DATA_LITERAL: u8 = 0;
 pub const DATA_REG_U8: u8 = 1;

@@ -358,6 +358,31 @@ fn profile_compute_units() {
     });
     record("Instructions", "PDA derivation", per_pda, "one literal seed, bump search");
 
+    // With the bump supplied, the same derivation runs once instead of searching down from 255.
+    let per_create_pda = harness.marginal(1, 6, |_harness, n| {
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some(system_program::id().to_bytes()), None, 0);
+        let seed = builder.blob(b"seed");
+        let canonical = Pubkey::find_program_address(&[b"seed"], &system_program::id()).1;
+        let bump = builder.const_u64(canonical as u64);
+        for _ in 0..n {
+            builder.create_pda(program, bump, &[Segment::Literal(seed)]);
+        }
+        let flag = builder.const_bool(true);
+        builder.require(flag);
+        Case {
+            payload: builder.build().expect("builds"),
+            accounts: vec![AccountMeta::new_readonly(system_program::id(), false)],
+            inputs: Vec::new(),
+        }
+    });
+    record(
+        "Instructions",
+        "PDA derivation, supplied bump",
+        per_create_pda,
+        "one literal seed, no search",
+    );
+
     // ---- cross-program invocations ----------------------------------------
     let per_cpi = harness.marginal(1, 11, |harness, n| {
         let mut builder = ProgramBuilder::new();

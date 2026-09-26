@@ -355,6 +355,21 @@ impl ProgramBuilder {
         )
     }
 
+    /// Pushes PDA seed segments and emits CREATE_PDA against `program` with the bump in `bump`.
+    pub fn create_pda(&mut self, program: u8, bump: u8, seeds: &[Segment]) -> u8 {
+        let start = self.segments.len() as u16;
+        for seed in seeds {
+            self.push_segment(*seed);
+        }
+        self.op(
+            OP_CREATE_PDA,
+            program,
+            bump,
+            NO_INDEX,
+            range_immediate(start, seeds.len() as u16),
+        )
+    }
+
     /// Mutable access to the emitted instructions, for negative tests.
     pub fn instructions_mut(&mut self) -> &mut Vec<InstructionRecord> {
         &mut self.instructions

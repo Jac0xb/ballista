@@ -102,12 +102,17 @@ every other register, applied to a value that comes from outside the VM.
 The clock supplies the current slot as a `u64` and the Unix timestamp as an `i64`. Inside a loop,
 the current iteration index is available as a `u64`.
 
-A canonical program-derived address is computed from a pinned program and between one and fifteen
-seeds. Each seed is a value of any type, contributing its own encoding, and no single seed may
-exceed thirty-two bytes. The derivation is the canonical one, so it finds the bump rather than
-accepting one, and it produces a `pubkey` that is typically compared against an account the caller
+A program-derived address is computed from a pinned program and between one and fifteen seeds.
+Each seed is a value of any type, contributing its own encoding, and no single seed may exceed
+thirty-two bytes. The result is a `pubkey`, typically compared against an account the caller
 supplied. This is how a template checks that the account it was handed really is the associated
 token account or vault it was supposed to be, rather than trusting the caller's word.
+
+By default the derivation is the canonical one: it searches for the bump rather than accepting
+one, which costs 1,500 compute units per attempt. A third argument supplies the bump as a `u64`
+expression, and the derivation then runs once. The guarantee is the same either way, because a
+wrong bump yields either an on-curve address, which is not a program address, or a different
+off-curve one that fails the comparison.
 
 ### Every source, enumerated
 
@@ -128,7 +133,7 @@ token account or vault it was supposed to be, rather than trusting the caller's 
 | `expression.clockSlot()` | `u64` | Anywhere |
 | `expression.clockUnixTimestamp()` | `i64` | Anywhere |
 | `expression.loopIndex()` | `u64` | Inside a loop only |
-| `expression.pda(program, seeds)` | `pubkey` | Program must pin an address; 1 to 15 seeds |
+| `expression.pda(program, seeds, bump?)` | `pubkey` | Program must pin an address; 1 to 15 seeds; `bump` is a `u64` |
 
 The `field` argument selects one of five layout-independent properties:
 
@@ -242,8 +247,8 @@ return an ordinary requirement step and introduce no new capability.
 
 | Helper | Asserts |
 | --- | --- |
-| `assertPda({ account, program, seeds, label? })` | The account's key equals the canonical derivation of those seeds under that program |
-| `assertAta({ associatedTokenAccount, owner, mint, tokenProgram, associatedTokenProgram, label? })` | The account is the canonical associated token account for that owner and mint |
+| `assertPda({ account, program, seeds, bump?, label? })` | The account's key equals the derivation of those seeds under that program |
+| `assertAta({ associatedTokenAccount, owner, mint, tokenProgram, associatedTokenProgram, bump?, label? })` | The account is the canonical associated token account for that owner and mint |
 
 `assertAssociatedTokenAccount` is an alias of the second. Both exist because checking that a caller
 handed you the account it claimed is the most common assertion in a template, and the most

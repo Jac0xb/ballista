@@ -176,6 +176,59 @@
       }
     ]
   },
+  "assert-ata-with-bump": {
+    "hash": "a89e3e6bb7288b3253caf38481437db00eebbbc263a20b1803dae90469cb22fc",
+    "stats": {
+      "payloadBytes": 284,
+      "fixedAccounts": 5,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 7,
+      "instructions": 8,
+      "cpis": 0,
+      "maxExpandedCpis": 0,
+      "maxCpiDataLength": 0,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 1,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 2,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 3,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 4,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 5,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 6,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 7,
+        "path": "steps[0]"
+      }
+    ]
+  },
   "checked-transfer-snapshot": {
     "hash": "933048fa95d02378f65ded959a6e3e626f3152fd3cd00aa508f39da6cdd77a1f",
     "stats": {

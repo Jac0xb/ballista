@@ -517,30 +517,22 @@ fn dispatch<'data>(machine: &mut Machine<'_, 'data>) -> ProgramResult {
                 return Ok(());
             };
             loop_context = next_iteration(machine, active);
-            let resume = if loop_context.is_some() {
-                active.body_start
+            rest = if loop_context.is_some() {
+                &instructions[active.body_start..active.body_end]
             } else {
-                active.body_end
-            };
-            rest = &instructions[resume..active.resume_end];
-            if loop_context.is_none() {
+                let body_end = active.body_end;
                 batch = None;
-            }
+                &instructions[body_end..]
+            };
             continue;
         };
         // Only the root can hold a loop. Inside a body, FOREACH reaches the dispatch and is
         // rejected there like any opcode the executor does not run, with the same error.
         if instruction.opcode == OP_FOREACH && loop_context.is_none() {
-            let active = enter_batch(machine, index_of(instructions, instruction), instruction)?;
-            loop_context = active.first_row(machine);
-            rest = if loop_context.is_some() {
-                &instructions[active.body_start..active.body_end]
-            } else {
-                &instructions[active.body_end..]
-            };
-            if loop_context.is_some() {
-                batch = Some(active);
-            }
+            let pc = index_of(instructions, instruction);
+            let (start, end) = enter_batch(machine, pc, instruction, &mut batch)?;
+            loop_context = batch.as_ref().map(|active| (active.iteration, active.row_base));
+            rest = &instructions[start..end];
             continue;
         }
         if let Err(error) = execute_instruction(
@@ -571,8 +563,6 @@ fn index_of(instructions: &[InstructionRecord], instruction: &InstructionRecord)
 struct Batch<'data> {
     body_start: usize,
     body_end: usize,
-    /// Where the current pass stops: the body's end while rows remain, the program's end after.
-    resume_end: usize,
     /// The registers the carry mask names, in ascending order: the first `carried_len` entries.
     /// Listed once at loop entry so a row copies just these instead of testing every register.
     carried: [u8; MAX_REGISTERS],
@@ -588,25 +578,16 @@ struct Batch<'data> {
     row_base: usize,
 }
 
-impl Batch<'_> {
-    /// The loop context of the first row, or `None` when the run supplied no rows.
-    fn first_row(&self, machine: &mut Machine<'_, '_>) -> Option<(usize, usize)> {
-        if machine.iterations == 0 {
-            finish_batch(machine);
-            return None;
-        }
-        Some((self.iteration, self.row_base))
-    }
-}
-
 /// Starts the FOREACH at `pc`: checks its body range, snapshots the registers, and decides what
-/// the batch's invocations can reuse between rows.
+/// the batch's invocations can reuse between rows. With rows to run, fills `batch` in place and
+/// returns the body's range; with none, leaves it empty and returns the code after the loop.
 #[inline(never)]
 fn enter_batch<'data>(
     machine: &mut Machine<'_, 'data>,
     pc: usize,
     instruction: &InstructionRecord,
-) -> Result<Batch<'data>, ProgramError> {
+    batch: &mut Option<Batch<'data>>,
+) -> Result<(usize, usize), ProgramError> {
     let program = machine.program;
     let body_start = pc + 1;
     let body_end = body_start
@@ -616,39 +597,41 @@ fn enter_batch<'data>(
     // Registers written inside the body are discarded after each iteration, except the ones named
     // in the carry mask, which flow into the next iteration and out of the loop.
     let carry = instruction.immediate();
-    let mut carried = [0u8; MAX_REGISTERS];
-    let mut carried_len = 0;
-    for register in 0..machine.registers.len().min(MAX_REGISTERS) {
-        if carry & (1u64 << register) != 0 {
-            carried[carried_len] = register as u8;
-            carried_len += 1;
-        }
-    }
+    let register_count = machine.registers.len();
     // Every write goes through an instruction's `dst`, whatever its opcode, so a body whose
     // destinations are all carried registers, or not registers at all, leaves nothing to restore.
-    let register_count = machine.registers.len();
     let restore = program.instructions[body_start..body_end].iter().any(|record| {
         let dst = record.dst as usize;
         dst < register_count && (dst >= MAX_REGISTERS || carry & (1u64 << dst) == 0)
     });
-    let base_registers = machine.registers.to_vec();
     let (cache_cpi, data_invariant) =
         loop_cache_plan(program, &program.instructions[body_start..body_end]);
     machine.scratch.cache_cpi = cache_cpi;
     machine.scratch.data_invariant = data_invariant;
     machine.scratch.built = false;
-    // The first row starts from registers equal to the snapshot, so it needs no restore.
-    Ok(Batch {
+    if machine.iterations == 0 {
+        finish_batch(machine);
+        return Ok((body_end, program.instructions.len()));
+    }
+    // Built in place: moving a finished batch into the slot would copy it with a syscall.
+    let active = batch.insert(Batch {
         body_start,
         body_end,
-        resume_end: body_end,
-        carried,
-        carried_len,
+        carried: [0; MAX_REGISTERS],
+        carried_len: 0,
         restore,
-        base_registers,
+        base_registers: machine.registers.to_vec(),
         iteration: 0,
         row_base: program.header.fixed_account_count(),
-    })
+    });
+    for register in 0..register_count.min(MAX_REGISTERS) {
+        if carry & (1u64 << register) != 0 {
+            active.carried[active.carried_len] = register as u8;
+            active.carried_len += 1;
+        }
+    }
+    // The first row starts from registers equal to the snapshot, so it needs no restore.
+    Ok((body_start, body_end))
 }
 
 /// Ends one pass over the batch body: keeps the carried registers, then either restores the
@@ -677,7 +660,6 @@ fn next_iteration<'data>(
             .wrapping_add(machine.program.header.batch_stride());
         return Some((batch.iteration, batch.row_base));
     }
-    batch.resume_end = machine.program.instructions.len();
     finish_batch(machine);
     None
 }

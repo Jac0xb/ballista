@@ -139,7 +139,7 @@ pub const OP_MOVE: u8 = 49;
 pub const OP_CREATE_PDA: u8 = 50;
 /// `a × b ÷ c` for three `u64`s or three `u128`s, rounded down, with the product computed exactly.
 pub const OP_MUL_DIV: u8 = 51;
-/// As `OP_MUL_DIV`, rounded up.
+/// As [`OP_MUL_DIV`], rounded up.
 pub const OP_MUL_DIV_CEIL: u8 = 52;
 /// `a mod b` for matching `u64`, `i64` or `u128`; the result takes the dividend's sign.
 pub const OP_REM: u8 = 53;
@@ -147,8 +147,11 @@ pub const OP_REM: u8 = 53;
 pub const OP_SHL: u8 = 54;
 /// `a >> b`, rounding down; a shift of the full width or more gives zero.
 pub const OP_SHR: u8 = 55;
+/// `a & b` for two matching `u64` or `u128` registers.
 pub const OP_BIT_AND: u8 = 56;
+/// `a | b`, as [`OP_BIT_AND`].
 pub const OP_BIT_OR: u8 = 57;
+/// `a ^ b`, as [`OP_BIT_AND`].
 pub const OP_BIT_XOR: u8 = 58;
 /// `10^a` for a `u64` `a` of at most 38, as a `u128`.
 pub const OP_POW10: u8 = 59;

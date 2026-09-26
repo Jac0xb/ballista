@@ -131,8 +131,9 @@ pub struct Scratch<'data> {
     metas: Vec<InstructionAccount<'data>>,
     views: Vec<&'data AccountView>,
     data: Vec<u8>,
-    /// Program invoked by the most recent executed CPI, for return-data provenance checks.
-    last_invoked: Option<[u8; 32]>,
+    /// Program invoked by the most recent executed CPI, for return-data provenance checks. A
+    /// reference into the account, not a copy: an address never changes during a run.
+    last_invoked: Option<&'data Address>,
     /// Invoke instructions reached so far, counted across loop iterations.
     expanded: u8,
     /// Bit `n` is set when the `n`th reached invoke actually ran (its guard was true).
@@ -1037,7 +1038,7 @@ fn read_return_data<'data>(
     if size == 0 {
         return Err(BallistaError::MissingReturnData.into());
     }
-    if program_id != expected_program {
+    if &program_id != expected_program.as_array() {
         return Err(BallistaError::ReturnDataMismatch.into());
     }
     let bytes = &buffer[..size.min(MAX_RETURN_DATA_LEN)];
@@ -1289,7 +1290,7 @@ fn invoke_cpi<'data>(
     let invoked = bounded_invoke(&instruction, scratch.views.as_slice());
     crate::profile::cpi_end();
     invoked?;
-    scratch.last_invoked = Some(program_account.address().to_bytes());
+    scratch.last_invoked = Some(program_account.address());
     Ok(())
 }
 

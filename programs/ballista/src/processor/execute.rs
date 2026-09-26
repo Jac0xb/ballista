@@ -9,6 +9,7 @@ use pinocchio::{
 use solana_address::Address;
 
 use crate::error::{vm_error, BallistaError};
+use crate::utils::pda;
 
 /// A typed register value. Public for formal specifications; the module is private otherwise.
 ///
@@ -916,14 +917,14 @@ fn derive_pda<'data>(
             seeds[slot] = &storage[slot][..lengths[slot]];
         }
         seeds[count] = &bump;
-        Address::create_program_address(&seeds[..count + 1], program_account.address())
-            .map_err(|_| BallistaError::InvalidPdaDerivation)?
+        pda::create_program_address(&seeds[..count + 1], program_account.address())
+            .ok_or(BallistaError::InvalidPdaDerivation)?
     } else {
         for slot in 0..count {
             seeds[slot] = &storage[slot][..lengths[slot]];
         }
         let (derived, _) =
-            Address::try_find_program_address(&seeds[..count], program_account.address())
+            pda::try_find_program_address(&seeds[..count], program_account.address())
                 .ok_or(BallistaError::InvalidPdaDerivation)?;
         derived
     };

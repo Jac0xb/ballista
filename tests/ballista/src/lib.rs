@@ -2,6 +2,7 @@ pub mod cases;
 mod ceilings;
 
 mod benchmarks;
+mod pda_equivalence;
 #[cfg(feature = "cu-profile")]
 mod phases;
 mod profile;
@@ -1191,13 +1192,15 @@ mod tests {
             shallow_supplied.abs_diff(deep_supplied) < 50,
             "a supplied bump is flat: {shallow_supplied} vs {deep_supplied}"
         );
-        // The search pays about 1,500 units for every bump it rejects.
+        // The search pays for every bump it rejects, and the deep owner's rejects at least four:
+        // a SHA-256 of the 150-byte preimage and a curve check, about 330 units each.
+        const PER_ATTEMPT: u64 = 300;
         assert!(
-            deep_searched > shallow_searched + 4_000,
+            deep_searched > shallow_searched + 4 * PER_ATTEMPT,
             "the search grows with depth: {deep_searched} vs {shallow_searched}"
         );
         assert!(
-            deep_supplied + 5_000 < deep_searched,
+            deep_supplied + 3 * PER_ATTEMPT < deep_searched,
             "the supplied bump skips that search: {deep_supplied} vs {deep_searched}"
         );
 

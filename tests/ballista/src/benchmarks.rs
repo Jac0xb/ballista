@@ -84,8 +84,8 @@ fn associated_token_address(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
 
 /// A case's own slice of the key space, from its name rather than its position. Deriving it from
 /// the position would renumber every later case whenever one is inserted, and a renumbered
-/// address changes how deep its PDA bump search goes — 1,500 compute units per step — which the
-/// ceilings would report as a regression in an unrelated example.
+/// address changes how deep its PDA bump search goes — about 300 compute units per step — which
+/// the ceilings would report as a regression in an unrelated example.
 fn case_seed(name: &str) -> u32 {
     let mut hash: u32 = 2_166_136_261;
     for byte in name.as_bytes() {

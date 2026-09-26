@@ -230,8 +230,8 @@ fn run_template(accounts: &mut [AccountView], input_bytes: &[u8]) -> ProgramResu
 }
 
 /// Checks the accounts an upload needs and returns the template PDA's bump, so the caller does
-/// not pay for a second canonical derivation: the search costs 1,500 compute units per bump it
-/// rejects, which is the most expensive thing an upload does.
+/// not pay for a second canonical derivation: the search costs about 300 compute units per bump
+/// it tries (see `utils::pda`).
 fn validate_create_accounts(
     creator: &AccountView,
     template: &AccountView,

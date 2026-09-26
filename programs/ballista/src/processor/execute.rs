@@ -283,11 +283,15 @@ pub fn parse_run_inputs<'data>(
 ) -> RunResult<Vec<RuntimeValue<'data>>> {
     let fixed = program.header.input_count();
     let row = program.inputs.get(fixed..).unwrap_or(&[]);
-    let descriptors = program.inputs[..fixed.min(program.inputs.len())]
-        .iter()
-        .chain((0..iterations).flat_map(|_| row.iter()));
-    let count = fixed + iterations * row.len();
-    parse_sequence(descriptors, count, data)
+    // `iterations` is bounded by the runtime account count, so this cannot overflow. Checked
+    // arithmetic would cost a 128-bit multiply on SBF.
+    let count = fixed.wrapping_add(iterations.wrapping_mul(row.len()));
+    let mut reader = InputReader::new(data, count);
+    reader.read_all(&program.inputs[..fixed.min(program.inputs.len())])?;
+    for _ in 0..iterations {
+        reader.read_all(row)?;
+    }
+    reader.finish(count)
 }
 
 /// Decodes a flat sequence of input values.
@@ -296,65 +300,128 @@ pub fn parse_inputs<'data>(
     descriptors: &[InputDescriptor],
     data: &'data [u8],
 ) -> RunResult<Vec<RuntimeValue<'data>>> {
-    parse_sequence(descriptors.iter(), descriptors.len(), data)
+    let mut reader = InputReader::new(data, descriptors.len());
+    reader.read_all(descriptors)?;
+    reader.finish(descriptors.len())
 }
 
-fn parse_sequence<'data, 'd>(
-    descriptors: impl Iterator<Item = &'d InputDescriptor>,
-    count: usize,
-    mut data: &'data [u8],
-) -> RunResult<Vec<RuntimeValue<'data>>> {
-    let mut inputs = vec![RuntimeValue::Unset; count];
-    for (index, descriptor) in descriptors.enumerate() {
-        let fail = || RunError::VmAt(BallistaError::InvalidRunInputs, clamp(index));
-        let value = match descriptor.value_type {
-            VALUE_BOOL => {
-                let (value, remaining) = take::<1>(data).map_err(|_| fail())?;
-                data = remaining;
-                match value[0] {
-                    0 => RuntimeValue::Bool(false),
-                    1 => RuntimeValue::Bool(true),
-                    _ => return Err(fail()),
-                }
+/// Decodes run input values in order, each straight into its slot.
+struct InputReader<'data> {
+    data: &'data [u8],
+    values: Vec<RuntimeValue<'data>>,
+}
+
+impl<'data> InputReader<'data> {
+    #[inline(always)]
+    fn new(data: &'data [u8], count: usize) -> Self {
+        // A verified template declares at most `MAX_INPUT_VALUES` values; the cap lets the
+        // compiler drop the allocation's overflow check. Anything past it would still fit, after
+        // one reallocation.
+        Self {
+            data,
+            values: Vec::with_capacity(count.min(MAX_INPUT_VALUES)),
+        }
+    }
+
+    /// Decodes one value per descriptor. A failure names the value's running index.
+    #[inline(always)]
+    fn read_all(&mut self, descriptors: &[InputDescriptor]) -> RunResult<()> {
+        for descriptor in descriptors {
+            if !self.read(descriptor) {
+                return Err(RunError::VmAt(
+                    BallistaError::InvalidRunInputs,
+                    clamp(self.values.len()),
+                ));
             }
+        }
+        Ok(())
+    }
+
+    /// Decodes the value `descriptor` names from the front of the remaining bytes, returning
+    /// false when they do not hold a valid value of that type. Each arm stores its value
+    /// straight into the next slot rather than through a copy of the whole enum.
+    #[inline(always)]
+    fn read(&mut self, descriptor: &InputDescriptor) -> bool {
+        let data = self.data;
+        let rest = match descriptor.value_type {
             VALUE_U64 => {
-                let (value, remaining) = take::<8>(data).map_err(|_| fail())?;
-                data = remaining;
-                RuntimeValue::U64(u64::from_le_bytes(*value))
-            }
-            VALUE_I64 => {
-                let (value, remaining) = take::<8>(data).map_err(|_| fail())?;
-                data = remaining;
-                RuntimeValue::I64(i64::from_le_bytes(*value))
-            }
-            VALUE_U128 => {
-                let (value, remaining) = take::<16>(data).map_err(|_| fail())?;
-                data = remaining;
-                RuntimeValue::U128(*value)
+                let Some((bytes, rest)) = data.split_first_chunk::<8>() else {
+                    return false;
+                };
+                self.values
+                    .push(RuntimeValue::U64(u64::from_le_bytes(*bytes)));
+                rest
             }
             VALUE_PUBKEY => {
-                let (value, remaining) = take::<32>(data).map_err(|_| fail())?;
-                data = remaining;
-                RuntimeValue::Pubkey(*value)
+                let Some((bytes, rest)) = data.split_first_chunk::<32>() else {
+                    return false;
+                };
+                self.values.push(RuntimeValue::Pubkey(*bytes));
+                rest
+            }
+            VALUE_BOOL => {
+                let Some((&byte, rest)) = data.split_first() else {
+                    return false;
+                };
+                let value = match byte {
+                    0 => false,
+                    1 => true,
+                    _ => return false,
+                };
+                self.values.push(RuntimeValue::Bool(value));
+                rest
+            }
+            VALUE_I64 => {
+                let Some((bytes, rest)) = data.split_first_chunk::<8>() else {
+                    return false;
+                };
+                self.values
+                    .push(RuntimeValue::I64(i64::from_le_bytes(*bytes)));
+                rest
+            }
+            VALUE_U128 => {
+                let Some((bytes, rest)) = data.split_first_chunk::<16>() else {
+                    return false;
+                };
+                self.values.push(RuntimeValue::U128(*bytes));
+                rest
             }
             VALUE_BYTES => {
-                let (len, remaining) = take::<2>(data).map_err(|_| fail())?;
+                let Some((len, rest)) = data.split_first_chunk::<2>() else {
+                    return false;
+                };
                 let len = u16::from_le_bytes(*len) as usize;
-                let (bytes, remaining) = remaining.split_at_checked(len).ok_or_else(fail)?;
                 if len > descriptor.max_len() {
-                    return Err(fail());
+                    return false;
                 }
-                data = remaining;
-                RuntimeValue::Bytes(bytes)
+                let Some((bytes, rest)) = rest.split_at_checked(len) else {
+                    return false;
+                };
+                self.values.push(RuntimeValue::Bytes(bytes));
+                rest
             }
-            _ => return Err(fail()),
+            _ => return false,
         };
-        inputs[index] = value;
+        self.data = rest;
+        true
     }
-    if !data.is_empty() {
-        return Err(RunError::VmAt(BallistaError::InvalidRunInputs, clamp(count)));
+
+    /// Rejects trailing bytes, naming the index after the last value.
+    #[inline(always)]
+    fn finish(mut self, count: usize) -> RunResult<Vec<RuntimeValue<'data>>> {
+        if !self.data.is_empty() {
+            return Err(RunError::VmAt(
+                BallistaError::InvalidRunInputs,
+                clamp(count),
+            ));
+        }
+        // Only an inputs table shorter than its header leaves values undecoded, and they read as
+        // unset, as they always have.
+        if self.values.len() < count {
+            self.values.resize(count, RuntimeValue::Unset);
+        }
+        Ok(self.values)
     }
-    Ok(inputs)
 }
 
 /// Checks the runtime accounts against the schema and returns where everything falls.
@@ -1645,6 +1712,7 @@ pub fn read_array<const N: usize>(data: &[u8], offset: usize) -> RunResult<&[u8;
         .ok_or_else(|| BallistaError::InvalidRuntimeAccount.into())
 }
 
+#[cfg(test)]
 fn take<const N: usize>(data: &[u8]) -> RunResult<(&[u8; N], &[u8])> {
     let (bytes, remaining) = data
         .split_at_checked(N)

@@ -507,7 +507,6 @@ fn execute_root<'data>(
 #[inline(never)]
 fn dispatch<'data>(machine: &mut Machine<'_, 'data>) -> ProgramResult {
     let instructions = machine.program.instructions;
-    let mut pc = 0usize;
     let mut rest = instructions;
     let mut batch: Option<Batch<'data>> = None;
     let mut loop_context: Option<(usize, usize)> = None;
@@ -518,12 +517,12 @@ fn dispatch<'data>(machine: &mut Machine<'_, 'data>) -> ProgramResult {
                 return Ok(());
             };
             loop_context = next_iteration(machine, active);
-            pc = if loop_context.is_some() {
+            let resume = if loop_context.is_some() {
                 active.body_start
             } else {
                 active.body_end
             };
-            rest = &instructions[pc..active.resume_end];
+            rest = &instructions[resume..active.resume_end];
             if loop_context.is_none() {
                 batch = None;
             }
@@ -532,13 +531,8 @@ fn dispatch<'data>(machine: &mut Machine<'_, 'data>) -> ProgramResult {
         // Only the root can hold a loop. Inside a body, FOREACH reaches the dispatch and is
         // rejected there like any opcode the executor does not run, with the same error.
         if instruction.opcode == OP_FOREACH && loop_context.is_none() {
-            let active = enter_batch(machine, pc, instruction)?;
+            let active = enter_batch(machine, index_of(instructions, instruction), instruction)?;
             loop_context = active.first_row(machine);
-            pc = if loop_context.is_some() {
-                active.body_start
-            } else {
-                active.body_end
-            };
             rest = if loop_context.is_some() {
                 &instructions[active.body_start..active.body_end]
             } else {
@@ -558,13 +552,19 @@ fn dispatch<'data>(machine: &mut Machine<'_, 'data>) -> ProgramResult {
             instruction,
             loop_context,
         ) {
-            return Err(error.at(pc, instruction));
+            return Err(error.at(index_of(instructions, instruction), instruction));
         }
         rest = tail;
-        // `pc` indexes `rest`'s first element, which exists, so it is below the instruction count
-        // and the increment cannot wrap.
-        pc = pc.wrapping_add(1);
     }
+}
+
+/// The index of `instruction` within `instructions`, which holds it. Only a failure or a loop
+/// entry needs it, so the dispatch loop walks a slice instead of counting.
+#[inline(always)]
+fn index_of(instructions: &[InstructionRecord], instruction: &InstructionRecord) -> usize {
+    (instruction as *const InstructionRecord as usize)
+        .wrapping_sub(instructions.as_ptr() as usize)
+        / core::mem::size_of::<InstructionRecord>()
 }
 
 /// A FOREACH in progress.
@@ -711,7 +711,14 @@ pub fn execute_instruction<'data>(
                 if offset >= program.header.row_input_count() {
                     return Err(BallistaError::InvalidTemplateProgram.into());
                 }
-                program.header.input_count() + iteration * program.header.row_input_count() + offset
+                // The row count, the input counts, and so the index are all below 256 × 256, so
+                // none of this can wrap, and `get` bounds-checks the result regardless. A checked
+                // multiplication would call SBF's 128-bit multiply routine on every row input load.
+                program
+                    .header
+                    .input_count()
+                    .wrapping_add(iteration.wrapping_mul(program.header.row_input_count()))
+                    .wrapping_add(offset)
             };
             let value = *inputs
                 .get(index)
@@ -1022,6 +1029,7 @@ fn blob_range<'data>(
         .ok_or_else(|| BallistaError::InvalidTemplateProgram.into())
 }
 
+#[inline(always)]
 pub fn read_value<'data>(opcode: u8, data: &[u8], offset: usize) -> RunResult<RuntimeValue<'data>> {
     Ok(match opcode {
         OP_READ_U8 => RuntimeValue::U64(read_array::<1>(data, offset)?[0] as u64),
@@ -1400,7 +1408,9 @@ pub fn resolve_account<'data>(
         if offset >= program.header.batch_stride() {
             return Err(BallistaError::InvalidRuntimeAccount.into());
         }
-        row_base + offset
+        // A row starts below the runtime account count, which is at most 120, and the offset is
+        // below the stride, so this cannot wrap; the lookup below bounds-checks it regardless.
+        row_base.wrapping_add(offset)
     };
     accounts
         .get(index)
@@ -1582,6 +1592,7 @@ pub fn as_u128(value: RuntimeValue<'_>) -> RunResult<u128> {
     }
 }
 
+#[inline(always)]
 pub fn read_array<const N: usize>(data: &[u8], offset: usize) -> RunResult<&[u8; N]> {
     offset
         .checked_add(N)

@@ -781,17 +781,21 @@ pub fn execute_instruction<'data>(
         | OP_READ_PUBKEY | OP_READ_BOOL => {
             let account = resolve_account(program, accounts, instruction.a, loop_context)?;
             let offset = if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
-                match read(registers, instruction.b)? {
-                    RuntimeValue::U64(value) => usize::try_from(*value)
+                match registers.get(instruction.b as usize) {
+                    Some(RuntimeValue::U64(value)) => usize::try_from(*value)
                         .map_err(|_| BallistaError::InvalidRuntimeAccount)?,
-                    _ => return Err(BallistaError::TypeMismatch.into()),
+                    Some(RuntimeValue::Unset) | None => {
+                        return Err(BallistaError::InvalidRegister.into())
+                    }
+                    Some(_) => return Err(BallistaError::TypeMismatch.into()),
                 }
             } else {
                 instruction.immediate() as usize
             };
             let data = account.try_borrow()?;
-            let value = read_value(instruction.opcode, &data, offset)?;
-            set(registers, dst, value)?;
+            decode_value(instruction.opcode, &data, offset, |value| {
+                set(registers, dst, value)
+            })?;
         }
         OP_CLOCK_SLOT => set(registers, dst, RuntimeValue::U64(Clock::get()?.slot))?,
         OP_CLOCK_TIMESTAMP => set(
@@ -800,14 +804,17 @@ pub fn execute_instruction<'data>(
             RuntimeValue::I64(Clock::get()?.unix_timestamp),
         )?,
         OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_MIN | OP_MAX => {
-            let left = *read(registers, instruction.a)?;
-            let right = *read(registers, instruction.b)?;
-            set(registers, dst, arithmetic(instruction.opcode, left, right)?)?;
+            let left = operand(registers, instruction.a)?;
+            let right = operand(registers, instruction.b)?;
+            let value = arithmetic(instruction.opcode, *left, *right)
+                .map_err(|error| unset_first(error, left, right))?;
+            set(registers, dst, value)?;
         }
         OP_EQ | OP_NE | OP_LT | OP_LTE | OP_GT | OP_GTE => {
-            let left = *read(registers, instruction.a)?;
-            let right = *read(registers, instruction.b)?;
-            let result = compare(instruction.opcode, left, right)?;
+            let left = operand(registers, instruction.a)?;
+            let right = operand(registers, instruction.b)?;
+            let result = compare(instruction.opcode, *left, *right)
+                .map_err(|error| unset_first(error, left, right))?;
             set(registers, dst, RuntimeValue::Bool(result))?;
         }
         OP_AND | OP_OR => {
@@ -838,7 +845,9 @@ pub fn execute_instruction<'data>(
             set(registers, dst, selected)?;
         }
         OP_CAST_U64 | OP_CAST_I64 | OP_CAST_U128 => {
-            let value = cast(instruction.opcode, *read(registers, instruction.a)?)?;
+            let source = operand(registers, instruction.a)?;
+            let value = cast(instruction.opcode, *source)
+                .map_err(|error| unset_first(error, source, source))?;
             set(registers, dst, value)?;
         }
         OP_LOOP_INDEX => {
@@ -1031,21 +1040,38 @@ fn blob_range<'data>(
 
 #[inline(always)]
 pub fn read_value<'data>(opcode: u8, data: &[u8], offset: usize) -> RunResult<RuntimeValue<'data>> {
-    Ok(match opcode {
-        OP_READ_U8 => RuntimeValue::U64(read_array::<1>(data, offset)?[0] as u64),
-        OP_READ_U16 => RuntimeValue::U64(u16::from_le_bytes(*read_array(data, offset)?) as u64),
-        OP_READ_U32 => RuntimeValue::U64(u32::from_le_bytes(*read_array(data, offset)?) as u64),
-        OP_READ_U64 => RuntimeValue::U64(u64::from_le_bytes(*read_array(data, offset)?)),
-        OP_READ_I64 => RuntimeValue::I64(i64::from_le_bytes(*read_array(data, offset)?)),
-        OP_READ_U128 => RuntimeValue::U128(*read_array(data, offset)?),
-        OP_READ_PUBKEY => RuntimeValue::Pubkey(*read_array(data, offset)?),
+    decode_value(opcode, data, offset, Ok)
+}
+
+/// Decodes the value a read opcode names at `offset` and hands it to `sink`. Each opcode calls
+/// `sink` with its own variant, so a sink that stores to a register writes only that variant's
+/// bytes instead of a whole value merged from all eight.
+#[inline(always)]
+fn decode_value<'data, T>(
+    opcode: u8,
+    data: &[u8],
+    offset: usize,
+    sink: impl FnOnce(RuntimeValue<'data>) -> RunResult<T>,
+) -> RunResult<T> {
+    match opcode {
+        OP_READ_U8 => sink(RuntimeValue::U64(read_array::<1>(data, offset)?[0] as u64)),
+        OP_READ_U16 => sink(RuntimeValue::U64(
+            u16::from_le_bytes(*read_array(data, offset)?) as u64,
+        )),
+        OP_READ_U32 => sink(RuntimeValue::U64(
+            u32::from_le_bytes(*read_array(data, offset)?) as u64,
+        )),
+        OP_READ_U64 => sink(RuntimeValue::U64(u64::from_le_bytes(*read_array(data, offset)?))),
+        OP_READ_I64 => sink(RuntimeValue::I64(i64::from_le_bytes(*read_array(data, offset)?))),
+        OP_READ_U128 => sink(RuntimeValue::U128(*read_array(data, offset)?)),
+        OP_READ_PUBKEY => sink(RuntimeValue::Pubkey(*read_array(data, offset)?)),
         OP_READ_BOOL => match read_array::<1>(data, offset)?[0] {
-            0 => RuntimeValue::Bool(false),
-            1 => RuntimeValue::Bool(true),
-            _ => return Err(BallistaError::TypeMismatch.into()),
+            0 => sink(RuntimeValue::Bool(false)),
+            1 => sink(RuntimeValue::Bool(true)),
+            _ => Err(BallistaError::TypeMismatch.into()),
         },
-        _ => return Err(BallistaError::InvalidTemplateProgram.into()),
-    })
+        _ => Err(BallistaError::InvalidTemplateProgram.into()),
+    }
 }
 
 fn invoke_cpi<'data>(
@@ -1570,9 +1596,44 @@ fn read<'registers, 'data>(
 /// `TypeMismatch` if it holds another type, the same order `as_bool(get(..)?)` reports them in.
 #[inline(always)]
 fn read_bool(registers: &[RuntimeValue<'_>], index: u8) -> RunResult<bool> {
-    match read(registers, index)? {
-        RuntimeValue::Bool(value) => Ok(*value),
-        _ => Err(BallistaError::TypeMismatch.into()),
+    match registers.get(index as usize) {
+        Some(RuntimeValue::Bool(value)) => Ok(*value),
+        other => Err(not_a_bool(other)),
+    }
+}
+
+/// Why a register that `read_bool` expected to hold a boolean does not.
+#[cold]
+#[inline(never)]
+fn not_a_bool(register: Option<&RuntimeValue<'_>>) -> RunError {
+    match register {
+        Some(RuntimeValue::Unset) | None => BallistaError::InvalidRegister.into(),
+        Some(_) => BallistaError::TypeMismatch.into(),
+    }
+}
+
+/// The register at `index`, unset or not; out of range is `InvalidRegister`. For handlers whose
+/// type match already rejects an unset value: they test the type they expect first and sort out
+/// an unset operand only once that test fails, through `unset_first`.
+#[inline(always)]
+fn operand<'registers, 'data>(
+    registers: &'registers [RuntimeValue<'data>],
+    index: u8,
+) -> RunResult<&'registers RuntimeValue<'data>> {
+    registers
+        .get(index as usize)
+        .ok_or_else(|| BallistaError::InvalidRegister.into())
+}
+
+/// The error an operation on `left` and `right` reports once it has failed. Reading an unset
+/// operand fails before the operation runs, with `InvalidRegister`, exactly as `get` would have.
+#[cold]
+#[inline(never)]
+fn unset_first(error: RunError, left: &RuntimeValue<'_>, right: &RuntimeValue<'_>) -> RunError {
+    if matches!(left, RuntimeValue::Unset) || matches!(right, RuntimeValue::Unset) {
+        BallistaError::InvalidRegister.into()
+    } else {
+        error
     }
 }
 
@@ -2125,6 +2186,53 @@ mod tests {
             Err(err(BallistaError::InvalidRunInputs))
         );
         assert_eq!(take::<1>(&[1, 2]), Ok((&[1], &[2][..])));
+    }
+
+    /// The typed handlers test the type they expect before looking for an unset operand, so this
+    /// pins what they report: an unset or out-of-range operand is `InvalidRegister`, as reading it
+    /// with `get` first always was, and only a set operand of the wrong type is `TypeMismatch`.
+    #[test]
+    fn unset_operands_report_invalid_register_before_type_mismatch() {
+        let mut builder = ProgramBuilder::new();
+        builder.account(0, None, None, 0);
+        for _ in 0..4 {
+            builder.register();
+        }
+        builder.const_bool(true);
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut scratch = Scratch::new(&program);
+        let accounts = [];
+        // r0 unset, r1 u64, r2 bool, r3 i64; register 4 is out of range.
+        let mut registers = vec![Unset, U64(7), Bool(true), I64(-1)];
+        let mut run = |record: InstructionRecord| {
+            execute_instruction(&program, &[], &accounts, &mut registers, &mut scratch, &record, None)
+        };
+        let invalid = Err(err(BallistaError::InvalidRegister));
+        let mismatch = Err(err(BallistaError::TypeMismatch));
+        for opcode in [OP_ADD, OP_EQ, OP_LT] {
+            assert_eq!(run(record(opcode, 1, 0, 1, NO_INDEX, 0, 0)), invalid, "unset left, {opcode}");
+            assert_eq!(run(record(opcode, 1, 1, 0, NO_INDEX, 0, 0)), invalid, "unset right, {opcode}");
+            assert_eq!(run(record(opcode, 1, 0, 2, NO_INDEX, 0, 0)), invalid, "unset beside a bool, {opcode}");
+            assert_eq!(run(record(opcode, 1, 3, 0, NO_INDEX, 0, 0)), invalid, "a mismatched left does not win, {opcode}");
+            assert_eq!(run(record(opcode, 1, 4, 1, NO_INDEX, 0, 0)), invalid, "out of range, {opcode}");
+            assert_eq!(run(record(opcode, 1, 1, 3, NO_INDEX, 0, 0)), mismatch, "u64 against i64, {opcode}");
+        }
+        assert_eq!(run(record(OP_CAST_U128, 1, 0, NO_INDEX, NO_INDEX, 0, 0)), invalid);
+        assert_eq!(run(record(OP_CAST_U128, 1, 2, NO_INDEX, NO_INDEX, 0, 0)), mismatch);
+        for opcode in [OP_AND, OP_OR] {
+            assert_eq!(run(record(opcode, 1, 0, 2, NO_INDEX, 0, 0)), invalid);
+            assert_eq!(run(record(opcode, 1, 2, 0, NO_INDEX, 0, 0)), invalid);
+            assert_eq!(run(record(opcode, 1, 1, 0, NO_INDEX, 0, 0)), mismatch, "the left operand is read first");
+        }
+        assert_eq!(run(record(OP_NOT, 1, 0, NO_INDEX, NO_INDEX, 0, 0)), invalid);
+        assert_eq!(run(record(OP_NOT, 1, 1, NO_INDEX, NO_INDEX, 0, 0)), mismatch);
+        assert_eq!(run(record(OP_REQUIRE, NO_INDEX, 0, NO_INDEX, NO_INDEX, 0, 0)), invalid);
+        assert_eq!(run(record(OP_REQUIRE, NO_INDEX, 3, NO_INDEX, NO_INDEX, 0, 0)), mismatch);
+        assert_eq!(run(record(OP_SELECT, 1, 0, 1, 1, 0, 0)), invalid);
+        assert_eq!(run(record(OP_SELECT, 1, 2, 0, 1, 0, 0)), invalid, "the selected operand is unset");
+        assert_eq!(run(record(OP_MOVE, 1, 0, NO_INDEX, NO_INDEX, 0, 0)), invalid);
+        assert_eq!(registers[1], U64(7), "no failed instruction wrote its destination");
     }
 
     #[test]

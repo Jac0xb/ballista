@@ -53,6 +53,11 @@ pub type RunResult<T> = Result<T, RunError>;
 
 impl RunError {
     /// Maps a failure raised while executing `instruction` at `pc`, logging the location.
+    ///
+    /// Out of line and cold: a run fails at most once, so the dispatch loop keeps only a branch to
+    /// here and none of the logging in its own body.
+    #[cold]
+    #[inline(never)]
     fn at(self, pc: usize, instruction: &InstructionRecord) -> ProgramError {
         match self {
             RunError::Program(error) => error,
@@ -80,6 +85,8 @@ impl RunError {
     }
 
     /// Maps a failure raised before the first instruction runs (input or account validation).
+    #[cold]
+    #[inline(never)]
     fn before_execution(self) -> ProgramError {
         match self {
             RunError::Program(error) => error,

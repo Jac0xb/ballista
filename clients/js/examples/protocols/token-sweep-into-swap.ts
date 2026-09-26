@@ -6,13 +6,15 @@
  * is still moving when the transaction is signed, so the amount to sell does not exist yet.
  *
  * A route built with a fixed input amount fails when the balance came up short and strands the
- * difference when it came up long. Here the swap's input amount is read out of the account, and
- * the run refuses to bother below a floor.
+ * difference when it came up long. Jupiter's `route` carries that amount as `in_amount`, after
+ * the route plan and before the quote. So the caller hands over the route plan and the quote's
+ * own numbers separately, and the template writes the instruction itself: the balance it reads
+ * becomes `in_amount`, and the quoted output is rescaled to match. The plan splits its input by
+ * percentage, so the same plan sells more or less; how far the balance may drift from the quote
+ * is bounded by the pools and tick arrays the route's accounts cover.
  *
- * The amount at offset 64 is the raw SPL Token balance. Under Token-2022's transfer-fee
- * extension part of that can be withheld and unspendable, tracked separately by the
- * `TransferFeeAmount` extension past the 165-byte base layout, so for a fee-bearing mint read
- * the withheld amount from the extension and subtract it.
+ * Both token accounts are pinned to the legacy SPL Token program, so a Token-2022 account fails
+ * the owner check instead of being read with the wrong layout.
  */
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -24,27 +26,34 @@ import {
   step,
 } from '../../src/index.js';
 import {
+  JUPITER_ROUTE,
   JUPITER_V6,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_LENGTH,
   addressBytes,
 } from './shared.js';
 
+const balanceOf = (name: string) =>
+  expression.accountData(account.fixed(name), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64');
+
 export const tokenSweepIntoSwap = defineTemplate({
   inputs: {
-    /**
-     * The route, built for a nominal input. Jupiter reads its own amount from this data, so the
-     * caller quotes for roughly the expected balance; the guard below is what makes the
-     * difference safe rather than the route.
-     */
-    routeData: { type: 'bytes', maxLength: 512 },
+    /** `route_plan` as the Swap API encoded it: the bytes between the discriminator and `in_amount`. */
+    routePlan: { type: 'bytes', maxLength: 512 },
+    /** The `in_amount` the route was quoted for. */
+    quotedInAmount: { type: 'u64' },
+    /** The quote's `quoted_out_amount` for that input. */
+    quotedOutAmount: { type: 'u64' },
+    /** The quote's `slippage_bps`. */
+    slippageBps: { type: 'u64' },
+    /** The quote's `platform_fee_bps`. */
+    platformFeeBps: { type: 'u64' },
     /** Do not sell less than this. */
     dustFloor: { type: 'u64' },
-    /** And do not accept less than this for it. */
-    minimumOut: { type: 'u64' },
   },
   accounts: {
     jupiter: { executable: true, address: addressBytes(JUPITER_V6) },
+    tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
     seller: { signer: true, writable: true },
     sourceAta: {
       writable: true,
@@ -59,49 +68,78 @@ export const tokenSweepIntoSwap = defineTemplate({
   },
   accountGroups: ['routeAccounts'],
   steps: [
-    step.let(
-      'available',
-      expression.accountData(account.fixed('sourceAta'), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64'),
-      'readSellableBalance',
-    ),
+    step.let('available', balanceOf('sourceAta'), 'readSellableBalance'),
 
     step.require(
       expression.greaterThan(expression.variable('available'), expression.input('dustFloor')),
       'worthSelling',
     ),
 
-    step.snapshot(
-      'proceedsBefore',
-      expression.accountData(account.fixed('destinationAta'), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64'),
-      'readProceedsBefore',
+    // The quote was for `quotedInAmount`; selling `available` instead should fetch proportionally
+    // more or less. Jupiter enforces its slippage against whatever quote the instruction carries.
+    step.let(
+      'quotedOut',
+      expression.cast(
+        'u64',
+        expression.divide(
+          expression.multiply(
+            expression.cast('u128', expression.input('quotedOutAmount')),
+            expression.cast('u128', expression.variable('available')),
+          ),
+          expression.cast('u128', expression.input('quotedInAmount')),
+        ),
+      ),
+      'rescaleQuoteToBalance',
     ),
 
+    step.snapshot('proceedsBefore', balanceOf('destinationAta'), 'readProceedsBefore'),
+
+    // `route` takes the token program, the signer, and the user's source and destination token
+    // accounts first; the route's own accounts follow as the group.
     step.invoke({
       program: account.fixed('jupiter'),
-      accounts: [{ account: account.fixed('seller'), signer: true, writable: true }],
+      accounts: [
+        { account: account.fixed('tokenProgram'), signer: false, writable: false },
+        { account: account.fixed('seller'), signer: true, writable: false },
+        { account: account.fixed('sourceAta'), signer: false, writable: true },
+        { account: account.fixed('destinationAta'), signer: false, writable: true },
+      ],
       accountGroup: 'routeAccounts',
-      data: [data.encode('bytes', expression.input('routeData'))],
+      data: [
+        data.literal(JUPITER_ROUTE),
+        data.encode('bytes', expression.input('routePlan')),
+        data.encode('u64', expression.variable('available')),
+        data.encode('u64', expression.variable('quotedOut')),
+        data.encode('u16', expression.input('slippageBps')),
+        data.encode('u8', expression.input('platformFeeBps')),
+      ],
       label: 'sell',
     }),
 
+    // Jupiter checks this too. Checking it here, on the balances, holds whatever the route did.
     step.require(
       expression.greaterThanOrEqual(
-        expression.subtract(
-          expression.accountData(account.fixed('destinationAta'), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64'),
-          expression.snapshot('proceedsBefore'),
+        expression.subtract(balanceOf('destinationAta'), expression.snapshot('proceedsBefore')),
+        expression.cast(
+          'u64',
+          expression.divide(
+            expression.multiply(
+              expression.cast('u128', expression.variable('quotedOut')),
+              expression.cast(
+                'u128',
+                expression.subtract(expression.u64(10_000), expression.input('slippageBps')),
+              ),
+            ),
+            expression.u128(10_000),
+          ),
         ),
-        expression.input('minimumOut'),
       ),
-      'saleMetItsFloor',
+      'saleMetTheQuote',
     ),
 
-    // Whatever the route left behind is dust by construction: it was below the floor or the
-    // route could not take it. Nothing is stranded silently, because the balance is re-read.
+    // The whole balance was the input, so anything left means the route did not take it all.
     step.require(
-      expression.lessThanOrEqual(
-        expression.accountData(account.fixed('sourceAta'), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64'),
-        expression.input('dustFloor'),
-      ),
+      expression.lessThanOrEqual(balanceOf('sourceAta'), expression.input('dustFloor')),
       'nothingMeaningfulLeftBehind',
     ),
   ],

@@ -1,18 +1,19 @@
 /**
- * Settle Drift PnL only when settling it actually moves money.
+ * Settle Drift PnL, then withdraw without ever borrowing.
  *
  * `settle_pnl` is permissionless: anyone may call it for any user and market. That makes it a
- * natural thing to schedule, and a natural thing to batch alongside a withdrawal that depends on
- * it. The catch is that a settle which finds nothing to settle is a wasted transaction, and
- * batched with anything else it takes that down too.
+ * natural thing to schedule, and a natural thing to batch with the withdrawal that depends on it.
+ * The risk in the batch is the withdrawal: with `reduce_only` off, a Drift withdrawal larger than
+ * the deposit opens a borrow for the difference.
  *
- * The template measures the settlement by its effect — the user's spot token account — and
- * requires a withdrawal-sized result before withdrawing. If the settle produced nothing, the run
- * reverts before the dependent withdrawal is attempted rather than after.
+ * The template settles, withdraws `minimumSettled` with `reduce_only` on, so the withdrawal can
+ * only draw down a deposit, and then requires the destination token account to have received the
+ * full amount. If the account could not pay that out without borrowing, the run reverts, settle
+ * included.
  *
- * Reading Drift's unsettled PnL directly and attaching a `when` would let the run land as a
- * no-op instead of reverting. That needs the `User` account's layout from the current IDL, which
- * is a zero-copy struct whose offsets are not derived here.
+ * It does not tell settled PnL apart from an earlier deposit. That needs the `User` account's spot
+ * positions, a zero-copy struct whose offsets are not derived here. With them, a `when` on the
+ * withdrawal could also turn "nothing settled" into a no-op instead of a revert.
  */
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -24,7 +25,7 @@ import {
   step,
 } from '../../src/index.js';
 import {
-  BORSH_FALSE,
+  BORSH_TRUE,
   DRIFT_V2,
   DRIFT_WITHDRAW,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
@@ -96,8 +97,8 @@ export const driftSettleWhenProfitable = defineTemplate({
         data.literal(DRIFT_WITHDRAW),
         data.literal(u16Bytes(SPOT_MARKET_INDEX)),
         data.encode('u64', expression.input('minimumSettled')),
-        // reduce_only: never turn a withdrawal into a borrow.
-        data.literal(BORSH_FALSE),
+        // reduce_only: draw down a deposit, never open a borrow.
+        data.literal(BORSH_TRUE),
       ],
       label: 'withdrawSettled',
     }),

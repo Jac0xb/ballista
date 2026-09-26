@@ -8,8 +8,8 @@
  * refreshes that happen in this same transaction, after signing.
  *
  * So the template refreshes, liquidates, and then requires the liquidator's collateral account to
- * have grown by at least the bounty it was chasing. Anything less and the run reverts: no
- * half-executed liquidation, no paying gas to improve someone else's position.
+ * have grown by at least the bounty it was chasing. Anything less and the run reverts, so a
+ * liquidation that did not pay leaves nothing behind. The reverted transaction still pays its fee.
  *
  * Gating the liquidation on health itself is also possible — read the obligation's borrowed and
  * unhealthy-borrow values and attach a `when` — but those offsets are not derived here. Take

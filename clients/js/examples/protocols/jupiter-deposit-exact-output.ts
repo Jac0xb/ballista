@@ -11,9 +11,11 @@
  * that number. A plain transaction has to write it before the swap has happened: quote it high
  * and the deposit fails, quote it low and the remainder is stranded in the ATA.
  *
- * Route account lists vary in length, so the route's accounts arrive as an account group rather
- * than as declared schema slots. Group members are forwarded with the transaction's own writable
- * flag and never sign.
+ * `route` takes the token program, the signing owner, and the owner's source and destination
+ * token accounts first, and the template passes those four itself: the destination is the account
+ * it measures, so what Jupiter credits is what gets deposited. The rest of the route's list varies
+ * in length with the route, so it arrives as an account group. Group members are forwarded with
+ * the transaction's own writable flag and never sign.
  */
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -25,6 +27,7 @@ import {
   step,
 } from '../../src/index.js';
 import {
+  JUPITER_ROUTE,
   JUPITER_V6,
   KAMINO_DEPOSIT,
   KAMINO_LEND,
@@ -35,8 +38,8 @@ import {
 
 export const jupiterDepositExactOutput = defineTemplate({
   inputs: {
-    /** The whole Jupiter instruction, as returned by the Swap API. */
-    routeData: { type: 'bytes', maxLength: 512 },
+    /** Jupiter's `route` arguments: the Swap API's instruction data after the discriminator. */
+    routeArgs: { type: 'bytes', maxLength: 512 },
     /** Below this the route is not worth depositing and the run fails instead. */
     minimumOut: { type: 'u64' },
   },
@@ -45,6 +48,8 @@ export const jupiterDepositExactOutput = defineTemplate({
     kamino: { executable: true, address: addressBytes(KAMINO_LEND) },
     tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
     owner: { signer: true, writable: true },
+    /** What the route sells from. */
+    sourceAta: { writable: true },
     /** The route's destination, and the account the deposit draws from. */
     destinationAta: {
       writable: true,
@@ -70,9 +75,14 @@ export const jupiterDepositExactOutput = defineTemplate({
 
     step.invoke({
       program: account.fixed('jupiter'),
-      accounts: [{ account: account.fixed('owner'), signer: true, writable: true }],
+      accounts: [
+        { account: account.fixed('tokenProgram'), signer: false, writable: false },
+        { account: account.fixed('owner'), signer: true, writable: false },
+        { account: account.fixed('sourceAta'), signer: false, writable: true },
+        { account: account.fixed('destinationAta'), signer: false, writable: true },
+      ],
       accountGroup: 'routeAccounts',
-      data: [data.encode('bytes', expression.input('routeData'))],
+      data: [data.literal(JUPITER_ROUTE), data.encode('bytes', expression.input('routeArgs'))],
       label: 'swap',
     }),
 

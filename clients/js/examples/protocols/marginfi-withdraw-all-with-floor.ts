@@ -7,9 +7,9 @@
  * liquidated, utilization capped it — still succeeds, and anything sequenced after it proceeds
  * on a false assumption.
  *
- * Here the amount that landed is measured and has to clear a floor before the run continues. The
- * trailing `Option::None` byte is `withdraw_all` left unset on the first argument path; the
- * second element sets it to `Some(true)`.
+ * Here the amount that landed is measured and has to clear a floor before the run continues.
+ * `withdraw_all` is passed as `Some(true)`, so marginfi withdraws the whole position and ignores
+ * `amount`.
  */
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,

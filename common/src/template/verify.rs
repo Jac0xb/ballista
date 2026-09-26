@@ -365,7 +365,11 @@ impl ProgramView<'_> {
                 } else {
                     self.verify_read_bounds(instruction, instruction_index, in_loop)?;
                 }
-                self.write_register(registers, instruction.dst, scalar(read_type(instruction.opcode)))?;
+                self.write_register(
+                    registers,
+                    instruction.dst,
+                    scalar(read_type(instruction.opcode)),
+                )?;
             }
             OP_CLOCK_SLOT => self.write_register(registers, instruction.dst, scalar(VALUE_U64))?,
             OP_CLOCK_TIMESTAMP => {
@@ -839,7 +843,9 @@ pub const fn read_width(opcode: u8) -> usize {
 }
 
 /// Register type produced by each `OP_READ_*` opcode; also the result type `OP_RETURN_DATA`
-/// selects when its width operand names one of them.
+/// selects when its width operand names one of them. Any other opcode falls back to `VALUE_U64`,
+/// so callers must first confirm the opcode is actually a read (or that `read_width` is nonzero),
+/// as both call sites do.
 pub const fn read_type(opcode: u8) -> u8 {
     match opcode {
         OP_READ_I64 | OP_READ_I32 => VALUE_I64,
@@ -1077,9 +1083,13 @@ mod tests {
         }
     }
 
+    /// `(opcode, operand types for a/b/c, expected outcome)`, for
+    /// [`multiply_divide_takes_three_matching_unsigned_operands`].
+    type MulDivTypeCase = (u8, [Option<u8>; 3], Result<(), TemplateError>);
+
     #[test]
     fn multiply_divide_takes_three_matching_unsigned_operands() {
-        let cases: &[(u8, [Option<u8>; 3], Result<(), TemplateError>)] = &[
+        let cases: &[MulDivTypeCase] = &[
             (OP_MUL_DIV, [Some(VALUE_U64); 3], Ok(())),
             (OP_MUL_DIV_CEIL, [Some(VALUE_U128); 3], Ok(())),
             (OP_MUL_DIV, [Some(VALUE_I64); 3], Err(TemplateError::TypeMismatch)),
@@ -1110,20 +1120,18 @@ mod tests {
         }
     }
 
-    /// `(opcode, operand types for a/b/c, expected destination type)`, for [`destination_types`].
-    type DestinationTypeCase = (u8, [u8; 3], u8);
-
     #[test]
     fn destination_types() {
         // Every new math opcode pins its destination's type: a witness of that type must be
         // accepted, and a witness of either other numeric type must be rejected.
-        let cases: &[DestinationTypeCase] = &[
+        let cases: &[(u8, [u8; 3], u8)] = &[
             (OP_MUL_DIV, [VALUE_U64; 3], VALUE_U64),
             (OP_MUL_DIV_CEIL, [VALUE_U128; 3], VALUE_U128),
             (OP_REM, [VALUE_U64, VALUE_U64, VALUE_U64], VALUE_U64),
             (OP_REM, [VALUE_I64, VALUE_I64, VALUE_U64], VALUE_I64),
             (OP_SHL, [VALUE_U128, VALUE_U64, VALUE_U64], VALUE_U128),
             (OP_SHR, [VALUE_U64, VALUE_U64, VALUE_U64], VALUE_U64),
+            (OP_BIT_AND, [VALUE_U64, VALUE_U64, VALUE_U64], VALUE_U64),
             (OP_BIT_XOR, [VALUE_U128, VALUE_U128, VALUE_U64], VALUE_U128),
             (OP_POW10, [VALUE_U64, VALUE_U64, VALUE_U64], VALUE_U128),
         ];
@@ -1195,8 +1203,8 @@ mod tests {
         builder.read(OP_READ_I32, feed, 5);
         assert!(matches!(verify_builder(&builder), Err(TemplateError::ReadOutOfBounds(_))));
 
-        // This opcode's width also selects `RETURN_DATA`'s result type; that path's typing is
-        // checked by `return_data_i32_selector_is_i64`, not here.
+        // As a `RETURN_DATA` selector this opcode picks a four-byte width; that path's typing is
+        // checked by `return_data_i32_selector_is_i64`.
         assert_eq!(read_width(OP_READ_I32), 4);
     }
 

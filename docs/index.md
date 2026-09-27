@@ -12,7 +12,7 @@ transaction runs, so the template reads the balance, checks it, and sends the di
 
 ::: code-group
 
-```ts [TypeScript · write it]
+```ts [TypeScript · Template]
 // Describe the template once: what it takes as input, which accounts it expects, and its steps.
 // compileTemplate turns it into the bytes you upload to the chain.
 import {
@@ -38,7 +38,10 @@ const sweep = defineTemplate({
     // Read the vault's balance while the transaction runs.
     step.let('balance', expression.accountField(account.fixed('vault'), 'lamports')),
     // Stop, and change nothing, unless the balance is above the minimum.
-    step.require(expression.greaterThan(expression.variable('balance'), expression.input('reserve'))),
+    step.require(
+      expression.greaterThan(expression.variable('balance'), expression.input('reserve')),
+      'aboveReserve',
+    ),
     // Send everything above the minimum.
     systemTransfer({
       systemProgram: account.fixed('systemProgram'),
@@ -53,7 +56,7 @@ const sweep = defineTemplate({
 const compiled = compileTemplate(sweep);
 ```
 
-```ts [TypeScript · run it]
+```ts [TypeScript · Run]
 // Build the instruction that runs the uploaded template. Add it to a transaction, sign, and send.
 import {
   BALLISTA_ADDRESS,
@@ -79,7 +82,7 @@ const run = buildKitRunInstruction({
 });
 ```
 
-```rust [Rust · write it]
+```rust [Rust · Template]
 // The same template, written with the Rust SDK. It is lower level: you declare accounts and inputs
 // in order, and each step's result goes in a numbered register that later steps read.
 use ballista_sdk::{
@@ -122,23 +125,23 @@ builder.invoke(transfer, None);
 let payload = builder.build()?;
 ```
 
-```rust [Rust · run it]
+```rust [Rust · Run]
 // Build the instruction that runs the uploaded template. Add it to a transaction, sign, and send.
-use ballista_sdk::{find_template_pda, run_instruction, SYSTEM_PROGRAM_ID};
+use ballista_sdk::{find_template_pda, run_instruction, RunInputs};
 use solana_program::instruction::AccountMeta;
 
-// creator, vault and destination are addresses you supply.
-let (template, _) = find_template_pda(&creator, 7);
+// creator_pubkey, vault_pubkey and destination_pubkey are addresses you supply.
+let (template, _) = find_template_pda(&creator_pubkey, 7);
 
 // The caller chooses the minimum, never the amount.
 let run = run_instruction(
     template,
     vec![
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new(vault, true),
-        AccountMeta::new(destination, false),
+        AccountMeta::new_readonly(ballista_sdk::SYSTEM_PROGRAM_ID, false),
+        AccountMeta::new(vault_pubkey, true),
+        AccountMeta::new(destination_pubkey, false),
     ],
-    &reserve.to_le_bytes(),
+    &RunInputs::new().u64(2_000_000).finish(),
 );
 ```
 

@@ -76,10 +76,15 @@ when it is finalized, before anyone runs it. Finalization proves that the templa
 - always finishes;
 - never reads a value before setting it;
 - refers only to accounts it declares;
-- never passes an account to a CPI as a signer (an account that signed the transaction) or as
-  writable (allowed to change) unless the account's declaration requires that privilege;
+- never passes a declared account to a CPI as a signer (an account that signed the transaction) or
+  as writable (allowed to change) unless the account's declaration requires that privilege.
+  [Account group](/guide/account-groups) members, which have no declaration, are passed as writable
+  when the transaction marked them writable, and never as signers;
 - stays within fixed limits on the number of CPIs and the size of their data, even in the worst
   case.
+
+Finalization does not check that a called program's address is pinned; only the TypeScript
+compiler requires that. See [Pins](/guide/trust-model#pins).
 
 What finalization cannot decide is who may run the template. Every run still relies on the
 transaction's signers, and on the checks inside the programs it calls, for authorization.

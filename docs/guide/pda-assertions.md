@@ -17,31 +17,118 @@ Ballista never signs.
 
 ::: code-group
 
-```ts [TypeScript · template]
-assertAta({
-  associatedTokenAccount: account.fixed('destinationAta'),
-  owner: account.fixed('recipient'),
-  mint: account.fixed('mint'),
-  tokenProgram: account.fixed('tokenProgram'),
-  associatedTokenProgram: account.fixed('associatedTokenProgram'),
+```ts [TypeScript · Template]
+import {
+  account,
+  assertAta,
+  compileTemplate,
+  defineTemplate,
+  ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES,
+} from '@jac0xb/ballista';
+
+const template = defineTemplate({
+  accounts: {
+    associatedTokenProgram: { executable: true, address: ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES },
+    tokenProgram: {},
+    recipient: {},
+    mint: {},
+    destinationAta: { writable: true },
+  },
+  steps: [
+    assertAta({
+      associatedTokenAccount: account.fixed('destinationAta'),
+      owner: account.fixed('recipient'),
+      mint: account.fixed('mint'),
+      tokenProgram: account.fixed('tokenProgram'),
+      associatedTokenProgram: account.fixed('associatedTokenProgram'),
+    }),
+  ],
+});
+
+const compiled = compileTemplate(template);
+```
+
+```ts [TypeScript · Run]
+import { address, getAddressEncoder, getProgramDerivedAddress } from '@solana/kit';
+import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
+
+const ASSOCIATED_TOKEN_PROGRAM = address('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+
+// templateAddress, recipient, mint and tokenProgram are addresses you supply.
+const encoder = getAddressEncoder();
+const [destinationAta] = await getProgramDerivedAddress({
+  programAddress: ASSOCIATED_TOKEN_PROGRAM,
+  seeds: [encoder.encode(recipient), encoder.encode(tokenProgram), encoder.encode(mint)],
+});
+
+const run = buildKitRunInstruction({
+  compiled,
+  templateAddress,
+  accounts: {
+    associatedTokenProgram: { address: ASSOCIATED_TOKEN_PROGRAM },
+    tokenProgram: { address: tokenProgram },
+    recipient: { address: recipient },
+    mint: { address: mint },
+    destinationAta: { address: destinationAta },
+  },
 });
 ```
 
-```rust [Rust · account binding]
-let destination_ata = get_associated_token_address_with_program_id(
-    &recipient,
-    &mint,
-    &token_program,
+```rust [Rust · Template]
+use ballista_sdk::{
+    ballista_common::template::{ACCOUNT_EXECUTABLE, ACCOUNT_WRITABLE, DATA_REG_PUBKEY, OP_EQ},
+    ProgramBuilder, Segment, ASSOCIATED_TOKEN_PROGRAM_ID,
+};
+
+let mut builder = ProgramBuilder::new();
+let associated_token_program = builder.account(
+    ACCOUNT_EXECUTABLE,
+    Some(ASSOCIATED_TOKEN_PROGRAM_ID.to_bytes()),
+    None,
+    0,
+);
+let token_program = builder.account(0, None, None, 0);
+let recipient = builder.account(0, None, None, 0);
+let mint = builder.account(0, None, None, 0);
+let destination_ata = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+
+// Derive the ATA from [owner, token program, mint] and require the passed account to match.
+let ata_key = builder.account_key(destination_ata);
+let owner_key = builder.account_key(recipient);
+let token_program_key = builder.account_key(token_program);
+let mint_key = builder.account_key(mint);
+let derived = builder.derive_pda(
+    associated_token_program,
+    &[
+        Segment::Register(DATA_REG_PUBKEY, owner_key),
+        Segment::Register(DATA_REG_PUBKEY, token_program_key),
+        Segment::Register(DATA_REG_PUBKEY, mint_key),
+    ],
+);
+let matches = builder.binary(OP_EQ, ata_key, derived);
+builder.require(matches);
+
+let payload = builder.build()?;
+```
+
+```rust [Rust · Run]
+use ballista_sdk::run_instruction;
+use solana_program::{instruction::AccountMeta, pubkey::Pubkey};
+
+// template, recipient_pubkey, mint_pubkey and token_program_id are addresses you supply.
+let (destination_ata_pubkey, _) = Pubkey::find_program_address(
+    &[recipient_pubkey.as_ref(), token_program_id.as_ref(), mint_pubkey.as_ref()],
+    &ballista_sdk::ASSOCIATED_TOKEN_PROGRAM_ID,
 );
 
-let run = ballista_sdk::run_instruction(
+let run = run_instruction(
     template,
     vec![
-        AccountMeta::new_readonly(associated_token_program, false),
-        AccountMeta::new_readonly(token_program, false),
-        AccountMeta::new_readonly(recipient, false),
-        AccountMeta::new_readonly(mint, false),
-        AccountMeta::new(destination_ata, false),
+        AccountMeta::new_readonly(ballista_sdk::ASSOCIATED_TOKEN_PROGRAM_ID, false),
+        AccountMeta::new_readonly(token_program_id, false),
+        AccountMeta::new_readonly(recipient_pubkey, false),
+        AccountMeta::new_readonly(mint_pubkey, false),
+        AccountMeta::new(destination_ata_pubkey, false),
     ],
     &[],
 );
@@ -51,12 +138,16 @@ let run = ballista_sdk::run_instruction(
 
 `assertAta` derives an address from the seeds `[owner, tokenProgram, mint]` under the Associated
 Token Program, searching for the canonical bump. The run fails unless the result equals the address
-of the account passed as `associatedTokenAccount`. The Rust tab shows the caller's side: it computes
-the same address off chain and passes the accounts in the order the template declares them.
+of the account passed as `associatedTokenAccount`. The Run tabs compute the same address off chain
+and pass the accounts in the order the template declares them. In Rust,
+`get_associated_token_address_with_program_id` from the `spl-associated-token-account` crate gives
+the same result as `Pubkey::find_program_address`.
 
 ## Assert an arbitrary PDA
 
 ```ts
+import { account, assertPda, expression } from '@jac0xb/ballista';
+
 assertPda({
   account: account.fixed('position'),
   program: account.fixed('protocolProgram'),
@@ -83,6 +174,8 @@ and the number of attempts depends on the seeds. The caller can compute the bump
 free, so a template can take it as an input and derive the address once:
 
 ```ts
+import { account, assertPda, expression } from '@jac0xb/ballista';
+
 assertPda({
   account: account.fixed('position'),
   program: account.fixed('protocolProgram'),
@@ -115,21 +208,39 @@ constant, such as `bump: expression.u64(254)`.
 expression both helpers use. Inside a batch, give each row's ATA its own bump with a row input:
 
 ```ts
-batch: {
-  maxIterations: 32,
-  row: { recipient: {}, ata: { writable: true } },
-  rowInputs: { ataBump: { type: 'u64' } },
-},
-steps: [step.forEach([
-  assertAta({
-    associatedTokenAccount: account.iteration('ata'),
-    owner: account.iteration('recipient'),
-    mint: account.fixed('mint'),
-    tokenProgram: account.fixed('tokenProgram'),
-    associatedTokenProgram: account.fixed('associatedTokenProgram'),
-    bump: expression.rowInput('ataBump'),
-  }),
-])]
+import {
+  account,
+  assertAta,
+  defineTemplate,
+  expression,
+  step,
+  ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES,
+} from '@jac0xb/ballista';
+
+const template = defineTemplate({
+  accounts: {
+    associatedTokenProgram: { executable: true, address: ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES },
+    tokenProgram: {},
+    mint: {},
+  },
+  batch: {
+    maxIterations: 32,
+    row: { recipient: {}, ata: { writable: true } },
+    rowInputs: { ataBump: { type: 'u64' } },
+  },
+  steps: [
+    step.forEach([
+      assertAta({
+        associatedTokenAccount: account.iteration('ata'),
+        owner: account.iteration('recipient'),
+        mint: account.fixed('mint'),
+        tokenProgram: account.fixed('tokenProgram'),
+        associatedTokenProgram: account.fixed('associatedTokenProgram'),
+        bump: expression.rowInput('ataBump'),
+      }),
+    ]),
+  ],
+});
 ```
 
 | Derivation | Compute units |
@@ -138,7 +249,7 @@ steps: [step.forEach([
 | Supplied bump, one constant seed | 1,898 |
 
 The search costs more the further the canonical bump is below 255; a supplied bump costs the same
-every time. The [compute profile](/cu-profile) has the full measurements.
+every time.
 
 ::: warning Variable compute
 Without a supplied bump, a derivation's cost depends on how many bumps the search tries. Measure

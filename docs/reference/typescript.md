@@ -65,6 +65,8 @@ account's `minDataLength` to cover the read.
 ## Compilation and inspection
 
 ```ts
+import { compileTemplate, decodeTemplateAccount, inspectTemplate } from '@jac0xb/ballista';
+
 const compiled = compileTemplate(template);
 
 compiled.bytes;             // bytecode to store on chain
@@ -92,6 +94,8 @@ the step's label if it has one.
 ## Errors
 
 ```ts
+import { decodeBallistaError, explainRunError } from '@jac0xb/ballista';
+
 decodeBallistaError(code);            // { kind, name, context, source } or undefined
 explainRunError(code, compiled);      // adds the step, account, or input the context points at
 ```
@@ -108,6 +112,16 @@ then finalized, which makes it permanent and runnable. These functions return in
 bytes; the Kit adapter below wraps them into instructions with the right accounts.
 
 ```ts
+import {
+  encodeBeginTemplate,
+  encodeCancelTemplate,
+  encodeCreateTemplate,
+  encodeFinalizeTemplate,
+  encodeWriteTemplateChunk,
+  planTemplateUpload,
+  resumeTemplateUpload,
+} from '@jac0xb/ballista';
+
 planTemplateUpload(compiled, templateId);
 resumeTemplateUpload(compiled, decodedAccount);
 encodeCreateTemplate(compiled, templateId);
@@ -130,6 +144,8 @@ encodeCancelTemplate();
 ## Run construction
 
 ```ts
+import { buildRunInstruction } from '@jac0xb/ballista';
+
 const instruction = buildRunInstruction({
   compiled,
   programAddress,
@@ -175,6 +191,17 @@ The byte constants `SYSTEM_PROGRAM_ADDRESS_BYTES`, `TOKEN_PROGRAM_ADDRESS_BYTES`
 Import from `@jac0xb/ballista/kit`:
 
 ```ts
+import {
+  buildKitResumeTemplateUploadPlan,
+  buildKitRunInstruction,
+  buildKitTemplateUploadPlan,
+  createComputeUnitProvider,
+  findFreeTemplateId,
+  getComputeUnitsConsumed,
+  getTemplateAddress,
+  measureTransactionMessage,
+} from '@jac0xb/ballista/kit';
+
 getTemplateAddress(creator, templateId, programAddress?);
 findFreeTemplateId({ rpc, creator, start? });
 buildKitRunInstruction(input);

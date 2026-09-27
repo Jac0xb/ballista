@@ -249,6 +249,12 @@ interface ExpressionResult {
 
 type Bindings = Map<string, ExpressionResult>;
 
+/**
+ * The loop a step sits in: `rows` for a `forEach` body, which has row accounts, row inputs and a
+ * loop index, and `count` for a `repeat` body, which has only the index. `undefined` at the root.
+ */
+type LoopKind = 'rows' | 'count';
+
 /** Maps one emitted VM instruction back to the authoring step that produced it. */
 export interface SourceMapEntry {
   /** Instruction index, which is also the program counter reported in run errors. */
@@ -361,7 +367,7 @@ class Compiler {
     }
     this.location = { path: 'template' };
     // Steps compile first so every static read has already raised its account's data floor.
-    this.compileSteps(this.template.steps, false, new Map(), new Set(), 'steps');
+    this.compileSteps(this.template.steps, undefined, new Map(), new Set(), 'steps');
     for (const [name, constraint] of this.fixedEntries) {
       this.accountRecords.push(this.compileAccountConstraint(constraint, this.requiredDataLength.get(fixedKey(name)) ?? 0));
     }
@@ -382,10 +388,7 @@ class Compiler {
       throw new RangeError('Template constants exceed the wire format');
     }
 
-    const rootCpis = countCpis(this.template.steps.filter((item) => item.kind !== 'forEach'));
-    const loop = this.template.steps.find((item) => item.kind === 'forEach');
-    const loopCpis = loop?.kind === 'forEach' ? countCpis(loop.steps) : 0;
-    const maxExpandedCpis = rootCpis + loopCpis * (this.template.batch?.maxIterations ?? 0);
+    const maxExpandedCpis = worstCaseCpis(this.template.steps, this.template.batch?.maxIterations ?? 0);
     if (maxExpandedCpis > MAX_EXPANDED_CPIS) {
       throw new RangeError(`Template can expand to ${maxExpandedCpis} CPIs; maximum is 64`);
     }
@@ -480,13 +483,13 @@ class Compiler {
     return writer.finish();
   }
 
-  compileSteps(steps: Step[], inLoop: boolean, bindings: Bindings, carried: Set<string>, path: string): void {
+  compileSteps(steps: Step[], loop: LoopKind | undefined, bindings: Bindings, carried: Set<string>, path: string): void {
     let previous: Step | undefined;
     for (const [index, current] of steps.entries()) {
       const stepPath = `${path}[${index}]`;
       this.location = { path: stepPath, ...(current.label ? { label: current.label } : {}) };
-      if (current.kind === 'forEach') {
-        if (inLoop) throw new TypeError('Nested forEach is not supported');
+      if (current.kind === 'forEach' || current.kind === 'repeat') {
+        if (loop) throw new TypeError('Nested loops are not supported');
         let carry = 0n;
         const carriedNames = new Set<string>();
         for (const name of current.carry ?? []) {
@@ -495,26 +498,38 @@ class Compiler {
           carriedNames.add(name);
           carry |= 1n << BigInt(binding.register);
         }
-        const forEachIndex = this.pushInstruction(instructionRecord(opcode.forEach, NO_INDEX, 0, NO_INDEX, NO_INDEX, carry));
+        // A REPEAT reads its count once, as the loop starts, so the count compiles at the root.
+        // FOREACH leaves both operands unset.
+        let count = NO_INDEX;
+        let max = NO_INDEX;
+        if (current.kind === 'repeat') {
+          const value = this.compileExpression(current.count, undefined, bindings);
+          requireType(value, 'u64', 'repeat count');
+          count = value.register;
+          max = current.max;
+        }
+        const operation = current.kind === 'repeat' ? opcode.repeat : opcode.forEach;
+        const loopPc = this.pushInstruction(instructionRecord(operation, NO_INDEX, 0, count, max, carry));
         const bodyStart = this.instructions.length;
-        this.compileSteps(current.steps, true, new Map(bindings), carriedNames, `${stepPath}.steps`);
+        const kind = current.kind === 'repeat' ? 'count' : 'rows';
+        this.compileSteps(current.steps, kind, new Map(bindings), carriedNames, `${stepPath}.steps`);
         const bodyLength = this.instructions.length - bodyStart;
-        if (bodyLength === 0 || bodyLength > 0xff) throw new RangeError('Invalid forEach body length');
-        this.instructions[forEachIndex] = instructionRecord(opcode.forEach, NO_INDEX, bodyLength, NO_INDEX, NO_INDEX, carry);
+        if (bodyLength === 0 || bodyLength > 0xff) throw new RangeError(`Invalid ${current.kind} body length`);
+        this.instructions[loopPc] = instructionRecord(operation, NO_INDEX, bodyLength, count, max, carry);
       } else if (current.kind === 'let') {
         if (bindings.has(current.name)) throw new TypeError(`Variable already defined: ${current.name}`);
         const value =
           current.value.kind === 'returnData'
             ? this.compileReturnData(current.value, previous)
-            : this.compileExpression(current.value, inLoop, bindings);
+            : this.compileExpression(current.value, loop, bindings);
         bindings.set(current.name, value);
       } else if (current.kind === 'assign') {
-        if (!inLoop) throw new TypeError('assign is only valid inside forEach');
+        if (!loop) throw new TypeError('assign is only valid inside a loop');
         const binding = bindings.get(current.name);
         if (!binding || !carried.has(current.name)) {
           throw new TypeError(`assign target must be listed in the loop's carry: ${current.name}`);
         }
-        const value = this.compileExpression(current.value, inLoop, bindings);
+        const value = this.compileExpression(current.value, loop, bindings);
         if (value.type !== binding.type || (value.type === 'bytes' && value.maxLength !== binding.maxLength)) {
           throw new TypeError(`assign to ${current.name} must keep its ${binding.type} type and size`);
         }
@@ -524,21 +539,21 @@ class Compiler {
         // and the register it wrote. Nested ands flatten the same way. The failure is still one
         // error: whichever conjunct is false stops the run.
         for (const conjunct of flattenConjunction(current.condition)) {
-          const condition = this.compileExpression(conjunct, inLoop, bindings);
+          const condition = this.compileExpression(conjunct, loop, bindings);
           requireType(condition, 'bool', 'require condition');
           this.pushInstruction(instructionRecord(opcode.require, NO_INDEX, condition.register));
         }
       } else {
-        this.compileInvoke(current, inLoop, bindings);
+        this.compileInvoke(current, loop, bindings);
       }
       this.location = { path: stepPath, ...(current.label ? { label: current.label } : {}) };
       previous = current;
     }
   }
 
-  compileInvoke(current: Extract<Step, { kind: 'invoke' }>, inLoop: boolean, bindings: Bindings): void {
-    const programAccount = this.encodeAccountReference(current.program, inLoop);
-    const programConstraint = this.constraintFor(current.program, inLoop);
+  compileInvoke(current: Extract<Step, { kind: 'invoke' }>, loop: LoopKind | undefined, bindings: Bindings): void {
+    const programAccount = this.encodeAccountReference(current.program, loop);
+    const programConstraint = this.constraintFor(current.program, loop);
     this.requirePinnedProgram(current.program, programConstraint, 'Invoke program');
     if (
       current.programAddress &&
@@ -553,8 +568,8 @@ class Compiler {
 
     const accountStart = this.cpiAccounts.length;
     for (const account of current.accounts) {
-      const reference = this.encodeAccountReference(account.account, inLoop);
-      const constraint = this.constraintFor(account.account, inLoop);
+      const reference = this.encodeAccountReference(account.account, loop);
+      const constraint = this.constraintFor(account.account, loop);
       if (account.signer && !constraint.signer) throw new TypeError('CPI signer is not required by its account schema');
       if (account.writable && !constraint.writable) throw new TypeError('CPI writable account is not writable in its schema');
       this.cpiAccounts.push(Uint8Array.of(reference, (account.signer ? ACCOUNT_SIGNER : 0) | (account.writable ? ACCOUNT_WRITABLE : 0)));
@@ -563,7 +578,7 @@ class Compiler {
     const segmentStart = this.dataSegments.length;
     let maxDataLength = 0;
     for (const part of current.data) {
-      const result = this.compileDataPart(part, inLoop, bindings);
+      const result = this.compileDataPart(part, loop, bindings);
       this.dataSegments.push(result.record);
       maxDataLength += result.maxLength;
     }
@@ -590,7 +605,7 @@ class Compiler {
 
     let guard = NO_INDEX;
     if (current.when) {
-      const result = this.compileExpression(current.when, inLoop, bindings);
+      const result = this.compileExpression(current.when, loop, bindings);
       requireType(result, 'bool', 'invoke guard');
       guard = result.register;
     }
@@ -607,7 +622,7 @@ class Compiler {
     return this.emit(opcode.returnData, readResultType[node.type], 0, readOpcode[node.type], NO_INDEX, NO_INDEX, BigInt(node.offset));
   }
 
-  compileDataPart(part: DataPart, inLoop: boolean, bindings: Bindings): { record: Uint8Array; maxLength: number } {
+  compileDataPart(part: DataPart, loop: LoopKind | undefined, bindings: Bindings): { record: Uint8Array; maxLength: number } {
     const writer = new Writer();
     if (part.kind === 'literal') {
       const offset = this.addBlob(part.bytes);
@@ -619,7 +634,7 @@ class Compiler {
       return { record: writer.finish(), maxLength: part.bytes.length };
     }
 
-    const value = this.compileExpression(part.value, inLoop, bindings);
+    const value = this.compileExpression(part.value, loop, bindings);
     const expected: Record<typeof part.encoding, ValueType | 'unsigned'> = {
       u8: 'unsigned',
       u16: 'unsigned',
@@ -645,7 +660,7 @@ class Compiler {
     return { record: writer.finish(), maxLength };
   }
 
-  compileExpression(current: Expression, inLoop: boolean, bindings: Bindings): ExpressionResult {
+  compileExpression(current: Expression, loop: LoopKind | undefined, bindings: Bindings): ExpressionResult {
     if (current.kind === 'input') {
       const loaded = this.fixedInputs.get(current.name);
       if (loaded !== undefined) return loaded;
@@ -655,7 +670,7 @@ class Compiler {
       return this.emit(opcode.loadInput, definition.type, definition.type === 'bytes' ? definition.maxLength : 0, index);
     }
     if (current.kind === 'rowInput') {
-      if (!inLoop) throw new TypeError('Row inputs are only valid inside forEach');
+      if (loop !== 'rows') throw new TypeError('Row inputs are only valid inside forEach');
       const index = this.rowInputIndices.get(current.name);
       if (index === undefined) throw new TypeError(`Unknown row input: ${current.name}`);
       const definition = this.rowInputEntries[index]![1];
@@ -680,7 +695,7 @@ class Compiler {
       return result;
     }
     if (current.kind === 'accountField') {
-      const accountReference = this.encodeAccountReference(current.account, inLoop);
+      const accountReference = this.encodeAccountReference(current.account, loop);
       const fields = {
         key: [opcode.accountKey, 'pubkey'],
         owner: [opcode.accountOwner, 'pubkey'],
@@ -692,15 +707,15 @@ class Compiler {
       return this.emit(operation, type, 0, accountReference);
     }
     if (current.kind === 'accountData') {
-      const accountReference = this.encodeAccountReference(current.account, inLoop);
-      this.requirePinnedForRead(current.account, this.constraintFor(current.account, inLoop));
+      const accountReference = this.encodeAccountReference(current.account, loop);
+      this.requirePinnedForRead(current.account, this.constraintFor(current.account, loop));
       const operation = readOpcode[current.type];
       const type = readResultType[current.type];
       if (typeof current.offset === 'number') {
         this.raiseDataFloor(current.account, current.offset + readWidth[current.type]);
         return this.emit(operation, type, 0, accountReference, NO_INDEX, NO_INDEX, BigInt(current.offset));
       }
-      const offset = this.compileExpression(current.offset, inLoop, bindings);
+      const offset = this.compileExpression(current.offset, loop, bindings);
       requireType(offset, 'u64', 'accountData offset');
       return this.emit(operation, type, 0, accountReference, offset.register, NO_INDEX, 0n, INSTRUCTION_FLAG_DYNAMIC_OFFSET);
     }
@@ -713,12 +728,12 @@ class Compiler {
         : this.emit(opcode.clockTimestamp, 'i64');
     }
     if (current.kind === 'loopIndex') {
-      if (!inLoop) throw new TypeError('loopIndex is only valid inside forEach');
+      if (!loop) throw new TypeError('loopIndex is only valid inside a loop');
       return this.emit(opcode.loopIndex, 'u64');
     }
     if (current.kind === 'pda') {
-      const programAccount = this.encodeAccountReference(current.program, inLoop);
-      const programConstraint = this.constraintFor(current.program, inLoop);
+      const programAccount = this.encodeAccountReference(current.program, loop);
+      const programConstraint = this.constraintFor(current.program, loop);
       this.requirePinnedProgram(current.program, programConstraint, 'PDA program');
       if (current.seeds.length < 1 || current.seeds.length > MAX_PDA_SEEDS) {
         throw new RangeError(`PDA derivation requires 1 to ${MAX_PDA_SEEDS} seeds`);
@@ -727,13 +742,13 @@ class Compiler {
       // difference between about 4,800 and 1,500 compute units.
       let bumpRegister = NO_INDEX;
       if (current.bump !== undefined) {
-        const bump = this.compileExpression(current.bump, inLoop, bindings);
+        const bump = this.compileExpression(current.bump, loop, bindings);
         requireType(bump, 'u64', 'PDA bump');
         bumpRegister = bump.register;
       }
       const segmentStart = this.dataSegments.length;
       for (const seed of current.seeds) {
-        const value = this.compileExpression(seed, inLoop, bindings);
+        const value = this.compileExpression(seed, loop, bindings);
         const seedLength = value.type === 'bytes' ? value.maxLength : fixedValueLength(value.type);
         if (seedLength > MAX_PDA_SEED_LENGTH) {
           throw new RangeError(`PDA seed can exceed ${MAX_PDA_SEED_LENGTH} bytes`);
@@ -751,14 +766,14 @@ class Compiler {
       );
     }
     if (current.kind === 'not') {
-      const value = this.compileExpression(current.value, inLoop, bindings);
+      const value = this.compileExpression(current.value, loop, bindings);
       requireType(value, 'bool', 'not');
       return this.emit(opcode.not, 'bool', 0, value.register);
     }
     if (current.kind === 'multiplyDivide') {
-      const left = this.compileExpression(current.left, inLoop, bindings);
-      const right = this.compileExpression(current.right, inLoop, bindings);
-      const divisor = this.compileExpression(current.divisor, inLoop, bindings);
+      const left = this.compileExpression(current.left, loop, bindings);
+      const right = this.compileExpression(current.right, loop, bindings);
+      const divisor = this.compileExpression(current.divisor, loop, bindings);
       if (left.type !== right.type || left.type !== divisor.type || !isUnsigned(left.type)) {
         throw new TypeError('multiplyDivide requires three u64 or three u128 operands');
       }
@@ -766,27 +781,27 @@ class Compiler {
       return this.emit(operation, left.type, 0, left.register, right.register, divisor.register);
     }
     if (current.kind === 'powerOfTen') {
-      const exponent = this.compileExpression(current.exponent, inLoop, bindings);
+      const exponent = this.compileExpression(current.exponent, loop, bindings);
       requireType(exponent, 'u64', 'powerOfTen');
       return this.emit(opcode.powerOfTen, 'u128', 0, exponent.register);
     }
     if (current.kind === 'cast') {
-      const value = this.compileExpression(current.value, inLoop, bindings);
+      const value = this.compileExpression(current.value, loop, bindings);
       if (!isNumeric(value.type)) throw new TypeError('cast requires a numeric expression');
       const operation = { u64: opcode.castU64, i64: opcode.castI64, u128: opcode.castU128 }[current.to];
       return this.emit(operation, current.to, 0, value.register);
     }
     if (current.kind === 'select') {
-      const condition = this.compileExpression(current.condition, inLoop, bindings);
-      const ifTrue = this.compileExpression(current.ifTrue, inLoop, bindings);
-      const ifFalse = this.compileExpression(current.ifFalse, inLoop, bindings);
+      const condition = this.compileExpression(current.condition, loop, bindings);
+      const ifTrue = this.compileExpression(current.ifTrue, loop, bindings);
+      const ifFalse = this.compileExpression(current.ifFalse, loop, bindings);
       requireType(condition, 'bool', 'select condition');
       requireType(ifFalse, ifTrue.type, 'select branches');
       return this.emit(opcode.select, ifTrue.type, Math.max(ifTrue.maxLength, ifFalse.maxLength), condition.register, ifTrue.register, ifFalse.register);
     }
 
-    const left = this.compileExpression(current.left, inLoop, bindings);
-    const right = this.compileExpression(current.right, inLoop, bindings);
+    const left = this.compileExpression(current.left, loop, bindings);
+    const right = this.compileExpression(current.right, loop, bindings);
     const operation = opcode[current.op];
     if (current.op === 'shiftLeft' || current.op === 'shiftRight') {
       if (!isUnsigned(left.type)) {
@@ -904,25 +919,25 @@ class Compiler {
     }
   }
 
-  encodeAccountReference(reference: AccountReference, inLoop: boolean): number {
+  encodeAccountReference(reference: AccountReference, loop: LoopKind | undefined): number {
     if (reference.kind === 'account') {
       const index = this.fixedIndices.get(reference.name);
       if (index === undefined) throw new TypeError(`Unknown fixed account: ${reference.name}`);
       return index;
     }
-    if (!inLoop) throw new TypeError('Iteration accounts are only valid inside forEach');
+    if (loop !== 'rows') throw new TypeError('Iteration accounts are only valid inside forEach');
     const index = this.batchIndices.get(reference.name);
     if (index === undefined) throw new TypeError(`Unknown batch account: ${reference.name}`);
     return ITERATION_ACCOUNT_BIT | index;
   }
 
-  constraintFor(reference: AccountReference, inLoop: boolean): AccountConstraint {
+  constraintFor(reference: AccountReference, loop: LoopKind | undefined): AccountConstraint {
     if (reference.kind === 'account') {
       const index = this.fixedIndices.get(reference.name);
       if (index === undefined) throw new TypeError(`Unknown fixed account: ${reference.name}`);
       return this.fixedEntries[index]![1];
     }
-    if (!inLoop) throw new TypeError('Iteration accounts are only valid inside forEach');
+    if (loop !== 'rows') throw new TypeError('Iteration accounts are only valid inside forEach');
     const index = this.batchIndices.get(reference.name);
     if (index === undefined) throw new TypeError(`Unknown batch account: ${reference.name}`);
     return this.batchEntries[index]![1];
@@ -1013,8 +1028,20 @@ function encodeBigint(value: bigint, byteLength: number): Uint8Array {
 function countCpis(steps: Step[]): number {
   return steps.reduce((total, current) => {
     if (current.kind === 'invoke') return total + 1;
-    if (current.kind === 'forEach') return total + countCpis(current.steps);
+    if (current.kind === 'forEach' || current.kind === 'repeat') return total + countCpis(current.steps);
     return total;
+  }, 0);
+}
+
+/**
+ * The most invocations a run can reach: each loop's body runs its maximum number of times, the
+ * batch's for a `forEach` and its own `max` for a `repeat`, and every other invoke once.
+ */
+function worstCaseCpis(steps: Step[], batchMaxIterations: number): number {
+  return steps.reduce((total, current) => {
+    if (current.kind === 'forEach') return total + countCpis(current.steps) * batchMaxIterations;
+    if (current.kind === 'repeat') return total + countCpis(current.steps) * current.max;
+    return total + countCpis([current]);
   }, 0);
 }
 

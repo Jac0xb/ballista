@@ -21,6 +21,7 @@ import {
   step,
   systemTransfer,
   type CompiledTemplate,
+  type Expression,
   type Step,
   type TemplateInput,
 } from './index.js';
@@ -460,7 +461,7 @@ describe('Ballista compiler', () => {
         accounts: {},
         steps: [step.let('total', expression.u64(0)), step.assign('total', expression.u64(1))],
       }),
-    ).toThrow('assign is only valid inside forEach');
+    ).toThrow('assign is only valid inside a loop');
     expect(() =>
       compileTemplate(
         defineTemplate({
@@ -957,5 +958,139 @@ describe('math expressions', () => {
     );
     expect(records(compiled).some((record) => record[0] === opcode.readI32)).toBe(true);
     expect(minDataLength(compiled, 0)).toBe(93);
+  });
+});
+
+describe('count loops and several loops', () => {
+  const payAccounts = {
+    systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
+    source: { signer: true, writable: true },
+    destination: { writable: true },
+  };
+  const pay = (to = account.fixed('destination')): Step =>
+    systemTransfer({
+      systemProgram: account.fixed('systemProgram'),
+      from: account.fixed('source'),
+      to,
+      lamports: expression.input('amount'),
+    });
+
+  test('repeat lowers to one REPEAT record: body length, count register, maximum and carry mask', () => {
+    const compiled = compileTemplate(
+      defineTemplate({
+        inputs: { rounds: { type: 'u64' }, amount: { type: 'u64' } },
+        accounts: payAccounts,
+        steps: [
+          step.let('total', expression.u64(0)),
+          step.repeat(
+            expression.input('rounds'),
+            [pay(), step.assign('total', expression.add(expression.variable('total'), expression.loopIndex()))],
+            { max: 5, carry: ['total'], label: 'payRounds' },
+          ),
+        ],
+      }),
+    );
+    const all = records(compiled);
+    const repeatPc = all.findIndex((record) => record[0] === opcode.repeat);
+    const repeat = all[repeatPc]!;
+    // The two hoisted inputs are registers 0 and 1, and the constant total register 2.
+    expect([...repeat.slice(1, 6)]).toEqual([0xff, all.length - repeatPc - 1, 0, 5, 0]);
+    expect(readU64(repeat, 6)).toBe(1n << 2n);
+    expect(compiled.sourceMap[repeatPc]).toEqual({ pc: repeatPc, path: 'steps[1]', label: 'payRounds' });
+    expect(compiled.stats.maxExpandedCpis).toBe(5);
+    expect(inspectTemplate(compiled.bytes)).toEqual(compiled.stats);
+  });
+
+  test('a template may hold several loops; the worst case adds them up and inspectTemplate agrees', () => {
+    const compiled = compileTemplate(
+      defineTemplate({
+        inputs: { amount: { type: 'u64' } },
+        accounts: payAccounts,
+        batch: { maxIterations: 10, row: { recipient: { writable: true } } },
+        steps: [
+          pay(),
+          step.forEach([pay(account.iteration('recipient'))]),
+          step.repeat(expression.u64(3), [pay(), pay()], { max: 4 }),
+          step.forEach([step.require(expression.greaterThan(expression.accountField(account.iteration('recipient'), 'lamports'), expression.u64(0)))]),
+        ],
+      }),
+    );
+    // One at the root, ten rows of one, and four passes of two.
+    expect(compiled.stats.maxExpandedCpis).toBe(1 + 10 + 8);
+    expect(inspectTemplate(compiled.bytes)).toEqual(compiled.stats);
+    expect(records(compiled).map((record) => record[0]).filter((code) => code === opcode.forEach || code === opcode.repeat)).toEqual([
+      opcode.forEach,
+      opcode.repeat,
+      opcode.forEach,
+    ]);
+
+    expect(() =>
+      compileTemplate(
+        defineTemplate({
+          inputs: { amount: { type: 'u64' } },
+          accounts: payAccounts,
+          steps: [step.repeat(expression.u64(1), [pay(), pay()], { max: 33 })],
+        }),
+      ),
+    ).toThrow('66 CPIs');
+  });
+
+  test('a repeat body has the loop index but no rows', () => {
+    const rows = {
+      inputs: { amount: { type: 'u64' } },
+      accounts: payAccounts,
+      batch: { maxIterations: 2, row: { recipient: { writable: true } }, rowInputs: { share: { type: 'u64' } } },
+    } as const;
+    const withRepeat = (body: Step[]) =>
+      compileTemplate(
+        defineTemplate({ ...rows, steps: [step.forEach([pay()]), step.repeat(expression.u64(2), body, { max: 2 })] }),
+      );
+    expect(() => withRepeat([step.require(expression.lessThan(expression.loopIndex(), expression.u64(2)))])).not.toThrow();
+    expect(() => withRepeat([step.require(expression.equal(expression.rowInput('share'), expression.u64(1)))])).toThrow(
+      'Row inputs are only valid inside forEach',
+    );
+    expect(() => withRepeat([pay(account.iteration('recipient'))])).toThrow('Iteration accounts are only valid inside forEach');
+    expect(() =>
+      compileTemplate(defineTemplate({ inputs: {}, accounts: {}, steps: [step.require(expression.equal(expression.loopIndex(), expression.u64(0)))] })),
+    ).toThrow('loopIndex is only valid inside a loop');
+  });
+
+  test('the count is a u64 evaluated before the loop, and the maximum is 1 to 255', () => {
+    const counted = (count: Expression, max: number) =>
+      compileTemplate(
+        defineTemplate({
+          inputs: { rounds: { type: 'u64' }, signed: { type: 'i64' } },
+          accounts: {},
+          steps: [step.repeat(count, [step.require(expression.bool(true))], { max })],
+        }),
+      );
+    // The count's own instructions come before the REPEAT.
+    const compiled = counted(expression.divide(expression.input('rounds'), expression.u64(2)), 255);
+    const codes = records(compiled).map((record) => record[0]);
+    expect(codes.indexOf(opcode.divide)).toBeLessThan(codes.indexOf(opcode.repeat));
+    expect(() => counted(expression.input('signed'), 1)).toThrow('repeat count requires u64');
+    expect(() => counted(expression.loopIndex(), 1)).toThrow('loopIndex is only valid inside a loop');
+    expect(() => counted(expression.input('rounds'), 0)).toThrow();
+    expect(() => counted(expression.input('rounds'), 256)).toThrow();
+  });
+
+  test('loops are top level, at most eight, and a batch needs a forEach', () => {
+    const loop = () => step.repeat(expression.u64(1), [step.require(expression.bool(true))], { max: 1 });
+    expect(() => defineTemplate({ accounts: {}, steps: Array.from({ length: 8 }, loop) })).not.toThrow();
+    expect(() => defineTemplate({ accounts: {}, steps: Array.from({ length: 9 }, loop) })).toThrow('at most 8 top-level loops');
+    expect(() =>
+      defineTemplate({ accounts: {}, batch: { maxIterations: 1, row: { recipient: {} } }, steps: [step.forEach([loop()])] }),
+    ).toThrow('Nested iteration');
+    expect(() => defineTemplate({ accounts: {}, steps: [step.repeat(expression.u64(1), [loop()], { max: 1 })] })).toThrow('Nested iteration');
+    expect(() => defineTemplate({ accounts: {}, batch: { maxIterations: 1, row: { recipient: {} } }, steps: [loop()] })).toThrow(
+      'requires at least one top-level forEach',
+    );
+    expect(() =>
+      defineTemplate({
+        accounts: {},
+        batch: { maxIterations: 1, row: { recipient: {} } },
+        steps: [step.forEach([step.require(expression.bool(true))]), step.forEach([step.require(expression.bool(true))])],
+      }),
+    ).not.toThrow();
   });
 });

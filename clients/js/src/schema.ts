@@ -295,6 +295,20 @@ export type Step =
       /** Variables defined before the loop whose values flow across iterations and out of it. */
       carry?: string[];
       label?: string;
+    }
+  | {
+      /**
+       * Runs `steps` `count` times. `count` is a u64 evaluated once, before the first pass; a run
+       * whose count is above `max` fails with `LoopCountExceeded`.
+       */
+      kind: 'repeat';
+      count: Expression;
+      /** The most passes the loop may make, 1 to 255. The worst-case CPI count assumes all of them. */
+      max: number;
+      steps: Step[];
+      /** Variables defined before the loop whose values flow across passes and out of it. */
+      carry?: string[];
+      label?: string;
     };
 
 export const StepSchema: z.ZodType<Step> = z.lazy(() =>
@@ -317,6 +331,16 @@ export const StepSchema: z.ZodType<Step> = z.lazy(() =>
     z
       .object({
         kind: z.literal('forEach'),
+        steps: z.array(StepSchema).min(1).max(64),
+        carry: z.array(identifier).max(64).optional(),
+        label,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('repeat'),
+        count: ExpressionSchema,
+        max: z.number().int().min(1).max(255),
         steps: z.array(StepSchema).min(1).max(64),
         carry: z.array(identifier).max(64).optional(),
         label,
@@ -383,7 +407,7 @@ export const TemplateSchema = z
         if (item.kind === 'invoke' && item.accountGroup !== undefined && !groupNames.has(item.accountGroup)) {
           context.addIssue({ code: 'custom', message: `Unknown account group: ${item.accountGroup}`, path: [path, index, 'accountGroup'] });
         }
-        if (item.kind === 'forEach') checkGroups(item.steps, `${path}.${index}.steps`);
+        if (item.kind === 'forEach' || item.kind === 'repeat') checkGroups(item.steps, `${path}.${index}.steps`);
       }
     };
     checkGroups(template.steps, 'steps');
@@ -395,26 +419,35 @@ export const TemplateSchema = z
         path: ['accounts'],
       });
     }
-    const forEachSteps = template.steps.filter((step) => step.kind === 'forEach');
-    if ((template.batch === undefined) !== (forEachSteps.length === 0) || forEachSteps.length > 1) {
+    const loops = template.steps.filter(isLoop);
+    // Every forEach iterates the batch rows, so a batch needs at least one and a forEach needs a batch.
+    if ((template.batch === undefined) !== loops.every((loop) => loop.kind !== 'forEach')) {
       context.addIssue({
         code: 'custom',
-        message: 'A batch schema requires exactly one top-level forEach step',
+        message: 'A batch schema requires at least one top-level forEach step, and forEach requires a batch schema',
         path: ['steps'],
       });
     }
-    for (const forEach of forEachSteps) {
-      if (forEach.kind === 'forEach' && forEach.steps.some((step) => step.kind === 'forEach')) {
+    if (loops.length > 8) {
+      context.addIssue({ code: 'custom', message: 'A template holds at most 8 top-level loops', path: ['steps'] });
+    }
+    for (const loop of loops) {
+      if (loop.steps.some(isLoop)) {
         context.addIssue({ code: 'custom', message: 'Nested iteration is not supported', path: ['steps'] });
       }
-      if (forEach.kind === 'forEach' && new Set(forEach.carry ?? []).size !== (forEach.carry ?? []).length) {
+      if (new Set(loop.carry ?? []).size !== (loop.carry ?? []).length) {
         context.addIssue({ code: 'custom', message: 'Carried variables must be unique', path: ['steps'] });
       }
     }
     if (template.steps.some((step) => step.kind === 'assign')) {
-      context.addIssue({ code: 'custom', message: 'assign is only valid inside forEach', path: ['steps'] });
+      context.addIssue({ code: 'custom', message: 'assign is only valid inside a loop', path: ['steps'] });
     }
   });
+
+/** The two loop steps: `forEach` over the batch rows, and `repeat` over a count. */
+function isLoop(step: Step): step is Extract<Step, { kind: 'forEach' | 'repeat' }> {
+  return step.kind === 'forEach' || step.kind === 'repeat';
+}
 
 export type Template = z.infer<typeof TemplateSchema>;
 export type TemplateInput = z.input<typeof TemplateSchema>;
@@ -532,6 +565,15 @@ export const step = {
   invoke: (input: Omit<Extract<Step, { kind: 'invoke' }>, 'kind'>): Step => ({ kind: 'invoke', ...input }),
   forEach: (steps: Step[], options: { carry?: string[]; label?: string } = {}): Step => ({
     kind: 'forEach',
+    steps,
+    ...(options.carry ? { carry: options.carry } : {}),
+    ...(options.label ? { label: options.label } : {}),
+  }),
+  /** Runs `steps` `count` times, at most `options.max`; `count` is a u64 read once, before the first pass. */
+  repeat: (count: Expression, steps: Step[], options: { max: number; carry?: string[]; label?: string }): Step => ({
+    kind: 'repeat',
+    count,
+    max: options.max,
     steps,
     ...(options.carry ? { carry: options.carry } : {}),
     ...(options.label ? { label: options.label } : {}),

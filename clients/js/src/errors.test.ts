@@ -89,6 +89,18 @@ describe('error decoding', () => {
     expect(explainRunError(1, budgeted)).toBeUndefined();
   });
 
+  test('explains a count above its maximum by the repeat step', () => {
+    const counted = compileTemplate(
+      defineTemplate({
+        inputs: { rounds: { type: 'u64' } },
+        accounts: {},
+        steps: [step.repeat(expression.input('rounds'), [step.require(expression.bool(true))], { max: 3, label: 'rounds' })],
+      }),
+    );
+    const repeatPc = counted.sourceMap.find((entry) => entry.label === 'rounds')!.pc;
+    expect(explainRunError((repeatPc << 16) | 6022, counted)?.message).toBe('LoopCountExceeded at steps[0] (rounds)');
+  });
+
   test('falls back to the instruction index when a program counter has no source entry', () => {
     expect(explainRunError((200 << 16) | 6013, budgeted)?.message).toBe('ArithmeticOverflow at instruction 200');
   });

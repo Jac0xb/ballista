@@ -357,6 +357,23 @@ impl ProgramBuilder {
         index
     }
 
+    /// Emits a REPEAT whose body is produced by `body` and returns the REPEAT's index. The body
+    /// runs as many times as the `u64` in register `count` holds when the loop starts; a count
+    /// above `max` fails the run.
+    pub fn repeat(
+        &mut self,
+        count: u8,
+        max: u8,
+        carry_mask: u64,
+        body: impl FnOnce(&mut Self),
+    ) -> usize {
+        let index = self.emit(record(OP_REPEAT, NO_INDEX, 0, count, max, 0, carry_mask));
+        body(self);
+        let body_len = (self.instructions.len() - index - 1) as u8;
+        self.instructions[index].a = body_len;
+        index
+    }
+
     /// Pushes PDA seed segments and emits DERIVE_PDA against `program`.
     pub fn derive_pda(&mut self, program: u8, seeds: &[Segment]) -> u8 {
         let start = self.segments.len() as u16;
@@ -607,6 +624,26 @@ mod tests {
         let stats = program.verify().unwrap();
         assert_eq!(stats.batch_stride, 1);
         assert_eq!(stats.max_expanded_cpis, 4);
+    }
+
+    #[test]
+    fn repeat_patches_the_body_length_and_records_its_count_and_maximum() {
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(3);
+        let total = builder.const_u64(0);
+        let index = builder.repeat(count, 5, 1 << total, |body| {
+            let step = body.loop_index();
+            let sum = body.binary(OP_ADD, total, step);
+            body.mov(total, sum);
+        });
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let repeat = program.instructions[index];
+        assert_eq!(
+            (repeat.opcode, repeat.dst, repeat.a, repeat.b, repeat.c, repeat.flags),
+            (OP_REPEAT, NO_INDEX, 3, count, 5, 0)
+        );
+        assert_eq!(repeat.immediate(), 1 << total);
     }
 
     #[test]

@@ -1921,6 +1921,52 @@ mod tests {
         assert_eq!(context.account_store.borrow()[&ata].data().len(), 165);
     }
 
+    /// The math opcodes as the TypeScript SDK compiles them, run on chain. Each requirement in the
+    /// fixture compares one result with a constant worked out by hand, so a run that succeeds has
+    /// computed all of them exactly; the failing runs show each failure is the documented one.
+    #[test]
+    fn typescript_math_fixture_computes_exact_results() {
+        let creator = Pubkey::new_unique();
+        let authority = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let feed = Pubkey::new_unique();
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        accounts.insert(
+            feed,
+            token::create_account_for_token_account(token_account_state(mint, authority, 0xffff_fff8)),
+        );
+        let context = context(accounts);
+        let payload = fixture("math-ops");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 90, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 90);
+        let run = |amount: u64, price: u64, divisor: u64, flags: u64, exponent: u64| {
+            let mut inputs = Vec::new();
+            for value in [amount, price, divisor, flags, exponent] {
+                inputs.extend_from_slice(&value.to_le_bytes());
+            }
+            context.process_instruction(&run_instruction(
+                template,
+                vec![AccountMeta::new_readonly(feed, false)],
+                &inputs,
+            ))
+        };
+
+        let exact = run(1_000_003, 7, 3, 0xabcd, 18);
+        assert!(exact.program_result.is_ok(), "{exact:#?}");
+
+        // A wrong power of ten fails its requirement, not the arithmetic.
+        let wrong = run(1_000_003, 7, 3, 0xabcd, 17);
+        assert_eq!(decode_kind(&wrong), Some(6015));
+        // Division by zero and a power of ten past 10^38 fail as themselves.
+        let zero = run(1_000_003, 7, 0, 0xabcd, 18);
+        assert_eq!(decode_kind(&zero), Some(6014));
+        let huge = run(1_000_003, 7, 3, 0xabcd, 39);
+        assert_eq!(decode_kind(&huge), Some(6013));
+    }
+
     /// Anything the verifier accepts must execute without a structural error. Generated programs
     /// contain no CPIs, so the only failures they may produce are value-dependent.
     #[test]
@@ -1995,6 +2041,7 @@ mod tests {
             "batch-transfer-30" => include_str!("../../../fixtures/batch-transfer-30.hex"),
             "payroll-row-amounts" => include_str!("../../../fixtures/payroll-row-amounts.hex"),
             "group-forward-transfer" => include_str!("../../../fixtures/group-forward-transfer.hex"),
+            "math-ops" => include_str!("../../../fixtures/math-ops.hex"),
             other => panic!("unknown fixture {other}"),
         };
         let bytes: Vec<u8> = hex

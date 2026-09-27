@@ -213,7 +213,8 @@ impl ProgramBuilder {
         self.op(OP_CLOCK_TIMESTAMP, NO_INDEX, NO_INDEX, NO_INDEX, 0)
     }
 
-    /// Emits a two-operand instruction (arithmetic, comparison, or boolean).
+    /// Emits a two-operand instruction: arithmetic, remainder, shift, bitwise, comparison, or
+    /// boolean.
     pub fn binary(&mut self, opcode: u8, left: u8, right: u8) -> u8 {
         self.op(opcode, left, right, NO_INDEX, 0)
     }
@@ -228,6 +229,22 @@ impl ProgramBuilder {
 
     pub fn cast(&mut self, opcode: u8, value: u8) -> u8 {
         self.op(opcode, value, NO_INDEX, NO_INDEX, 0)
+    }
+
+    /// `a × b ÷ c` with the product computed exactly, rounded down. All three share a type,
+    /// `u64` or `u128`.
+    pub fn mul_div(&mut self, a: u8, b: u8, c: u8) -> u8 {
+        self.op(OP_MUL_DIV, a, b, c, 0)
+    }
+
+    /// `a × b ÷ c`, rounded up.
+    pub fn mul_div_ceil(&mut self, a: u8, b: u8, c: u8) -> u8 {
+        self.op(OP_MUL_DIV_CEIL, a, b, c, 0)
+    }
+
+    /// `10^exponent` as a `u128`, from a `u64` register.
+    pub fn pow10(&mut self, exponent: u8) -> u8 {
+        self.op(OP_POW10, exponent, NO_INDEX, NO_INDEX, 0)
     }
 
     pub fn loop_index(&mut self) -> u8 {

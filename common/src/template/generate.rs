@@ -255,7 +255,7 @@ fn emit_operation(
     if registers.len() >= 56 {
         return;
     }
-    match choices.below(12) {
+    match choices.below(16) {
         0 => {
             let value_type = SCALAR_TYPES[choices.below(SCALAR_TYPES.len())];
             let register = match value_type {
@@ -372,6 +372,64 @@ fn emit_operation(
                 registers.push(flag, VALUE_BOOL);
                 builder.require(flag);
             }
+        }
+        11 => {
+            // Remainder on any numeric type; bitwise operations on unsigned ones.
+            let numeric = registers.numeric();
+            if let Some(left) = choices.pick(&numeric) {
+                let kind = registers.type_of(left);
+                let same = registers.of_type(kind);
+                let right = same[choices.below(same.len())];
+                let opcode = if kind == VALUE_I64 {
+                    OP_REM
+                } else {
+                    [OP_REM, OP_BIT_AND, OP_BIT_OR, OP_BIT_XOR][choices.below(4)]
+                };
+                let register = builder.binary(opcode, left, right);
+                registers.push(register, kind);
+            }
+        }
+        12 => {
+            let unsigned: Vec<u8> = registers
+                .numeric()
+                .into_iter()
+                .filter(|register| registers.type_of(*register) != VALUE_I64)
+                .collect();
+            if let Some(value) = choices.pick(&unsigned) {
+                let kind = registers.type_of(value);
+                // Amounts past the width exercise the zero and overflow rules too.
+                let bits = builder.const_u64(choices.below(140) as u64);
+                registers.push(bits, VALUE_U64);
+                let opcode = if choices.below(2) == 0 { OP_SHL } else { OP_SHR };
+                let register = builder.binary(opcode, value, bits);
+                registers.push(register, kind);
+            }
+        }
+        13 => {
+            let unsigned: Vec<u8> = registers
+                .numeric()
+                .into_iter()
+                .filter(|register| registers.type_of(*register) != VALUE_I64)
+                .collect();
+            if let Some(a) = choices.pick(&unsigned) {
+                let kind = registers.type_of(a);
+                let same = registers.of_type(kind);
+                let b = same[choices.below(same.len())];
+                let c = same[choices.below(same.len())];
+                let register = if choices.below(2) == 0 {
+                    builder.mul_div(a, b, c)
+                } else {
+                    builder.mul_div_ceil(a, b, c)
+                };
+                registers.push(register, kind);
+            }
+        }
+        14 => {
+            // Exponents past 38 overflow, which is an allowed value-dependent failure.
+            let exponent = builder.const_u64(choices.below(45) as u64);
+            registers.push(exponent, VALUE_U64);
+            let register = builder.pow10(exponent);
+            registers.push(register, VALUE_U128);
         }
         _ => {
             if in_loop {

@@ -410,6 +410,34 @@ impl ProgramBuilder {
         )
     }
 
+    /// Pushes `parts` and emits an `EMIT`, which logs their encoding as one `Program data:` field.
+    /// Returns the instruction's index. (`emit` itself appends a raw record.)
+    pub fn emit_data(&mut self, parts: &[Segment]) -> usize {
+        self.output(OP_EMIT, parts)
+    }
+
+    /// Pushes `parts` and emits a `SET_RETURN_DATA`, which makes their encoding the run's return
+    /// data. Returns the instruction's index.
+    pub fn set_return_data(&mut self, parts: &[Segment]) -> usize {
+        self.output(OP_SET_RETURN_DATA, parts)
+    }
+
+    fn output(&mut self, opcode: u8, parts: &[Segment]) -> usize {
+        let start = self.segments.len() as u16;
+        for part in parts {
+            self.push_segment(*part);
+        }
+        self.emit(record(
+            opcode,
+            NO_INDEX,
+            NO_INDEX,
+            NO_INDEX,
+            NO_INDEX,
+            0,
+            range_immediate(start, parts.len() as u16),
+        ))
+    }
+
     /// Mutable access to the emitted instructions, for negative tests.
     pub fn instructions_mut(&mut self) -> &mut Vec<InstructionRecord> {
         &mut self.instructions
@@ -650,6 +678,48 @@ mod tests {
             (OP_REPEAT, NO_INDEX, 3, count, 5, 0)
         );
         assert_eq!(repeat.immediate(), 1 << total);
+    }
+
+    #[test]
+    fn output_helpers_push_their_parts_and_write_no_register() {
+        let mut builder = ProgramBuilder::new();
+        let amount = builder.const_u64(7);
+        let flag = builder.const_bool(true);
+        let tag = builder.blob(b"TAG");
+        let logged = builder.emit_data(&[
+            Segment::Literal(tag),
+            Segment::Register(DATA_REG_U64, amount),
+        ]);
+        let returned = builder.set_return_data(&[Segment::Register(DATA_REG_BOOL, flag)]);
+        assert_eq!((logged, returned), (2, 3));
+
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        assert_eq!(program.header.register_count(), 2, "outputs allocate no register");
+        let emit = &program.instructions[logged];
+        assert_eq!(emit.opcode, OP_EMIT);
+        assert_eq!(
+            [emit.dst, emit.a, emit.b, emit.c, emit.flags],
+            [NO_INDEX, NO_INDEX, NO_INDEX, NO_INDEX, 0]
+        );
+        assert_eq!(emit.blob_range(), (0, 2), "segments 0 and 1");
+        let set = &program.instructions[returned];
+        assert_eq!(set.opcode, OP_SET_RETURN_DATA);
+        assert_eq!(set.dst, NO_INDEX);
+        assert_eq!(set.blob_range(), (2, 1), "segment 2");
+        let kinds: Vec<(u8, u8)> = program
+            .data_segments
+            .iter()
+            .map(|segment| (segment.kind, segment.register))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (DATA_LITERAL, NO_INDEX),
+                (DATA_REG_U64, amount),
+                (DATA_REG_BOOL, flag)
+            ]
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@
 
 use {
     crate::{
-        kamino, oracle,
+        kamino, marginfi, oracle,
         snapshot::{self, Leg, Snapshot},
         template::{self, Example},
         tx::{self, Outcome},
@@ -192,6 +192,36 @@ pub fn borrow(
     setup(svm, owner, &[], instructions);
 }
 
+/// Opens the marginfi account `account` for `authority` in the main group, and deposits each
+/// `(bank, source token account, amount)`. Returns the account's address.
+pub fn marginfi_account(
+    svm: &mut LiteSVM,
+    authority: &Keypair,
+    account: &Keypair,
+    deposits: &[(Address, Address, u64)],
+) -> Address {
+    let a = authority.pubkey();
+    let mut instructions = vec![marginfi::initialize_account(
+        &MARGINFI_GROUP,
+        &account.pubkey(),
+        &a,
+        &a,
+    )];
+    for (bank, source, amount) in deposits {
+        instructions.push(marginfi::deposit(
+            svm,
+            &MARGINFI_GROUP,
+            &account.pubkey(),
+            &a,
+            bank,
+            source,
+            *amount,
+        ));
+    }
+    setup(svm, authority, &[account], instructions);
+    account.pubkey()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,6 +243,7 @@ mod tests {
             (SOL_BANK, "marginfiSolBank"),
             (kamino::KLEND, "kamino"),
             (kamino::FARMS, "kaminoFarms"),
+            (marginfi::MARGINFI, "marginfi"),
         ] {
             assert_eq!(constant, named(name), "{name}");
         }
@@ -336,6 +367,43 @@ mod tests {
         assert_eq!(
             wallet::token_balance(&svm, &leg.destination_token_account),
             0
+        );
+    }
+
+    #[test]
+    fn a_marginfi_account_takes_deposits_in_two_banks() {
+        let mut svm = svm();
+        let authority = wallet::keypair(b"ballista-protocol-tests-mfi-auth");
+        let account = wallet::keypair(b"ballista-protocol-tests-mfi-acct");
+        let a = authority.pubkey();
+        wallet::fund(&mut svm, &a, 10 * SOL);
+        let usdc = wallet::token_account(&mut svm, &a, &USDC_MINT, 100_000_000);
+        let wsol = wallet::token_account(&mut svm, &a, &wallet::WSOL_MINT, SOL);
+
+        let address = marginfi_account(
+            &mut svm,
+            &authority,
+            &account,
+            &[(USDC_BANK, usdc, 100_000_000), (SOL_BANK, wsol, SOL)],
+        );
+        assert_eq!(address, account.pubkey());
+        assert_eq!(wallet::token_balance(&svm, &usdc), 0);
+        assert_eq!(wallet::token_balance(&svm, &wsol), 0);
+        let mut active = marginfi::active_banks(&svm, &address);
+        active.sort();
+        let mut both = vec![USDC_BANK, SOL_BANK];
+        both.sort();
+        assert_eq!(active, both);
+        assert_eq!(
+            marginfi::health_accounts(&svm, &address, &USDC_BANK),
+            [
+                AccountMeta::new_readonly(SOL_BANK, false),
+                AccountMeta::new_readonly(marginfi::bank(&svm, &SOL_BANK).oracle, false),
+            ]
+        );
+        assert_eq!(
+            marginfi::health_accounts(&svm, &address, &SOL_BANK).len(),
+            2
         );
     }
 }

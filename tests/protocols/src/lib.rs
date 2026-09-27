@@ -9,6 +9,7 @@
 //!   account and input names recorded in `fixtures/protocol-examples.json`.
 //! - [`tx`] signs and sends, checks the wire size, and names the program that failed.
 //! - [`kamino`] builds Kamino Lend's instructions and reads its reserves and obligations.
+//! - [`marginfi`] builds marginfi's instructions and reads its banks and accounts.
 //! - [`lending`] loads the lending snapshot and holds the setup the Kamino and marginfi scenarios
 //!   share.
 //!
@@ -17,6 +18,7 @@
 
 pub mod kamino;
 pub mod lending;
+pub mod marginfi;
 pub mod oracle;
 pub mod snapshot;
 pub mod template;

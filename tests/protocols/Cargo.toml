@@ -14,7 +14,7 @@ ballista-sdk = { path = "../../clients/rust" }       # unchanged SDK; types line
 litesvm = { git = "https://github.com/LiteSVM/litesvm", rev = "6a550a1000138cf8a285fac98a17c88ba5b2ad5b" }
 # Major-only carets: cargo unifies each with the version litesvm pins. Commit Cargo.lock.
 solana-account = "4"
-solana-address = "2"
+solana-address = { version = "2", features = ["copy", "curve25519", "decode"] }  # Copy, PDAs, base58
 solana-clock = "3"
 solana-compute-budget-interface = "3"
 solana-instruction = "3"
@@ -29,3 +29,7 @@ serde_json = "1"
 base64 = "0.22"
 sha2 = "0.10"                 # verify manifest hashes
 # litesvm features = ["precompiles"] only if a scenario signs Ed25519/secp256k1 (builds OpenSSL)
+
+# `Snapshot::load` hashes about 25 MB; unoptimized, sha2 spends most of a second on it per load.
+[profile.dev.package.sha2]
+opt-level = 3

@@ -10,6 +10,14 @@
  * Here the amount that landed is measured and has to clear a floor before the run continues.
  * `withdraw_all` is passed as `Some(true)`, so marginfi withdraws the whole position and ignores
  * `amount`.
+ *
+ * marginfi then checks the account's health against every balance it still holds, and reads
+ * those balances' banks and oracles from the accounts after withdraw's eight. `healthAccounts`
+ * carries them: for each remaining balance, its bank and then its oracle, by bank address from
+ * highest to lowest. It is empty when the withdrawn balance was the account's only one; without
+ * it, any other balance fails the withdrawal (`InvalidBankAccount`). A Token-2022 bank also needs
+ * its mint, first in the group. The vault authority is a PDA marginfi signs for, so it is passed
+ * read-only.
  */
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -42,7 +50,7 @@ export const marginfiWithdrawAllWithFloor = defineTemplate({
     authority: { signer: true },
     bank: { writable: true },
     bankLiquidityVault: { writable: true },
-    bankLiquidityVaultAuthority: { writable: true },
+    bankLiquidityVaultAuthority: {},
     destinationAta: {
       writable: true,
       owner: TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -55,6 +63,8 @@ export const marginfiWithdrawAllWithFloor = defineTemplate({
       minDataLength: TOKEN_ACCOUNT_LENGTH,
     },
   },
+  /** What marginfi's health check reads, described above. */
+  accountGroups: ['healthAccounts'],
   steps: [
     step.snapshot(
       'balanceBefore',
@@ -70,10 +80,11 @@ export const marginfiWithdrawAllWithFloor = defineTemplate({
         { account: account.fixed('authority'), signer: true, writable: false },
         { account: account.fixed('bank'), signer: false, writable: true },
         { account: account.fixed('destinationAta'), signer: false, writable: true },
-        { account: account.fixed('bankLiquidityVaultAuthority'), signer: false, writable: true },
+        { account: account.fixed('bankLiquidityVaultAuthority'), signer: false, writable: false },
         { account: account.fixed('bankLiquidityVault'), signer: false, writable: true },
         { account: account.fixed('tokenProgram'), signer: false, writable: false },
       ],
+      accountGroup: 'healthAccounts',
       data: [
         data.literal(MARGINFI_WITHDRAW),
         // `amount` is ignored when `withdraw_all` is Some(true), but Borsh still reads it.

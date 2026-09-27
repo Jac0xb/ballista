@@ -23,6 +23,7 @@ import {
   jupiterOracleCheckedSwap,
   kaminoLiquidateWithProof,
   kaminoRepaySwapOutput,
+  marginfiWithdrawAllWithFloor,
   pythFreshPriceGate,
   tokenSweepIntoSwap,
 } from '../examples/protocols/index.js';
@@ -37,6 +38,7 @@ import {
   KAMINO_LEND,
   KAMINO_LIQUIDATE,
   KAMINO_REPAY,
+  MARGINFI_WITHDRAW,
   PYTH,
   SPL_MINT,
   SYSVAR_INSTRUCTIONS,
@@ -326,6 +328,20 @@ describe('the Kamino liquidation', () => {
     expect(dependsOn(check.condition, bindings, reads('userDestinationCollateral', TOKEN_ACCOUNT_AMOUNT_OFFSET))).toBe(false);
     const [liquidate] = invokesOf(kaminoLiquidateWithProof, 'kamino') as [Invoke];
     expect(nameOf(liquidate.accounts[15]!.account)).toBe('userDestinationLiquidity');
+  });
+});
+
+const marginfiWithdrawals: [string, Template][] = [['marginfiWithdrawAllWithFloor', marginfiWithdrawAllWithFloor]];
+
+describe('marginfi withdrawals', () => {
+  test.each(marginfiWithdrawals)("%s forwards the health check's banks and oracles after withdraw's eight accounts", (_, template) => {
+    const [withdraw] = invokesOf(template, 'marginfi') as [Invoke];
+    const [discriminator] = withdraw.data;
+    expect(discriminator?.kind === 'literal' ? [...discriminator.bytes] : []).toEqual([...MARGINFI_WITHDRAW]);
+    expect(withdraw.accounts).toHaveLength(8);
+    expect(withdraw.accountGroup).toBe('healthAccounts');
+    // The vault authority is a PDA marginfi signs for; nothing writes it.
+    expect(withdraw.accounts[5]!.writable).toBe(false);
   });
 });
 

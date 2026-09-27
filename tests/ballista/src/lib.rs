@@ -19,10 +19,11 @@ mod tests {
         AccountConstraint, CpiAccountRecord, CpiDescriptor, DataSegment, InputDescriptor,
         InstructionRecord, ProgramBuilder, ProgramHeader, ProgramView, PubkeyRecord, Segment,
         TemplateAccount, ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_LITERAL,
-        DATA_REG_PUBKEY, DATA_REG_U64, ITERATION_ACCOUNT_BIT, MAX_PDA_SEEDS, NO_INDEX,
-        OP_ACCOUNT_IS_EMPTY, OP_ACCOUNT_KEY, OP_ACCOUNT_LAMPORTS, OP_ADD, OP_DERIVE_PDA, OP_EQ,
-        OP_FOREACH, OP_INVOKE, OP_LOAD_INPUT, OP_LTE, OP_NE, OP_READ_I32, OP_READ_U64, OP_REPEAT,
-        OP_REQUIRE, OP_SUB, VALUE_BOOL, VALUE_I64, VALUE_U64,
+        DATA_REG_PUBKEY, DATA_REG_U64, ITERATION_ACCOUNT_BIT, MAX_CPI_DATA_LEN, MAX_LOOPS,
+        MAX_PDA_SEEDS, MAX_REGISTERS, MAX_ROW_INPUTS, NO_INDEX, OP_ACCOUNT_IS_EMPTY, OP_ACCOUNT_KEY,
+        OP_ACCOUNT_LAMPORTS, OP_ADD, OP_DERIVE_PDA, OP_EQ, OP_FOREACH, OP_INVOKE, OP_LOAD_INPUT,
+        OP_LTE, OP_NE, OP_READ_I32, OP_READ_U64, OP_REPEAT, OP_REQUIRE, OP_SUB, VALUE_BOOL,
+        VALUE_I64, VALUE_U64,
     };
     use mollusk_svm::{program::loader_keys::LOADER_V3, Mollusk, MolluskContext};
     use mollusk_svm_programs_memo::memo;
@@ -2226,6 +2227,62 @@ mod tests {
         // A row holding more than half of the total fails the second row loop's check.
         let lopsided = run(1, &[holders[0], holders[1], holders[3]]);
         assert_eq!(decode_kind(&lopsided), Some(6015), "{lopsided:#?}");
+    }
+
+    /// Eight loops over sixty-four registers. The heap is a 32 KiB bump allocator that never frees;
+    /// with 240 row input values and a 4 KiB invocation buffer already on it, a 2,560-byte register
+    /// snapshot per loop would not fit, so the run passes only if every loop reuses one snapshot.
+    #[test]
+    fn eight_loops_share_one_register_snapshot_in_the_default_heap() {
+        let creator = Pubkey::new_unique();
+        let rows: Vec<Pubkey> = (0..30).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        for row in &rows {
+            accounts.insert(*row, Account::new(1, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(
+            ACCOUNT_EXECUTABLE,
+            Some(system_program::id().to_bytes()),
+            None,
+            0,
+        );
+        builder.row_account(0, None, None, 0);
+        builder.batch(30, 30);
+        for _ in 0..MAX_ROW_INPUTS {
+            builder.row_input(VALUE_BOOL, 0);
+        }
+        // Never invoked, but every descriptor sizes the invocation buffer: 4 KiB here.
+        let padding = builder.blob(&[0; MAX_CPI_DATA_LEN]);
+        builder.cpi(program, &[], &[Segment::Literal(padding)]);
+        let count = builder.const_u64(1);
+        builder.for_each(0, |body| {
+            body.loop_index();
+        });
+        for _ in 1..MAX_LOOPS {
+            builder.repeat(count, 1, 0, |body| {
+                body.loop_index();
+            });
+        }
+        while (builder.register_count() as usize) < MAX_REGISTERS {
+            builder.register();
+        }
+        let payload = builder.build().expect("builds");
+        ProgramView::parse(&payload)
+            .and_then(|program| program.verify())
+            .expect("verifies");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 97, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 97);
+        let mut metas = vec![AccountMeta::new_readonly(system_program::id(), false)];
+        metas.extend(rows.iter().map(|row| AccountMeta::new_readonly(*row, false)));
+        let inputs = vec![0u8; rows.len() * MAX_ROW_INPUTS];
+        let result = context.process_instruction(&run_instruction(template, metas, &inputs));
+        assert!(result.program_result.is_ok(), "{result:#?}");
     }
 
     /// Anything the verifier accepts must execute without a structural error. Generated programs

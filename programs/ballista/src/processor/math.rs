@@ -33,10 +33,11 @@ pub fn mul_div<'data>(
     }
 }
 
-/// `a × b ÷ c` for three `u64`s, entirely in native 64-bit and 128-bit arithmetic. The `u128` arm
-/// below has to reach for a `u128` division (compiler-rt's `__udivti3`) when the wide path is
-/// unavoidable; a `u64` operation never needs to; going through it anyway (as `a × b ÷ c` did
-/// before this) means paying for a division four times wider than the answer.
+/// `a × b ÷ c` for three `u64`s, entirely in native 64-bit arithmetic: this never touches `u128`.
+/// `mul_div_u128` still reaches for a `u128` division (compiler-rt's `__udivti3`/`__umodti3`)
+/// when the product needs more than 64 bits but the computation still fits in 128; routing a
+/// `u64` answer through that would mean a division twice as wide as the answer needs.
+#[inline(always)]
 pub fn mul_div_u64(a: u64, b: u64, c: u64, round_up: bool) -> RunResult<u64> {
     if c == 0 {
         return Err(BallistaError::DivisionByZero.into());
@@ -65,13 +66,15 @@ pub fn mul_div_u64(a: u64, b: u64, c: u64, round_up: bool) -> RunResult<u64> {
 /// is worth the extra branch: one multiply when both factors fit `u64`, a native `u64` division
 /// when the product and the divisor both do, and the remainder computed only when rounding up
 /// needs it (`&&` short-circuits, so it is not computed at all when rounding down).
+#[inline(always)]
 pub fn mul_div_u128(a: u128, b: u128, c: u128, round_up: bool) -> RunResult<u128> {
     if c == 0 {
         return Err(BallistaError::DivisionByZero.into());
     }
     let (high, low) = if (a | b) >> 64 == 0 {
-        // Both factors fit `u64`: the compiler lowers this to one native 64 × 64 → 128 multiply
-        // rather than the general (on SBF, software) 128 × 128 multiply `full_product` needs.
+        // Both factors fit `u64`: this is one call to compiler-rt's `__multi3`, not a native
+        // instruction, but still cheaper than `full_product`'s four narrower multiplies and
+        // their carry propagation.
         (0, (a as u64 as u128) * (b as u64 as u128))
     } else {
         full_product(a, b)
@@ -158,8 +161,13 @@ fn divlu(high: u64, low: u64, divisor: u64) -> (u64, u64) {
     let (n1, n0) = (n10 >> 32, n10 & MASK);
 
     let mut q1 = n32 / d1;
-    let mut rhat = n32 - q1 * d1;
-    while q1 >= HALF || q1 * d0 > (rhat << 32) + n1 {
+    // Neither multiply below can overflow `u64`, so `wrapping_mul` is exact, not an
+    // approximation: `q × d1 ≤ n` because `q` is `n / d1`, and `q × d0` is only evaluated once
+    // `q < 2^32` (the `||` short-circuits before it otherwise), so both factors fit 32 bits.
+    // Plain `*` would give the same answer, but checked with overflow-checks on, it compiles to
+    // a `__multi3` call on SBF; `wrapping_mul` does not.
+    let mut rhat = n32 - q1.wrapping_mul(d1);
+    while q1 >= HALF || q1.wrapping_mul(d0) > (rhat << 32) + n1 {
         q1 -= 1;
         rhat += d1;
         if rhat >= HALF {
@@ -168,8 +176,9 @@ fn divlu(high: u64, low: u64, divisor: u64) -> (u64, u64) {
     }
     let n21 = (n32 << 32).wrapping_add(n1).wrapping_sub(q1.wrapping_mul(divisor));
     let mut q0 = n21 / d1;
-    rhat = n21 - q0 * d1;
-    while q0 >= HALF || q0 * d0 > (rhat << 32) + n0 {
+    // As above, for the second digit.
+    rhat = n21 - q0.wrapping_mul(d1);
+    while q0 >= HALF || q0.wrapping_mul(d0) > (rhat << 32) + n0 {
         q0 -= 1;
         rhat += d1;
         if rhat >= HALF {
@@ -223,8 +232,9 @@ fn divide_3by2(rem: u128, digit: u64, divisor: u128) -> (u64, u128) {
 fn divide_wide(high: u128, low: u128, divisor: u128) -> (u128, u128) {
     debug_assert!(high < divisor, "the quotient must fit 128 bits");
     if divisor >> 64 == 0 {
-        // A one-digit divisor: two direct `divlu` calls over the dividend's 64-bit digits need no
-        // normalization or correction loop.
+        // A one-digit divisor: two direct `divlu` calls take the dividend's 64-bit digits one at
+        // a time, each with `divlu`'s own normalization and correction. What this skips is
+        // `divide_3by2`'s 3-by-2 correction loop, needed only for a genuinely two-digit divisor.
         let divisor = divisor as u64;
         let (q1, remainder) = divlu(high as u64, (low >> 64) as u64, divisor);
         let (q0, remainder) = divlu(remainder, low as u64, divisor);
@@ -439,8 +449,9 @@ mod tests {
 
     /// `q` and `r` are the floor quotient and remainder of `a × b ÷ c` exactly when
     /// `q × c + r = a × b` and `r < c`: division with remainder is unique. `a × b` is computed
-    /// with `slow_mul`, not `full_product`, so this checker cannot share a bug with the code
-    /// under test.
+    /// with `slow_mul`, not `full_product`, so a bug in `full_product` cannot make this checker
+    /// agree with a wrong `a × b`. `q × c` below still goes through `full_product`, though, so
+    /// this falls short of full independence.
     fn is_floor_division(a: u128, b: u128, c: u128, q: u128) -> bool {
         let (product_high, product_low) = slow_mul(a, b);
         let (qc_high, qc_low) = full_product(q, c);
@@ -569,7 +580,12 @@ mod tests {
         }
         let mut rng = Rng(0x1111_2222_3333_4444);
         for _ in 0..50_000 {
-            let (a, b, c) = (rng.next(), rng.next(), rng.next().max(1));
+            // Two full-width random u64s almost never multiply to under 2^64, so `mul_div_u64`'s
+            // native `high == 0` branch would go untested. Shifting each factor right by a random
+            // amount varies their magnitude enough that the product lands under 2^64 often too.
+            let a = rng.next() >> (rng.next() % 64);
+            let b = rng.next() >> (rng.next() % 64);
+            let c = rng.next().max(1);
             let round_up = rng.next().is_multiple_of(2);
             assert_eq!(
                 mul_div_u64(a, b, c, round_up),
@@ -640,13 +656,26 @@ mod tests {
         check(0, u128::MAX, 3);
         check(2, u128::MAX, u64::MAX as u128);
         check(0, 0, 1);
+
+        // A digit whose estimate is capped at u64::MAX (r1 >= d1 in `divide_3by2`) and then needs
+        // exactly one correction: known values, independently computed, not just cross-checked
+        // against the bit-by-bit reference.
+        let (dividend_high, low, divisor) = (1u128 << 127, 0u128, (1u128 << 127) | u64::MAX as u128);
+        check(dividend_high, low, divisor);
+        assert_eq!(
+            super::divide_wide(dividend_high, low, divisor),
+            (340282366920938463426481119284349108229, 170141183460469231602560095199917244421)
+        );
     }
 
     #[test]
     fn divlu_matches_u128_division() {
         let mut rng = Rng(0xfeed_face_dead_beef);
         for _ in 0..50_000 {
-            let divisor = rng.next().max(1);
+            // A raw `rng.next()` is top-bit-set about half the time and needs a shift of 40+ or
+            // more only rarely, so normalization would go almost untested. Shifting a fresh random
+            // value right by a random amount spreads `leading_zeros()` over the full 0..64 range.
+            let divisor = (rng.next() >> (rng.next() % 64)).max(1);
             let high = rng.next() % divisor; // high < divisor, so the quotient fits u64.
             let low = rng.next();
             let dividend = ((high as u128) << 64) | low as u128;

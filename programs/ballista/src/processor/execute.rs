@@ -891,6 +891,7 @@ pub fn execute_instruction<'data>(
             let a = operand(registers, instruction.a)?;
             let b = operand(registers, instruction.b)?;
             let c = operand(registers, instruction.c)?;
+            // `c` fills both slots: `unset_first` only needs to know whether it is `Unset`.
             let value = math::mul_div(instruction.opcode == OP_MUL_DIV_CEIL, *a, *b, *c)
                 .map_err(|error| unset_first(unset_first(error, a, b), c, c))?;
             set(registers, dst, value)?;
@@ -2370,13 +2371,23 @@ mod tests {
         };
         let invalid = Err(err(BallistaError::InvalidRegister));
         let mismatch = Err(err(BallistaError::TypeMismatch));
-        for opcode in [OP_ADD, OP_EQ, OP_LT] {
+        for opcode in [
+            OP_ADD, OP_EQ, OP_LT, OP_REM, OP_SHL, OP_SHR, OP_BIT_AND, OP_BIT_OR, OP_BIT_XOR,
+        ] {
             assert_eq!(run(record(opcode, 1, 0, 1, NO_INDEX, 0, 0)), invalid, "unset left, {opcode}");
             assert_eq!(run(record(opcode, 1, 1, 0, NO_INDEX, 0, 0)), invalid, "unset right, {opcode}");
             assert_eq!(run(record(opcode, 1, 0, 2, NO_INDEX, 0, 0)), invalid, "unset beside a bool, {opcode}");
             assert_eq!(run(record(opcode, 1, 3, 0, NO_INDEX, 0, 0)), invalid, "a mismatched left does not win, {opcode}");
             assert_eq!(run(record(opcode, 1, 4, 1, NO_INDEX, 0, 0)), invalid, "out of range, {opcode}");
             assert_eq!(run(record(opcode, 1, 1, 3, NO_INDEX, 0, 0)), mismatch, "u64 against i64, {opcode}");
+        }
+        assert_eq!(run(record(OP_POW10, 1, 0, NO_INDEX, NO_INDEX, 0, 0)), invalid);
+        assert_eq!(run(record(OP_POW10, 1, 2, NO_INDEX, NO_INDEX, 0, 0)), mismatch);
+        for opcode in [OP_MUL_DIV, OP_MUL_DIV_CEIL] {
+            assert_eq!(run(record(opcode, 1, 0, 1, 1, 0, 0)), invalid, "unset a, {opcode}");
+            assert_eq!(run(record(opcode, 1, 1, 0, 1, 0, 0)), invalid, "unset b, {opcode}");
+            assert_eq!(run(record(opcode, 1, 1, 1, 0, 0, 0)), invalid, "unset c, {opcode}");
+            assert_eq!(run(record(opcode, 1, 1, 1, 3, 0, 0)), mismatch, "u64 against i64 in c, {opcode}");
         }
         assert_eq!(run(record(OP_CAST_U128, 1, 0, NO_INDEX, NO_INDEX, 0, 0)), invalid);
         assert_eq!(run(record(OP_CAST_U128, 1, 2, NO_INDEX, NO_INDEX, 0, 0)), mismatch);

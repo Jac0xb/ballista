@@ -1,0 +1,37 @@
+{
+  "description": "Milestone 2 of the real-protocol tests: orcaCompoundFees and orcaHarvestManyPositions against the Whirlpool program. Two SOL/USDC pools under the main WhirlpoolsConfig: Czfq (tick spacing 4, the liquid one) for the compounder, and HJPj (tick spacing 64, thin, one tick array spans about 75% of price) for the harvest, whose rows then share one tick array. Each pool's seven tick arrays are the current one and three either side, as of the last refresh; tests/orca_snapshot.rs fails when the price has left them. No Oracle PDA is listed: neither pool uses adaptive fees, and swaps need the address only. The test wallet is unused by the Orca tests, which sign with their own seeded keys; every snapshot names the same one because the loader checks it.",
+  "wallet": {
+    "seed": "ballista-protocol-tests-wallet-1"
+  },
+  "programs": {
+    "whirlpool": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+    "token": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "token2022": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "associatedToken": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    "memo": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
+  },
+  "accounts": {
+    "wsolMint": "So11111111111111111111111111111111111111112",
+    "usdcMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "czfqWhirlpool": "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE",
+    "czfqVaultA": "EUuUbDcafPrmVTD5M6qoJAoyyNbihBhugADAxRMn5he9",
+    "czfqVaultB": "2WLWEuKDgkDUccTpbwYp1GToYktiSB1cXvreHUwiSUVP",
+    "czfqTickArray-22176": "8NPFeBD52yqJWnsmBNma9qXXGEjXa6WatYcLMXjzSeyK",
+    "czfqTickArray-21824": "D3461zSTVPNdBFPRk2b6zpqQ93g2LW5Kw2potgMdxNJP",
+    "czfqTickArray-21472": "6hA1LN1fzCiXqymDiQXeBFn5da1b7STP1L7JmDc6hR3M",
+    "czfqTickArray-21120": "FdtvWk8j5u1a64YK2Uxk9eXxKZJTwLHDGx8aJPbJyw2Q",
+    "czfqTickArray-20768": "8fV1MQYaRiW9qDWinzYfNa3FLs8PXSdPxoytiwrcyJPD",
+    "czfqTickArray-20416": "HKFHvjsaXWqm5eJpP6minENF6EDK4r86d7G3oYfqD4Q8",
+    "czfqTickArray-20064": "8Yoy9SqpLRV1UkLiTkMkNqnuE1bcSAFiYC8jMjS7Niqp",
+    "hjpjWhirlpool": "HJPjoWUrhoZzkNfRpHuieeFk9WcZWjwy6PBjZ81ngndJ",
+    "hjpjVaultA": "3YQm7ujtXWJU2e9jhp2QGHpnn1ShXn12QjvzMvDgabpX",
+    "hjpjVaultB": "2JTw1fE2wz1SymWUQ7UqpVtrTuKjcd6mWwYwUJUCh2rq",
+    "hjpjTickArray-39424": "EVqGhR2ukNuqZNfvFFAitrX6UqrRm2r8ayKX9LH9xHzK",
+    "hjpjTickArray-33792": "2Eh8HEeu45tCWxY6ruLLRN6VcTSD7bfshGj7bZA87Kne",
+    "hjpjTickArray-28160": "A2W6hiA2nf16iqtbZt9vX8FJbiXjv3DBUG3DgTja61HT",
+    "hjpjTickArray-22528": "CEstjhG1v4nUgvGDyFruYEbJ18X8XeN4sX1WFCLt4D5c",
+    "hjpjTickArray-16896": "HoDhUt77EotPNLUfJuvCCLbmpiM1JR6WLqWxeDPR1xvK",
+    "hjpjTickArray-11264": "81T5kNuPRkyVzhwbe2RpKR7wmQpGJ7RBkGPdTqyfa5vq",
+    "hjpjTickArray-5632": "9K1HWrGKZKfjTnKfF621BmEQdai4FcUz9tsoF41jwz5B"
+  }
+}

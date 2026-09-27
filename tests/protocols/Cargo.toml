@@ -1,0 +1,31 @@
+[package]
+name = "ballista-protocol-tests"
+version = "1.0.0"
+edition = "2021"
+publish = false
+
+[workspace]   # its own workspace; the root Cargo.toml excludes "tests/protocols"
+
+[dependencies]
+ballista-sdk = { path = "../../clients/rust" }       # unchanged SDK; types line up natively
+# LiteSVM master after "chore: bump agave crates to 4.3 (#425)": the first LiteSVM whose pins
+# (solana-instruction ~3.5, solana-address ~2.7, Agave 4.3 = mainnet) agree with solana-program 4.1.0.
+# Move to the crates.io release that contains this commit once it is published.
+litesvm = { git = "https://github.com/LiteSVM/litesvm", rev = "6a550a1000138cf8a285fac98a17c88ba5b2ad5b" }
+# Major-only carets: cargo unifies each with the version litesvm pins. Commit Cargo.lock.
+solana-account = "4"
+solana-address = "2"
+solana-clock = "3"
+solana-compute-budget-interface = "3"
+solana-instruction = "3"
+solana-keypair = "3"
+solana-message = "4"
+solana-sdk-ids = "3"          # bpf_loader_upgradeable, address_lookup_table, sysvar ids
+solana-signer = "3"
+solana-transaction = { version = "4", features = ["wincode"] }  # wire-size assertion
+wincode = "0.6"               # must equal solana-transaction 4.3's wincode major
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+sha2 = "0.10"                 # verify manifest hashes
+# litesvm features = ["precompiles"] only if a scenario signs Ed25519/secp256k1 (builds OpenSSL)

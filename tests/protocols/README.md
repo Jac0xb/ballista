@@ -13,7 +13,7 @@ This directory is its own Cargo workspace, excluded from the root one.
 From the repository root:
 
 ```bash
-git lfs pull                                                 # if snapshot/programs/*.so are pointer files
+git lfs pull                                                 # if snapshot*/programs/*.so are pointer files
 cargo build-sbf --manifest-path programs/ballista/Cargo.toml
 cargo test --manifest-path tests/protocols/Cargo.toml
 ```
@@ -26,15 +26,17 @@ cargo test --manifest-path tests/protocols/Cargo.toml
 | `snapshot/accounts.json` | Every account's data |
 | `snapshot/routes.json` | Each Jupiter route's quote and instructions, by name |
 | `snapshot/programs/*.so` | Program binaries, in Git LFS |
+| `snapshot-lending/` | The Kamino and marginfi templates' snapshot, from `manifests/lending.json`, in the same four parts |
 
 `scripts/snapshot/manifests/` says what to take: programs, accounts and the swaps to quote. To
 refresh (Node 22 or later), from the repository root:
 
 ```bash
 node scripts/snapshot/snapshot.mjs scripts/snapshot/manifests/milestone-1.json tests/protocols/snapshot
+node scripts/snapshot/snapshot.mjs scripts/snapshot/manifests/lending.json tests/protocols/snapshot-lending
 ```
 
-The run replaces `snapshot/` whole and prints what changed.
+Each run replaces its snapshot directory whole and prints what changed.
 
 - `SOLANA_RPC_URL`: a mainnet RPC. Defaults to the public `https://api.mainnet.solana.com`.
 - `JUPITER_API_KEY`: query `api.jup.ag` with this key. Defaults to the keyless `lite-api.jup.ag`.

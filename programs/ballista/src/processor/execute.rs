@@ -10,6 +10,7 @@ use pinocchio::{
 };
 use solana_address::Address;
 
+use super::math;
 use crate::error::{vm_error, BallistaError};
 use crate::utils::pda;
 
@@ -846,8 +847,8 @@ pub fn execute_instruction<'data>(
             let account = resolve(program, accounts, instruction.a, loop_context)?;
             set(registers, dst, RuntimeValue::Bool(account.is_data_empty()))?;
         }
-        OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_U128
-        | OP_READ_PUBKEY | OP_READ_BOOL => {
+        OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_I32
+        | OP_READ_U128 | OP_READ_PUBKEY | OP_READ_BOOL => {
             let account = resolve(program, accounts, instruction.a, loop_context)?;
             let offset = if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
                 match registers.get(instruction.b as usize) {
@@ -877,6 +878,27 @@ pub fn execute_instruction<'data>(
             let right = operand(registers, instruction.b)?;
             let value = arithmetic(instruction.opcode, *left, *right)
                 .map_err(|error| unset_first(error, left, right))?;
+            set(registers, dst, value)?;
+        }
+        OP_REM | OP_SHL | OP_SHR | OP_BIT_AND | OP_BIT_OR | OP_BIT_XOR => {
+            let left = operand(registers, instruction.a)?;
+            let right = operand(registers, instruction.b)?;
+            let value = math::integer(instruction.opcode, *left, *right)
+                .map_err(|error| unset_first(error, left, right))?;
+            set(registers, dst, value)?;
+        }
+        OP_MUL_DIV | OP_MUL_DIV_CEIL => {
+            let a = operand(registers, instruction.a)?;
+            let b = operand(registers, instruction.b)?;
+            let c = operand(registers, instruction.c)?;
+            let value = math::mul_div(instruction.opcode == OP_MUL_DIV_CEIL, *a, *b, *c)
+                .map_err(|error| unset_first(unset_first(error, a, b), c, c))?;
+            set(registers, dst, value)?;
+        }
+        OP_POW10 => {
+            let exponent = operand(registers, instruction.a)?;
+            let value = math::pow10(*exponent)
+                .map_err(|error| unset_first(error, exponent, exponent))?;
             set(registers, dst, value)?;
         }
         OP_EQ | OP_NE | OP_LT | OP_LTE | OP_GT | OP_GTE => {
@@ -1117,6 +1139,9 @@ fn decode_value<'data, T>(
         )),
         OP_READ_U64 => sink(RuntimeValue::U64(u64::from_le_bytes(*read_array(data, offset)?))),
         OP_READ_I64 => sink(RuntimeValue::I64(i64::from_le_bytes(*read_array(data, offset)?))),
+        OP_READ_I32 => sink(RuntimeValue::I64(
+            i32::from_le_bytes(*read_array(data, offset)?) as i64,
+        )),
         OP_READ_U128 => sink(RuntimeValue::U128(*read_array(data, offset)?)),
         OP_READ_PUBKEY => sink(RuntimeValue::Pubkey(*read_array(data, offset)?)),
         OP_READ_BOOL => match read_array::<1>(data, offset)?[0] {
@@ -2402,5 +2427,13 @@ mod tests {
             read_value(OP_ADD, &data, 0),
             Err(err(BallistaError::InvalidTemplateProgram))
         );
+    }
+
+    #[test]
+    fn i32_reads_sign_extend() {
+        let data = [0xf8, 0xff, 0xff, 0xff, 0x2a, 0x00, 0x00, 0x00];
+        assert_eq!(read_value(OP_READ_I32, &data, 0), Ok(RuntimeValue::I64(-8)));
+        assert_eq!(read_value(OP_READ_I32, &data, 4), Ok(RuntimeValue::I64(42)));
+        assert!(read_value(OP_READ_I32, &data, 5).is_err());
     }
 }

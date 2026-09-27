@@ -1,12 +1,21 @@
 # Batch execution
 
-A template may declare one repeated account row, and beside it a row of inputs. The caller supplies
-rows after the fixed accounts, and the VM infers the iteration count from the remaining account
-count. Each row's input values travel in the run data, so every iteration can carry its own
-amount, recipient-specific parameter, or flag. A template can require a minimum number of rows so
-a batch cannot succeed vacuously with none.
+This page shows how a template repeats its steps over a list of rows, such as paying 30 recipients
+in one run, and the limits that apply.
+
+A template can declare one batch: a row of accounts, and optionally a row of input values, that the
+caller repeats once per item. The caller passes the rows after the template's fixed accounts (the
+ones declared in `accounts`), and the program works out the number of rows from how many accounts
+follow, not counting members of [account groups](./account-groups). Each row's input values travel
+in the run data, so every row can carry its own amount or flag. A template can also require a
+minimum number of rows, so that a run with no rows fails instead of succeeding without doing
+anything.
 
 ## Thirty-recipient payroll
+
+This template sends the same number of lamports (the smallest unit of SOL) from a treasury, which
+must sign, to each of up to 30 recipients. `step.forEach` runs its steps once per row, and
+`account.iteration('recipient')` refers to the current row's account.
 
 ::: code-group
 
@@ -81,9 +90,9 @@ let run = ballista_sdk::run_instruction(template, accounts, &inputs);
 
 ## A different amount per row
 
-`batch.rowInputs` declares inputs that are carried once per iteration. Inside `forEach`,
-`expression.rowInput(name)` reads the current row's value. At run time the caller passes one
-input record per row, in the same order as the rows.
+`batch.rowInputs` declares inputs that every row carries. Inside `forEach`,
+`expression.rowInput(name)` reads the current row's value. At run time the caller passes one set of
+values per row, in the same order as the rows.
 
 ::: code-group
 
@@ -155,20 +164,26 @@ let run = ballista_sdk::run_instruction(template, accounts, &inputs.finish());
 
 :::
 
-Row inputs share the input table with the fixed inputs (32 descriptors in total, at most 8 per row),
-and the run may carry at most 256 values: fixed inputs plus row inputs times the maximum iteration
-count. Encoded run data is still capped at 1,024 bytes, which is the practical bound on `bytes` row
-inputs. A run whose row values do not match its rows fails with `InvalidRunInputs`, and the error's
-context is the index of the first missing or malformed value, counting fixed values first.
+These limits apply to row inputs:
 
-Rows carry values and accounts, not CPI shapes: an `invoke` inside the loop forwards the same
-[account group](./account-groups) on every iteration.
+- Fixed inputs and row inputs together are limited to 32 declarations, with at most 8 per row.
+- A run can carry at most 256 values: the fixed inputs plus the row inputs times the template's
+  maximum number of rows.
+- The whole run data is limited to 1,024 bytes, which in practice bounds `bytes` row inputs.
+
+If the row values do not match the rows, the run fails with `InvalidRunInputs`, and the error
+reports the index of the first missing or malformed value, counting fixed values first.
+
+Rows supply accounts and values, not new calls: the loop body's CPIs (calls to other programs) are
+the same for every row. An `invoke` inside the loop that forwards an account group forwards the
+same group on every row.
 
 ## Carry a total across rows
 
-Registers written inside the loop body are discarded after each iteration, except the ones the
-loop carries. A carried variable is defined before the loop, reassigned inside it, and readable
-after it, so a template can enforce a bound over the whole batch.
+Values set inside the loop body are discarded after each row, unless the loop carries them. A
+carried variable is defined with `step.let` before the loop, listed in the loop's `carry` option,
+updated inside the loop with `step.assign`, and still readable after the loop ends. That lets a
+template enforce a limit over the whole batch, such as a total budget.
 
 ::: code-group
 
@@ -201,7 +216,7 @@ const instruction = buildKitRunInstruction({
   batchRows: recipients.map((recipient) => ({ recipient: { address: recipient } })),
 });
 
-// A breach fails the labelled require; the code's high bits name the instruction:
+// Going over budget fails the labelled require, and explainRunError names that step:
 explainRunError(code, compiled)?.message; // 'RequirementFailed at steps[2] (withinBudget)'
 ```
 
@@ -227,11 +242,18 @@ let run = ballista_sdk::run_instruction(template, accounts, &inputs);
 
 :::
 
-The carry mask lives in the `forEach` instruction's immediate. The verifier requires every carried
-register to be initialized before the loop and to keep its type through the body; a carried `bytes`
-value must also keep its maximum length.
+In Rust, values live in registers (numbered slots the builder hands back), and the first argument to
+`for_each` lists the registers to carry as a bit mask: `1 << total` carries the register that holds
+the total, and `0` carries nothing. Finalization, the one-time check before a template is locked on
+chain, confirms that every carried value is set before the loop and keeps its type through the loop
+body. A carried `bytes` value must also keep its maximum length.
 
 ## Stride-two rows
+
+A row can hold more than one account. The number of accounts in each row is its stride; here each
+row has two, an owner and a token account. For every row, the template checks that the token account
+is the owner's ATA (associated token account), creates the account if it does not exist, and
+transfers tokens to it.
 
 ```ts
 batch: {
@@ -256,11 +278,14 @@ steps: [
 ]
 ```
 
-The row stride must be `1..=8`, the tail count must divide evenly by the stride, and rows cannot
-exceed `maxIterations` or fall below `minIterations`. There is no nested loop, backward jump, or
-condition-controlled `while`. Root steps may execute before and after the loop.
+A row holds 1 to 8 accounts. The accounts passed for rows must make up a whole number of rows, and
+the row count must lie between `minIterations` and `maxIterations`. There are no nested loops, no
+backward jumps, and no `while` loops that run until a condition changes. Steps outside the loop can
+run before it and after it.
 
 ::: warning Count CPIs, not just rows
-The hard ceiling is 64 expanded CPIs. A 30-row body with two CPIs expands to 60; a third CPI would
-make the template invalid at finalization.
+A template can make at most 64 CPIs, counted for the worst case: the calls outside the loop, plus
+the calls in the loop body times `maxIterations`. Calls with a `when` condition count too. A 30-row
+loop with two calls counts as 60; a third call in the loop body would make 90, and finalization
+would reject the template.
 :::

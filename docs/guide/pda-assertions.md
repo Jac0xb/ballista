@@ -1,7 +1,17 @@
 # PDA and ATA assertions
 
-Canonical PDA derivation lets a template prove that caller-supplied accounts have the relationship
-the workflow expects. It does not let Ballista sign for those accounts.
+This page shows how a template checks that an account the caller passed is the PDA or associated
+token account it expects, and how to keep that check cheap.
+
+A PDA (program-derived address) is an address computed from a program's address, a list of seeds,
+and one extra seed byte called the bump. The bump is chosen so the address falls off the ed25519
+curve, which means no private key exists for it. The canonical bump is the first value, counting
+down from 255, that gives such an address, and programs normally create their accounts at that
+canonical address. An ATA (associated token account) is the token account at the Associated Token
+Program's PDA for a given wallet, token program, and mint.
+
+These assertions prove how an address was derived. They do not let Ballista sign for the account:
+Ballista never signs.
 
 ## Assert an associated token account
 
@@ -39,8 +49,10 @@ let run = ballista_sdk::run_instruction(
 
 :::
 
-`assertAta` derives `[owner, tokenProgram, mint]` under the Associated Token Program and compares
-the result with the supplied token-account key.
+`assertAta` derives an address from the seeds `[owner, tokenProgram, mint]` under the Associated
+Token Program, searching for the canonical bump. The run fails unless the result equals the address
+of the account passed as `associatedTokenAccount`. The Rust tab shows the caller's side: it computes
+the same address off chain and passes the accounts in the order the template declares them.
 
 ## Assert an arbitrary PDA
 
@@ -56,16 +68,19 @@ assertPda({
 });
 ```
 
-The program account must be declared executable. Each expression is encoded according to its VM
-type. A template may supply at most 15 seeds, each with a statically proven maximum of 32 bytes;
-the runtime reserves the final seed for the bump.
+The program account must be declared `executable: true`, and the compiler also requires it to have
+a fixed `address`. Each seed is encoded according to its type: a `u64` as 8 little-endian bytes, a
+`pubkey` as its 32 bytes, and `bytes` as its contents. A template may supply at most 15 seeds, and
+both the compiler and finalization (the one-time check that locks a template on chain) check that no
+seed can be longer than 32 bytes. Solana allows 16 seeds in a derivation, and the last one is kept
+for the bump.
 
 ## Supply the bump
 
-Searching for the canonical bump means hashing with 255, then 254, and so on until the result is
-off the curve. The runtime charges 1,500 compute units for every attempt, and a run cannot know in
-advance how many it will take. The caller already knows the answer: the bump is public, stable,
-and derived off chain for free. Pass it and the derivation runs once.
+Finding the canonical bump on chain means hashing with 255, then 254, and so on until the result is
+off the curve. Solana charges 1,500 compute units (its measure of execution cost) for every attempt,
+and the number of attempts depends on the seeds. The caller can compute the bump off chain for
+free, so a template can take it as an input and derive the address once:
 
 ```ts
 assertPda({
@@ -80,8 +95,24 @@ assertPda({
 });
 ```
 
-`assertAta` takes the same option, and `expression.pda(program, seeds, bump)` is the underlying
-expression. Inside a batch, give each row its own bump with a row input:
+A supplied bump changes what the check proves. Without one, the assertion proves that the account
+is the canonical PDA for those seeds. With one, it proves only that the account is derived from
+those seeds with that bump. A bump above 255, or one that lands on the curve, fails the run, and a
+bump that derives a different address fails the comparison. But a caller who passes a lower bump
+that is also off the curve, together with the address it derives, passes the check. That address is
+a valid PDA, but not the canonical one.
+
+Whether that matters depends on the program that owns the PDA. For associated token accounts it is
+harmless: the Associated Token Program only ever creates accounts at the canonical address, so no
+token account can exist at a non-canonical ATA address.
+
+When a template must insist on the canonical address, do not take the bump from the caller. Either
+leave out `bump`, so the program searches for the canonical one, or, when every seed is fixed as you
+write the template, compute the canonical bump yourself and write it into the template as a
+constant, such as `bump: expression.u64(254)`.
+
+`assertAta` takes the same `bump` option, and `expression.pda(program, seeds, bump)` is the
+expression both helpers use. Inside a batch, give each row's ATA its own bump with a row input:
 
 ```ts
 batch: {
@@ -101,20 +132,15 @@ steps: [step.forEach([
 ])]
 ```
 
-The guarantee is unchanged. A wrong bump either produces an address on the curve, which is not a
-valid program address and fails the run, or produces a different off-curve address, which fails
-the comparison. Nothing a caller can pass makes a substituted account pass the check.
-
 | Derivation | Compute units |
 | --- | ---: |
-| Canonical search, one literal seed | 4,852 |
-| Supplied bump, one literal seed | 1,898 |
+| Canonical search, one constant seed | 4,852 |
+| Supplied bump, one constant seed | 1,898 |
 
-The search cost grows with the bump's depth; the supplied cost does not. For an associated token
-account whose canonical bump is 250, the same assertion costs 11,325 units searching and 4,069
-with the bump supplied. Full numbers are in the [compute profile](/cu-profile).
+The search costs more the further the canonical bump is below 255; a supplied bump costs the same
+every time. The [compute profile](/cu-profile) has the full measurements.
 
 ::: warning Variable compute
-Without a supplied bump the search has variable compute cost. Measure templates that derive many
-PDAs, especially inside a batch loop.
+Without a supplied bump, a derivation's cost depends on how many bumps the search tries. Measure
+templates that derive many PDAs, especially inside a batch loop.
 :::

@@ -1,141 +1,162 @@
 # Template language
 
-This page describes the complete language a template can be written in: every value it can hold,
-every source it can read, every computation it can perform, and every effect it can cause. The
-surface is deliberately small. It is sized so that finalization can prove a template terminates,
-never reads an uninitialized register, never addresses an account outside its schema, and never
-exceeds its declared worst-case CPI count or generated data length. Anything that would defeat one
-of those proofs is absent by construction rather than by convention.
+This page lists everything a template can contain: the types of values it works with, the inputs
+and accounts it declares, the expressions it can compute, and the steps it runs. Function names are
+from the TypeScript SDK. The Rust `ProgramBuilder` produces the same bytecode at a lower level; see
+[Rust SDK](/reference/rust).
 
-A template is a declaration of typed inputs, an account schema, an optional batch range, and an
-ordered list of steps. Compilation turns names into indices and expressions into register-based
-bytecode. Nothing in the authoring document survives into the stored payload except its meaning:
-every identifier you write is a compiler-side convenience.
+A template declares typed inputs, the accounts it expects, an optional batch of repeated rows, and
+an ordered list of steps. The compiler turns it into bytecode: a list of fixed-size instructions,
+each identified by a number called its opcode. Instructions keep intermediate values in registers,
+numbered slots that each hold one value for the length of a run. The names you give inputs,
+accounts, and bindings are replaced by numbers and are not stored on chain.
+
+When a template is finalized (made permanent and runnable), the Ballista program's verifier checks
+its bytecode once. It confirms that the template always finishes, never reads a register before
+writing it, only refers to accounts it declared, and stays within the limits on CPIs
+(cross-program invocations, meaning calls from the template to other programs) and CPI instruction
+data even in the worst case. The language leaves out anything that would stop those checks from
+working.
 
 ## Values
 
-Six types can occupy a register. The first five are fixed width; `bytes` carries a length bounded
-at authoring time.
+A register holds one of six types. Five have a fixed width. A `bytes` value has a maximum length
+that is declared when the template is written.
 
-| Type | Width | Notes |
+| Type | Width | Typical use |
 | --- | ---: | --- |
-| `bool` | 1 byte | Guards, logical operators, and the condition of a select |
-| `u64` | 8 bytes | Lamports, token amounts, slots, and offsets |
-| `i64` | 8 bytes | Signed quantities, notably the clock's Unix timestamp |
+| `bool` | 1 byte | Conditions and flags |
+| `u64` | 8 bytes | Lamports (1 SOL is 1,000,000,000 lamports), token amounts, slot numbers, byte offsets |
+| `i64` | 8 bytes | Signed values, such as the clock's Unix timestamp |
 | `u128` | 16 bytes | Intermediate products that would overflow 64 bits |
-| `pubkey` | 32 bytes | Addresses, compared for equality and used as PDA seeds |
-| `bytes` | declared maximum, up to 1024 | Opaque client-supplied payloads |
+| `pubkey` | 32 bytes | Account addresses, compared for equality or used as seeds of a program-derived address (PDA) |
+| `bytes` | declared maximum, up to 1,024 | Raw data the template passes along without interpreting it |
 
-Numeric types never coerce implicitly. An addition, a comparison, or a select whose two branches
-disagree on type is rejected at compile time rather than at run time, so a mismatch is a build
-error and never a failed transaction. Conversions are explicit through a cast, which accepts a
-numeric expression and produces `u64`, `i64`, or `u128`. A cast that cannot represent its input
-fails the run.
+Numeric types are never converted automatically. The compiler rejects an addition, a comparison,
+or a `select` whose operands have different types, so a type mismatch is a build error rather than
+a failed transaction. To convert, use `expression.cast`, which accepts any numeric value and
+produces a `u64`, `i64`, or `u128`. A cast fails the run if the value does not fit the target type.
 
-There is no string type, no floating point, no map or struct, and no dynamic deserialization of
-protocol account layouts. Values that look like structured data are read as fixed-width fields at
-known offsets, and everything else stays opaque `bytes` that the template forwards without
-interpretation.
+There is no string type, no floating point, no map or struct, and no way to decode another
+program's account layout. Structured data is read as fixed-width fields at known byte offsets.
+Anything else stays as `bytes`.
 
 ## Inputs
 
-A template declares up to thirty-two named inputs, each with one of the six types. A `bytes` input
-additionally declares a maximum length between one and 1024, which becomes part of the worst-case
-data accounting proven at finalization.
+A template declares up to 32 named inputs, each with one of the six types. A `bytes` input also
+declares a maximum length from 1 to 1,024. That maximum counts toward the worst-case CPI data size
+the verifier checks.
 
-Inputs are encoded positionally in declaration order. A caller concatenates each value little
-endian, with a `bool` as a single byte and a `bytes` value preceded by its length as a
-little-endian `u16`. This is why the declaration order of a template is part of its interface:
-renaming an input is free, but reordering the declarations changes the encoding that every existing
-caller produces.
+Callers send inputs as one byte string, with the values in declaration order. Numbers are
+little-endian, a `bool` is one byte, and a `bytes` value is a little-endian `u16` length followed
+by the bytes. Declaration order is therefore part of a template's interface. Renaming an input
+leaves the compiled template unchanged, but reordering inputs changes the encoding every caller
+must produce.
 
-A batch may also declare up to eight row inputs, which are carried once per iteration and read
-inside the loop with `expression.rowInput`. The run data is then the account-group length prefix
-(one byte per declared group), the fixed values, and one row of values per iteration. Fixed and row
-descriptors share the budget of thirty-two, and fixed values plus row values times the maximum
-iteration count may not exceed 256.
+A batch can also declare up to eight row inputs: values the caller supplies once per row, read
+inside the loop with `expression.rowInput(name)`. The run data (the bytes sent with each run) then
+holds one length byte per [account group](/guide/account-groups) (a list of accounts whose size the
+caller chooses), the fixed input values, and one set of row input values per row. Fixed and row
+inputs share the limit of 32. The number of fixed inputs, plus the number of row inputs times the
+maximum row count, may not exceed 256.
 
 ## Accounts
 
-An account schema is a capability declaration. Each named account states the maximum privilege a
-run may use for that slot, and the program rejects any account the caller supplies that does not
-satisfy it. A schema can require that the account be a signer, be writable, or be executable; it
-can pin an exact address; it can pin the owning program; and it can demand a minimum data length.
+The account schema lists, by name, the accounts a template uses. Each entry states the most a run
+may do with that account, and the program rejects a run whose account does not satisfy it. An
+entry can require the account to be a signer (the transaction carries its signature), writable
+(the transaction allows programs to modify it), or executable (a program). It can also pin the
+account's address or its owner program, and require a minimum data length. To pin a value is to
+fix it in the template, so that a run fails if the caller passes anything else.
 
-The privileges flow one direction only. A CPI inside the template may request the same privilege as
-its schema or less, never more, so reading a finalized template's schema tells you the upper bound
-on what any invocation of it can do. Ballista forwards signer status that the outer transaction
-already carries and never signs as its own PDA, which means a template cannot manufacture authority
-that the sender did not already hold.
+A CPI in the template may ask for the same privileges as the account's schema entry or fewer,
+never more. Reading a finalized template's schema therefore tells you the most any run of it can
+do with the accounts it declares. Ballista passes on signatures the transaction already carries
+and never signs as its own PDA, so a template cannot gain authority the transaction did not
+already have.
 
-Two pinning rules are enforced at compile time because their absence would make the surrounding
-logic meaningless. A program that is invoked, or that a PDA is derived against, must be marked
-executable and must pin an address, since an unpinned program turns every downstream guarantee into
-a guess. An account whose data is read must pin either an owner or an address, since a byte offset
-into an account of unknown provenance is not a field, only a number. Both rules can be waived per
-account with an explicit opt-out flag, which exists so that a template can deliberately accept
-caller-chosen programs or untrusted data. The flag is named to be conspicuous in review.
+The compiler enforces two pinning rules:
 
-Fixed-offset reads also raise a floor on the account's required data length automatically. If a
-template reads a `u64` at offset 64, the compiler records that the account must hold at least
-seventy-two bytes, and the run enforces it.
+- A program that the template invokes, or derives a PDA from, must be marked `executable` and must
+  pin its `address`. Otherwise the caller could substitute any program.
+- An account whose data the template reads must pin its `owner` or its `address`. A byte offset
+  only has a meaning when you know which program wrote the data.
+
+Setting `unsafeUnpinned: true` on an account waives both rules for that account. Use it when a
+template deliberately accepts a program or data that the caller chooses.
+
+A read at a fixed offset also raises the account's minimum data length. If a template reads a
+`u64` at offset 64, the compiler records that the account must hold at least 72 bytes, and every
+run checks it.
 
 ## Reading state
 
-Five account fields are available without knowing anything about an account's layout: its key, its
-owner, its lamport balance, its data length, and whether it is empty. These work on any account in
-the schema, including an iteration account inside a loop.
+Five account fields can be read without knowing the account's layout: its address (`key`), its
+`owner`, its `lamports` balance, its `dataLength`, and `isEmpty`, which is true when the account
+holds no data. These work on any account in the schema, including a row account inside the loop.
 
-Account data is read at a byte offset as one of eight widths: `bool`, `u8`, `u16`, `u32`, `u64`,
-`i64`, `u128`, or `pubkey`. The narrow unsigned widths widen into `u64` in the register file, so a
-`u8` flag and a `u64` amount compose in the same arithmetic without an explicit cast. The offset is
-normally a constant fixed in the template. It can instead be a `u64` expression evaluated during
-the run, which allows a read whose position depends on an input or on a value read earlier, at the
-cost of the automatic data-length floor that a constant offset provides.
+Account data is read at a byte offset as one of eight types: `bool`, `u8`, `u16`, `u32`, `u64`,
+`i64`, `u128`, or `pubkey`. The narrow unsigned types `u8`, `u16`, and `u32` are widened to `u64`
+when read, so a one-byte flag and an eight-byte amount can be combined without a cast. A `bool`
+read fails the run unless the byte is 0 or 1. The offset is usually a constant. It can instead be a
+`u64` expression evaluated during the run, so the position can depend on an input or on an earlier
+read. Such a read does not raise the account's minimum data length, and it fails the run if it
+extends past the end of the data.
 
-Return data from a CPI is readable at a byte offset and width, under one structural restriction:
-the read must be the value of a binding that immediately follows an unconditional invocation. A
-guarded invocation cannot be the source, because a skipped CPI produces no return data and the
-resulting register would have no defined value. This is the same initialization proof that governs
-every other register, applied to a value that comes from outside the VM.
+A CPI's return data (bytes the invoked program hands back) can be read at a byte offset as the
+same eight types, with one restriction: the read must be the value of a `let` step placed directly
+after an invoke that has no guard. A guarded invoke might be skipped, which would leave no return
+data and a register with no defined value. The run also fails if the return data was not set by the
+program just invoked, or is too short for the read.
 
-The clock supplies the current slot as a `u64` and the Unix timestamp as an `i64`. Inside a loop,
-the current iteration index is available as a `u64`.
+The clock gives the current slot (Solana's block-by-block time counter) as a `u64` and the Unix
+timestamp as an `i64`. Inside the loop, `expression.loopIndex()` gives the current row's zero-based
+index as a `u64`.
 
-A program-derived address is computed from a pinned program and between one and fifteen seeds.
-Each seed is a value of any type, contributing its own encoding, and no single seed may exceed
-thirty-two bytes. The result is a `pubkey`, typically compared against an account the caller
-supplied. This is how a template checks that the account it was handed really is the associated
-token account or vault it was supposed to be, rather than trusting the caller's word.
+A program-derived address (PDA) is an address computed from a program ID and a list of seeds. No
+private key exists for it. A template derives one from a pinned program and 1 to 15 seeds. Each
+seed can be a value of any type and contributes that type's encoding: a `u64` adds 8 little-endian
+bytes, a `pubkey` its 32 bytes. No seed may exceed 32 bytes. The result is a `pubkey`, usually
+compared with an account the caller supplied. This is how a template checks that it was given the
+right vault or associated token account (ATA: the standard token account for a wallet and a mint)
+instead of trusting the caller.
 
-By default the derivation is the canonical one: it searches for the bump rather than accepting
-one, which costs 1,500 compute units per attempt. A third argument supplies the bump as a `u64`
-expression, and the derivation then runs once. The guarantee is the same either way, because a
-wrong bump yields either an on-curve address, which is not a program address, or a different
-off-curve one that fails the comparison.
+Deriving a PDA needs a bump: one extra seed byte, tried from 255 downward until the result is a
+valid program address. The first value that works is the canonical bump. By default the template
+searches for it, and each attempt costs 1,500 compute units (Solana's measure of execution cost).
+Passing a `u64` bump as the third argument derives the address once instead. A bump above 255, or
+one that does not produce a valid program address, fails the run.
+
+The two forms prove slightly different things. Without a bump, a match proves the account is the
+canonical PDA for those seeds. With a bump, a match proves the account is the PDA for those seeds
+and that bump. Several bumps can produce valid addresses, so when the caller chooses the bump, a
+match does not prove the address is the canonical one. If the account must be the canonical PDA,
+do not take the bump from the caller: leave it out, or, when every seed is fixed in the template,
+write the canonical bump in as a constant.
 
 ### Every source, enumerated
 
-| Constructor | Result | Availability |
+| Constructor | Result | Where it can be used |
 | --- | --- | --- |
-| `expression.input(name)` | the input's declared type | Anywhere |
-| `expression.variable(name)` | the binding's type | After the binding, in scope |
-| `expression.snapshot(name)` | the binding's type | Identical to `variable` |
+| `expression.input(name)` | The input's declared type | Anywhere |
+| `expression.rowInput(name)` | The row input's declared type | Inside the loop only |
+| `expression.variable(name)` | The binding's type | After the binding, while it is in scope |
+| `expression.snapshot(name)` | The binding's type | Same as `variable` |
 | `expression.bool(v)` | `bool` | Literal |
 | `expression.u64(v)` | `u64` | Literal |
 | `expression.i64(v)` | `i64` | Literal |
 | `expression.u128(v)` | `u128` | Literal |
 | `expression.pubkey(v)` | `pubkey` | Literal, 32 bytes |
-| `expression.bytes(v)` | `bytes` | Literal, up to 1024 bytes |
-| `expression.accountField(account, field)` | see below | Any schema account |
-| `expression.accountData(account, offset, type)` | see below | Account must pin owner or address |
-| `expression.returnData(type, offset?)` | see below | Only as a binding directly after an unguarded invoke |
+| `expression.bytes(v)` | `bytes` | Literal, up to 1,024 bytes |
+| `expression.accountField(account, field)` | See the field table below | Any schema account |
+| `expression.accountData(account, offset, type)` | See the read-type table below | The account must pin its owner or address |
+| `expression.returnData(type, offset?)` | See the read-type table below | Only as the value of a `let` directly after an unguarded invoke; `offset` defaults to 0 |
 | `expression.clockSlot()` | `u64` | Anywhere |
 | `expression.clockUnixTimestamp()` | `i64` | Anywhere |
-| `expression.loopIndex()` | `u64` | Inside a loop only |
-| `expression.pda(program, seeds, bump?)` | `pubkey` | Program must pin an address; 1 to 15 seeds; `bump` is a `u64` |
+| `expression.loopIndex()` | `u64` | Inside the loop only |
+| `expression.pda(program, seeds, bump?)` | `pubkey` | The program must pin an address; 1 to 15 seeds; `bump` is a `u64` |
 
-The `field` argument selects one of five layout-independent properties:
+The `field` argument selects one of five properties that do not depend on the account's layout:
 
 | Field | Result |
 | --- | --- |
@@ -143,13 +164,12 @@ The `field` argument selects one of five layout-independent properties:
 | `owner` | `pubkey` |
 | `lamports` | `u64` |
 | `dataLength` | `u64` |
-| `isEmpty` | `bool` |
+| `isEmpty` | `bool`, true when the account holds no data |
 
-The `type` argument of a data or return-data read selects one of eight widths. The three narrow
-unsigned widths widen on the way into the register file, which is why a one-byte flag and an
-eight-byte amount compose without an explicit cast:
+The `type` argument of an account-data or return-data read selects one of eight types. The narrow
+unsigned types become `u64`:
 
-| Read width | Result |
+| Read type | Result |
 | --- | --- |
 | `bool` | `bool` |
 | `u8`, `u16`, `u32`, `u64` | `u64` |
@@ -159,35 +179,38 @@ eight-byte amount compose without an explicit cast:
 
 ## Computation
 
-Arithmetic is checked. Addition, subtraction, multiplication, and division operate on two operands
-of the same numeric type and fail the transaction on overflow, on underflow, and on division by
-zero. There is no wrapping, no saturation, and no silent truncation anywhere in the language, which
-means an arithmetic result that exists at all is a result that was representable.
+Arithmetic is checked. `add`, `subtract`, `multiply`, and `divide` take two operands of the same
+numeric type and fail the run if the result does not fit the type or the divisor is zero. Nothing
+wraps around, saturates, or is silently truncated. Division discards the remainder.
 
-Both operands of `min` and `max` must share a numeric type, and the result takes that type.
-Equality and inequality apply to any two values of matching type, including pubkeys and bytes.
-Ordered comparison is restricted to numerics. The three boolean connectives combine boolean
-operands, and a select chooses between two same-typed branches on a boolean condition. A select
-evaluates both branches before choosing, since the VM has no branch instruction; the choice picks a
-register rather than skipping work.
+`min` and `max` take two operands of the same numeric type and return that type. `equal` and
+`notEqual` accept any two values of the same type, including pubkeys and bytes. The ordered
+comparisons accept numeric types only. `and`, `or`, and `not` combine booleans, and `select` picks
+one of two values of the same type depending on a boolean condition.
+
+The bytecode has no jump instruction, so nothing inside an expression is skipped. `select`
+evaluates both branches before it chooses, and `and` and `or` evaluate both operands. If any of
+those fails (an overflow, a division by zero, a bad read), the run fails, even when the other side
+alone would have decided the result. For example, a `select` that divides by a value only when the
+value is non-zero still fails when it is zero, because the division runs either way.
 
 ### Every operator, enumerated
 
 Arithmetic takes two operands of the same numeric type and returns that type. Each failure below
-aborts the transaction.
+fails the transaction.
 
 | Constructor | Operands | Result | Fails when |
 | --- | --- | --- | --- |
-| `expression.add(a, b)` | matching numeric | same | The sum exceeds the type |
-| `expression.subtract(a, b)` | matching numeric | same | The result goes below the type's minimum |
-| `expression.multiply(a, b)` | matching numeric | same | The product exceeds the type |
-| `expression.divide(a, b)` | matching numeric | same | The divisor is zero |
+| `expression.add(a, b)` | matching numeric | same | The result does not fit the type |
+| `expression.subtract(a, b)` | matching numeric | same | The result does not fit the type (for `u64` and `u128`, it would be below zero) |
+| `expression.multiply(a, b)` | matching numeric | same | The result does not fit the type |
+| `expression.divide(a, b)` | matching numeric | same | The divisor is zero, or the result does not fit (the `i64` minimum divided by −1) |
 | `expression.min(a, b)` | matching numeric | same | Never |
 | `expression.max(a, b)` | matching numeric | same | Never |
 | `expression.cast(to, value)` | any numeric | `u64`, `i64`, or `u128` | The value does not fit the target |
 
-Comparisons return a boolean. Equality accepts any two values of matching type, including addresses
-and opaque bytes. The four ordered comparisons are numeric only.
+Comparisons return a boolean. Equality accepts any two values of the same type, including
+addresses and bytes. The four ordered comparisons accept numeric types only.
 
 | Constructor | Operands | Result |
 | --- | --- | --- |
@@ -198,177 +221,191 @@ and opaque bytes. The four ordered comparisons are numeric only.
 | `expression.greaterThan(a, b)` | matching numeric | `bool` |
 | `expression.greaterThanOrEqual(a, b)` | matching numeric | `bool` |
 
-Four logical forms complete the surface. There is no exclusive-or, no implication, and no n-ary
-form: wider conjunctions are built by nesting.
+There are four logical forms. There is no exclusive-or, and `and` and `or` take exactly two
+operands; nest them to combine more.
 
 | Constructor | Operands | Result |
 | --- | --- | --- |
 | `expression.and(a, b)` | `bool`, `bool` | `bool` |
 | `expression.or(a, b)` | `bool`, `bool` | `bool` |
 | `expression.not(value)` | `bool` | `bool` |
-| `expression.select(condition, ifTrue, ifFalse)` | `bool` plus two matching | the branch type |
-
-Neither connective short-circuits. Both operands are evaluated before the combining instruction
-runs, because the machine has no branch. This matters only for cost, never for correctness, since
-no expression has a side effect.
+| `expression.select(condition, ifTrue, ifFalse)` | `bool` plus two of the same type | The type of the two values |
 
 ## Bindings
 
-A binding evaluates an expression once, at its position in the step list, and holds the result in a
-register for the remainder of the run. This is what makes a before-and-after comparison possible.
-Every expression is otherwise re-evaluated wherever it appears, so a balance read on either side of
-an invocation yields two independent reads, and without a binding the earlier value is
-unrecoverable. The operation is spelled two ways for readability: one name reads naturally in
-pre/post checks, the other everywhere else, and they compile identically.
+A binding evaluates an expression once, at its place in the step list, and keeps the result in a
+register for the rest of the run. Write one with `step.let(name, value)` or
+`step.snapshot(name, value)`. The two compile identically; `snapshot` reads better in
+before-and-after checks. Read the value back with `expression.variable(name)` or
+`expression.snapshot(name)`.
 
-Bindings are immutable and lexically scoped, and a name cannot be redefined in the scope that
-already holds it. They allocate no account, cost no rent, and do not survive the transaction. One
-exception to immutability exists for loops, described below.
+Bindings are what make before-and-after comparisons possible. An expression written inline is
+evaluated where it appears, so a balance read before a CPI and the same read after it are two
+separate reads. Without a binding, the earlier value is lost.
+
+A binding cannot be changed, and its name cannot be reused while the binding is in scope. A binding
+is visible to the steps after it; one made inside the loop body is visible only inside the body.
+Bindings create no account and end with the transaction. The one exception to "cannot be changed"
+is a carried binding in the loop, described under [Batches](#batches).
 
 ## Assertions
 
-There is exactly one assertion primitive. `step.require(condition, label?)` evaluates a boolean and
-aborts the whole transaction unless it is true, rolling back every effect the run has already
-caused, including CPIs that already succeeded. The optional label is carried in the source map so a
-failure can be attributed to a specific check rather than to the template as a whole.
+`step.require(condition, label?)` is the only assertion. It evaluates a boolean and, if it is
+false, fails the whole transaction. Solana then undoes everything the run did, including CPIs that
+already succeeded. The optional label (up to 64 characters) is kept in the compiled template's
+source map, which links each bytecode instruction to the step that produced it, so a failure can
+be traced to a specific check. Labels are not stored on chain.
 
-That single primitive covers every assertion in the language, because the interesting part is the
-expression, not the statement. Anything in the two tables above that yields a boolean is a valid
-condition. In practice the useful shapes are a small set. An account can be checked for identity by
-comparing its key against a literal or a derived address, or for provenance by comparing its owner.
-A balance or token amount can be bounded by comparing a read against an input. A deadline is a
-comparison against the clock. A delta is a comparison against a binding captured before an
-invocation, which is the one shape that cannot be expressed without a binding. A compound policy is
-those parts combined with the logical connectives, and an override is the whole thing disjoined
-with an input flag.
+Any expression that produces a boolean can be a condition. Common patterns:
 
-Two helpers wrap the derivation shape, since it is verbose and easy to get subtly wrong. Both
-return an ordinary requirement step and introduce no new capability.
+- **Identity:** compare an account's `key` with a literal or a derived address.
+- **Owner:** compare an account's `owner` with the program that should own it.
+- **Bounds:** compare a balance or token amount with an input.
+- **Deadline:** compare the clock with an input.
+- **Change across a CPI:** compare a value read after the CPI with a binding captured before it.
+  This is the one pattern that needs a binding.
+- **Combined policy:** join the checks above with `and` and `or`. To let the caller override a
+  check, combine it with a `bool` input using `or`.
 
-| Helper | Asserts |
+Two helpers write the common address checks for you. Each returns an ordinary `require` step.
+
+| Helper | Checks that |
 | --- | --- |
-| `assertPda({ account, program, seeds, bump?, label? })` | The account's key equals the derivation of those seeds under that program |
-| `assertAta({ associatedTokenAccount, owner, mint, tokenProgram, associatedTokenProgram, bump?, label? })` | The account is the canonical associated token account for that owner and mint |
+| `assertPda({ account, program, seeds, bump?, label? })` | The account's address is the PDA derived from those seeds under that program |
+| `assertAta({ associatedTokenAccount, owner, mint, tokenProgram, associatedTokenProgram, bump?, label? })` | The account is the associated token account for that owner, mint, and token program |
 
-`assertAssociatedTokenAccount` is an alias of the second. Both exist because checking that a caller
-handed you the account it claimed is the most common assertion in a template, and the most
-consequential one to omit.
+`assertAssociatedTokenAccount` is another name for `assertAta`. Checking that the caller passed
+the account it claims is the most common check in a template.
 
 ## Steps and control flow
 
-A template holds up to 128 top-level steps, executed in order. There are five kinds.
+A template has up to 128 top-level steps, run in order. There are five kinds:
 
-A requirement evaluates a boolean and aborts the entire Solana transaction unless it is true, which
-rolls back every effect the run has already caused, including CPIs that already succeeded.
+- A **requirement** (`step.require`) fails the whole transaction if its condition is false.
+- A **binding** (`step.let` or `step.snapshot`) names a value.
+- An **assignment** (`step.assign`) updates a carried binding inside the loop.
+- An **invocation** (`step.invoke`) performs a CPI.
+- A **loop** (`step.forEach`) runs its steps once per batch row.
 
-A binding step introduces a name, and an assignment step updates one, subject to the loop rules
-below.
+An invocation calls a program whose address the template pins. It lists up to 64 accounts, each
+with the signer and writable flags it needs, and builds its instruction data from up to 64 parts.
+It may also name one [account group](/guide/account-groups): a list of accounts the caller
+supplies at run time, passed after the listed accounts and never as signers.
 
-An invocation performs a CPI against a pinned program. It lists up to sixty-four accounts with the
-privileges it wants for each, may name one [account group](/guide/account-groups) whose caller-supplied
-members follow those accounts without signer status, and builds its instruction data from up to
-sixty-four parts. A part
-is either a literal byte string fixed in the template, typically a discriminator, or a register
-encoded at a chosen width. The available encodings are `u8`, `u16`, `u32`, `u64`, `i64`, `u128`,
-`pubkey`, `bool`, and `bytes`. The three narrow unsigned encodings accept a `u64` or `u128`
-register and check the value fits at run time, which is how a template writes a one-byte field
-without giving up checked arithmetic. A `bytes` part is inserted raw, with no length prefix, so a
-protocol that expects a length must be given one explicitly as a preceding part. Total generated
-data is capped at 4096 bytes, and the worst case is proven at finalization rather than discovered
-during a run.
+Each data part is either literal bytes fixed in the template, such as an instruction discriminator
+(the leading bytes that tell a program which instruction to run), or a value encoded at a chosen
+width: `u8`, `u16`, `u32`, `u64`, `i64`, `u128`, `pubkey`, `bool`, or `bytes`. The unsigned
+encodings `u8`, `u16`, `u32`, and `u64` accept a `u64` or `u128` value and fail the run if it does
+not fit, so a template can write a one-byte field without giving up checked arithmetic. A `bytes`
+part is inserted as is, with no length prefix; if the program expects a length, add it as a
+separate part. An invocation's data can be at most 4,096 bytes, and the verifier checks the worst
+case when the template is finalized.
 
-An invocation may carry a guard, which makes that single CPI optional. The guard is evaluated in
-place, and if it is false the invocation is skipped and execution continues with the next step. A
-guard is the right tool when the work is legitimately unnecessary, such as creating an account that
-may already exist; a requirement is the right tool when a false condition means something is wrong.
-The run event records which invocations actually fired.
+An invocation can have a guard (`when`), which makes that one CPI optional. The guard is evaluated
+in place. If it is false, the CPI is skipped and the run continues with the next step. Use a guard
+when the work is sometimes unnecessary, such as creating an account that may already exist. Use a
+requirement when a false condition means something is wrong. If the template sets `emitEvent`, the
+run event records which invocations ran.
 
-A loop is the only control flow the language has. A template may contain exactly one, it must be at
-the top level, it cannot nest, and it runs forward over the batch rows the caller supplied. Its
-body holds between one and sixty-four steps. The loop's trip count is bounded by the batch range
-declared in the template, so worst-case CPI expansion is the body's invocation count multiplied by
-the maximum iteration count, and that product is known before the template is ever run.
+The loop is the only way to repeat steps. A template can have at most one, at the top level, and
+loops cannot be nested. The loop runs once for each batch row the caller supplies, and its body
+holds 1 to 64 steps. Because the template declares the maximum number of rows, the worst-case
+number of CPIs is known before the template ever runs: the invocations in the body times the
+maximum rows, plus the top-level invocations. That total may not exceed 64.
 
 ### Every step and data part, enumerated
 
 | Constructor | Effect |
 | --- | --- |
-| `step.require(condition, label?)` | Abort the transaction unless the boolean holds |
-| `step.let(name, value, label?)` | Bind an expression to a name for the rest of the run |
-| `step.snapshot(name, value, label?)` | Identical to `let`, named for pre/post checks |
+| `step.require(condition, label?)` | Fail the transaction unless the condition is true |
+| `step.let(name, value, label?)` | Bind a value to a name for the rest of the run |
+| `step.snapshot(name, value, label?)` | Same as `let`; the name suits before-and-after checks |
 | `step.assign(name, value, label?)` | Reassign a carried binding; loop body only |
-| `step.invoke({ program, accounts, data, when?, programAddress?, label? })` | Perform a CPI, optionally guarded |
-| `step.forEach(steps, { carry?, label? })` | Iterate the batch rows; one per template, top level only |
+| `step.invoke({ program, accounts, data, when?, accountGroup?, programAddress?, label? })` | Perform a CPI, optionally guarded by `when` |
+| `step.forEach(steps, { carry?, label? })` | Run the steps once per batch row; one per template, top level only |
 
-Instruction data is assembled from two part constructors.
+Each entry in an invocation's `accounts` is `{ account, signer?, writable? }`. `programAddress`
+states which program the step is written for; compilation fails if the `program` account pins a
+different address.
+
+Instruction data is built from two part constructors.
 
 | Constructor | Produces |
 | --- | --- |
 | `data.literal(bytes)` | Fixed bytes, typically a discriminator |
-| `data.encode(encoding, value)` | A register encoded as `u8`, `u16`, `u32`, `u64`, `i64`, `u128`, `pubkey`, `bool`, or `bytes` |
+| `data.encode(encoding, value)` | A value encoded as `u8`, `u16`, `u32`, `u64`, `i64`, `u128`, `pubkey`, `bool`, or `bytes` |
 
-Accounts are named with `account.fixed(name)` for a schema account and `account.iteration(name)`
-for the current row's account inside a loop.
+Accounts are named with `account.fixed(name)` for an account in the schema and
+`account.iteration(name)` for an account in the current batch row, inside the loop.
 
 ## Batches
 
-A batch declares a maximum iteration count, an optional minimum, and a row shape of between one and
-eight named accounts. The caller supplies rows at run time, and steps inside the loop reach that
-iteration's accounts by name. The minimum exists so that a run supplying too few rows fails rather
-than succeeding vacuously.
+A batch declares a maximum number of rows (1 to 60), an optional minimum (default 0), and a row of
+1 to 8 named accounts. The caller supplies the rows at run time, and steps inside the loop refer to
+the current row's accounts with `account.iteration(name)`. A run with fewer rows than the minimum
+fails instead of succeeding without doing anything.
 
-A row carries accounts and, when the batch declares row inputs, one value per row input. Steps
-inside the loop read the current row's values with `expression.rowInput`, so a payroll that pays each
-recipient a different caller-supplied amount is expressible. What a row cannot carry is a CPI shape:
-an invocation inside the loop forwards the same account group on every iteration.
+When the batch declares row inputs, each row also carries one value per row input, read with
+`expression.rowInput(name)`. A payroll can therefore pay each recipient a different amount. A row
+cannot change which accounts a CPI forwards: an invocation inside the loop forwards the same
+account group on every row.
 
-Values cross iteration boundaries only through an explicit carry. A binding created before the loop
-and named in the loop's carry list may be reassigned inside the body, must keep its exact type and
-size across the assignment, and remains readable after the loop ends. This is what makes running
-totals possible, and a requirement placed after the loop can then assert something about the batch
-as a whole. Any binding created inside the body without being carried is rebuilt each iteration and
-cannot be read afterward.
+Values pass from one row to the next only through a carry. A binding created before the loop and
+listed in the loop's `carry` option can be reassigned inside the body with `step.assign`. It must
+keep the same type (and, for `bytes`, the same maximum length), and it can still be read after the
+loop. This is how a template keeps a running total, which a requirement after the loop can then
+check. A binding created inside the body without being carried is recreated on every row and
+cannot be read after the loop.
 
 ## Bounds
 
-Every limit below is fixed in the wire format and checked at finalization.
+"Bytecode" limits come from the bytecode format. The verifier checks them when a template is
+finalized, and the TypeScript compiler checks them before you upload. "TypeScript" limits come
+from the TypeScript SDK only; a template built with the Rust builder is not bound by them.
 
-| Bound | Limit |
-| --- | ---: |
-| Registers | 64 |
-| Inputs | 32 |
-| `bytes` input or literal length | 1024 |
-| Top-level steps | 128 |
-| Steps in a loop body | 64 |
-| Runtime accounts, fixed plus batch range plus groups | 120 |
-| Row inputs per batch row | 8 |
-| Input values per run, fixed plus rows | 256 |
-| Account groups | 8 |
-| Accounts per CPI, declared plus group | 64 |
-| Data parts per CPI | 64 |
-| Generated CPI data | 4096 bytes |
-| Batch iterations | 60 |
-| Accounts per batch row | 8 |
-| PDA seeds | 15 |
-| Bytes per PDA seed | 32 |
+| Bound | Limit | Source |
+| --- | ---: | --- |
+| Registers | 64 | Bytecode |
+| Inputs, fixed plus row | 32 | Bytecode |
+| Row inputs per batch row | 8 | Bytecode |
+| Input values per run, fixed plus rows | 256 | Bytecode |
+| `bytes` input or literal length | 1,024 | Bytecode |
+| Top-level steps | 128 | TypeScript |
+| Steps in a loop body | 64 | TypeScript |
+| Batch rows | 60 | TypeScript |
+| Accounts per batch row | 8 | Bytecode |
+| Runtime accounts: fixed, plus batch rows, plus account group members | 120 | Bytecode |
+| Account groups | 8 | Bytecode |
+| CPIs per run, counting each loop iteration | 64 | Bytecode |
+| Accounts per CPI, listed plus group members | 64 | Bytecode |
+| Data parts per CPI | 64 | TypeScript |
+| Instruction data per CPI | 4,096 bytes | Bytecode |
+| PDA seeds | 15 | Bytecode |
+| Bytes per PDA seed | 32 | Bytecode |
 
-The runtime account budget is the one that binds soonest in practice. Fixed accounts plus the row
-width multiplied by the maximum iteration count must fit within 120, so a full eight-account row
-leaves room for fourteen iterations and eight fixed accounts. Account groups are sized at run time
-within the same total, and the 1,232-byte transaction limit usually binds before it does.
+Account group sizes are only known at run time, so the program checks the two limits that include
+group members during each run.
+
+Fixed accounts plus the row width times the maximum number of rows must fit in 120. With eight
+accounts per row, 14 rows use 112 slots and leave 8 for fixed accounts. Account groups count
+toward the same 120, but the transaction's own limits usually stop a run first; see
+[Limits](/reference/limits#transaction-ceilings).
 
 ## What the language excludes
 
-The absences are load-bearing, and each one buys a specific proof.
+The language leaves these out on purpose:
 
-There are no backward jumps, no recursion, no nested loops, and no unbounded loop form, which is
-what makes termination decidable at finalization instead of being a runtime compute-budget gamble.
-There is no dynamic account discovery. The only accounts outside the schema are the members of an
-account group, which a template can forward to a CPI but never read, constrain, or sign with, so
-everything a template checks is still a fixed, auditable property of the stored template. There is no
-mutable template state and no variable that outlives a transaction, so a finalized template is a
-pure function of its inputs, its accounts, and the chain state it reads.
+- There are no jumps, recursion, nested loops, or unbounded loops. Every template is therefore
+  known to finish, and its worst case is known before it runs, rather than being cut off by the
+  transaction's compute budget.
+- A template cannot discover accounts at run time. The only accounts outside the schema are
+  account group members, which a template can forward to a CPI but never read, check, or sign
+  with. Everything a template checks is fixed in the stored template, where anyone can review it.
+- No state survives a transaction. What a run does depends only on its inputs, its accounts, and
+  the chain state it reads.
 
-Ballista also declines several things it could technically do. It never signs as its own PDA, holds
-custody, schedules its own execution, enforces replay policy, or pays keepers. A workflow needing
-any of those needs a program, and the guide's opening page draws that line in more detail.
+Ballista also leaves out several things it could do in principle. It never signs as its own PDA,
+never takes custody of funds, never schedules its own runs, does not stop a template from being run
+again with the same inputs (replay protection), and does not pay keepers (bots that submit
+transactions for a fee). A workflow that needs any of these needs its own program.
+[Why Ballista?](/guide/why-ballista) explains where that line falls.

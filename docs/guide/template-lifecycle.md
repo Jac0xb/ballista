@@ -1,8 +1,19 @@
 # Template lifecycle
 
-Templates are immutable PDA accounts derived from `['template', creator, templateId]`.
+This page shows how to upload a template, in one instruction or in several, and what you can and
+cannot do with it afterwards.
+
+A template is stored in its own account. The account's address is a PDA (program-derived address:
+an address owned by a program, with no private key) derived from the seeds
+`['template', creator, templateId]`. `creator` is the uploader's address, and `templateId` is a
+number from 0 to 65,535 that the creator picks. Once a template is finalized (checked and locked),
+its account can never change.
 
 ## One-shot creation
+
+When the whole template fits in one instruction, `CreateTemplate` uploads it, checks it, and
+finalizes it in a single step. `planTemplateUpload` chooses this mode when the instruction's data is
+at most 3,500 bytes; its `maxInstructionDataBytes` option changes that limit.
 
 ::: code-group
 
@@ -28,6 +39,19 @@ send(instruction).await?;
 :::
 
 ## Chunked and resumable upload
+
+A larger template is uploaded in pieces:
+
+1. `BeginTemplate` creates the account and records the template's total length and its SHA-256
+   hash.
+2. `WriteTemplateChunk` instructions append the bytes. Each write must start exactly where the last
+   one ended, at the byte count the account has recorded (`written_len`).
+3. `FinalizeTemplate` checks that every byte arrived, that the bytes match the recorded hash, and
+   that the template passes the program's checks. Then it locks the account.
+
+`buildKitTemplateUploadPlan` sizes each write to fit the transaction message you pass it. If an
+upload is interrupted, `resumeTemplateUpload` reads the account and plans only the remaining
+writes.
 
 ::: code-group
 
@@ -67,6 +91,7 @@ send(ballista_sdk::finalize_template_instruction(creator, template)).await?;
 
 :::
 
-Writes must append at exactly `written_len`. Finalization checks the declared length, SHA-256 hash,
-and VM structure. An uploading account can be cancelled to recover rent; a finalized template can
-never be changed or closed. Publish a revision under a new template ID.
+An upload that has not been finalized can be cancelled with `CancelTemplate`. That closes the
+account and returns its rent deposit, in lamports (the smallest unit of SOL), to the creator. A
+finalized template can never be changed or closed; to publish a revision, upload it under a new
+template ID.

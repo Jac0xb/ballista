@@ -29,8 +29,9 @@ cargo test -p cvlr-pinocchio --features rt
 
 cd ballista-specs
 cargo certora-sbf --tools-version v1.53  # SBF binary for the prover
-certoraSolanaProver run.conf             # every rule
-certoraSolanaProver run.conf --rule rule_verified_pure_instructions_preserve_register_typing
+certoraSolanaProver run.conf             # the 14 rules that prove
+certoraSolanaProver run.conf --rule rule_u64_arithmetic_is_checked
+certoraSolanaProver run-blocked.conf     # the 16 rules expected to fail; see below
 ```
 
 Results appear at `https://prover.certora.com/output/<job>/<key>`. Platform tools v1.53 ship the
@@ -44,18 +45,25 @@ the program on first use. Run it after changes to the executor even when no prov
 
 ## What the rules state
 
-- **Typing preservation.** For any register typing, any register values consistent with it, and
-  any instruction the verifier accepts against it, the executor returns success or a
+`run.conf` holds the rules that prove today: arithmetic, comparisons, casts, error codes, and the
+parser. The typing, account-constraint, lifecycle, and `u128` arithmetic rules are written but
+blocked on the prover's model of heap memory, so they live in `run-blocked.conf` and are expected
+to fail. That file also holds three diagnostic rules that isolate the problem: byte stores read
+back as words, and the constant program parsed from byte stores or from `memcpy`.
+
+- **Typing preservation** (blocked). For any register typing, any register values consistent with
+  it, and any instruction the verifier accepts against it, the executor returns success or a
   value-dependent error and leaves the destination holding the recorded type. This is the
   per-instruction step of the argument that finalize-time verification is sound.
-- **Arithmetic, comparisons, casts.** Match Rust's checked semantics for every input and reject
-  mixed or non-numeric operands.
+- **Arithmetic, comparisons, casts.** Match Rust's checked semantics for every `u64` and `i64`
+  input and reject mixed or non-numeric operands. For signed division only the error cases are
+  proved, and the `u128` rule is blocked.
 - **Parser.** Checks magic and version first, reports truncation rather than misparsing, and
   returns sections that exactly consume the payload.
-- **Account constraints.** Signer, writable, executable, address, owner, minimum length, and count
-  are enforced exactly, and header reads return the account's real fields.
-- **Lifecycle.** Finalized templates reject chunk writes and cancellation, uploading templates
-  never run, and a run never writes the template account.
+- **Account constraints** (blocked). Signer, writable, executable, address, owner, minimum length,
+  and count are enforced exactly, and header reads return the account's real fields.
+- **Lifecycle** (blocked). Finalized templates reject chunk writes and cancellation, uploading
+  templates never run, and a run never writes the template account.
 - **Error codes.** Encoding round-trips and every code decodes into exactly one of runtime,
   verifier, or foreign.
 

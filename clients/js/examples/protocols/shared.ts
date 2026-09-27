@@ -84,7 +84,14 @@ export const PYTH = {
   /** 1 is `Full`, 0 is `Partial`. Read this before trusting any offset below. */
   verificationLevel: 40,
   verificationLevelFull: 1,
-  /** Offsets for a `Full` account. A `Partial` one shifts each by one. */
+  /**
+   * Offsets for a `Full` account. A `Partial` one shifts each by one.
+   *
+   * `feedId` is `price_message.feed_id`, the 32 bytes that say which feed the price belongs to:
+   * SOL/USD's is `ef0d8b6f…c280b56d`. The receiver owns every feed's account alike, so nothing
+   * else about the account says which one it is.
+   */
+  feedId: 41,
   price: 73,
   confidence: 81,
   exponent: 89,

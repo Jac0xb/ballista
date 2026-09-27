@@ -10,6 +10,8 @@ import { describe, expect, test } from 'vitest';
 
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
+  account,
+  expression,
   type AccountReference,
   type Expression,
   type Step,
@@ -33,6 +35,7 @@ import {
   JUPITER_V6,
   KAMINO_REPAY,
   PYTH,
+  PYTH_RECEIVER,
   SPL_MINT,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_MINT_OFFSET,
@@ -245,6 +248,49 @@ describe('the oracle-checked swap', () => {
       dependsOn(destinationCheck.condition, bindings, reads('destinationAta', TOKEN_ACCOUNT_MINT_OFFSET)),
     ).toBe(true);
     expect(dependsOn(destinationCheck.condition, bindings, accountKey('destinationMint'))).toBe(true);
+  });
+});
+
+/**
+ * The Pyth receiver owns every feed's price account alike, so pinning the owner takes any feed's
+ * price: USDC/USD's would pass for SOL/USD's. Pyth's own `get_price_no_older_than` checks the
+ * feed id, and so must every template that reads a price.
+ */
+describe('the Pyth templates', () => {
+  const pythTemplates: [string, Template][] = [
+    ['jupiterOracleCheckedSwap', jupiterOracleCheckedSwap],
+    ['pythFreshPriceGate', pythFreshPriceGate],
+  ];
+
+  test('are every example that reads an account the Pyth receiver owns', () => {
+    const receiver = [...addressBytes(PYTH_RECEIVER)].join();
+    const reading = Object.entries(protocols)
+      .filter(([, template]) =>
+        Object.values(template.accounts).some(
+          (constraint) => constraint.owner !== undefined && [...constraint.owner].join() === receiver,
+        ),
+      )
+      .map(([name]) => name)
+      .sort();
+    expect(reading).toEqual(pythTemplates.map(([name]) => name).sort());
+  });
+
+  test.each(pythTemplates)('%s requires the price account to carry the feed id it is given', (_, template) => {
+    expect(requireLabeled(template, 'priceIsTheExpectedFeed').condition).toEqual(
+      expression.equal(
+        expression.accountData(account.fixed('priceUpdate'), PYTH.feedId, 'pubkey'),
+        expression.input('feedId'),
+      ),
+    );
+    expect(template.inputs?.feedId).toEqual({ type: 'pubkey' });
+  });
+
+  // The feed id's offset holds only once the verification level has fixed the layout, and a
+  // price read before the pin would be a price from whichever feed was passed.
+  test.each(pythTemplates)('%s pins the feed right after the layout, before reading anything else', (_, template) => {
+    const labels = template.steps.map((step) => step.label);
+    expect(labels.indexOf('priceIsFullyVerified')).toBe(0);
+    expect(labels.indexOf('priceIsTheExpectedFeed')).toBe(1);
   });
 });
 

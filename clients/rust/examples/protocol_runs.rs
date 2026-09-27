@@ -25,12 +25,14 @@ const PYTH_RECEIVER: Pubkey = pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5Lt
 // #region plain
 /// Shape one: fixed accounts and fixed inputs, in the order the template declares them.
 ///
-/// This is `pyth-fresh-price-gate`. Its inputs are `maximumAge`, `maximumConfidence`,
+/// This is `pyth-fresh-price-gate`. Its inputs are `feedId`, `maximumAge`, `maximumConfidence`,
 /// `floorPrice`, `ceilingPrice`, `actionData`; its accounts are the price update, the action
-/// program, the token program, and the actor. The action is a Jupiter `route`, whose list starts
-/// with the token program and the actor, so `action_accounts` is its list from the third account on.
+/// program, the token program, and the actor. `feed_id` is the Pyth feed the price update must
+/// carry, as 32 bytes. The action is a Jupiter `route`, whose list starts with the token program
+/// and the actor, so `action_accounts` is its list from the third account on.
 pub struct PriceGate {
     pub price_update: Pubkey,
+    pub feed_id: [u8; 32],
     pub action_program: Pubkey,
     pub actor: Pubkey,
 }
@@ -47,6 +49,7 @@ pub fn run_price_gate(
     // Group lengths come first, before any value, one byte per declared group.
     let inputs = RunInputs::new()
         .groups(&[action_accounts.len() as u8])
+        .pubkey(&Pubkey::new_from_array(gate.feed_id))
         .i64(maximum_age)
         .u64(maximum_confidence)
         .i64(band.0)
@@ -153,9 +156,20 @@ fn main() {
     let (template, _) = find_template_pda(&creator, 1);
     let key = Pubkey::new_unique;
 
+    // SOL/USD's feed id, `ef0d8b6f…c280b56d`.
+    let sol_usd = [
+        0xef, 0x0d, 0x8b, 0x6f, 0xda, 0x2c, 0xeb, 0xa4, 0x1d, 0xa1, 0x5d, 0x40, 0x95, 0xd1, 0xda,
+        0x39, 0x2a, 0x0d, 0x2f, 0x8e, 0xd0, 0xc6, 0xc7, 0xbc, 0x0f, 0x4c, 0xfa, 0xc8, 0xc2, 0x80,
+        0xb5, 0x6d,
+    ];
     let gate = run_price_gate(
         template,
-        &PriceGate { price_update: key(), action_program: SYSTEM_PROGRAM_ID, actor: key() },
+        &PriceGate {
+            price_update: key(),
+            feed_id: sol_usd,
+            action_program: SYSTEM_PROGRAM_ID,
+            actor: key(),
+        },
         60,
         1_000_000,
         (90_00000000, 250_00000000),

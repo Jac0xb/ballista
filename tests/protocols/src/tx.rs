@@ -30,6 +30,25 @@ pub struct Outcome {
     pub size: usize,
 }
 
+impl Outcome {
+    /// The compute units `program` consumed in its most expensive invocation, CPIs it made
+    /// included: the largest of its `consumed` lines, which for a program called once is its
+    /// outermost invocation's. `None` if it never ran.
+    pub fn compute_units_of(&self, program: &Address) -> Option<u64> {
+        let prefix = format!("Program {program} consumed ");
+        self.logs
+            .iter()
+            .filter_map(|line| {
+                line.strip_prefix(&prefix)?
+                    .split_once(" of ")?
+                    .0
+                    .parse()
+                    .ok()
+            })
+            .max()
+    }
+}
+
 /// A transaction that failed in a program.
 pub struct Failure {
     /// The innermost program that failed. When a CPI fails, every caller up the stack logs its
@@ -496,6 +515,32 @@ mod tests {
         ]);
         assert_eq!(innermost_failure(&logs), Some((ballista_sdk::ID, None)));
         assert_eq!(innermost_failure(&lines(&["Program log: done"])), None);
+    }
+
+    /// Jupiter calls itself to log its event, so it has two `consumed` lines; the outer one, which
+    /// includes the inner, is its cost. Ballista's includes Jupiter's.
+    #[test]
+    fn a_program_s_compute_units_are_its_outermost_invocation_s() {
+        let outcome = Outcome {
+            logs: lines(&[
+                "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD invoke [1]",
+                "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 invoke [2]",
+                "Program log: consumed 7 of 8 compute units",
+                "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 invoke [3]",
+                "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 consumed 1500 of 90000 compute units",
+                "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 success",
+                "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 consumed 41000 of 130000 compute units",
+                "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 success",
+                "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD consumed 52000 of 200000 compute units",
+                "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD success",
+            ]),
+            compute_units: 52_150,
+            fee: 5_000,
+            size: 700,
+        };
+        assert_eq!(outcome.compute_units_of(&JUPITER), Some(41_000));
+        assert_eq!(outcome.compute_units_of(&ballista_sdk::ID), Some(52_000));
+        assert_eq!(outcome.compute_units_of(&SYSTEM_PROGRAM_ID), None);
     }
 
     /// Ballista built from source in a bare SVM, with `fixtures/system-transfer.hex` uploaded.

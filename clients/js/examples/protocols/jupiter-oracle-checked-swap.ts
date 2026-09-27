@@ -11,11 +11,15 @@
  * independent sources have to agree before the transaction is allowed to stand.
  *
  * The feed must price the token being sold in the token being bought: SOL/USD when selling SOL
- * for USDC. Pyth's price is `price × 10^exponent` per whole token, so a fill in base units is
- * worth `sold × price × 10^(destinationDecimals + exponent − sourceDecimals)`. The template reads
- * the feed's exponent and both mints' decimals on chain and computes that scale itself, and checks
+ * for USDC. The Pyth receiver owns every feed's price account alike, so the template requires the
+ * account to carry the feed id the caller names. Without that, any feed's price would do, and
+ * USDC/USD's would value each SOL sold at a dollar.
+ *
+ * Pyth's price is `price × 10^exponent` per whole token, so a fill in base units is worth
+ * `sold × price × 10^(destinationDecimals + exponent − sourceDecimals)`. The template reads the
+ * feed's exponent and both mints' decimals on chain and computes that scale itself, and checks
  * each token account against the mint it is supposed to hold so a caller cannot point the decimals
- * read at the wrong mint. The caller supplies only the route and the tolerance.
+ * read at the wrong mint. The caller supplies only the feed id, the route and the tolerance.
  *
  * A transaction cannot express this: the fill is only known after the route runs, and by then
  * every instruction is already committed.
@@ -46,6 +50,11 @@ const balanceOf = (name: string) =>
 
 export const jupiterOracleCheckedSwap = defineTemplate({
   inputs: {
+    /**
+     * The Pyth feed the price must come from, as its 32-byte id: SOL/USD's is
+     * `ef0d8b6f…c280b56d`. It must price the token sold in the token bought.
+     */
+    feedId: { type: 'pubkey' },
     /** Jupiter's `route` arguments: the Swap API's instruction data after the discriminator. */
     routeArgs: { type: 'bytes', maxLength: 512 },
     /** How far below the oracle the fill may land, in basis points. */
@@ -78,6 +87,15 @@ export const jupiterOracleCheckedSwap = defineTemplate({
         expression.u64(PYTH.verificationLevelFull),
       ),
       'priceIsFullyVerified',
+    ),
+
+    // The owner pin takes any feed's price; the feed id is what says which one this is.
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('priceUpdate'), PYTH.feedId, 'pubkey'),
+        expression.input('feedId'),
+      ),
+      'priceIsTheExpectedFeed',
     ),
 
     step.require(

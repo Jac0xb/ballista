@@ -33,6 +33,7 @@ import {
   JUPITER_V6,
   KAMINO_REPAY,
   PYTH,
+  SPL_MINT,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   addressBytes,
   anchorDiscriminator,
@@ -109,6 +110,10 @@ function dependsOn(
       return (
         expression.seeds.some(recurse) || (expression.bump !== undefined && recurse(expression.bump))
       );
+    case 'multiplyDivide':
+      return recurse(expression.left) || recurse(expression.right) || recurse(expression.divisor);
+    case 'powerOfTen':
+      return recurse(expression.exponent);
     default:
       return false;
   }
@@ -211,6 +216,12 @@ describe('the oracle-checked swap', () => {
         step.kind === 'require' && dependsOn(step.condition, bindings, reads('priceUpdate', PYTH.exponent)),
     );
     expect(pinned).toBe(true);
+  });
+
+  test('scales by both mints’ decimals, read on chain rather than supplied', () => {
+    expect(dependsOn(check.condition, bindings, reads('sourceMint', SPL_MINT.decimals))).toBe(true);
+    expect(dependsOn(check.condition, bindings, reads('destinationMint', SPL_MINT.decimals))).toBe(true);
+    expect(Object.keys(jupiterOracleCheckedSwap.inputs ?? {})).not.toContain('scaleDivisor');
   });
 });
 

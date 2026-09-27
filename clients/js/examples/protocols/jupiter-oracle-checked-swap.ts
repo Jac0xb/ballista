@@ -12,9 +12,10 @@
  *
  * The feed must price the token being sold in the token being bought: SOL/USD when selling SOL
  * for USDC. Pyth's price is `price × 10^exponent` per whole token, so a fill in base units is
- * worth `sold × price / 10^(sourceDecimals − destinationDecimals − exponent)`. The caller computes
- * that divisor once for the pair, and the template pins the exponent it assumes: a feed whose
- * exponent changes fails the run instead of being priced a thousand times off.
+ * worth `sold × price × 10^(destinationDecimals + exponent − sourceDecimals)`. The template reads
+ * the feed's exponent and both mints' decimals on chain and computes that scale itself, and checks
+ * each token account against the mint it is supposed to hold so a caller cannot point the decimals
+ * read at the wrong mint. The caller supplies only the route and the tolerance.
  *
  * A transaction cannot express this: the fill is only known after the route runs, and by then
  * every instruction is already committed.
@@ -33,8 +34,10 @@ import {
   JUPITER_V6,
   PYTH,
   PYTH_RECEIVER,
+  SPL_MINT,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_LENGTH,
+  TOKEN_ACCOUNT_MINT_OFFSET,
   addressBytes,
 } from './shared.js';
 
@@ -45,10 +48,6 @@ export const jupiterOracleCheckedSwap = defineTemplate({
   inputs: {
     /** Jupiter's `route` arguments: the Swap API's instruction data after the discriminator. */
     routeArgs: { type: 'bytes', maxLength: 512 },
-    /** The feed's exponent, which `scaleDivisor` was computed for. Pyth's are negative. */
-    priceExponent: { type: 'i64' },
-    /** `10^(sourceDecimals − destinationDecimals − priceExponent)`, a property of the pair. */
-    scaleDivisor: { type: 'u128' },
     /** How far below the oracle the fill may land, in basis points. */
     toleranceBps: { type: 'u64' },
   },
@@ -67,6 +66,8 @@ export const jupiterOracleCheckedSwap = defineTemplate({
       owner: TOKEN_PROGRAM_ADDRESS_BYTES,
       minDataLength: TOKEN_ACCOUNT_LENGTH,
     },
+    sourceMint: { owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: SPL_MINT.length },
+    destinationMint: { owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: SPL_MINT.length },
   },
   accountGroups: ['routeAccounts'],
   steps: [
@@ -90,14 +91,36 @@ export const jupiterOracleCheckedSwap = defineTemplate({
       'oracleIsFresh',
     ),
 
-    // The exponent is an i32. Read its bits as a u32 and compare them with the two's-complement
-    // encoding of the one the divisor assumes: 2^32 + exponent, for a negative exponent.
+    // Each token account must hold the mint whose decimals scale it.
     step.require(
       expression.equal(
-        expression.accountData(account.fixed('priceUpdate'), PYTH.exponent, 'u32'),
-        expression.cast('u64', expression.add(expression.i64(1n << 32n), expression.input('priceExponent'))),
+        expression.accountData(account.fixed('sourceAta'), TOKEN_ACCOUNT_MINT_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('sourceMint'), 'key'),
       ),
-      'exponentIsTheOneTheDivisorAssumes',
+      'sourceHoldsTheSourceMint',
+    ),
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('destinationAta'), TOKEN_ACCOUNT_MINT_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('destinationMint'), 'key'),
+      ),
+      'destinationHoldsTheDestinationMint',
+    ),
+
+    // price × 10^exponent is per whole token. In base units the fill is worth
+    // sold × price × 10^(destinationDecimals + exponent − sourceDecimals). The exponent is an
+    // i32 and usually negative, so split the power into a multiplier and a divisor, each ≥ 0,
+    // and let multiplyDivide apply both exactly.
+    step.let(
+      'scale',
+      expression.subtract(
+        expression.add(
+          expression.cast('i64', expression.accountData(account.fixed('destinationMint'), SPL_MINT.decimals, 'u8')),
+          expression.accountData(account.fixed('priceUpdate'), PYTH.exponent, 'i32'),
+        ),
+        expression.cast('i64', expression.accountData(account.fixed('sourceMint'), SPL_MINT.decimals, 'u8')),
+      ),
+      'computeDecimalScale',
     ),
 
     // Pyth prices are signed; a negative or zero price means the feed is unusable here.
@@ -137,26 +160,27 @@ export const jupiterOracleCheckedSwap = defineTemplate({
       'measureAmountSold',
     ),
 
-    // sold × price / divisor is the fill at the oracle price, in destination base units. Dividing
-    // before applying the tolerance keeps the product inside u128, and rounds the floor down.
+    // sold × price, scaled by 10^scale, is the fill at the oracle price in destination base
+    // units; multiplyDivide computes the exact product and applies it. sold × price fits u128
+    // because both factors are below 2^64. Using max with zero means exactly one of the two
+    // powers of ten below is 1, so no select is needed — a select evaluates both branches, and
+    // the unused one would fail its cast.
     step.let(
       'fairOut',
       expression.cast(
         'u64',
-        expression.divide(
-          expression.multiply(
-            expression.divide(
-              expression.multiply(
-                expression.cast('u128', expression.variable('sold')),
-                expression.cast('u128', expression.variable('oraclePrice')),
-              ),
-              expression.input('scaleDivisor'),
+        expression.multiplyDivide(
+          expression.multiplyDivide(
+            expression.multiply(
+              expression.cast('u128', expression.variable('sold')),
+              expression.cast('u128', expression.variable('oraclePrice')),
             ),
-            expression.cast(
-              'u128',
-              expression.subtract(expression.u64(10_000), expression.input('toleranceBps')),
+            expression.powerOfTen(expression.cast('u64', expression.max(expression.variable('scale'), expression.i64(0)))),
+            expression.powerOfTen(
+              expression.cast('u64', expression.max(expression.subtract(expression.i64(0), expression.variable('scale')), expression.i64(0))),
             ),
           ),
+          expression.cast('u128', expression.subtract(expression.u64(10_000), expression.input('toleranceBps'))),
           expression.u128(10_000),
         ),
       ),

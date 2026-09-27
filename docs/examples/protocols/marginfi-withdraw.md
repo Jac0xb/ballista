@@ -1,7 +1,13 @@
 # Withdraw everything, with a minimum
 
-This template empties a marginfi position, reverts unless enough came out, and sends the proceeds
-on to a treasury account.
+<p class="protocol-line">marginfi</p>
+
+**Status:** Compiles and passes the verifier; not yet run against marginfi.
+
+## What it does
+
+Empties a marginfi position, reverts unless enough came out, and sends the proceeds on to a
+treasury account.
 
 marginfi's `lending_account_withdraw(amount, withdraw_all)` can empty a position, but it doesn't
 tell the caller how much came out, so nothing later in the transaction can depend on it. A
@@ -13,11 +19,17 @@ The template records the destination token balance, withdraws everything, and me
 arrived. If that is less than `minimumWithdrawn`, the run reverts. Otherwise it transfers the
 withdrawn amount to the treasury token account.
 
+## Template
+
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/marginfi-withdraw-all-with-floor.ts [Template · TypeScript]
+<<< ../../../clients/js/examples/protocols/marginfi-withdraw-all-with-floor.ts [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_runs.rs#plain [Run · Rust]
+<<< ../../../clients/rust/examples/protocol_templates.rs#marginfi-withdraw [Rust · Template]
+
+<<< ../../../clients/js/examples/protocols/run/marginfi-withdraw.ts [TypeScript · Run]
+
+<<< ../../../clients/rust/examples/protocol_templates_run.rs#marginfi-withdraw [Rust · Run]
 
 :::
 
@@ -25,12 +37,16 @@ The last two bytes of the withdrawal's instruction data are `Option::Some(true)`
 `withdraw_all`. In that mode marginfi ignores `amount`, but the field still has to be there,
 because Borsh (the binary format Anchor programs use for instruction arguments) reads every field.
 
-The Rust tab builds the run for [act only on a fresh price](/examples/protocols/pyth-gate). Build
-this template's run the same way, with its own accounts and inputs in the order the template
-declares them. This template has no account group, so leave out the `.groups(...)` call and the
-extra accounts at the end.
+## Run it
 
-Not yet run against marginfi: the template compiles and passes Ballista's verifier, but no test
-calls marginfi.
+The Run tabs pass the template's 10 accounts in the order it declares them, and one input,
+`minimumWithdrawn`. `authority` signs but is not writable. There is no account group.
+
+## What has been tested
+
+- The template compiles and passes Ballista's verifier.
+- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
+  and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
+- No test calls marginfi.
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

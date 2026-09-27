@@ -1,7 +1,13 @@
 # Repay what the swap produced
 
-This template sells collateral through Jupiter and repays a Kamino loan with what the sale
-produced, in one transaction.
+<p class="protocol-line">Kamino · Jupiter</p>
+
+**Status:** Compiles and passes the verifier; not yet run against Jupiter or Kamino.
+
+## What it does
+
+Sells collateral through Jupiter and repays a Kamino loan with what the sale produced, in one
+transaction.
 
 Deleveraging means selling collateral and repaying a loan with the proceeds. Two numbers are
 unknown when you sign: how much the swap returns, and how much you owe by the time the transaction
@@ -10,14 +16,32 @@ the transaction lands.
 
 The template handles the first number. It swaps, measures how much of the borrowed token arrived,
 and requires at least `minimumRepayment`. It then refreshes the Kamino reserve, because a repayment
-is priced against a freshly refreshed reserve, and repays the amount the swap produced.
+is priced against a freshly refreshed reserve, and repays the amount the swap produced. It does not
+read the debt.
 
-It does not read the debt: it repays exactly what the swap produced.
+## Template
+
+::: code-group
+
+<<< ../../../clients/js/examples/protocols/kamino-repay-swap-output.ts [TypeScript · Template]
+
+<<< ../../../clients/rust/examples/protocol_templates.rs#kamino-repay [Rust · Template]
+
+<<< ../../../clients/js/examples/protocols/run/kamino-repay.ts [TypeScript · Run]
+
+<<< ../../../clients/rust/examples/protocol_templates_run.rs#kamino-repay [Rust · Run]
+
+:::
+
+## Run it
 
 Jupiter's `route` starts its account list with the token program, the signer, and the signer's
 source and destination token accounts: here the collateral account and the borrowed-token account.
-The template passes those four itself; the rest of the route's accounts arrive as an
-[account group](/guide/account-groups). `routeArgs` is Jupiter's instruction data without its
+The template passes those four itself; the rest of the route's accounts arrive as the
+`routeAccounts` [account group](/guide/account-groups).
+
+The Run tabs pass the 11 declared accounts in order, then the inputs `routeArgs` and
+`minimumRepayment`, then the group. `routeArgs` is Jupiter's instruction data without its
 eight-byte discriminator; the template adds the `route` discriminator itself.
 
 ::: tip Requesting the route
@@ -26,20 +50,13 @@ instruction. The API's default, `shared_accounts_route`, is a different instruct
 are in a different order.
 :::
 
-::: code-group
+## What has been tested
 
-<<< ../../../clients/js/examples/protocols/kamino-repay-swap-output.ts [Template · TypeScript]
-
-<<< ../../../clients/rust/examples/protocol_runs.rs#group [Run · Rust]
-
-:::
-
-The Rust tab builds the run for [deposit exactly what a swap produced](/examples/protocols/jupiter-deposit).
-This template's run has the same form, with the route's remaining accounts passed as an account
-group, but uses its own accounts and inputs in the order the template declares them.
-
-Not yet run against Jupiter or Kamino: the template compiles and passes Ballista's verifier, and a
-test checks that it calls `route` with its accounts in `route`'s order, but no test calls either
-program.
+- The template compiles and passes Ballista's verifier.
+- A test checks that it calls `route` with its accounts in `route`'s order, and that it repays
+  exactly what the swap produced (`clients/js/src/protocol-semantics.test.ts`).
+- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
+  and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
+- No test calls Jupiter or Kamino.
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

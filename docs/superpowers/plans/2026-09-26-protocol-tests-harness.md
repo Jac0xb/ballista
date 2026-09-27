@@ -172,7 +172,10 @@ Write `tests/protocols/src/{snapshot,wallet,oracle,tx,template}.rs`, adapting
   - `warp(svm, slots, seconds)`, which only moves forward.
   - `lookup_tables() -> Vec<AddressLookupTableAccount>`.
 - **`wallet.rs`**
-  - `funded(svm, lamports) -> Keypair`.
+  - `funded(svm, lamports) -> Keypair`. Write the balance with `set_account` (write rule 1)
+    rather than `airdrop`. LiteSVM's blockhash never advances by itself, so a second identical
+    airdrop is rejected as `AlreadyProcessed`. For the same reason, `tx::send` should call
+    `expire_blockhash()` before each send, or tests must never send identical transactions.
   - `token_account(svm, owner, mint, amount) -> Address`. It creates or overwrites an ATA's state
     directly (write rule 1), in the real SPL Token layout and owned by the Token program. Also
     handle wSOL.
@@ -185,7 +188,10 @@ Write `tests/protocols/src/{snapshot,wallet,oracle,tx,template}.rs`, adapting
     message when tables are given and legacy otherwise, asserts that the serialized size is at
     most 1,232 bytes, and sends. `Outcome` carries the logs and compute units consumed.
   - `Failure { program: Address, code: Option<u32>, logs }`. `program` is the one whose
-    `Program <id> failed` line appears last, which attributes the error correctly.
+    `Program <id> failed` line appears **first**: that is the innermost program that failed.
+    Every caller up the CPI stack then logs its own `failed` line repeating the same code, so the
+    last line would blame Ballista for a System program error (measured in Task 1). Parse
+    `meta.logs`, which is plain text, not `pretty_logs()`, which adds ANSI colours.
   - `ballista_error(&Failure) -> Option<(kind, context)>`, which decodes only when
     `program == ballista_sdk::ID`.
 - **`template.rs`**

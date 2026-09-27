@@ -2,6 +2,7 @@
 
 use ballista::error::BallistaError;
 use ballista::processor::execute::{arithmetic, cast, compare, RunError, RunResult, RuntimeValue};
+use ballista::processor::math::{integer, mul_div};
 use ballista_common::template::*;
 use cvlr::prelude::*;
 
@@ -233,4 +234,66 @@ pub fn rule_casts_succeed_exactly_when_the_value_fits() {
     let value: u64 = nondet();
     cvlr_assert!(cast(OP_CAST_U128, RuntimeValue::U64(value)) == Ok(RuntimeValue::U128((value as u128).to_le_bytes())));
     cvlr_assert!(cast(OP_CAST_U64, RuntimeValue::Bool(true)) == Err(RunError::Vm(BallistaError::TypeMismatch)));
+}
+
+/// Remainder, shifts and bitwise operations over `u64` match Rust's checked operators exactly.
+#[rule]
+pub fn rule_u64_integer_operations_match_rust() {
+    let op = pick!(OP_REM, OP_SHL, OP_SHR, OP_BIT_AND, OP_BIT_OR, OP_BIT_XOR);
+    let a: u64 = nondet();
+    let b: u64 = nondet();
+    clog!(op, a, b);
+    let expected: Option<u64> = match op {
+        OP_REM => a.checked_rem(b),
+        OP_SHL => {
+            if b >= 64 {
+                if a == 0 { Some(0) } else { None }
+            } else {
+                let shifted = a << b;
+                if shifted >> b == a { Some(shifted) } else { None }
+            }
+        }
+        OP_SHR => Some(if b >= 64 { 0 } else { a >> b }),
+        OP_BIT_AND => Some(a & b),
+        OP_BIT_OR => Some(a | b),
+        _ => Some(a ^ b),
+    };
+    match integer(op, RuntimeValue::U64(a), RuntimeValue::U64(b)) {
+        Ok(RuntimeValue::U64(result)) => cvlr_assert!(expected == Some(result)),
+        Err(RunError::Vm(BallistaError::DivisionByZero)) => cvlr_assert!(op == OP_REM && b == 0),
+        Err(RunError::Vm(BallistaError::ArithmeticOverflow)) => {
+            cvlr_assert!(expected.is_none() && !(op == OP_REM && b == 0))
+        }
+        _ => cvlr_assert!(false),
+    }
+}
+
+/// `mul_div` over `u64` is the rounded quotient of the exact product, failing only for a zero
+/// divisor or a quotient past `u64::MAX`. The `u64` path is `mul_div_u64`, which never divides a
+/// `u128`: it widens the product with `mul64`'s native 32×32→64 multiplies, then estimates the
+/// quotient's digits with `divlu`, corrected at most twice per digit loop. Neither step reaches
+/// for a compiler-rt routine, so this rule may actually prove; it stays in the blocked
+/// configuration for now because it has not been run through the prover here, and should move to
+/// `run.conf` once a prover run confirms it.
+#[rule]
+pub fn rule_u64_mul_div_is_exact() {
+    let a: u64 = nondet();
+    let b: u64 = nondet();
+    let c: u64 = nondet();
+    let round_up: bool = nondet();
+    let product = a as u128 * b as u128;
+    match mul_div(round_up, RuntimeValue::U64(a), RuntimeValue::U64(b), RuntimeValue::U64(c)) {
+        Ok(RuntimeValue::U64(result)) => {
+            cvlr_assert!(c != 0);
+            let floor = product / c as u128;
+            let rounded = if round_up && product % c as u128 != 0 { floor + 1 } else { floor };
+            cvlr_assert!(result as u128 == rounded);
+        }
+        Err(RunError::Vm(BallistaError::DivisionByZero)) => cvlr_assert!(c == 0),
+        Err(RunError::Vm(BallistaError::ArithmeticOverflow)) => {
+            cvlr_assert!(c != 0);
+            cvlr_assert!(product / c as u128 >= u64::MAX as u128);
+        }
+        _ => cvlr_assert!(false),
+    }
 }

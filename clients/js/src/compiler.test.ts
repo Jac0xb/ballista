@@ -868,6 +868,48 @@ function minDataLength(compiled: CompiledTemplate, index: number): number {
   return view.getUint32(HEADER_LENGTH + index * ACCOUNT_RECORD_LENGTH + 4, true);
 }
 
+/** The data segments (kind and register) and each CPI descriptor's segment range, from the bytes. */
+function segmentTables(compiled: CompiledTemplate) {
+  const view = new DataView(compiled.bytes.buffer, compiled.bytes.byteOffset);
+  const cpiStart = instructionOffset(compiled, compiled.stats.instructions);
+  const cpiAccounts = view.getUint16(12, true);
+  const segmentStart = cpiStart + compiled.stats.cpis * 12 + cpiAccounts * 2;
+  const segments = Array.from({ length: view.getUint16(14, true) }, (_, index) => ({
+    kind: compiled.bytes[segmentStart + index * 8]!,
+    register: compiled.bytes[segmentStart + index * 8 + 1]!,
+  }));
+  const cpis = Array.from({ length: compiled.stats.cpis }, (_, index) => ({
+    start: view.getUint16(cpiStart + index * 12 + 6, true),
+    length: compiled.bytes[cpiStart + index * 12 + 5]!,
+  }));
+  return { segments, cpis };
+}
+
+describe('data segments', () => {
+  test('an invocation part that derives a PDA leaves the invocation its own segments', () => {
+    const compiled = compileTemplate(
+      defineTemplate({
+        accounts: { program: { executable: true, address: address(9) }, owner: {} },
+        steps: [
+          step.invoke({
+            program: account.fixed('program'),
+            accounts: [],
+            data: [
+              data.encode(
+                'pubkey',
+                expression.pda(account.fixed('program'), [expression.accountField(account.fixed('owner'), 'key')]),
+              ),
+            ],
+          }),
+        ],
+      }),
+    );
+    const { segments, cpis } = segmentTables(compiled);
+    // Register 0 is the owner's key, the PDA's only seed; register 1 is the derived address.
+    expect(segments.slice(cpis[0]!.start, cpis[0]!.start + cpis[0]!.length)).toEqual([{ kind: 7, register: 1 }]);
+  });
+});
+
 describe('math expressions', () => {
   const compileSteps = (inputs: TemplateInput['inputs'], steps: Step[]) =>
     compileTemplate(defineTemplate({ inputs, accounts: {}, steps }));

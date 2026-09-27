@@ -628,13 +628,7 @@ class Compiler {
       this.cpiAccounts.push(Uint8Array.of(reference, (account.signer ? ACCOUNT_SIGNER : 0) | (account.writable ? ACCOUNT_WRITABLE : 0)));
     }
 
-    const segmentStart = this.dataSegments.length;
-    let maxDataLength = 0;
-    for (const part of current.data) {
-      const result = this.compileDataPart(part, loop, bindings);
-      this.dataSegments.push(result.record);
-      maxDataLength += result.maxLength;
-    }
+    const { segmentStart, maxLength: maxDataLength } = this.compileDataParts(current.data, loop, bindings);
     if (maxDataLength > MAX_CPI_DATA_LENGTH) throw new RangeError('CPI data can exceed 4096 bytes');
     this.maxCpiDataLength = Math.max(this.maxCpiDataLength, maxDataLength);
 
@@ -673,6 +667,19 @@ class Compiler {
       throw new RangeError(`returnData read extends past ${MAX_RETURN_DATA_LENGTH} bytes`);
     }
     return this.emit(opcode.returnData, readResultType[node.type], 0, readOpcode[node.type], NO_INDEX, NO_INDEX, BigInt(node.offset));
+  }
+
+  /**
+   * Compiles a step's data parts, then appends their segments as one contiguous run and returns
+   * where it starts. A part can push segments of its own while it compiles (a `pda` expression's
+   * seeds), so appending each part's segment as soon as it compiled would leave those seeds inside
+   * the step's range, and the step would encode a seed where it meant the part.
+   */
+  compileDataParts(parts: DataPart[], loop: LoopKind | undefined, bindings: Bindings): { segmentStart: number; maxLength: number } {
+    const compiled = parts.map((part) => this.compileDataPart(part, loop, bindings));
+    const segmentStart = this.dataSegments.length;
+    for (const { record } of compiled) this.dataSegments.push(record);
+    return { segmentStart, maxLength: compiled.reduce((total, { maxLength }) => total + maxLength, 0) };
   }
 
   compileDataPart(part: DataPart, loop: LoopKind | undefined, bindings: Bindings): { record: Uint8Array; maxLength: number } {

@@ -57,7 +57,7 @@ export const orcaHarvestManyPositions = defineTemplate({
         step.invoke({
           program: account.fixed('whirlpoolProgram'),
           accounts: [
-            { account: account.fixed('whirlpool'), signer: false, writable: true },
+            { account: account.fixed('whirlpool'), signer: false, writable: false },
             { account: account.fixed('positionAuthority'), signer: true, writable: false },
             { account: account.iteration('position'), signer: false, writable: true },
             { account: account.iteration('positionTokenAccount'), signer: false, writable: false },

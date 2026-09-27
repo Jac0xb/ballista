@@ -20,6 +20,7 @@
  */
 import {
   SYSTEM_PROGRAM_ADDRESS_BYTES,
+  TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
   compileTemplate,
   data,
@@ -28,11 +29,11 @@ import {
   step,
   systemTransfer,
 } from '../../src/index.js';
-import { JUPITER_V6, addressBytes } from './shared.js';
+import { JUPITER_ROUTE, JUPITER_V6, addressBytes } from './shared.js';
 
 export const jitoProfitGuardedTip = defineTemplate({
   inputs: {
-    /** The client-built strategy instruction, for example a Jupiter route. */
+    /** The strategy's Jupiter `route` arguments: the Swap API's instruction data after the discriminator. */
     strategyData: { type: 'bytes', maxLength: 512 },
     /** The bid, fixed before signing. Jito's floor is 1,000 lamports. */
     tipLamports: { type: 'u64' },
@@ -42,6 +43,7 @@ export const jitoProfitGuardedTip = defineTemplate({
   accounts: {
     systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
     strategyProgram: { executable: true, address: addressBytes(JUPITER_V6) },
+    tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
     searcher: { signer: true, writable: true },
     /** One of the eight Jito tip accounts. */
     jitoTip: { writable: true },
@@ -56,9 +58,13 @@ export const jitoProfitGuardedTip = defineTemplate({
 
     step.invoke({
       program: account.fixed('strategyProgram'),
-      accounts: [{ account: account.fixed('searcher'), signer: true, writable: true }],
+      // `route` takes the token program and the signer first; the rest of its list is the group.
+      accounts: [
+        { account: account.fixed('tokenProgram'), signer: false, writable: false },
+        { account: account.fixed('searcher'), signer: true, writable: false },
+      ],
       accountGroup: 'strategyAccounts',
-      data: [data.encode('bytes', expression.input('strategyData'))],
+      data: [data.literal(JUPITER_ROUTE), data.encode('bytes', expression.input('strategyData'))],
       label: 'runStrategy',
     }),
 

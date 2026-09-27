@@ -11,8 +11,12 @@
  * two, so every field after it sits one byte earlier in a `Full` account than in a `Partial`
  * one. Reading a price at a fixed offset without checking the level is reading whichever field
  * happens to be there. Requiring `Full` fixes the layout and is the stronger guarantee besides.
+ *
+ * The action here is a Jupiter `route`. It takes the token program and the signer first, so the
+ * template passes those two itself and the rest of the route's list arrives as a group.
  */
 import {
+  TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
   compileTemplate,
   data,
@@ -20,7 +24,7 @@ import {
   expression,
   step,
 } from '../../src/index.js';
-import { JUPITER_V6, PYTH, PYTH_RECEIVER, addressBytes } from './shared.js';
+import { JUPITER_ROUTE, JUPITER_V6, PYTH, PYTH_RECEIVER, addressBytes } from './shared.js';
 
 /** Valid only once the verification level has been pinned to `Full`; see the require below. */
 const price = expression.accountData(account.fixed('priceUpdate'), PYTH.price, 'i64');
@@ -35,6 +39,7 @@ export const pythFreshPriceGate = defineTemplate({
     maximumConfidence: { type: 'u64' },
     floorPrice: { type: 'i64' },
     ceilingPrice: { type: 'i64' },
+    /** Jupiter's `route` arguments: the Swap API's instruction data after the discriminator. */
     actionData: { type: 'bytes', maxLength: 512 },
   },
   accounts: {
@@ -44,6 +49,7 @@ export const pythFreshPriceGate = defineTemplate({
      */
     priceUpdate: { owner: addressBytes(PYTH_RECEIVER), minDataLength: PYTH.length },
     actionProgram: { executable: true, address: addressBytes(JUPITER_V6) },
+    tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
     actor: { signer: true, writable: true },
   },
   accountGroups: ['actionAccounts'],
@@ -76,9 +82,12 @@ export const pythFreshPriceGate = defineTemplate({
 
     step.invoke({
       program: account.fixed('actionProgram'),
-      accounts: [{ account: account.fixed('actor'), signer: true, writable: true }],
+      accounts: [
+        { account: account.fixed('tokenProgram'), signer: false, writable: false },
+        { account: account.fixed('actor'), signer: true, writable: false },
+      ],
       accountGroup: 'actionAccounts',
-      data: [data.encode('bytes', expression.input('actionData'))],
+      data: [data.literal(JUPITER_ROUTE), data.encode('bytes', expression.input('actionData'))],
       label: 'actOnTheOracle',
     }),
   ],

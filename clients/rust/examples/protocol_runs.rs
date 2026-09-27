@@ -27,7 +27,8 @@ const PYTH_RECEIVER: Pubkey = pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5Lt
 ///
 /// This is `pyth-fresh-price-gate`. Its inputs are `maximumAge`, `maximumConfidence`,
 /// `floorPrice`, `ceilingPrice`, `actionData`; its accounts are the price update, the action
-/// program, and the actor.
+/// program, the token program, and the actor. The action is a Jupiter `route`, whose list starts
+/// with the token program and the actor, so `action_accounts` is its list from the third account on.
 pub struct PriceGate {
     pub price_update: Pubkey,
     pub action_program: Pubkey,
@@ -56,6 +57,7 @@ pub fn run_price_gate(
     let mut accounts = vec![
         AccountMeta::new_readonly(gate.price_update, false),
         AccountMeta::new_readonly(gate.action_program, false),
+        AccountMeta::new_readonly(TOKEN_PROGRAM, false),
         AccountMeta::new(gate.actor, true),
     ];
     // Group members follow the declared accounts. They never sign, whatever flags they carry.
@@ -67,20 +69,24 @@ pub fn run_price_gate(
 // #region group
 /// Shape two: an account group, for a callee whose account list is not a fixed length.
 ///
-/// This is `jupiter-deposit-exact-output`. The route's accounts arrive as a group, so one
-/// template serves every route the aggregator returns.
+/// This is `jupiter-deposit-exact-output`. Jupiter's `route` starts its account list with the
+/// token program, the signing owner, and the owner's source and destination token accounts. The
+/// template passes those four itself, so `route_accounts` is the Swap API's list from the fifth
+/// account on, and it arrives as a group: one template serves every route the aggregator returns.
+/// `route_args` is the Swap API's instruction data after its eight-byte discriminator, and
+/// `token_accounts` the owner's source and destination token accounts.
 pub fn run_jupiter_deposit(
     template: Pubkey,
     owner: Pubkey,
-    destination_ata: Pubkey,
-    kamino_accounts: [Pubkey; 8],
-    route_data: &[u8],
+    token_accounts: (Pubkey, Pubkey),
+    kamino_accounts: [Pubkey; 7],
+    route_args: &[u8],
     route_accounts: Vec<AccountMeta>,
     minimum_out: u64,
 ) -> Instruction {
     let inputs = RunInputs::new()
         .groups(&[route_accounts.len() as u8])
-        .bytes(route_data)
+        .bytes(route_args)
         .u64(minimum_out)
         .finish();
 
@@ -89,7 +95,8 @@ pub fn run_jupiter_deposit(
         AccountMeta::new_readonly(KAMINO_LEND, false),
         AccountMeta::new_readonly(TOKEN_PROGRAM, false),
         AccountMeta::new(owner, true),
-        AccountMeta::new(destination_ata, false),
+        AccountMeta::new(token_accounts.0, false),
+        AccountMeta::new(token_accounts.1, false),
     ];
     accounts.extend(kamino_accounts.iter().enumerate().map(|(index, key)| {
         // The obligation and reserve accounts are written; the market and its authority are not.
@@ -160,8 +167,8 @@ fn main() {
     let deposit = run_jupiter_deposit(
         template,
         key(),
-        key(),
-        [key(), key(), key(), key(), key(), key(), key(), key()],
+        (key(), key()),
+        [key(), key(), key(), key(), key(), key(), key()],
         &[0xc1; 96],
         vec![AccountMeta::new(key(), false); 24],
         1_000_000,

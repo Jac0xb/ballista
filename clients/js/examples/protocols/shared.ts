@@ -69,9 +69,9 @@ export const TOKEN_ACCOUNT_LENGTH = 165;
  * larger size either way, leaving a trailing byte unused.
  *
  * Deriving offsets from `PriceUpdateV2::LEN = 8 + 32 + 2 + 32 + 8 + …` therefore gives the
- * `Partial` layout, which on devnet is the minority: of 4,000 accounts sampled, 3,323 were
- * `Full` and 677 `Partial`. Templates here require `Full` — it is the stronger guarantee anyway,
- * having all the signatures rather than some — and read at the `Full` offsets.
+ * `Partial` layout, while most accounts on devnet are `Full`. Templates here require `Full` — it is
+ * the stronger guarantee anyway, having all the signatures rather than some — and read at the
+ * `Full` offsets.
  */
 export const PYTH = {
   length: 134,
@@ -98,6 +98,48 @@ export const ORCA_POSITION = {
 } as const;
 
 // ------------------------------------------------------------ instructions
+
+/**
+ * Jupiter v6 `route(route_plan: Vec<RoutePlanStep>, in_amount: u64, quoted_out_amount: u64,
+ * slippage_bps: u16, platform_fee_bps: u8)`, from the published CPI IDL (`jup-ag/jupiter-cpi`).
+ *
+ * Its accounts start `token_program`, `user_transfer_authority` (the one signer),
+ * `user_source_token_account` and `user_destination_token_account`; `destination_token_account`,
+ * `destination_mint`, `platform_fee_account`, `event_authority`, `program` and the route's own
+ * accounts follow. A template passes the first four itself and forwards the rest as an account
+ * group. Ask the Swap API for `useSharedAccounts: false`: the default, `shared_accounts_route`,
+ * orders its accounts differently.
+ */
+export const JUPITER_ROUTE = anchorDiscriminator('route');
+
+/** The accounts at the head of `route`'s list that a template passes itself. */
+export const JUPITER_ROUTE_FIXED_ACCOUNTS = 4;
+
+/** `in_amount`, `quoted_out_amount`, `slippage_bps` and `platform_fee_bps`: the bytes after the plan. */
+export const JUPITER_ROUTE_TAIL_LENGTH = 19;
+
+/** `route` instruction data as the Swap API returns it, split into the parts templates take. */
+export function splitJupiterRoute(data: Uint8Array) {
+  // Discriminator, the plan's u32 length prefix, and the tail.
+  const isRoute =
+    data.length >= 8 + 4 + JUPITER_ROUTE_TAIL_LENGTH &&
+    JUPITER_ROUTE.every((byte, index) => data[index] === byte);
+  if (!isRoute) {
+    throw new Error('Not Jupiter `route` data; request the Swap API with useSharedAccounts: false');
+  }
+  const tailStart = data.length - JUPITER_ROUTE_TAIL_LENGTH;
+  const tail = new DataView(data.buffer, data.byteOffset + tailStart, JUPITER_ROUTE_TAIL_LENGTH);
+  return {
+    /** Everything after the discriminator. */
+    args: data.slice(8),
+    /** The Borsh `route_plan` vector, length prefix included. */
+    routePlan: data.slice(8, tailStart),
+    inAmount: tail.getBigUint64(0, true),
+    quotedOutAmount: tail.getBigUint64(8, true),
+    slippageBps: tail.getUint16(16, true),
+    platformFeeBps: tail.getUint8(18),
+  };
+}
 
 /** `deposit_reserve_liquidity_and_obligation_collateral_v2(liquidity_amount: u64)`. */
 export const KAMINO_DEPOSIT = anchorDiscriminator('deposit_reserve_liquidity_and_obligation_collateral_v2');
@@ -129,6 +171,8 @@ export const DRIFT_WITHDRAW = anchorDiscriminator('withdraw');
 export const OPTION_NONE = Uint8Array.of(0);
 /** Borsh `false`. */
 export const BORSH_FALSE = Uint8Array.of(0);
+/** Borsh `true`. */
+export const BORSH_TRUE = Uint8Array.of(1);
 
 /** A little-endian u16, for arguments such as Drift's `market_index`. */
 export function u16Bytes(value: number): Uint8Array<ArrayBuffer> {

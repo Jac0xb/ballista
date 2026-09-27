@@ -6,8 +6,8 @@
  * deposit fails on insufficient funds, taking the withdrawal down with it; guess low and the
  * remainder sits in the wallet, out of the market, until someone notices.
  *
- * Rate-shopping bots run this loop constantly. Today it is two transactions with an unhedged gap
- * between them, or a custom program.
+ * Without a template this takes two transactions, with the funds sitting in the wallet between
+ * them, or a custom program.
  */
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,

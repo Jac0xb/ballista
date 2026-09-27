@@ -582,8 +582,14 @@ mod tests {
             .filter(|(_, label)| label.as_str() == "fillBeatTheOracle")
             .map(|(pc, _)| *pc)
             .collect();
-        assert!(fill.len() > 1, "a labelled step spans several pcs: {fill:?}");
-        assert!(fill.windows(2).all(|pair| pair[1] == pair[0] + 1), "{fill:?}");
+        assert!(
+            fill.len() > 1,
+            "a labelled step spans several pcs: {fill:?}"
+        );
+        assert!(
+            fill.windows(2).all(|pair| pair[1] == pair[0] + 1),
+            "{fill:?}"
+        );
         assert_eq!(fill.last(), swap.labels.keys().max());
         assert_eq!(swap.label_at(fill[0] - 1), Some("computeOracleFloor"));
         // Inputs and constants are loaded before the first step, unlabelled.
@@ -596,7 +602,10 @@ mod tests {
             .map(|(pc, _)| *pc)
             .collect();
         assert!(worth.len() > 1, "{worth:?}");
-        assert!(worth.windows(2).all(|pair| pair[1] == pair[0] + 1), "{worth:?}");
+        assert!(
+            worth.windows(2).all(|pair| pair[1] == pair[0] + 1),
+            "{worth:?}"
+        );
     }
 
     fn names(names: &[&str]) -> Vec<String> {

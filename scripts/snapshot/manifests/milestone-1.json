@@ -1,0 +1,65 @@
+{
+  "description": "Milestone 1 of the real-protocol tests: jupiterOracleCheckedSwap, tokenSweepIntoSwap, pythFreshPriceGate and jitoProfitGuardedTip, which need only Jupiter, Pyth and Jito. The snapshot also takes every executable a route references, listed here or not. All three AMMs in `jupiter.dexes` are listed because Jupiter's pick among them changes every few seconds, so any refresh may route through any of them; listing them keeps the snapshot's program set the same from one refresh to the next.",
+  "wallet": {
+    "seed": "ballista-protocol-tests-wallet-1",
+    "description": "The tests sign with Keypair::new_from_array(*b\"ballista-protocol-tests-wallet-1\"). Jupiter builds every route for this wallet, so the routes' token accounts are its associated token accounts, which the tests write themselves."
+  },
+  "programs": {
+    "jupiter": "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+    "token": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "associatedToken": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    "pythReceiver": "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ",
+    "whirlpool": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+    "raydiumClmm": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+    "meteoraDlmm": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
+  },
+  "accounts": {
+    "pythSolUsd": "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE",
+    "jitoTip": "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
+    "usdcMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "wsolMint": "So11111111111111111111111111111111111111112"
+  },
+  "jupiter": {
+    "description": "Classic AMMs only: they are deterministic and change only when traded. The prop AMMs that dominate SOL-USDC reprice every slot and read the instructions sysvar or a vote account.",
+    "dexes": ["Whirlpool", "Raydium CLMM", "Meteora DLMM"],
+    "maxAccounts": 30,
+    "slippageBps": 50
+  },
+  "routes": {
+    "solToUsdc": {
+      "description": "1 SOL for USDC: the oracle-checked swap, and the action behind the Pyth price gate.",
+      "legs": [
+        {
+          "inputMint": "So11111111111111111111111111111111111111112",
+          "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "amount": 1000000000
+        }
+      ]
+    },
+    "usdcToSol": {
+      "description": "150 USDC for SOL: the token sweep.",
+      "legs": [
+        {
+          "inputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "outputMint": "So11111111111111111111111111111111111111112",
+          "amount": 150000000
+        }
+      ]
+    },
+    "solToUsdcToSol": {
+      "description": "A SOL round trip for the Jito tip. Jupiter's API refuses a quote whose input and output mints are equal (CIRCULAR_ARBITRAGE_IS_DISABLED), so this is two chained quotes: 1 SOL for USDC, then that quote's whole outAmount back to SOL. Each leg is its own route instruction with its own accounts. Stitching both into one route, with a two-step plan whose second step reads the first's output, is left to the test that needs it.",
+      "legs": [
+        {
+          "inputMint": "So11111111111111111111111111111111111111112",
+          "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "amount": 1000000000
+        },
+        {
+          "inputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "outputMint": "So11111111111111111111111111111111111111112",
+          "amountFromPreviousLeg": "outAmount"
+        }
+      ]
+    }
+  }
+}

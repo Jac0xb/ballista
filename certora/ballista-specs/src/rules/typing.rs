@@ -8,7 +8,7 @@
 //! Induction over the instruction sequence then gives the whole-program guarantee.
 
 use ballista::error::BallistaError;
-use ballista::processor::execute::{execute_instruction, RunError, RuntimeValue, Scratch};
+use ballista::processor::execute::{execute_instruction, RunError, RuntimeValue, Scratch, NO_ROWS};
 use ballista_common::template::*;
 use cvlr::nondet::havoc::alloc_mut_ref_havoced;
 use cvlr::prelude::*;
@@ -16,7 +16,7 @@ use cvlr_pinocchio::nondet_account_views;
 use pinocchio::AccountView;
 
 use super::util::{
-    nondet_instruction, nondet_register_info, runtime_type, runtime_value_for, spec_program,
+    nondet_instruction, nondet_register_info, pick, runtime_type, runtime_value_for, spec_program,
     writes_destination, REGISTERS,
 };
 
@@ -47,18 +47,24 @@ fn check_typing_preservation(with_account: bool, accounts: &[AccountView]) {
     }
 
     let instruction = nondet_instruction();
-    let in_loop: bool = nondet();
+    let scope = pick!(LoopScope::Root, LoopScope::Rows, LoopScope::Count);
     clog!(instruction.opcode, instruction.dst, instruction.a, instruction.b, instruction.c);
 
     // Only instructions the verifier accepts are of interest.
-    let verdict = program.verify_single_instruction(&instruction, 0, in_loop, None, typing);
+    let verdict = program.verify_single_instruction(&instruction, 0, scope, None, typing);
     cvlr_assume!(verdict.is_ok());
 
     let mut scratch = Scratch::new(&program);
-    let loop_context = if in_loop {
+    // A FOREACH's rows start after the fixed accounts; a REPEAT has none.
+    let loop_context = if scope.in_loop() {
         let iteration: usize = nondet();
         cvlr_assume!(iteration < MAX_RUNTIME_ACCOUNTS);
-        Some((iteration, program.header.fixed_account_count()))
+        let row_base = if scope.in_row_loop() {
+            program.header.fixed_account_count()
+        } else {
+            NO_ROWS
+        };
+        Some((iteration, row_base))
     } else {
         None
     };

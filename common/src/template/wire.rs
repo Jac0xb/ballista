@@ -551,14 +551,16 @@ impl<'data> ProgramView<'data> {
         })
     }
 
-    pub fn account_constraint(&self, reference: u8, in_loop: bool) -> Option<&AccountConstraint> {
+    /// The constraint an account reference names: a fixed account, or inside a loop over the batch
+    /// rows a row account.
+    pub fn account_constraint(&self, reference: u8, in_row_loop: bool) -> Option<&AccountConstraint> {
         if reference & ITERATION_ACCOUNT_BIT == 0 {
             return self
                 .accounts
                 .get(reference as usize)
                 .filter(|_| (reference as usize) < self.header.fixed_account_count());
         }
-        if !in_loop {
+        if !in_row_loop {
             return None;
         }
         let offset = (reference & !ITERATION_ACCOUNT_BIT) as usize;
@@ -569,15 +571,16 @@ impl<'data> ProgramView<'data> {
             .get(self.header.fixed_account_count() + offset)
     }
 
-    /// The descriptor a `LOAD_INPUT` operand names: a fixed input, or inside a loop a row input.
-    pub fn input_descriptor(&self, reference: u8, in_loop: bool) -> Option<&InputDescriptor> {
+    /// The descriptor a `LOAD_INPUT` operand names: a fixed input, or inside a loop over the batch
+    /// rows a row input.
+    pub fn input_descriptor(&self, reference: u8, in_row_loop: bool) -> Option<&InputDescriptor> {
         if reference & ITERATION_INPUT_BIT == 0 {
             return self
                 .inputs
                 .get(reference as usize)
                 .filter(|_| (reference as usize) < self.header.input_count());
         }
-        if !in_loop {
+        if !in_row_loop {
             return None;
         }
         let offset = (reference & !ITERATION_INPUT_BIT) as usize;

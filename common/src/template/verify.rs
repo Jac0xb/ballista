@@ -47,6 +47,31 @@ impl RegisterInfo {
     }
 }
 
+/// Where an instruction sits, which decides what it may name. `LOOP_INDEX` needs a loop; row
+/// accounts and row inputs need a loop over the batch rows. A count loop has an index but no
+/// rows, so one flag cannot say both.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LoopScope {
+    /// Outside every loop.
+    Root,
+    /// Inside a `FOREACH` body.
+    Rows,
+    /// Inside a `REPEAT` body.
+    Count,
+}
+
+impl LoopScope {
+    /// Whether `LOOP_INDEX` is allowed here.
+    pub const fn in_loop(self) -> bool {
+        !matches!(self, LoopScope::Root)
+    }
+
+    /// Whether row accounts and row inputs are allowed here.
+    pub const fn in_row_loop(self) -> bool {
+        matches!(self, LoopScope::Rows)
+    }
+}
+
 impl ProgramView<'_> {
     pub fn verify(&self) -> Result<VerificationStats, TemplateError> {
         let header = self.header;
@@ -129,7 +154,8 @@ impl ProgramView<'_> {
         let mut registers = [None; MAX_REGISTERS];
         let mut program_counter = 0usize;
         let mut root_cpis = 0usize;
-        let mut foreach_count = 0usize;
+        let mut loops = 0usize;
+        let mut row_loops = 0usize;
         let mut max_cpi_data_len = 0usize;
         // The previous root-level instruction, if the previous instruction was not a loop body.
         let mut previous: Option<&InstructionRecord> = None;
@@ -137,11 +163,26 @@ impl ProgramView<'_> {
         while program_counter < self.instructions.len() {
             let instruction = &self.instructions[program_counter];
             self.verify_record_header(instruction, program_counter)?;
-            if instruction.opcode == OP_FOREACH {
-                foreach_count += 1;
-                if header.batch_stride() == 0 || foreach_count > 1 || instruction.a == 0 {
-                    return Err(TemplateError::InvalidBatch);
+            if matches!(instruction.opcode, OP_FOREACH | OP_REPEAT) {
+                loops += 1;
+                if loops > MAX_LOOPS {
+                    return Err(TemplateError::InvalidLoop(program_counter));
                 }
+                // A FOREACH makes one pass per batch row. A REPEAT makes at most `c` passes,
+                // counted by the u64 its register `b` holds when the loop starts.
+                let (scope, max_passes) = if instruction.opcode == OP_FOREACH {
+                    if header.batch_stride() == 0 || instruction.a == 0 {
+                        return Err(TemplateError::InvalidBatch);
+                    }
+                    row_loops += 1;
+                    (LoopScope::Rows, header.batch_max_iterations())
+                } else {
+                    if instruction.a == 0 || instruction.c == 0 {
+                        return Err(TemplateError::InvalidLoop(program_counter));
+                    }
+                    self.require_type(&registers, instruction.b, VALUE_U64)?;
+                    (LoopScope::Count, instruction.c as usize)
+                };
                 let body_start = program_counter + 1;
                 let body_end = body_start
                     .checked_add(instruction.a as usize)
@@ -154,12 +195,13 @@ impl ProgramView<'_> {
                 self.verify_carry_before(carry, &registers)?;
                 let mut body_registers = registers;
                 let (body_cpis, body_max_data) =
-                    self.verify_range(body_start, body_end, true, &mut body_registers)?;
+                    self.verify_range(body_start, body_end, scope, &mut body_registers)?;
                 verify_carry_after(carry, &registers, &body_registers)?;
+                // The worst case runs every loop to its maximum.
                 root_cpis = root_cpis
                     .checked_add(
                         body_cpis
-                            .checked_mul(header.batch_max_iterations())
+                            .checked_mul(max_passes)
                             .ok_or(TemplateError::CountOverflow)?,
                     )
                     .ok_or(TemplateError::CountOverflow)?;
@@ -172,7 +214,7 @@ impl ProgramView<'_> {
             let (cpis, data_len) = self.verify_instruction(
                 instruction,
                 program_counter,
-                false,
+                LoopScope::Root,
                 previous,
                 &mut registers,
             )?;
@@ -182,9 +224,8 @@ impl ProgramView<'_> {
             program_counter += 1;
         }
 
-        if (header.batch_stride() == 0 && foreach_count != 0)
-            || (header.batch_stride() != 0 && foreach_count != 1)
-        {
+        // A batch is iterated by at least one FOREACH, and a FOREACH needs a batch to iterate.
+        if (header.batch_stride() == 0) != (row_loops == 0) {
             return Err(TemplateError::InvalidBatch);
         }
         if root_cpis > MAX_EXPANDED_CPIS {
@@ -216,7 +257,7 @@ impl ProgramView<'_> {
         &self,
         instruction: &InstructionRecord,
         instruction_index: usize,
-        in_loop: bool,
+        scope: LoopScope,
         previous: Option<&InstructionRecord>,
         registers: &mut [Option<RegisterInfo>; MAX_REGISTERS],
     ) -> Result<(usize, usize), TemplateError> {
@@ -224,14 +265,18 @@ impl ProgramView<'_> {
         if instruction.opcode == OP_FOREACH {
             return Err(TemplateError::InvalidBatch);
         }
-        self.verify_instruction(instruction, instruction_index, in_loop, previous, registers)
+        if instruction.opcode == OP_REPEAT {
+            return Err(TemplateError::InvalidLoop(instruction_index));
+        }
+        self.verify_instruction(instruction, instruction_index, scope, previous, registers)
     }
 
+    /// Verifies a loop body. Loops never nest, so a loop instruction here is rejected.
     fn verify_range(
         &self,
         start: usize,
         end: usize,
-        in_loop: bool,
+        scope: LoopScope,
         registers: &mut [Option<RegisterInfo>; MAX_REGISTERS],
     ) -> Result<(usize, usize), TemplateError> {
         let mut cpis = 0usize;
@@ -243,8 +288,11 @@ impl ProgramView<'_> {
             if instruction.opcode == OP_FOREACH {
                 return Err(TemplateError::InvalidBatch);
             }
+            if instruction.opcode == OP_REPEAT {
+                return Err(TemplateError::InvalidLoop(index));
+            }
             let (instruction_cpis, data_len) =
-                self.verify_instruction(instruction, index, in_loop, previous, registers)?;
+                self.verify_instruction(instruction, index, scope, previous, registers)?;
             cpis += instruction_cpis;
             max_data_len = max_data_len.max(data_len);
             previous = Some(instruction);
@@ -297,15 +345,21 @@ impl ProgramView<'_> {
         &self,
         instruction: &InstructionRecord,
         instruction_index: usize,
-        in_loop: bool,
+        scope: LoopScope,
         previous: Option<&InstructionRecord>,
         registers: &mut [Option<RegisterInfo>; MAX_REGISTERS],
     ) -> Result<(usize, usize), TemplateError> {
         let scalar = |value_type| RegisterInfo::scalar(value_type);
+        // Row accounts and row inputs resolve only in a FOREACH body. A REPEAT body has an index
+        // but no rows, and naming a row there has its own error.
+        let in_row_loop = scope.in_row_loop();
+        if scope == LoopScope::Count && self.names_row(instruction) {
+            return Err(TemplateError::InvalidLoop(instruction_index));
+        }
         match instruction.opcode {
             OP_LOAD_INPUT => {
                 let input = self
-                    .input_descriptor(instruction.a, in_loop)
+                    .input_descriptor(instruction.a, in_row_loop)
                     .ok_or(TemplateError::InvalidInstruction(instruction_index))?;
                 let info = if input.value_type == VALUE_BYTES {
                     RegisterInfo::bytes(input.max_len())
@@ -343,27 +397,27 @@ impl ProgramView<'_> {
                 self.write_register(registers, instruction.dst, RegisterInfo::bytes(len))?;
             }
             OP_ACCOUNT_KEY | OP_ACCOUNT_OWNER => {
-                self.require_account(instruction.a, in_loop)?;
+                self.require_account(instruction.a, in_row_loop)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_PUBKEY))?;
             }
             OP_ACCOUNT_LAMPORTS | OP_ACCOUNT_DATA_LEN => {
-                self.require_account(instruction.a, in_loop)?;
+                self.require_account(instruction.a, in_row_loop)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
             }
             OP_ACCOUNT_IS_EMPTY => {
-                self.require_account(instruction.a, in_loop)?;
+                self.require_account(instruction.a, in_row_loop)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_BOOL))?;
             }
             OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_U128
             | OP_READ_PUBKEY | OP_READ_BOOL | OP_READ_I32 => {
                 if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
-                    self.require_account(instruction.a, in_loop)?;
+                    self.require_account(instruction.a, in_row_loop)?;
                     self.require_type(registers, instruction.b, VALUE_U64)?;
                     if instruction.immediate() != 0 {
                         return Err(TemplateError::InvalidFlags(instruction_index));
                     }
                 } else {
-                    self.verify_read_bounds(instruction, instruction_index, in_loop)?;
+                    self.verify_read_bounds(instruction, instruction_index, in_row_loop)?;
                 }
                 self.write_register(
                     registers,
@@ -464,7 +518,7 @@ impl ProgramView<'_> {
                 self.write_register(registers, instruction.dst, scalar(target))?;
             }
             OP_LOOP_INDEX => {
-                if !in_loop {
+                if !scope.in_loop() {
                     return Err(TemplateError::InvalidInstruction(instruction_index));
                 }
                 self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
@@ -489,14 +543,14 @@ impl ProgramView<'_> {
                 self.write_register(registers, instruction.dst, scalar(read_type(instruction.a)))?;
             }
             OP_DERIVE_PDA => {
-                self.verify_pda_seeds(instruction, instruction_index, in_loop, registers)?;
+                self.verify_pda_seeds(instruction, instruction_index, in_row_loop, registers)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_PUBKEY))?;
             }
             OP_CREATE_PDA => {
                 // The bump completes the seed list, so it is a plain u64 the template computed or
                 // read from an input; the executor rejects one that does not fit in a byte.
                 self.require_type(registers, instruction.b, VALUE_U64)?;
-                self.verify_pda_seeds(instruction, instruction_index, in_loop, registers)?;
+                self.verify_pda_seeds(instruction, instruction_index, in_row_loop, registers)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_PUBKEY))?;
             }
             OP_REQUIRE => self.require_type(registers, instruction.a, VALUE_BOOL)?,
@@ -504,10 +558,11 @@ impl ProgramView<'_> {
                 if instruction.b != NO_INDEX {
                     self.require_type(registers, instruction.b, VALUE_BOOL)?;
                 }
-                let max_data = self.verify_cpi(instruction.a as usize, in_loop, registers)?;
+                let max_data = self.verify_cpi(instruction.a as usize, in_row_loop, registers)?;
                 return Ok((1, max_data));
             }
             OP_FOREACH => return Err(TemplateError::InvalidBatch),
+            OP_REPEAT => return Err(TemplateError::InvalidLoop(instruction_index)),
             _ => return Err(TemplateError::InvalidInstruction(instruction_index)),
         }
         Ok((0, 0))
@@ -519,11 +574,11 @@ impl ProgramView<'_> {
         &self,
         instruction: &InstructionRecord,
         instruction_index: usize,
-        in_loop: bool,
+        in_row_loop: bool,
         registers: &[Option<RegisterInfo>; MAX_REGISTERS],
     ) -> Result<(), TemplateError> {
         let program = self
-            .account_constraint(instruction.a, in_loop)
+            .account_constraint(instruction.a, in_row_loop)
             .ok_or(TemplateError::InvalidInstruction(instruction_index))?;
         if program.flags & ACCOUNT_EXECUTABLE == 0 {
             return Err(TemplateError::InvalidInstruction(instruction_index));
@@ -616,10 +671,10 @@ impl ProgramView<'_> {
         &self,
         instruction: &InstructionRecord,
         instruction_index: usize,
-        in_loop: bool,
+        in_row_loop: bool,
     ) -> Result<(), TemplateError> {
         let constraint = self
-            .account_constraint(instruction.a, in_loop)
+            .account_constraint(instruction.a, in_row_loop)
             .ok_or(TemplateError::InvalidAccountConstraint(instruction.a as usize))?;
         let width = read_width(instruction.opcode);
         let end = usize::try_from(instruction.immediate())
@@ -669,14 +724,14 @@ impl ProgramView<'_> {
     fn verify_cpi(
         &self,
         index: usize,
-        in_loop: bool,
+        in_row_loop: bool,
         registers: &[Option<RegisterInfo>; MAX_REGISTERS],
     ) -> Result<usize, TemplateError> {
         let descriptor = self.verify_cpi_shape(index)?;
         let account_end = descriptor.account_start() + descriptor.account_len as usize;
         let segment_end = descriptor.segment_start() + descriptor.segment_len as usize;
         let program = self
-            .account_constraint(descriptor.program_account, in_loop)
+            .account_constraint(descriptor.program_account, in_row_loop)
             .ok_or(TemplateError::InvalidCpi(index))?;
         if program.flags & ACCOUNT_EXECUTABLE == 0 {
             return Err(TemplateError::InvalidCpi(index));
@@ -687,7 +742,7 @@ impl ProgramView<'_> {
                 return Err(TemplateError::InvalidCpi(index));
             }
             let constraint = self
-                .account_constraint(cpi_account.account, in_loop)
+                .account_constraint(cpi_account.account, in_row_loop)
                 .ok_or(TemplateError::InvalidCpi(index))?;
             if cpi_account.flags & !constraint.flags != 0 {
                 return Err(TemplateError::InvalidCpi(index));
@@ -760,10 +815,31 @@ impl ProgramView<'_> {
         index == NO_INDEX || (index as usize) < self.pubkeys.len()
     }
 
-    fn require_account(&self, reference: u8, in_loop: bool) -> Result<(), TemplateError> {
-        self.account_constraint(reference, in_loop)
+    fn require_account(&self, reference: u8, in_row_loop: bool) -> Result<(), TemplateError> {
+        self.account_constraint(reference, in_row_loop)
             .map(|_| ())
             .ok_or(TemplateError::InvalidAccountConstraint(reference as usize))
+    }
+
+    /// Whether `instruction` names a row account or a row input, which only a FOREACH body has.
+    /// An operand this does not list still cannot name a row outside a FOREACH: the lookup
+    /// rejects it, only with that operand's own error instead of `InvalidLoop`.
+    fn names_row(&self, instruction: &InstructionRecord) -> bool {
+        let row_account = |reference: u8| reference & ITERATION_ACCOUNT_BIT != 0;
+        match instruction.opcode {
+            OP_LOAD_INPUT => instruction.a & ITERATION_INPUT_BIT != 0,
+            OP_ACCOUNT_KEY | OP_ACCOUNT_OWNER | OP_ACCOUNT_LAMPORTS | OP_ACCOUNT_DATA_LEN
+            | OP_ACCOUNT_IS_EMPTY | OP_DERIVE_PDA | OP_CREATE_PDA => row_account(instruction.a),
+            OP_INVOKE => self.cpis.get(instruction.a as usize).is_some_and(|descriptor| {
+                let start = descriptor.account_start();
+                row_account(descriptor.program_account)
+                    || self
+                        .cpi_accounts
+                        .get(start..start + descriptor.account_len as usize)
+                        .is_some_and(|records| records.iter().any(|record| row_account(record.account)))
+            }),
+            opcode => read_width(opcode) != 0 && row_account(instruction.a),
+        }
     }
 
     fn write_register(
@@ -1066,6 +1142,7 @@ mod tests {
             (OP_POW10, Some(VALUE_I64), None, Err(TemplateError::TypeMismatch)),
             (OP_POW10, Some(VALUE_U128), None, Err(TemplateError::TypeMismatch)),
             (OP_POW10, None, None, Err(TemplateError::RegisterNotInitialized(0))),
+            (75, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
             (39, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
             (0xfe, Some(VALUE_U64), Some(VALUE_U64), Err(TemplateError::InvalidInstruction(2))),
         ];
@@ -1402,14 +1479,14 @@ mod tests {
         builder.for_each(0, |body| body.require(condition));
         assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
 
-        // Two loops.
+        // Two loops over the same rows.
         let mut builder = ProgramBuilder::new();
         builder.row_account(0, None, None, 0);
         builder.batch(2, 0);
         let condition = builder.const_bool(true);
         builder.for_each(0, |body| body.require(condition));
         builder.for_each(0, |body| body.require(condition));
-        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
+        assert!(verify_builder(&builder).is_ok());
 
         // Nested loop.
         let mut builder = ProgramBuilder::new();
@@ -1488,6 +1565,271 @@ mod tests {
         let stats = verify_builder(&builder).unwrap();
         assert_eq!(stats.max_expanded_cpis, 30);
         assert_eq!(stats.batch_stride, 1);
+    }
+
+    #[test]
+    fn count_loops_take_a_u64_count_a_body_and_a_maximum() {
+        // A count loop with the index, and a carried total that leaves the loop.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(3);
+        let total = builder.const_u64(0);
+        builder.repeat(count, 4, 1 << total, |body| {
+            let index = body.loop_index();
+            let sum = body.binary(OP_ADD, total, index);
+            body.mov(total, sum);
+        });
+        let same = builder.binary(OP_EQ, total, total);
+        builder.require(same);
+        assert!(verify_builder(&builder).is_ok());
+
+        // An empty body or a zero maximum is not a loop.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let repeat = builder.repeat(count, 1, 0, |_| {});
+        builder.const_bool(true);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidLoop(repeat)));
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let repeat = builder.repeat(count, 0, 0, |body| {
+            body.loop_index();
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidLoop(repeat)));
+
+        // The count is read when the loop starts, so it must already hold a u64.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.register();
+        builder.repeat(count, 1, 0, |body| {
+            body.loop_index();
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::RegisterNotInitialized(count)));
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_i64(1);
+        builder.repeat(count, 1, 0, |body| {
+            body.loop_index();
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TypeMismatch));
+        let mut builder = ProgramBuilder::new();
+        builder.repeat(9, 1, 0, |body| {
+            body.loop_index();
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidRegister(9)));
+
+        // A body past the end of the program, and flags, which only reads take.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let repeat = builder.repeat(count, 1, 0, |body| {
+            body.loop_index();
+        });
+        builder.instructions_mut()[repeat].a = 200;
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidInstruction(repeat)));
+        builder.instructions_mut()[repeat].a = 1;
+        builder.instructions_mut()[repeat].flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET;
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidFlags(repeat)));
+
+        // Carried registers follow the FOREACH rules: set before the loop, and the same type after.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let total = builder.register();
+        builder.repeat(count, 1, 1 << total, |body| {
+            let index = body.loop_index();
+            body.mov(total, index);
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCarry(total)));
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let total = builder.const_u64(0);
+        builder.repeat(count, 1, 1 << total, |body| {
+            let flag = body.const_bool(true);
+            body.mov(total, flag);
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCarry(total)));
+
+        // Registers written in the body are gone after it.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let mut inner = NO_INDEX;
+        builder.repeat(count, 1, 0, |body| {
+            inner = body.loop_index();
+        });
+        let same = builder.binary(OP_EQ, inner, inner);
+        builder.require(same);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::RegisterNotInitialized(inner)));
+
+        // One instruction at a time, a loop is never accepted.
+        let mut builder = ProgramBuilder::new();
+        builder.const_bool(true);
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut registers = [None; MAX_REGISTERS];
+        let repeat = record(OP_REPEAT, NO_INDEX, 1, 0, 1, 0, 0);
+        assert_eq!(
+            program.verify_single_instruction(&repeat, 3, LoopScope::Count, None, &mut registers),
+            Err(TemplateError::InvalidLoop(3))
+        );
+    }
+
+    /// An executable program, a writable row account with a pinned owner and eight bytes of data,
+    /// a batch of two rows, and one `u64` row input.
+    fn declare_rows(builder: &mut ProgramBuilder) -> (u8, u8, u8) {
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let row = builder.row_account(ACCOUNT_WRITABLE, None, Some([2; 32]), 8);
+        builder.batch(2, 0);
+        let amount = builder.row_input(VALUE_U64, 0);
+        (program, row, amount)
+    }
+
+    /// `(what, emit)`: a body that names a row, for
+    /// [`count_loop_bodies_have_an_index_but_no_rows`]. `emit` takes the program, row account and
+    /// row input from [`declare_rows`], and names the row in the last instruction it emits.
+    type RowCase = (&'static str, fn(&mut ProgramBuilder, u8, u8, u8));
+
+    #[test]
+    fn count_loop_bodies_have_an_index_but_no_rows() {
+        let cases: [RowCase; 5] = [
+            ("row input", |body, _, _, amount| {
+                body.load_input(amount);
+            }),
+            ("row account field", |body, _, row, _| {
+                body.account_key(row);
+            }),
+            ("row account read", |body, _, row, _| {
+                body.read(OP_READ_U64, row, 0);
+            }),
+            ("row account read at a register offset", |body, _, row, _| {
+                let offset = body.const_u64(0);
+                body.read_dynamic(OP_READ_U64, row, offset);
+            }),
+            ("invoke passing a row account", |body, program, row, _| {
+                let cpi = body.cpi(program, &[(row, ACCOUNT_WRITABLE)], &[]);
+                body.invoke(cpi, None);
+            }),
+        ];
+        for (what, emit) in cases {
+            // Inside a FOREACH the row is there.
+            let mut builder = ProgramBuilder::new();
+            let (program, row, amount) = declare_rows(&mut builder);
+            builder.for_each(0, |body| emit(body, program, row, amount));
+            assert!(verify_builder(&builder).is_ok(), "{what} in a FOREACH");
+            // Inside a REPEAT it is not, though the FOREACH before it iterates the rows.
+            let count = builder.const_u64(1);
+            builder.repeat(count, 1, 0, |body| emit(body, program, row, amount));
+            let last = builder.instructions_mut().len() - 1;
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidLoop(last)),
+                "{what} in a REPEAT"
+            );
+        }
+    }
+
+    #[test]
+    fn a_template_holds_up_to_eight_loops_in_sequence_and_none_nested() {
+        // Two FOREACH loops over the same rows, with a REPEAT between them.
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let count = builder.const_u64(2);
+        builder.for_each(0, |body| {
+            body.account_lamports(row);
+        });
+        builder.repeat(count, 2, 0, |body| {
+            body.loop_index();
+        });
+        builder.for_each(0, |body| {
+            body.account_key(row);
+        });
+        assert!(verify_builder(&builder).is_ok());
+
+        // A count loop needs no batch, but a batch still needs a FOREACH.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(2);
+        builder.repeat(count, 2, 0, |body| {
+            body.loop_index();
+        });
+        assert!(verify_builder(&builder).is_ok());
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
+
+        // Eight loops, and not a ninth.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        for _ in 0..MAX_LOOPS {
+            builder.repeat(count, 1, 0, |body| {
+                body.loop_index();
+            });
+        }
+        assert!(verify_builder(&builder).is_ok());
+        let ninth = builder.repeat(count, 1, 0, |body| {
+            body.loop_index();
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidLoop(ninth)));
+
+        // No nesting: a REPEAT inside any body is InvalidLoop; a FOREACH is InvalidBatch, as before.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let count = builder.const_u64(1);
+        let mut inner = 0;
+        builder.for_each(0, |body| {
+            inner = body.repeat(count, 1, 0, |inner_body| {
+                inner_body.loop_index();
+            });
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidLoop(inner)));
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let mut inner = 0;
+        builder.repeat(count, 1, 0, |body| {
+            inner = body.repeat(count, 1, 0, |inner_body| {
+                inner_body.loop_index();
+            });
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidLoop(inner)));
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let count = builder.const_u64(1);
+        builder.repeat(count, 1, 0, |body| {
+            body.for_each(0, |inner_body| {
+                inner_body.loop_index();
+            });
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
+
+        // Return data never follows a loop: the invoke that set it ran in the body.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        let count = builder.const_u64(1);
+        builder.repeat(count, 1, 0, |body| body.invoke(cpi, None));
+        let read = builder.instructions_mut().len();
+        builder.return_data(OP_READ_U64, 0);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidReturnData(read)));
+    }
+
+    #[test]
+    fn worst_case_invocations_add_up_over_every_loop() {
+        // One invoke at the root, one per batch row, and two per REPEAT pass.
+        let build = |rows: u8, max: u8| {
+            let mut builder = ProgramBuilder::new();
+            let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+            builder.row_account(0, None, None, 0);
+            builder.batch(rows, 0);
+            let cpi = builder.cpi(program, &[], &[]);
+            let count = builder.const_u64(1);
+            builder.invoke(cpi, None);
+            builder.for_each(0, |body| body.invoke(cpi, None));
+            builder.repeat(count, max, 0, |body| {
+                body.invoke(cpi, None);
+                body.invoke(cpi, None);
+            });
+            verify_builder(&builder)
+        };
+        // 1 + 21 × 1 + 21 × 2 = 64.
+        assert_eq!(build(21, 21).unwrap().max_expanded_cpis, 64);
+        assert_eq!(build(22, 21), Err(TemplateError::ExcessiveCpiExpansion));
+        assert_eq!(build(21, 22), Err(TemplateError::ExcessiveCpiExpansion));
     }
 
     #[test]

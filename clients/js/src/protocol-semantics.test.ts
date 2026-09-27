@@ -35,6 +35,7 @@ import {
   PYTH,
   SPL_MINT,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
+  TOKEN_ACCOUNT_MINT_OFFSET,
   addressBytes,
   anchorDiscriminator,
 } from '../examples/protocols/shared.js';
@@ -124,6 +125,12 @@ const reads = (name: string, offset: number) => (candidate: Expression) =>
   candidate.account.kind === 'account' &&
   candidate.account.name === name &&
   candidate.offset === offset;
+
+const accountKey = (name: string) => (candidate: Expression) =>
+  candidate.kind === 'accountField' &&
+  candidate.account.kind === 'account' &&
+  candidate.account.name === name &&
+  candidate.field === 'key';
 
 const nameOf = (reference: AccountReference) => reference.name;
 
@@ -222,6 +229,22 @@ describe('the oracle-checked swap', () => {
     expect(dependsOn(check.condition, bindings, reads('sourceMint', SPL_MINT.decimals))).toBe(true);
     expect(dependsOn(check.condition, bindings, reads('destinationMint', SPL_MINT.decimals))).toBe(true);
     expect(Object.keys(jupiterOracleCheckedSwap.inputs ?? {})).not.toContain('scaleDivisor');
+  });
+
+  test('closes the mint-pairing hole: each ATA is checked against the mint it scales by', () => {
+    const sourceCheck = requireLabeled(jupiterOracleCheckedSwap, 'sourceHoldsTheSourceMint');
+    expect(sourceCheck).toBeDefined();
+    expect(
+      dependsOn(sourceCheck.condition, bindings, reads('sourceAta', TOKEN_ACCOUNT_MINT_OFFSET)),
+    ).toBe(true);
+    expect(dependsOn(sourceCheck.condition, bindings, accountKey('sourceMint'))).toBe(true);
+
+    const destinationCheck = requireLabeled(jupiterOracleCheckedSwap, 'destinationHoldsTheDestinationMint');
+    expect(destinationCheck).toBeDefined();
+    expect(
+      dependsOn(destinationCheck.condition, bindings, reads('destinationAta', TOKEN_ACCOUNT_MINT_OFFSET)),
+    ).toBe(true);
+    expect(dependsOn(destinationCheck.condition, bindings, accountKey('destinationMint'))).toBe(true);
   });
 });
 

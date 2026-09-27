@@ -21,8 +21,8 @@ mod tests {
         TemplateAccount, ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_LITERAL,
         DATA_REG_PUBKEY, DATA_REG_U64, ITERATION_ACCOUNT_BIT, MAX_PDA_SEEDS, NO_INDEX,
         OP_ACCOUNT_IS_EMPTY, OP_ACCOUNT_KEY, OP_ACCOUNT_LAMPORTS, OP_ADD, OP_DERIVE_PDA, OP_EQ,
-        OP_FOREACH, OP_INVOKE, OP_LOAD_INPUT, OP_LTE, OP_NE, OP_READ_I32, OP_READ_U64, OP_REQUIRE,
-        OP_SUB, VALUE_BOOL, VALUE_I64, VALUE_U64,
+        OP_FOREACH, OP_INVOKE, OP_LOAD_INPUT, OP_LTE, OP_NE, OP_READ_I32, OP_READ_U64, OP_REPEAT,
+        OP_REQUIRE, OP_SUB, VALUE_BOOL, VALUE_I64, VALUE_U64,
     };
     use mollusk_svm::{program::loader_keys::LOADER_V3, Mollusk, MolluskContext};
     use mollusk_svm_programs_memo::memo;
@@ -2168,6 +2168,66 @@ mod tests {
         }
     }
 
+    /// Count and row loops as the TypeScript SDK compiles them. A REPEAT pays `amount` once per
+    /// round; then two FOREACH loops walk the same rows, the second checking each row against the
+    /// total the first carried out of its loop.
+    #[test]
+    fn typescript_loops_fixture_runs_count_and_row_loops_in_sequence() {
+        let creator = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let recipient = Pubkey::new_unique();
+        let holders: Vec<Pubkey> = (0..4).map(|_| Pubkey::new_unique()).collect();
+        let mut accounts = funded_accounts([creator, payer, recipient], 10_000_000_000);
+        for (holder, lamports) in holders.iter().zip([100u64, 200, 300, 400]) {
+            accounts.insert(*holder, Account::new(lamports, 0, &system_program::id()));
+        }
+        let context = context(accounts);
+        let payload = fixture("loops");
+        let repeat_pc = ProgramView::parse(&payload)
+            .unwrap()
+            .instructions
+            .iter()
+            .position(|record| record.opcode == OP_REPEAT)
+            .unwrap() as u32;
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 96, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 96);
+        let run = |rounds: u64, rows: &[Pubkey]| {
+            let mut metas = vec![
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new(recipient, false),
+            ];
+            metas.extend(rows.iter().map(|row| AccountMeta::new_readonly(*row, false)));
+            let mut inputs = rounds.to_le_bytes().to_vec();
+            inputs.extend_from_slice(&1_000u64.to_le_bytes());
+            context.process_instruction(&run_instruction(template, metas, &inputs))
+        };
+
+        // Each round pays once, none included, and the rows pass both row loops.
+        for rounds in [0u64, 1, 4] {
+            let before = lamports(&context, recipient);
+            let result = run(rounds, &holders[..3]);
+            assert!(result.program_result.is_ok(), "{rounds} rounds: {result:#?}");
+            assert_eq!(lamports(&context, recipient), before + rounds * 1_000);
+            if rounds == 4 {
+                eprintln!("loops fixture, four rounds and three rows: {} CU", result.compute_units_consumed);
+            }
+        }
+
+        // Five rounds is over the count loop's maximum of four: the run fails at the REPEAT.
+        let before = lamports(&context, recipient);
+        let over = run(5, &holders[..3]);
+        assert_eq!(custom_code(&over), Some((repeat_pc << 16) | 6022), "{over:#?}");
+        assert_eq!(lamports(&context, recipient), before);
+
+        // A row holding more than half of the total fails the second row loop's check.
+        let lopsided = run(1, &[holders[0], holders[1], holders[3]]);
+        assert_eq!(decode_kind(&lopsided), Some(6015), "{lopsided:#?}");
+    }
+
     /// Anything the verifier accepts must execute without a structural error. Generated programs
     /// contain no CPIs, so the only failures they may produce are value-dependent.
     #[test]
@@ -2243,6 +2303,7 @@ mod tests {
             "payroll-row-amounts" => include_str!("../../../fixtures/payroll-row-amounts.hex"),
             "group-forward-transfer" => include_str!("../../../fixtures/group-forward-transfer.hex"),
             "math-ops" => include_str!("../../../fixtures/math-ops.hex"),
+            "loops" => include_str!("../../../fixtures/loops.hex"),
             other => panic!("unknown fixture {other}"),
         };
         let bytes: Vec<u8> = hex

@@ -370,6 +370,66 @@ export const fixtures: Record<string, () => Template> = {
       ],
     }),
 
+  loops: () =>
+    defineTemplate({
+      inputs: { rounds: { type: 'u64' }, amount: { type: 'u64' } },
+      accounts: {
+        ...systemPrograms,
+        payer: { signer: true, writable: true },
+        recipient: { writable: true },
+      },
+      batch: { maxIterations: 3, minIterations: 1, row: { holder: {} } },
+      steps: [
+        // A count loop pays `amount` once per round and adds up the round indexes.
+        step.let('indexSum', expression.u64(0)),
+        step.repeat(
+          expression.input('rounds'),
+          [
+            systemTransfer({
+              systemProgram: account.fixed('systemProgram'),
+              from: account.fixed('payer'),
+              to: account.fixed('recipient'),
+              lamports: expression.input('amount'),
+            }),
+            step.assign('indexSum', expression.add(expression.variable('indexSum'), expression.loopIndex())),
+          ],
+          { max: 4, carry: ['indexSum'], label: 'payEachRound' },
+        ),
+        // 2 × (0 + 1 + … + (rounds − 1)) + rounds = rounds².
+        step.require(
+          expression.equal(
+            expression.add(expression.multiply(expression.variable('indexSum'), expression.u64(2)), expression.input('rounds')),
+            expression.multiply(expression.input('rounds'), expression.input('rounds')),
+          ),
+          'indexesAddUp',
+        ),
+        // Two row loops over the same rows: the first totals their lamports, and the second
+        // checks that no row holds more than half of that total.
+        step.let('total', expression.u64(0)),
+        step.forEach(
+          [
+            step.assign(
+              'total',
+              expression.add(expression.variable('total'), expression.accountField(account.iteration('holder'), 'lamports')),
+            ),
+          ],
+          { carry: ['total'], label: 'totalRows' },
+        ),
+        step.forEach(
+          [
+            step.require(
+              expression.lessThanOrEqual(
+                expression.multiply(expression.accountField(account.iteration('holder'), 'lamports'), expression.u64(2)),
+                expression.variable('total'),
+              ),
+              'noRowAboveHalf',
+            ),
+          ],
+          { label: 'checkShares' },
+        ),
+      ],
+    }),
+
   'return-data': () =>
     defineTemplate({
       accounts: {

@@ -1,1 +1,1 @@
-tests/protocols/snapshot/programs/*.so filter=lfs diff=lfs merge=lfs -text
+tests/protocols/snapshot*/programs/*.so filter=lfs diff=lfs merge=lfs -text

@@ -847,25 +847,9 @@ pub fn execute_instruction<'data>(
             let account = resolve(program, accounts, instruction.a, loop_context)?;
             set(registers, dst, RuntimeValue::Bool(account.is_data_empty()))?;
         }
-        OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_I32
-        | OP_READ_U128 | OP_READ_PUBKEY | OP_READ_BOOL => {
-            let account = resolve(program, accounts, instruction.a, loop_context)?;
-            let offset = if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
-                match registers.get(instruction.b as usize) {
-                    Some(RuntimeValue::U64(value)) => usize::try_from(*value)
-                        .map_err(|_| BallistaError::InvalidRuntimeAccount)?,
-                    Some(RuntimeValue::Unset) | None => {
-                        return Err(BallistaError::InvalidRegister.into())
-                    }
-                    Some(_) => return Err(BallistaError::TypeMismatch.into()),
-                }
-            } else {
-                instruction.immediate() as usize
-            };
-            let data = account.try_borrow()?;
-            decode_value(instruction.opcode, &data, offset, |value| {
-                set(registers, dst, value)
-            })?;
+        OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_U128
+        | OP_READ_PUBKEY | OP_READ_BOOL => {
+            read_account(program, accounts, registers, instruction, loop_context)?
         }
         OP_CLOCK_SLOT => set(registers, dst, RuntimeValue::U64(Clock::get()?.slot))?,
         OP_CLOCK_TIMESTAMP => set(
@@ -878,28 +862,6 @@ pub fn execute_instruction<'data>(
             let right = operand(registers, instruction.b)?;
             let value = arithmetic(instruction.opcode, *left, *right)
                 .map_err(|error| unset_first(error, left, right))?;
-            set(registers, dst, value)?;
-        }
-        OP_REM | OP_SHL | OP_SHR | OP_BIT_AND | OP_BIT_OR | OP_BIT_XOR => {
-            let left = operand(registers, instruction.a)?;
-            let right = operand(registers, instruction.b)?;
-            let value = math::integer(instruction.opcode, *left, *right)
-                .map_err(|error| unset_first(error, left, right))?;
-            set(registers, dst, value)?;
-        }
-        OP_MUL_DIV | OP_MUL_DIV_CEIL => {
-            let a = operand(registers, instruction.a)?;
-            let b = operand(registers, instruction.b)?;
-            let c = operand(registers, instruction.c)?;
-            // `c` fills both slots: `unset_first` only needs to know whether it is `Unset`.
-            let value = math::mul_div(instruction.opcode == OP_MUL_DIV_CEIL, *a, *b, *c)
-                .map_err(|error| unset_first(unset_first(error, a, b), c, c))?;
-            set(registers, dst, value)?;
-        }
-        OP_POW10 => {
-            let exponent = operand(registers, instruction.a)?;
-            let value = math::pow10(*exponent)
-                .map_err(|error| unset_first(error, exponent, exponent))?;
             set(registers, dst, value)?;
         }
         OP_EQ | OP_NE | OP_LT | OP_LTE | OP_GT | OP_GTE => {
@@ -979,9 +941,79 @@ pub fn execute_instruction<'data>(
                 scratch.executed |= 1u64 << slot;
             }
         }
-        _ => return Err(BallistaError::InvalidTemplateProgram.into()),
+        // Every other opcode, including the ten numbered from `OP_MUL_DIV` up. SBF has no indirect
+        // jump, so this match compiles to a tree of comparisons, and giving those ten cases of
+        // their own would reshape it for every opcode. Here they leave it as it was.
+        _ => extended_instruction(program, accounts, registers, instruction, loop_context)?,
     }
     Ok(())
+}
+
+/// Runs the math opcodes and `READ_I32` out of line; any other opcode is one the executor does not
+/// run, and fails. As arms of the dispatch loop these cost every run a few compute units, used or
+/// not: the loop set up their stack slots on entry, and its opcode tree grew. Behind one call they
+/// cost only the templates that use them.
+#[inline(never)]
+fn extended_instruction<'data>(
+    program: &ProgramView<'data>,
+    accounts: &'data [AccountView],
+    registers: &mut [RuntimeValue<'data>],
+    instruction: &InstructionRecord,
+    loop_context: Option<(usize, usize)>,
+) -> RunResult<()> {
+    let value = match instruction.opcode {
+        OP_MUL_DIV | OP_MUL_DIV_CEIL => {
+            let a = operand(registers, instruction.a)?;
+            let b = operand(registers, instruction.b)?;
+            let c = operand(registers, instruction.c)?;
+            // `c` fills both slots: `unset_first` only needs to know whether it is `Unset`.
+            math::mul_div(instruction.opcode == OP_MUL_DIV_CEIL, *a, *b, *c)
+                .map_err(|error| unset_first(unset_first(error, a, b), c, c))?
+        }
+        OP_POW10 => {
+            let exponent = operand(registers, instruction.a)?;
+            math::pow10(*exponent).map_err(|error| unset_first(error, exponent, exponent))?
+        }
+        OP_REM | OP_SHL | OP_SHR | OP_BIT_AND | OP_BIT_OR | OP_BIT_XOR => {
+            let left = operand(registers, instruction.a)?;
+            let right = operand(registers, instruction.b)?;
+            math::integer(instruction.opcode, *left, *right)
+                .map_err(|error| unset_first(error, left, right))?
+        }
+        OP_READ_I32 => {
+            return read_account(program, accounts, registers, instruction, loop_context)
+        }
+        _ => return Err(BallistaError::InvalidTemplateProgram.into()),
+    };
+    set(registers, instruction.dst as usize, value)
+}
+
+/// Reads a typed value from an account's data into the destination register, for the read arm of
+/// the dispatch loop and for `READ_I32` in `extended_instruction`.
+#[inline(always)]
+fn read_account<'data>(
+    program: &ProgramView<'data>,
+    accounts: &'data [AccountView],
+    registers: &mut [RuntimeValue<'data>],
+    instruction: &InstructionRecord,
+    loop_context: Option<(usize, usize)>,
+) -> RunResult<()> {
+    let account = resolve(program, accounts, instruction.a, loop_context)?;
+    let offset = if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
+        match registers.get(instruction.b as usize) {
+            Some(RuntimeValue::U64(value)) => {
+                usize::try_from(*value).map_err(|_| BallistaError::InvalidRuntimeAccount)?
+            }
+            Some(RuntimeValue::Unset) | None => return Err(BallistaError::InvalidRegister.into()),
+            Some(_) => return Err(BallistaError::TypeMismatch.into()),
+        }
+    } else {
+        instruction.immediate() as usize
+    };
+    let data = account.try_borrow()?;
+    decode_value(instruction.opcode, &data, offset, |value| {
+        set(registers, instruction.dst as usize, value)
+    })
 }
 
 /// Derives the address a `DERIVE_PDA` or `CREATE_PDA` names. Out of line: its seed buffers are
@@ -2404,6 +2436,37 @@ mod tests {
         assert_eq!(run(record(OP_SELECT, 1, 2, 0, 1, 0, 0)), invalid, "the selected operand is unset");
         assert_eq!(run(record(OP_MOVE, 1, 0, NO_INDEX, NO_INDEX, 0, 0)), invalid);
         assert_eq!(registers[1], U64(7), "no failed instruction wrote its destination");
+    }
+
+    /// An opcode the executor does not run shares the math opcodes' fallback arm. It must still
+    /// fail as an invalid program, before any operand is read: registers out of range must not
+    /// turn the failure into `InvalidRegister`.
+    #[test]
+    fn opcodes_the_executor_does_not_run_fail_before_reading_operands() {
+        let mut builder = ProgramBuilder::new();
+        builder.register();
+        builder.const_bool(true);
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut scratch = Scratch::new(&program);
+        let mut registers = vec![U64(7)];
+        // 39 is unassigned; FOREACH reaches the executor only from inside a loop body.
+        for opcode in [0, 39, OP_FOREACH, OP_READ_I32 + 1, u8::MAX] {
+            assert_eq!(
+                execute_instruction(
+                    &program,
+                    &[],
+                    &[],
+                    &mut registers,
+                    &mut scratch,
+                    &record(opcode, 0, 9, 9, 9, 0, 0),
+                    None,
+                ),
+                Err(err(BallistaError::InvalidTemplateProgram)),
+                "{opcode}"
+            );
+        }
+        assert_eq!(registers[0], U64(7));
     }
 
     #[test]

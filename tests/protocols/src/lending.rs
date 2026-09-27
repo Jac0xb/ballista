@@ -222,6 +222,74 @@ pub fn marginfi_account(
     account.pubkey()
 }
 
+/// An obligation klend will liquidate:
+/// - Its borrower (seed `ballista-protocol-tests-borrower`) deposited 1 SOL and borrowed 70% of its
+///   value in USDC. The SOL reserve's loan-to-value is 74%.
+/// - Then SOL's Scope spot and TWAP were both lowered 12% and stamped now (rule 2). That puts the
+///   debt at about 80% of the collateral, past the 75% liquidation threshold. Moving the TWAP too
+///   keeps every price check passing.
+pub struct Unhealthy {
+    pub obligation: Address,
+    /// USDC base units borrowed.
+    pub debt: u64,
+    /// The prices it was left at: Scope values with exponent 8.
+    pub sol_price: u64,
+    pub usdc_price: u64,
+}
+
+pub fn unhealthy_obligation(svm: &mut LiteSVM) -> Unhealthy {
+    let borrower = wallet::keypair(b"ballista-protocol-tests-borrower");
+    let b = borrower.pubkey();
+    wallet::fund(svm, &b, 10 * SOL);
+    let collateral = wallet::token_account(svm, &b, &wallet::WSOL_MINT, SOL);
+    let proceeds = wallet::token_account(svm, &b, &USDC_MINT, 0);
+    let obligation = open_obligation(svm, &borrower, &[SOL_RESERVE]);
+    deposit(svm, &borrower, &obligation, &SOL_RESERVE, &collateral, SOL);
+
+    let sol = oracle::scope_price(svm, &SCOPE_PRICES, SOL_SPOT);
+    let usdc = oracle::scope_price(svm, &SCOPE_PRICES, USDC_SPOT);
+    assert_eq!((sol.exp, usdc.exp), (8, 8), "Scope prices with exponent 8");
+    // 70% of one SOL in USDC base units: value / 10^8 dollars, times 10^6, times 0.7.
+    let debt = sol.value * 7 / 1_000;
+    borrow(svm, &borrower, &obligation, &USDC_RESERVE, &proceeds, debt);
+
+    let fallen = sol.value * 88 / 100;
+    let clock = svm.get_sysvar::<Clock>();
+    let now = u64::try_from(clock.unix_timestamp).expect("the clock is after 1970");
+    for index in [SOL_SPOT, SOL_TWAP] {
+        oracle::set_scope_price(svm, &SCOPE_PRICES, index, fallen, clock.slot, now);
+    }
+    Unhealthy {
+        obligation,
+        debt,
+        sol_price: fallen,
+        usdc_price: usdc.value,
+    }
+}
+
+/// A liquidator (seed `ballista-protocol-tests-liquid-1`) holding `usdc` in its USDC account, with
+/// empty accounts for the SOL reserve's cTokens and for wrapped SOL (rule 1).
+pub fn liquidator(svm: &mut LiteSVM, usdc: u64) -> (Keypair, kamino::Liquidator) {
+    let liquidator = wallet::keypair(b"ballista-protocol-tests-liquid-1");
+    let l = liquidator.pubkey();
+    wallet::fund(svm, &l, 10 * SOL);
+    let collateral_mint = kamino::reserve_accounts(svm, &SOL_RESERVE).collateral_mint;
+    let accounts = kamino::Liquidator {
+        signer: l,
+        source_liquidity: wallet::token_account(svm, &l, &USDC_MINT, usdc),
+        destination_collateral: wallet::token_account(svm, &l, &collateral_mint, 0),
+        destination_liquidity: wallet::token_account(svm, &l, &wallet::WSOL_MINT, 0),
+    };
+    (liquidator, accounts)
+}
+
+/// `repaid` USDC base units, in lamports, at the given Scope prices (exponent 8). SOL has 9
+/// decimals and USDC 6, hence the 1,000.
+pub fn break_even(repaid: u64, usdc_price: u64, sol_price: u64) -> u64 {
+    u64::try_from(u128::from(repaid) * u128::from(usdc_price) * 1_000 / u128::from(sol_price))
+        .unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

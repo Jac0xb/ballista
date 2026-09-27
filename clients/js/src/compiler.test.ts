@@ -1094,3 +1094,63 @@ describe('count loops and several loops', () => {
     ).not.toThrow();
   });
 });
+
+describe('carried variables', () => {
+  test('each carried variable gets its own register when it starts from a value something else reads', () => {
+    const compiled = compileTemplate(
+      defineTemplate({
+        inputs: { start: { type: 'u64' } },
+        accounts: {},
+        batch: { maxIterations: 3, row: { holder: {} } },
+        steps: [
+          // Two variables start from one constant, which a later step reads again, and a third
+          // starts from an input that a later step reads too.
+          step.let('sum', expression.u64(0)),
+          step.let('count', expression.u64(0)),
+          step.let('floor', expression.input('start')),
+          step.forEach(
+            [
+              step.assign('sum', expression.add(expression.variable('sum'), expression.accountField(account.iteration('holder'), 'lamports'))),
+              step.assign('count', expression.add(expression.variable('count'), expression.u64(1))),
+              step.assign('floor', expression.add(expression.variable('floor'), expression.u64(1))),
+            ],
+            { carry: ['sum', 'count', 'floor'] },
+          ),
+          step.require(expression.greaterThan(expression.variable('count'), expression.u64(0))),
+          step.require(expression.greaterThanOrEqual(expression.variable('floor'), expression.input('start'))),
+        ],
+      }),
+    );
+    const all = records(compiled);
+    // The input is register 0 and the constants 0 and 1 are registers 1 and 2. Each carried
+    // variable is copied into a register of its own, 3 to 5, before the loop starts.
+    expect(all.slice(3, 6).map((record) => [...record.slice(0, 3)])).toEqual([
+      [opcode.move, 3, 1],
+      [opcode.move, 4, 1],
+      [opcode.move, 5, 0],
+    ]);
+    expect(all[6]![0]).toBe(opcode.forEach);
+    expect(readU64(all[6]!, 6)).toBe((1n << 3n) | (1n << 4n) | (1n << 5n));
+  });
+
+  test('a carried variable that alone reads its starting value keeps its register', () => {
+    const compiled = compileTemplate(
+      defineTemplate({
+        inputs: {},
+        accounts: {},
+        batch: { maxIterations: 3, row: { holder: {} } },
+        steps: [
+          step.let('total', expression.u64(0)),
+          step.forEach(
+            [step.assign('total', expression.add(expression.variable('total'), expression.accountField(account.iteration('holder'), 'lamports')))],
+            { carry: ['total'] },
+          ),
+        ],
+      }),
+    );
+    // The constant is register 0 and `total` alone reads it, so no copy comes before the loop.
+    const all = records(compiled);
+    expect(all[1]![0]).toBe(opcode.forEach);
+    expect(readU64(all[1]!, 6)).toBe(1n << 0n);
+  });
+});

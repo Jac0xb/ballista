@@ -146,6 +146,30 @@ function collectLiterals(value: unknown, into = new Map<string, Literal>()): Map
   return into;
 }
 
+/**
+ * How often each literal (keyed like `literalKey`) and each fixed input (as `input:<name>`)
+ * appears in the steps. A hoisted register that one appearance alone reads can be handed to a
+ * loop-carried variable; one that more read cannot.
+ */
+function countUses(value: unknown, into = new Map<string, number>()): Map<string, number> {
+  if (Array.isArray(value)) {
+    for (const item of value) countUses(item, into);
+    return into;
+  }
+  if (value === null || typeof value !== 'object') return into;
+  const record = value as Record<string, unknown>;
+  const inner = record.value as Literal | undefined;
+  let key: string | undefined;
+  if (record.kind === 'literal' && inner !== undefined && typeof inner === 'object' && 'type' in inner) {
+    key = literalKey(inner);
+  } else if (record.kind === 'input' && typeof record.name === 'string') {
+    key = `input:${record.name}`;
+  }
+  if (key !== undefined) into.set(key, (into.get(key) ?? 0) + 1);
+  for (const item of Object.values(record)) countUses(item, into);
+  return into;
+}
+
 /** Every fixed input the steps refer to, found by walking the plain object tree. */
 function collectInputNames(value: unknown, into: Set<string>): void {
   if (Array.isArray(value)) {
@@ -323,6 +347,8 @@ class Compiler {
   /** Highest byte any fixed-offset read touches per account, used to infer `minDataLength`. */
   readonly requiredDataLength = new Map<string, number>();
   readonly sourceMap: SourceMapEntry[] = [];
+  /** How often each literal and fixed input appears; see `countUses`. */
+  readonly uses: Map<string, number>;
   location: { path: string; label?: string } = { path: 'template' };
   nextRegister = 0;
   maxCpiDataLength = 0;
@@ -338,6 +364,7 @@ class Compiler {
     this.fixedEntries.forEach(([name], index) => this.fixedIndices.set(name, index));
     this.batchEntries.forEach(([name], index) => this.batchIndices.set(name, index));
     template.accountGroups.forEach((name, index) => this.accountGroupIndices.set(name, index));
+    this.uses = countUses(template.steps);
   }
 
   compile(): CompiledTemplate {
@@ -493,8 +520,15 @@ class Compiler {
         let carry = 0n;
         const carriedNames = new Set<string>();
         for (const name of current.carry ?? []) {
-          const binding = bindings.get(name);
+          let binding = bindings.get(name);
           if (!binding) throw new TypeError(`Carried variable must be defined before the loop: ${name}`);
+          // `assign` rewrites a carried variable's register on every pass, so nothing else may
+          // read it. A `let` of a constant, an input or another variable shares that value's
+          // register: copy it into one of the variable's own first.
+          if (this.sharesRegister(name, binding.register, bindings)) {
+            binding = this.emit(opcode.move, binding.type, binding.maxLength, binding.register);
+            bindings.set(name, binding);
+          }
           carriedNames.add(name);
           carry |= 1n << BigInt(binding.register);
         }
@@ -549,6 +583,23 @@ class Compiler {
       this.location = { path: stepPath, ...(current.label ? { label: current.label } : {}) };
       previous = current;
     }
+  }
+
+  /**
+   * Whether anything besides variable `name` reads `register`: another variable, or a hoisted
+   * constant or fixed input that appears more than once in the template.
+   */
+  sharesRegister(name: string, register: number, bindings: Bindings): boolean {
+    for (const [other, value] of bindings) {
+      if (other !== name && value.register === register) return true;
+    }
+    for (const [key, value] of this.constants) {
+      if (value.register === register) return (this.uses.get(key) ?? 0) > 1;
+    }
+    for (const [input, value] of this.fixedInputs) {
+      if (value.register === register) return (this.uses.get(`input:${input}`) ?? 0) > 1;
+    }
+    return false;
   }
 
   compileInvoke(current: Extract<Step, { kind: 'invoke' }>, loop: LoopKind | undefined, bindings: Bindings): void {

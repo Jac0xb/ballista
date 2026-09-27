@@ -2214,12 +2214,13 @@ mod tests {
         }
 
         // The live-protocol examples in `clients/js/examples/protocols` are compiled by the
-        // TypeScript suite into this file. They target programs no test can invoke, but the
-        // verifier is exactly the check that matters for them: it is what the chain runs before
-        // a template is allowed to be stored.
+        // TypeScript suite into this file, alongside the fixed-account, input and group order the
+        // LiteSVM harness uses to build each run instruction by name. They target programs no
+        // test can invoke, but the verifier is exactly the check that matters for them: it is
+        // what the chain runs before a template is allowed to be stored.
         let protocols = include_str!("../../../fixtures/protocol-examples.json");
         let mut examples = 0usize;
-        for entry in protocols.split('"').filter(|part| part.len() > 64) {
+        for entry in payload_values(protocols) {
             let bytes = decode_hex(entry);
             let program = ProgramView::parse(&bytes)
                 .unwrap_or_else(|error| panic!("protocol example {examples}: {error}"));
@@ -2235,6 +2236,21 @@ mod tests {
         let event = decode_hex(include_str!("../../../fixtures/event-flag.hex"));
         let program = ProgramView::parse(&event).unwrap();
         assert_eq!(program.header.flags(), PROGRAM_FLAG_EMIT_EVENT);
+    }
+
+    /// Each `"payload": "<hex>"` value in `protocol-examples.json`, in file order. The fixture
+    /// now also carries account and input names alongside each payload, so picking out quoted
+    /// strings over some length is no longer safe; reading the `payload` key explicitly is.
+    fn payload_values(json: &str) -> impl Iterator<Item = &str> {
+        const KEY: &str = "\"payload\":";
+        let mut rest = json;
+        std::iter::from_fn(move || {
+            let after_key = &rest[rest.find(KEY)? + KEY.len()..];
+            let open = after_key.find('"')? + 1;
+            let close = open + after_key[open..].find('"')?;
+            rest = &after_key[close + 1..];
+            Some(&after_key[open..close])
+        })
     }
 
     fn decode_hex(value: &str) -> Vec<u8> {

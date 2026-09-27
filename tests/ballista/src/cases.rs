@@ -6,7 +6,8 @@
 use ballista_common::instruction::{IX_CREATE_TEMPLATE, IX_RUN};
 use ballista_common::template::{
     ProgramBuilder, Segment, TemplateAccountHeader, ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER,
-    ACCOUNT_WRITABLE, DATA_REG_U64, OP_ADD, OP_AND, OP_EQ, OP_GTE, OP_LTE, OP_READ_U64, VALUE_U64,
+    ACCOUNT_WRITABLE, DATA_REG_U64, OP_ADD, OP_AND, OP_BIT_AND, OP_BIT_OR, OP_BIT_XOR, OP_CAST_U64,
+    OP_EQ, OP_GTE, OP_LT, OP_LTE, OP_READ_I32, OP_READ_U64, OP_REM, OP_SHL, OP_SHR, VALUE_U64,
 };
 use mollusk_svm::{program::loader_keys::LOADER_V3, Mollusk};
 use solana_account::Account;
@@ -49,6 +50,7 @@ pub fn cases() -> Vec<(&'static str, Case)> {
         ("run, pda derivation, bump search", pda_case(creator, 7, false)),
         ("run, pda derivation, bump supplied", pda_case(creator, 8, true)),
         ("create template, payroll 30 rows", upload(9)),
+        ("run, math opcodes, no cpi", math_ops(creator, 10)),
     ]
 }
 
@@ -214,6 +216,56 @@ fn oracle_band(creator: Pubkey, template_id: u16) -> Case {
         builder.build().expect("builds"),
         vec![(AccountMeta::new_readonly(account_key, false), account)],
         inputs,
+    )
+}
+
+/// Every opcode from `OP_MUL_DIV` up, as a price check scaled by an oracle's exponent would use
+/// them. They all run in `extended_instruction`, behind the dispatch loop's fallback arm, and no
+/// other case reaches it.
+fn math_ops(creator: Pubkey, template_id: u16) -> Case {
+    let mut builder = ProgramBuilder::new();
+    let oracle = builder.account(0, None, None, 128);
+    // `with_data` stores 7 at offset 64: read as the oracle's i32 exponent, a scale of 10^7.
+    let exponent = builder.read(OP_READ_I32, oracle, 64);
+    let exponent = builder.cast(OP_CAST_U64, exponent);
+    let scale = builder.pow10(exponent);
+    // 3.0 units at that scale, priced at 12,345 each: 37,035.
+    let amount = builder.const_u128(3 * 10u128.pow(7));
+    let price = builder.const_u128(12_345);
+    let value = builder.mul_div(amount, price, scale);
+    // A 30 basis-point fee on 1,000,003, rounded down and up: 3,000 and 3,001.
+    let gross = builder.const_u64(1_000_003);
+    let bps = builder.const_u64(30);
+    let basis = builder.const_u64(10_000);
+    let fee_floor = builder.mul_div(gross, bps, basis);
+    let fee_ceiling = builder.mul_div_ceil(gross, bps, basis);
+    // What is left over past whole lots of 1,000: 3.
+    let lot = builder.const_u64(1_000);
+    let odd_lot = builder.binary(OP_REM, gross, lot);
+    // A flag byte taken out of a word and put back: 0xab00 twice, which cancel.
+    let flags = builder.const_u64(0xabcd);
+    let mask = builder.const_u64(0xff00);
+    let eight = builder.const_u64(8);
+    let high = builder.binary(OP_BIT_AND, flags, mask);
+    let byte = builder.binary(OP_SHR, high, eight);
+    let back = builder.binary(OP_SHL, byte, eight);
+    let cancelled = builder.binary(OP_BIT_XOR, back, high);
+    let merged = builder.binary(OP_BIT_OR, cancelled, odd_lot);
+    let expected_value = builder.const_u128(37_035);
+    let value_right = builder.binary(OP_EQ, value, expected_value);
+    let rounded_up = builder.binary(OP_LT, fee_floor, fee_ceiling);
+    let three = builder.const_u64(3);
+    let bits_right = builder.binary(OP_EQ, merged, three);
+    let both = builder.binary(OP_AND, value_right, rounded_up);
+    let all = builder.binary(OP_AND, both, bits_right);
+    builder.require(all);
+    let (account_key, account) = with_data(template_id * 100 + 1);
+    run_case(
+        creator,
+        template_id,
+        builder.build().expect("builds"),
+        vec![(AccountMeta::new_readonly(account_key, false), account)],
+        Vec::new(),
     )
 }
 

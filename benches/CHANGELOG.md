@@ -12,7 +12,7 @@ machine. Build the program first with `pnpm build:program`.
 | What | Command | Output |
 | --- | --- | --- |
 | Cost of each feature | `cargo test --manifest-path tests/ballista/Cargo.toml profile_compute_units -- --nocapture` | printed table |
-| Nine fixed cases | `pnpm cu:bench` | `benches/compute_units.md` |
+| Ten fixed cases | `pnpm cu:bench` | `benches/compute_units.md` |
 | Every cookbook example | `cargo test --manifest-path tests/ballista/Cargo.toml measure_every_example -- --nocapture` | one line per example |
 | Where one run's compute goes | `pnpm cu:phases` | `fixtures/cu-phases.json` |
 | Lock in a win | `pnpm cu:ceilings`, `pnpm benchmarks` | lowers `fixtures/cu-ceilings.json`, `fixtures/example-ceilings.json` |
@@ -31,6 +31,39 @@ the same commit and says why here.
 ```
 
 ---
+
+## Pending: runtime extensions, not merged
+
+### 2026-09-27 · Run the new opcodes behind the dispatch loop's fallback arm · `claude/runtime-extensions`
+- **Change:** The ten runtime-math opcodes, `MUL_DIV` (51) to `READ_I32` (60), run in one
+  out-of-line helper, `extended_instruction`, which the dispatch match reaches through its fallback
+  arm. The comparison tree the match compiles to, and the loop's entry, are the same as before the
+  opcodes existed. The helper takes the interpreter's state as one pointer, each of its arms stores
+  its own result, and multiply-divide has an out-of-line helper of its own. Two commits: "Keep the
+  math opcodes out of the dispatch loop's way" (`7a5e15e`) and "Route new opcodes through a thin
+  out-of-line helper".
+- **Measured** against `e213241`, before the opcodes existed:
+  - As arms of the loop (`0fc777c`), every run paid for them: fixed cost 595 → 602, summing 30
+    rows 11,017 → 11,085, cookbook total 557,309 → 557,767 (+458).
+  - Now: fixed cost 595, summing 30 rows 11,047, cookbook total 557,356 (+47).
+  - Each math opcode costs more than as an arm, except multiply-divide: bitwise AND 79 → 104 CU,
+    power of ten 58 → 76, multiply-divide 176 → 168. The TypeScript fixture that runs all ten:
+    4,589 → 4,712.
+  - A new fixed case, "run, math opcodes, no cpi", holds the helper to 2,797 (2,668 as arms).
+  - `7a5e15e` raised these ceilings to the measured values: create template 4,443 → 4,446 (the
+    verifier's new arms), oracle band 1,082 → 1,083, bump search 2,012 → 2,014, bump supplied
+    1,514 → 1,515, summing 30 rows 11,017 → 11,047, and eleven cookbook examples by 1 to 16 CU.
+- **Checked:**
+  - The Mollusk and host suites pass, with new tests for `READ_I32`'s offsets, row accounts and
+    return data, and for opcodes the executor does not run.
+  - A differential harness compared 9,744 runs against `0fc777c`: `READ_I32` at every kind of
+    offset, every operand shape of the math and unknown opcodes, return data, loop rows, and 400
+    generated programs. Results, error codes and accounts were identical.
+- **Watch:**
+  - The fallback arm must stay one unconditional call, and none of these opcodes may get an arm of
+    its own. See Tried and rejected.
+  - The comparison arm still costs 2 CU more than at `e213241`, and reading an account's lamports
+    1 more, from register allocation.
 
 ## Pending: integrated, not merged
 
@@ -181,6 +214,15 @@ combined numbers; the entries after it keep what each branch measured alone.
 - **PDA derivation:** Writing seeds straight into the hash input saved 120–160 CU per derivation.
   It also moved register allocation in the interpreter: a checked add rose 6 CU, and some examples
   rose by up to 298.
+- **New opcodes:**
+  - As arms of the dispatch loop: 7 CU more on every run, and up to 68 more on a loop.
+  - `#[inline(never)]` on `math::integer` and `math::pow10`: 12 CU more again on every run. The
+    loop hoisted the addresses of their return slots to its entry.
+  - A case for `READ_I32` in the read arm: 60 CU more on summing 30 rows, a template that never
+    reads an i32. One helper behind an arm of its own for the math opcodes measured the same.
+  - A guard or `if` on the opcode inside the fallback arm: LLVM folds it into the match as a case
+    of its own, and it measured the same as an arm.
+  - `#[cold]` on the helper: no better.
 
 ## Landed
 

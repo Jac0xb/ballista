@@ -21,8 +21,8 @@ mod tests {
         TemplateAccount, ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_LITERAL,
         DATA_REG_PUBKEY, DATA_REG_U64, ITERATION_ACCOUNT_BIT, MAX_PDA_SEEDS, NO_INDEX,
         OP_ACCOUNT_IS_EMPTY, OP_ACCOUNT_KEY, OP_ACCOUNT_LAMPORTS, OP_ADD, OP_DERIVE_PDA, OP_EQ,
-        OP_FOREACH, OP_INVOKE, OP_LOAD_INPUT, OP_LTE, OP_NE, OP_READ_U64, OP_REQUIRE, OP_SUB,
-        VALUE_BOOL, VALUE_U64,
+        OP_FOREACH, OP_INVOKE, OP_LOAD_INPUT, OP_LTE, OP_NE, OP_READ_I32, OP_READ_U64, OP_REQUIRE,
+        OP_SUB, VALUE_BOOL, VALUE_I64, VALUE_U64,
     };
     use mollusk_svm::{program::loader_keys::LOADER_V3, Mollusk, MolluskContext};
     use mollusk_svm_programs_memo::memo;
@@ -1965,6 +1965,207 @@ mod tests {
         assert_eq!(decode_kind(&zero), Some(6014));
         let huge = run(1_000_003, 7, 3, 0xabcd, 39);
         assert_eq!(decode_kind(&huge), Some(6013));
+    }
+
+    /// `READ_I32` runs in `extended_instruction`, not the dispatch loop's read arm, so its dynamic
+    /// offsets are checked there. A read in range sign-extends, up to the last four bytes. One that
+    /// would end past the data fails at the read, and so does an offset of `u64::MAX`, which cannot
+    /// even have the width added to it.
+    #[test]
+    fn i32_reads_at_dynamic_offsets_sign_extend_or_fail_at_the_read() {
+        let creator = Pubkey::new_unique();
+        let feed = Pubkey::new_unique();
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        let mut feed_account = Account::new(1_000_000, 128, &system_program::id());
+        feed_account.data[..4].copy_from_slice(&42i32.to_le_bytes());
+        feed_account.data[124..].copy_from_slice(&i32::MIN.to_le_bytes());
+        accounts.insert(feed, feed_account);
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        let source = builder.account(0, None, None, 0);
+        let offset_input = builder.input(VALUE_U64, 0);
+        let expected_input = builder.input(VALUE_I64, 0);
+        let offset = builder.load_input(offset_input);
+        let expected = builder.load_input(expected_input);
+        let value = builder.read_dynamic(OP_READ_I32, source, offset);
+        let matches = builder.binary(OP_EQ, value, expected);
+        builder.require(matches);
+        let payload = builder.build().expect("builds");
+        ProgramView::parse(&payload)
+            .and_then(|program| program.verify())
+            .expect("verifies");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 91, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 91);
+        let metas = vec![AccountMeta::new_readonly(feed, false)];
+        let inputs = |offset: u64, expected: i64| {
+            let mut bytes = offset.to_le_bytes().to_vec();
+            bytes.extend_from_slice(&expected.to_le_bytes());
+            bytes
+        };
+
+        for (offset, expected) in [(0, 42), (124, i64::from(i32::MIN))] {
+            let run = context.process_instruction(&run_instruction(
+                template,
+                metas.clone(),
+                &inputs(offset, expected),
+            ));
+            assert!(run.program_result.is_ok(), "offset {offset}: {run:#?}");
+        }
+        // The read is instruction 2; 6009 is InvalidRuntimeAccount.
+        for offset in [125, u64::MAX] {
+            let run = context.process_instruction(&run_instruction(
+                template,
+                metas.clone(),
+                &inputs(offset, 0),
+            ));
+            assert_eq!(
+                custom_code(&run),
+                Some((2 << 16) | 6009),
+                "offset {offset}: {run:#?}"
+            );
+        }
+    }
+
+    /// Inside a FOREACH body, `READ_I32` reads each row's own account, at a fixed offset and at one
+    /// a row input supplies: `extended_instruction` resolves row accounts from the loop context the
+    /// dispatch loop hands it.
+    #[test]
+    fn i32_reads_resolve_each_rows_account_in_a_loop() {
+        let creator = Pubkey::new_unique();
+        let rows: Vec<Pubkey> = (0..3).map(|_| Pubkey::new_unique()).collect();
+        let fixed_values = [-5i32, 7, -100];
+        let dynamic_values = [1_000i32, -2_000, 3];
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        for (index, row) in rows.iter().enumerate() {
+            // Row `n` holds one i32 at offset 8 and another at 20 + 4n.
+            let mut account = Account::new(1_000_000, 64, &system_program::id());
+            account.data[8..12].copy_from_slice(&fixed_values[index].to_le_bytes());
+            let offset = 20 + 4 * index;
+            account.data[offset..offset + 4].copy_from_slice(&dynamic_values[index].to_le_bytes());
+            accounts.insert(*row, account);
+        }
+        let context = context(accounts);
+
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 64);
+        builder.batch(3, 1);
+        let offset_input = builder.row_input(VALUE_U64, 0);
+        let total = builder.const_i64(0);
+        builder.for_each(1u64 << total, |body| {
+            let offset = body.load_input(offset_input);
+            let fixed = body.read(OP_READ_I32, row, 8);
+            let dynamic = body.read_dynamic(OP_READ_I32, row, offset);
+            let both = body.binary(OP_ADD, fixed, dynamic);
+            let next = body.binary(OP_ADD, total, both);
+            body.mov(total, next);
+        });
+        let expected = builder.const_i64(-5 + 7 - 100 + 1_000 - 2_000 + 3);
+        let same = builder.binary(OP_EQ, total, expected);
+        builder.require(same);
+        let payload = builder.build().expect("builds");
+        ProgramView::parse(&payload)
+            .and_then(|program| program.verify())
+            .expect("verifies");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 92, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 92);
+        let metas: Vec<AccountMeta> = rows
+            .iter()
+            .map(|row| AccountMeta::new_readonly(*row, false))
+            .collect();
+        let offsets = |offsets: [u64; 3]| {
+            offsets
+                .iter()
+                .flat_map(|offset| offset.to_le_bytes())
+                .collect::<Vec<u8>>()
+        };
+
+        let run = context.process_instruction(&run_instruction(
+            template,
+            metas.clone(),
+            &offsets([20, 24, 28]),
+        ));
+        assert!(run.program_result.is_ok(), "{run:#?}");
+
+        // The third row's offset runs past its 64 bytes: the dynamic read is instruction 4.
+        let past =
+            context.process_instruction(&run_instruction(template, metas, &offsets([20, 24, 61])));
+        assert_eq!(custom_code(&past), Some((4 << 16) | 6009), "{past:#?}");
+    }
+
+    /// `RETURN_DATA` takes `READ_I32` as its width selector: four bytes at the offset,
+    /// sign-extended. SPL Token's GetAccountDataSize sets 165 as an eight-byte `u64`, so offset 0
+    /// reads 165, offset 4 reads its zero high half, and offset 5 would end past the data.
+    #[test]
+    fn return_data_reads_an_i32_at_an_offset() {
+        let creator = Pubkey::new_unique();
+        let authority = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let mut accounts = funded_accounts([creator], 10_000_000_000);
+        accounts.insert(
+            mint,
+            token::create_account_for_mint(Mint {
+                mint_authority: COption::Some(authority),
+                supply: 0,
+                decimals: 6,
+                is_initialized: true,
+                freeze_authority: COption::None,
+            }),
+        );
+        let context = context(accounts);
+
+        for (template_id, offset, expected) in
+            [(93u16, 0u64, Some(165i64)), (94, 4, Some(0)), (95, 5, None)]
+        {
+            let mut builder = ProgramBuilder::new();
+            let token_program =
+                builder.account(ACCOUNT_EXECUTABLE, Some(token::ID.to_bytes()), None, 0);
+            let mint_account = builder.account(0, None, Some(token::ID.to_bytes()), 82);
+            let literal = builder.blob(&[21]);
+            let cpi = builder.cpi(
+                token_program,
+                &[(mint_account, 0)],
+                &[Segment::Literal(literal)],
+            );
+            builder.invoke(cpi, None);
+            let value = builder.return_data(OP_READ_I32, offset);
+            let wanted = builder.const_i64(expected.unwrap_or(0));
+            let same = builder.binary(OP_EQ, value, wanted);
+            builder.require(same);
+            let payload = builder.build().expect("builds");
+            ProgramView::parse(&payload)
+                .and_then(|program| program.verify())
+                .expect("verifies");
+            assert!(context
+                .process_instruction(&create_template_instruction(creator, template_id, &payload))
+                .program_result
+                .is_ok());
+            let (template, _) = find_template_pda(&creator, template_id);
+            let run = context.process_instruction(&run_instruction(
+                template,
+                vec![
+                    AccountMeta::new_readonly(token::ID, false),
+                    AccountMeta::new_readonly(mint, false),
+                ],
+                &[],
+            ));
+            match expected {
+                Some(_) => assert!(run.program_result.is_ok(), "offset {offset}: {run:#?}"),
+                // Instruction 1 is the return-data read; 6018 is MissingReturnData, which is what a
+                // read past the end of the return data reports.
+                None => assert_eq!(
+                    custom_code(&run),
+                    Some((1 << 16) | 6018),
+                    "offset {offset}: {run:#?}"
+                ),
+            }
+        }
     }
 
     /// Anything the verifier accepts must execute without a structural error. Generated programs

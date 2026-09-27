@@ -20,6 +20,7 @@ use {
     solana_address::Address,
     solana_keypair::Keypair,
     solana_signer::Signer,
+    std::collections::BTreeMap,
 };
 
 const TEMPLATE: &str = "tokenSweepIntoSwap";
@@ -63,15 +64,29 @@ impl<'a> Sweep<'a> {
         }
     }
 
+    /// Another sweep from this one's state, without loading the snapshot again.
+    fn copy(&self) -> Self {
+        Sweep {
+            svm: self.svm.clone(),
+            seller: wallet::wallet(),
+            ..*self
+        }
+    }
+
     /// Gives the seller exactly `balance` USDC (write rule 1), then sells it in Jupiter's own
     /// transaction with the run in place of `route`: the compute budget, the setup that creates
     /// the wrapped SOL account, the run, and the cleanup that unwraps it.
     fn sell(&mut self, balance: u64) -> Result<Outcome, Failure> {
-        self.sell_with_slippage(balance, self.leg.route.slippage_bps)
+        self.sell_with(balance, self.leg.route.slippage_bps, DUST_FLOOR)
     }
 
-    /// [`Sweep::sell`] with a slippage other than the quote's.
-    fn sell_with_slippage(&mut self, balance: u64, slippage_bps: u16) -> Result<Outcome, Failure> {
+    /// [`Sweep::sell`] with another slippage than the quote's, or another dust floor.
+    fn sell_with(
+        &mut self,
+        balance: u64,
+        slippage_bps: u16,
+        dust_floor: u64,
+    ) -> Result<Outcome, Failure> {
         let leg = self.leg;
         let seller = self.seller.pubkey();
         let source = token_account(&mut self.svm, &seller, &self.usdc, balance);
@@ -99,7 +114,7 @@ impl<'a> Sweep<'a> {
             .input_u64("quotedOutAmount", leg.route.quoted_out_amount)
             .input_u64("slippageBps", u64::from(slippage_bps))
             .input_u64("platformFeeBps", u64::from(leg.route.platform_fee_bps))
-            .input_u64("dustFloor", DUST_FLOOR)
+            .input_u64("dustFloor", dust_floor)
             .group("routeAccounts", swap.accounts[4..].iter().cloned())
             .build();
         tx::send(
@@ -130,12 +145,18 @@ impl<'a> Sweep<'a> {
     }
 }
 
-/// The least a sale of `balance` may fetch: the quote rescaled to `balance`, less the quote's
-/// slippage.
-fn least_proceeds(leg: &Leg, balance: u64) -> u64 {
+/// The quote rescaled to `balance`, as the template rescales it.
+fn rescaled_quote(leg: &Leg, balance: u64) -> u64 {
     let rescaled = u128::from(leg.route.quoted_out_amount) * u128::from(balance)
         / u128::from(leg.route.in_amount);
-    let least = rescaled * u128::from(10_000 - leg.route.slippage_bps) / 10_000;
+    u64::try_from(rescaled).unwrap()
+}
+
+/// The least a sale of `balance` may fetch: the rescaled quote, less the quote's slippage.
+fn least_proceeds(leg: &Leg, balance: u64) -> u64 {
+    let least = u128::from(rescaled_quote(leg, balance))
+        * u128::from(10_000 - leg.route.slippage_bps)
+        / 10_000;
     u64::try_from(least).unwrap()
 }
 
@@ -173,8 +194,11 @@ fn sells_a_balance_other_than_the_quoted_one() {
             "selling {balance} fetched {proceeds} lamports, under the rescaled quote's {least}\n{outcome:?}"
         );
         println!(
-            "sold {balance} for {proceeds} lamports (at least {least}): {} CU, {} bytes",
-            outcome.compute_units, outcome.size
+            "sold {balance} for {proceeds} lamports (rescaled quote {}, at least {least}): {} CU, \
+             {} bytes",
+            rescaled_quote(sweep.leg, balance),
+            outcome.compute_units,
+            outcome.size
         );
     }
 }
@@ -218,14 +242,42 @@ fn a_balance_past_the_routes_tick_arrays_fails_in_raydium() {
     sweep.assert_nothing_sold(balance, before, &failure);
 }
 
-/// Measures how far above the quote a balance may go, for `findings/token-sweep.md`: the largest
-/// balance that lands with the quote's own slippage, then with the slippage relaxed so that only
-/// the route's tick arrays bound it, each searched to 1 USDC. Run it again after refreshing the
-/// snapshot:
-///
-/// ```text
-/// cargo test --manifest-path tests/protocols/Cargo.toml --test token_sweep -- --ignored --nocapture
-/// ```
+// ------------------------------------------------------------------------------ measurements
+//
+// Each ignored test below prints figures in `findings/token-sweep.md` that the checks above do
+// not; `sells_a_balance_other_than_the_quoted_one` prints the rest. After refreshing the
+// snapshot, rerun them all and update the findings:
+//
+//     cargo test --manifest-path tests/protocols/Cargo.toml --test token_sweep -- \
+//         --include-ignored --nocapture
+
+/// Who refused a sale: `Jupiter 6001`, `Raydium CLMM 6023 NotEnoughTickArrayAccount` (an Anchor
+/// program logs its error's name), or `Ballista RequirementFailed in saleMetTheQuote`.
+fn refusal(snapshot: &Snapshot, example: &Example, failure: &Failure) -> String {
+    if let Some((kind, pc)) = tx::ballista_error(failure) {
+        let step = example.label_at(pc).unwrap_or("an unlabelled step");
+        return format!("Ballista {kind} in {step}");
+    }
+    let program = [("Jupiter", "jupiter"), ("Raydium CLMM", "raydiumClmm")]
+        .into_iter()
+        .find(|(_, name)| snapshot.named(name) == failure.program)
+        .map_or_else(
+            || failure.program.to_string(),
+            |(label, _)| label.to_string(),
+        );
+    let name = failure.logs.iter().find_map(|line| {
+        let (_, rest) = line.split_once("Error Code: ")?;
+        rest.split('.').next()
+    });
+    let mut parts = vec![program];
+    parts.extend(failure.code.map(|code| code.to_string()));
+    parts.extend(name.map(str::to_string));
+    parts.join(" ")
+}
+
+/// How far above the quote a balance may go: the largest balance that lands with the quote's own
+/// slippage, then with the slippage relaxed so that only the route's tick arrays bound it, each
+/// searched to 1 USDC. It also counts who refused the sales that failed along the way.
 #[test]
 #[ignore = "a measurement for the findings, not a check"]
 fn measure_how_far_above_the_quote_a_balance_may_go() {
@@ -233,11 +285,19 @@ fn measure_how_far_above_the_quote_a_balance_may_go() {
     let snapshot = Snapshot::load(SNAPSHOT_DIR);
     let examples = examples();
     let example = &examples[TEMPLATE];
-    let leg = &snapshot.route(ROUTE).legs[0];
-    let quoted = leg.route.in_amount;
-    for slippage_bps in [leg.route.slippage_bps, 500] {
-        let sell =
-            |balance: u64| Sweep::new(&snapshot, example).sell_with_slippage(balance, slippage_bps);
+    let start = Sweep::new(&snapshot, example);
+    let quoted = start.leg.route.in_amount;
+    let mut refused: BTreeMap<String, u32> = BTreeMap::new();
+    for slippage_bps in [start.leg.route.slippage_bps, 500] {
+        let mut sell = |balance: u64| {
+            let sale = start.copy().sell_with(balance, slippage_bps, DUST_FLOOR);
+            if let Err(failure) = &sale {
+                *refused
+                    .entry(refusal(&snapshot, example, failure))
+                    .or_default() += 1;
+            }
+            sale
+        };
         // Double the balance until a sale fails, then halve the gap.
         let mut lands = quoted;
         let mut fails = quoted;
@@ -256,18 +316,114 @@ fn measure_how_far_above_the_quote_a_balance_may_go() {
             }
         }
         let outcome = sell(lands).unwrap();
-        let error = failure.logs.iter().find_map(|line| {
-            let (_, rest) = line.split_once("Error Code: ")?;
-            rest.split('.').next()
-        });
         println!(
-            "{slippage_bps} bps: {lands} lands ({:.1} times the quote, {} CU); {fails} fails in {} \
-             with {:?} {}",
+            "{slippage_bps} bps: {lands} lands ({:.1} times the quote, {} CU); {fails} is refused \
+             by {}",
             lands as f64 / quoted as f64,
             outcome.compute_units,
-            failure.program,
-            failure.code,
-            error.unwrap_or("")
+            refusal(&snapshot, example, &failure)
         );
+    }
+    for (refusal, count) in refused {
+        println!("{count} sales refused by {refusal}");
+    }
+}
+
+/// The smallest balances the route can sell. With a dust floor of 0 the template lets any balance
+/// through, and rounding decides whether the route can fill it. Prints each run of consecutive
+/// sizes, from 1 unit to 1,000, that ended the same way, then a few sizes from just above the
+/// tests' dust floor to half the quote.
+#[test]
+#[ignore = "a measurement for the findings, not a check"]
+fn measure_the_smallest_balance_the_route_can_sell() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+    let start = Sweep::new(&snapshot, example);
+    let quoted = start.leg.route.in_amount;
+    let sell = |balance: u64| match start
+        .copy()
+        .sell_with(balance, start.leg.route.slippage_bps, 0)
+    {
+        Ok(_) => "lands".to_string(),
+        Err(failure) => format!("refused by {}", refusal(&snapshot, example, &failure)),
+    };
+    let mut runs: Vec<(u64, u64, String)> = Vec::new();
+    for balance in 1..=1_000 {
+        let ending = sell(balance);
+        match runs.last_mut() {
+            Some((_, last, previous)) if *previous == ending => *last = balance,
+            _ => runs.push((balance, balance, ending)),
+        }
+    }
+    for (first, last, ending) in runs {
+        println!("{first} to {last} units: {ending}");
+    }
+    for balance in [DUST_FLOOR + 1, 100_000, 1_000_000, quoted / 10, quoted / 2] {
+        println!("{balance} units: {}", sell(balance));
+    }
+}
+
+/// Compute units: the route's own limit; Jupiter's own transaction at the quoted size; the run at
+/// 1, 100 and 1,000 times the quote; and every `consumed` line of the sale at 3% over, from which
+/// the findings split its cost by program. Builtins log no such line, so the compute budget's
+/// share is what the lines leave of the total.
+#[test]
+#[ignore = "a measurement for the findings, not a check"]
+fn measure_compute_units() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+    let start = Sweep::new(&snapshot, example);
+    let leg = start.leg;
+    let quoted = leg.route.in_amount;
+
+    // `SetComputeUnitLimit`: tag 2, then a little-endian u32.
+    let limit = leg
+        .instructions
+        .compute_budget
+        .iter()
+        .find_map(|instruction| {
+            let (&2, limit) = instruction.data.split_first()? else {
+                return None;
+            };
+            Some(u32::from_le_bytes(limit.try_into().ok()?))
+        });
+    println!("the route's compute-unit limit: {limit:?}");
+
+    let mut plain = start.copy();
+    token_account(&mut plain.svm, &plain.seller.pubkey(), &plain.usdc, quoted);
+    let outcome = tx::send(
+        &mut plain.svm,
+        &plain.seller,
+        &[],
+        &leg.instructions.all(),
+        &leg.lookup_tables,
+    )
+    .unwrap();
+    println!(
+        "Jupiter's own transaction at the quoted size: {} CU, {} bytes",
+        outcome.compute_units, outcome.size
+    );
+
+    for times in [1, 100, 1_000] {
+        let outcome = start.copy().sell(quoted * times).unwrap();
+        println!(
+            "the run at {times} times the quote: {} CU, {} bytes",
+            outcome.compute_units, outcome.size
+        );
+    }
+
+    let outcome = start.copy().sell(quoted * 103 / 100).unwrap();
+    println!(
+        "the run at 3% over the quote: {} CU, of which",
+        outcome.compute_units
+    );
+    for line in outcome
+        .logs
+        .iter()
+        .filter(|line| line.contains(" consumed "))
+    {
+        println!("  {line}");
     }
 }

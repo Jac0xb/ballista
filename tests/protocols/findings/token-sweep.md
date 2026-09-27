@@ -3,21 +3,35 @@
 Tests: [`tests/token_sweep.rs`](../tests/token_sweep.rs). Snapshot: slot 451,100,151
 (2026-09-27 20:09:42 UTC).
 
+Every figure here comes from those tests at that slot, unless it is marked as a one-off. The
+checks print the passing sales. Three ignored measurements print the rest:
+
+- `measure_compute_units`;
+- `measure_how_far_above_the_quote_a_balance_may_go`;
+- `measure_the_smallest_balance_the_route_can_sell`.
+
+After refreshing the snapshot, rerun them all and update this file:
+
+```bash
+cargo test --manifest-path tests/protocols/Cargo.toml --test token_sweep -- --include-ignored --nocapture
+```
+
 ## The route
 
 `usdcToSol`: 150 USDC for SOL, quoted for 1,218,153,385 lamports with a 50 bps slippage and no
 platform fee.
 
 - **Jupiter.** It is a v6 `route` instruction with one step, `RaydiumClmm` at 100%.
-- **The pool.** Raydium CLMM's SOL/USDC pool is `3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv`.
-  It has a tick spacing of 1 and stood at tick -20,950, about 123.09 USDC per SOL.
-- **Tick arrays.** The route passes three tick arrays, starting at ticks -21,000, -20,940 and
-  -20,880, together with the pool's bitmap extension.
+- **The pool.** It is Raydium CLMM's SOL/USDC pool, `3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv`.
 - **Accounts.** `route` takes 24 accounts. The template passes the first four itself, so the
   account group is the other 20.
-- **Jupiter's own transaction.** It is the compute budget (`SetComputeUnitLimit` 1,400,000), the
-  setup that creates the wrapped SOL account, `route`, and the cleanup that closes the account.
-  As a v0 transaction with one lookup table, it is 648 bytes.
+- **Jupiter's own transaction.** It is the compute budget (a limit of 1,400,000 CU), the setup that
+  creates the wrapped SOL account, `route`, and the cleanup that closes the account. As a v0
+  transaction with one lookup table, it is 648 bytes.
+- **Ticks (one-off, decoded by hand from the snapshot's pool and tick-array accounts).** The pool
+  has a tick spacing of 1 and stood at tick -20,950, about 123.09 USDC per SOL. The route passes
+  three tick arrays, starting at ticks -21,000, -20,940 and -20,880, together with the pool's
+  bitmap extension.
 
 The test runs Jupiter's own transaction with the Ballista run in place of `route`. The seller's
 USDC balance is written directly, under write rule 1.
@@ -34,8 +48,12 @@ in its logic needed fixing, and `pnpm fixtures` leaves its payload as it was.
 | 1,500,000,000 | ten times | 12,181,263,810 | 12,120,626,180 | 71,484 | 700 |
 
 In every case the source ends at zero, because the whole balance was `in_amount`. "Least allowed"
-is the quote rescaled to the balance, less 50 bps. Price impact was negligible at these sizes: at
-3% over, the proceeds were only 92 lamports under the rescaled quote itself.
+is the quote rescaled to the balance, less 50 bps. Price impact was negligible at these sizes. The
+proceeds against the rescaled quote itself:
+
+- 92 lamports under it at 3% over;
+- 88 over it at 3% under;
+- 0.002% under it at ten times.
 
 The failure paths fail as expected:
 
@@ -47,7 +65,7 @@ The failure paths fail as expected:
 
 ## Compute units and size
 
-At 3% over the quote:
+At 3% over the quote, split by the `consumed` lines that `measure_compute_units` prints:
 
 | Instruction | CU |
 | --- | ---: |
@@ -59,6 +77,12 @@ At 3% over the quote:
 | · Ballista's own share | 7,006 |
 | Cleanup: close the wrapped SOL account | 118 |
 | **Transaction** | **71,200** |
+
+Two rows are derived rather than read:
+
+- **Compute budget.** A builtin logs no `consumed` line, so its 150 CU is what the other lines
+  leave of the total.
+- **Ballista's own share.** It is the run's CU less Jupiter's.
 
 At the quoted size, Jupiter's own transaction takes 64,188 CU and 648 bytes. With the run in
 place of `route`, it takes 71,194 CU and 700 bytes. The template therefore adds about 7,000 CU and
@@ -73,8 +97,8 @@ There are two upper bounds, and whichever the balance reaches first applies.
 - **The route's coverage.** The swap has to stay within the tick arrays the route's accounts
   include.
 
-For this deep pool the slippage binds first. The ignored test
-`measure_how_far_above_the_quote_a_balance_may_go` searched each bound to 1 USDC:
+For this deep pool the slippage binds first. `measure_how_far_above_the_quote_a_balance_may_go`
+searched each bound to 1 USDC:
 
 | Slippage | Largest balance that lands | Times the quote | CU | One step further |
 | --- | ---: | ---: | ---: | --- |
@@ -85,32 +109,39 @@ At the slippage edge, Raydium's swap completes and Jupiter's check on its output
 
 **The largest drift that works is about 1,787 times the quote.**
 
-- **Tick coverage.** Selling USDC raises the pool's tick. The route's arrays end at tick -20,821,
-  129 ticks or about 1.3% of price above where the pool stood.
-- **Compute.** Compute grows with the ticks crossed: 71,194 CU at the quoted size, 91,505 CU at
-  100 times the quote, 461,727 CU at 1,000 times and 1,051,868 CU at the tick-array edge. The
-  route's limit is 1,400,000 CU, so compute never bound first, but at the edge it came within 25%.
-- **Below the quote.** Every size tried landed, down to just above the 0.01 USDC dust floor. The
-  one lower bound is rounding, which the dust floor already covers. With a dust floor of 0:
+- **Tick coverage (one-off, from the decoded ticks above).** Selling USDC raises the pool's tick.
+  The route's arrays end at tick -20,821, 129 ticks or about 1.3% of price above where the pool
+  stood.
+- **Compute.** Compute grows with the ticks crossed:
+  - 71,194 CU at the quoted size;
+  - 91,505 CU at 100 times the quote;
+  - 461,727 CU at 1,000 times;
+  - 1,051,868 CU at the tick-array edge.
+
+  The route's limit is 1,400,000 CU, so compute never bound first, but at the edge it came within
+  25%.
+- **Below the quote.** The one lower bound is rounding, which the dust floor covers. With a dust
+  floor of 0, `measure_the_smallest_balance_the_route_can_sell` finds:
   - 1 unit fails in Raydium with `TooSmallInputOrOutputAmount` (6022);
-  - every size tried from 2 to 100 units fails Jupiter's slippage check (6001);
-  - 200 units (0.0002 USDC) lands.
+  - from 2 to 194 units, most sizes fail Jupiter's slippage check (6001), but 173, 179 to 181 and
+    187 to 190 land;
+  - from 195 units, every size lands, up to 1,000, where the scan stops;
+  - the sizes it samples beyond the scan also land: 10,001 units, just above the tests' dust
+    floor, then 100,000, 1,000,000, a tenth of the quote and half of it.
 
 These numbers belong to this pool at this slot. On a shallow pool the slippage bound can be a few
-percent. Rerun the measurement after refreshing the snapshot:
-
-```bash
-cargo test --manifest-path tests/protocols/Cargo.toml --test token_sweep -- --ignored --nocapture
-```
+percent.
 
 ## Other observations
 
 - **`saleMetTheQuote` never failed on its own.** It repeats Jupiter's slippage check against the
-  same rescaled quote: `quote × (10,000 − slippageBps) / 10,000`, rounded down. In every short
-  sale measured, Jupiter's check failed first (6001). The requirement is a second check, made on
-  the balances.
-- **A failed sale sells nothing.** Every failure, whether too small, too large or at the floor,
-  reverts the whole transaction. The seller loses only the fee.
+  same rescaled quote: `quote × (10,000 − slippageBps) / 10,000`, rounded down. Every sale the
+  measurements saw refused was refused by Jupiter or Raydium. The drift search prints a count of
+  each, and the small-balance scan names the refuser for every size. The requirement is a second
+  check, made on the balances.
+- **A failed sale sells nothing.** Both failures the checks make revert the whole transaction, and
+  the seller loses only the fee. A transaction is atomic, so any other failure reverts the same
+  way.
 
 ## What changed in the template
 
@@ -131,8 +162,9 @@ cargo test --manifest-path tests/protocols/Cargo.toml --test token_sweep -- --ig
 - **Failures outside the template.** A balance too large or too small for the route fails inside
   the route, with Jupiter's 6001 or the AMM's own error, rather than at a template label. Nothing
   is sold.
-- **Choosing the dust floor.** Set it above the rounding floor, which is about 200 units at 50 bps
-  on this pool. A smaller balance then fails at `worthSelling` instead of inside the route.
+- **Choosing the dust floor.** Set it at the rounding floor or above: 194 units at 50 bps on this
+  pool. Every balance above it that the scan tried then lands, and a smaller one fails at
+  `worthSelling` instead of inside the route.
 - **Cost.** The whole transaction took 71,200 CU and 700 bytes, about 7,000 CU and 52 bytes more
   than Jupiter's own. Here Jupiter's compute budget set the limit to 1,400,000 CU. A client that
   sets a tighter limit from a simulation of Jupiter's own transaction needs to add the run's cost.

@@ -2507,9 +2507,9 @@ mod tests {
         let program = ProgramView::parse(&bytes).unwrap();
         let mut scratch = Scratch::new(&program);
         let mut registers = vec![U64(7)];
-        // 39 is unassigned, and FOREACH reaches the executor only from inside a loop body. The
-        // runtime extensions assign opcodes up to 74, so 75 and 0xfe stay free.
-        for opcode in [0, 39, OP_FOREACH, 75, 0xfe] {
+        // 39 is unassigned, and so is every number from 75 up, which no runtime extension takes.
+        // FOREACH and REPEAT reach the executor only from inside a loop body.
+        for opcode in [0, 39, OP_FOREACH, OP_REPEAT, 75, 0xfe, u8::MAX] {
             for dst in [0, 9] {
                 assert_eq!(
                     execute_instruction(

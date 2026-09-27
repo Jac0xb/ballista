@@ -235,9 +235,10 @@ pub fn runtime_type(value: RuntimeValue<'_>) -> Option<u8> {
     }
 }
 
-/// Whether an accepted instruction writes its destination register.
+/// Whether an accepted instruction writes its destination register. A loop opcode writes nothing
+/// itself; the instructions in its body do.
 pub fn writes_destination(opcode: u8) -> bool {
-    !matches!(opcode, OP_REQUIRE | OP_INVOKE | OP_FOREACH)
+    !matches!(opcode, OP_REQUIRE | OP_INVOKE | OP_FOREACH | OP_REPEAT)
 }
 
 /// The constants above are derived from `ProgramBuilder`; these tests keep them honest and print

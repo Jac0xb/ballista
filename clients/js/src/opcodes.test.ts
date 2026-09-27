@@ -81,6 +81,7 @@ const rustName: Record<keyof typeof opcode, string> = {
   bitXor: 'OP_BIT_XOR',
   powerOfTen: 'OP_POW10',
   readI32: 'OP_READ_I32',
+  repeat: 'OP_REPEAT',
 };
 
 test('every opcode has the same number in Rust and TypeScript', () => {

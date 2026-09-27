@@ -27,3 +27,4 @@ TooManyCpiAccounts
 InvalidReturnData
 InvalidMinIterations
 TooManyAccountGroups
+InvalidLoop

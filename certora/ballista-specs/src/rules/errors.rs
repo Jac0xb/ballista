@@ -46,6 +46,8 @@ pub fn rule_runtime_error_codes_carry_context_and_stay_in_range() {
         BallistaError::MissingReturnData,
         BallistaError::ReturnDataMismatch,
         BallistaError::AccountConstraintFailed,
+        BallistaError::CpiAccountLimitExceeded,
+        BallistaError::LoopCountExceeded,
     );
     let context: u16 = nondet();
     let ProgramError::Custom(code) = vm_error(kind, context) else {
@@ -95,7 +97,8 @@ pub fn rule_verifier_error_codes_are_distinct_and_in_range() {
         25 => TemplateError::TooManyCpiAccounts(nondet()),
         26 => TemplateError::InvalidReturnData(nondet()),
         27 => TemplateError::InvalidMinIterations,
-        _ => TemplateError::TooManyAccountGroups,
+        28 => TemplateError::TooManyAccountGroups,
+        _ => TemplateError::InvalidLoop(nondet()),
     };
     let (code, _) = error.code();
     cvlr_assert!(code == VERIFIER_ERROR_BASE + index as u32);

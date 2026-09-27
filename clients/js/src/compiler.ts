@@ -105,6 +105,7 @@ export const opcode = {
   bitXor: 58,
   powerOfTen: 59,
   readI32: 60,
+  repeat: 61,
 } as const;
 
 /** The conjuncts of a requirement: `and(and(a, b), c)` is three separate assertions. */

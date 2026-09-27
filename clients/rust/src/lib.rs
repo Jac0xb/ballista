@@ -311,8 +311,10 @@ mod tests {
         assert_eq!(verifier.source, ErrorSource::Verifier);
         assert_eq!(decode_ballista_error(6021).unwrap().name, "CpiAccountLimitExceeded");
         assert_eq!(decode_ballista_error(6128).unwrap().name, "TooManyAccountGroups");
+        assert_eq!(decode_ballista_error(6022).unwrap().name, "LoopCountExceeded");
+        assert_eq!(decode_ballista_error(6129).unwrap().name, "InvalidLoop");
         assert!(decode_ballista_error(1).is_none());
-        assert!(decode_ballista_error(6022).is_none());
-        assert!(decode_ballista_error(6129).is_none());
+        assert!(decode_ballista_error(6023).is_none());
+        assert!(decode_ballista_error(6130).is_none());
     }
 }

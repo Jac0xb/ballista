@@ -22,6 +22,8 @@ pub const MAX_ROW_INPUTS: usize = 8;
 pub const MAX_INPUT_VALUES: usize = 256;
 /// Caller-sized account groups a template may declare and forward to CPIs.
 pub const MAX_ACCOUNT_GROUPS: usize = 8;
+/// Top-level loops a template may hold. They run one after another and never nest.
+pub const MAX_LOOPS: usize = 8;
 pub const MAX_PDA_SEEDS: usize = 15;
 pub const MAX_PDA_SEED_LEN: usize = 32;
 /// Maximum bytes of CPI return data the runtime exposes.
@@ -47,7 +49,7 @@ pub const VERIFIER_ERROR_BASE: u32 = 6_100;
 
 /// Runtime error names in code order, starting at [`RUNTIME_ERROR_BASE`]. The program's error
 /// enum and the SDKs are checked against this table.
-pub const RUNTIME_ERROR_NAMES: [&str; 22] = [
+pub const RUNTIME_ERROR_NAMES: [&str; 23] = [
     "InvalidInstructionData",
     "InvalidTemplateAccount",
     "InvalidTemplateProgram",
@@ -70,6 +72,7 @@ pub const RUNTIME_ERROR_NAMES: [&str; 22] = [
     "ReturnDataMismatch",
     "AccountConstraintFailed",
     "CpiAccountLimitExceeded",
+    "LoopCountExceeded",
 ];
 
 pub const ACCOUNT_SIGNER: u8 = 1 << 0;
@@ -157,6 +160,10 @@ pub const OP_BIT_XOR: u8 = 58;
 pub const OP_POW10: u8 = 59;
 /// A four-byte signed read, sign-extended into an `i64` register.
 pub const OP_READ_I32: u8 = 60;
+/// A loop that runs its body a counted number of times: `a` is the body length, `b` the `u64`
+/// register holding the count, read once when the loop starts, `c` the static maximum, and the
+/// immediate the carry mask, as for [`OP_FOREACH`]. A count above `c` fails the run.
+pub const OP_REPEAT: u8 = 61;
 
 pub const DATA_LITERAL: u8 = 0;
 pub const DATA_REG_U8: u8 = 1;
@@ -646,6 +653,9 @@ pub enum TemplateError {
     InvalidMinIterations,
     /// The header declares more than `MAX_ACCOUNT_GROUPS` account groups.
     TooManyAccountGroups,
+    /// A `REPEAT` with an empty body or a zero maximum, or inside another loop; a loop past
+    /// `MAX_LOOPS`; or a row account or row input named inside a `REPEAT` body.
+    InvalidLoop(usize),
 }
 
 impl TemplateError {
@@ -685,6 +695,7 @@ impl TemplateError {
             TemplateError::InvalidReturnData(index) => (26, clamp(index)),
             TemplateError::InvalidMinIterations => (27, 0),
             TemplateError::TooManyAccountGroups => (28, 0),
+            TemplateError::InvalidLoop(index) => (29, clamp(index)),
         };
         (VERIFIER_ERROR_BASE + index, context)
     }
@@ -692,7 +703,7 @@ impl TemplateError {
 
 /// Verifier error names in code order, shared with the SDK through
 /// `fixtures/verifier-error-names.txt`.
-pub const VERIFIER_ERROR_NAMES: [&str; 29] = [
+pub const VERIFIER_ERROR_NAMES: [&str; 30] = [
     "Truncated",
     "PayloadTooLarge",
     "InvalidMagic",
@@ -722,6 +733,7 @@ pub const VERIFIER_ERROR_NAMES: [&str; 29] = [
     "InvalidReturnData",
     "InvalidMinIterations",
     "TooManyAccountGroups",
+    "InvalidLoop",
 ];
 
 /// Packs an error kind and a 16-bit context into one custom program error code.
@@ -828,13 +840,15 @@ mod tests {
             TemplateError::TooManyCpiAccounts(13),
             TemplateError::InvalidReturnData(14),
             TemplateError::InvalidMinIterations,
+            TemplateError::TooManyAccountGroups,
+            TemplateError::InvalidLoop(15),
         ];
         let mut codes: Vec<u32> = variants.iter().map(|error| error.code().0).collect();
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(codes.len(), variants.len());
         assert_eq!(codes[0], VERIFIER_ERROR_BASE);
-        assert_eq!(*codes.last().unwrap(), VERIFIER_ERROR_BASE + 27);
+        assert_eq!(*codes.last().unwrap(), VERIFIER_ERROR_BASE + 29);
         for variant in &variants {
             let (code, _) = variant.code();
             let name = format!("{variant:?}");
@@ -850,5 +864,6 @@ mod tests {
         assert_eq!(context, u16::MAX, "oversized contexts clamp");
         assert_eq!(decode_error(encode_error(kind, context)), (kind, context));
         assert_eq!(TemplateError::InvalidCpi(6).code(), (VERIFIER_ERROR_BASE + 15, 6));
+        assert_eq!(TemplateError::InvalidLoop(4).code(), (VERIFIER_ERROR_BASE + 29, 4));
     }
 }

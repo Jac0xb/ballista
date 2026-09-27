@@ -49,10 +49,12 @@ describe('error decoding', () => {
     expect(decodeBallistaError(6128)).toMatchObject({ name: 'TooManyAccountGroups' });
     expect(decodeBallistaError(6001)).toMatchObject({ name: 'InvalidTemplateAccount' });
     expect(decodeBallistaError((65 << 16) | 6021)).toMatchObject({ name: 'CpiAccountLimitExceeded', context: 65 });
+    expect(decodeBallistaError((4 << 16) | 6022)).toMatchObject({ name: 'LoopCountExceeded', context: 4, source: 'runtime' });
+    expect(decodeBallistaError((2 << 16) | 6129)).toMatchObject({ name: 'InvalidLoop', context: 2, source: 'verifier' });
     expect(decodeBallistaError(1)).toBeUndefined();
-    expect(decodeBallistaError(6022)).toBeUndefined();
+    expect(decodeBallistaError(6023)).toBeUndefined();
     expect(decodeBallistaError(6099)).toBeUndefined();
-    expect(decodeBallistaError(6129)).toBeUndefined();
+    expect(decodeBallistaError(6130)).toBeUndefined();
     expect(decodeBallistaError(-1)).toBeUndefined();
   });
 

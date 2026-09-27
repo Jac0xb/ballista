@@ -53,6 +53,9 @@ pub enum BallistaError {
     AccountConstraintFailed,
     #[error("CPI accounts including the forwarded group exceed the limit")]
     CpiAccountLimitExceeded,
+    /// A `REPEAT` count above the loop's static maximum; the context is the program counter.
+    #[error("loop count exceeds its maximum")]
+    LoopCountExceeded,
 }
 
 pub use ballista_common::template::RUNTIME_ERROR_NAMES;
@@ -111,6 +114,7 @@ mod tests {
             BallistaError::ReturnDataMismatch,
             BallistaError::AccountConstraintFailed,
             BallistaError::CpiAccountLimitExceeded,
+            BallistaError::LoopCountExceeded,
         ];
         for (index, variant) in variants.iter().enumerate() {
             assert_eq!(variant.code(), 6000 + index as u32, "{variant:?}");

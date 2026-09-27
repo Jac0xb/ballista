@@ -20,3 +20,4 @@ MissingReturnData
 ReturnDataMismatch
 AccountConstraintFailed
 CpiAccountLimitExceeded
+LoopCountExceeded

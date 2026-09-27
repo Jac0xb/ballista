@@ -286,6 +286,7 @@ describe('the token sweep', () => {
  */
 const kaminoCalls: [string, Template, { discriminator: Uint8Array; declared: number; amount: Expression }][] = [
   ['jupiterDepositExactOutput', jupiterDepositExactOutput, { discriminator: KAMINO_DEPOSIT, declared: 14, amount: { kind: 'variable', name: 'received' } }],
+  ['kaminoRepaySwapOutput', kaminoRepaySwapOutput, { discriminator: KAMINO_REPAY, declared: 9, amount: { kind: 'variable', name: 'swapped' } }],
 ];
 const kaminoDeposits: Template[] = [jupiterDepositExactOutput];
 
@@ -323,15 +324,6 @@ describe('the Drift settle', () => {
     // `withdraw(market_index: u16, amount: u64, reduce_only: bool)`: the flag is the last part.
     const reduceOnly = withdraw!.data.at(-1);
     expect(reduceOnly?.kind === 'literal' ? [...reduceOnly.bytes] : []).toEqual([...BORSH_TRUE]);
-  });
-});
-
-describe('the Kamino repay', () => {
-  test('repays exactly what the swap produced', () => {
-    const [repay] = invokesOf(kaminoRepaySwapOutput, 'kamino').filter(
-      (call) => call.data[0]?.kind === 'literal' && [...call.data[0].bytes].join() === [...KAMINO_REPAY].join(),
-    );
-    expect(repay?.data[1]).toEqual({ kind: 'encoded', encoding: 'u64', value: { kind: 'variable', name: 'swapped' } });
   });
 });
 

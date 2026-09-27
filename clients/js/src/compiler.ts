@@ -95,6 +95,16 @@ export const opcode = {
   returnData: 48,
   move: 49,
   createPda: 50,
+  mulDiv: 51,
+  mulDivCeil: 52,
+  remainder: 53,
+  shiftLeft: 54,
+  shiftRight: 55,
+  bitAnd: 56,
+  bitOr: 57,
+  bitXor: 58,
+  powerOfTen: 59,
+  readI32: 60,
 } as const;
 
 /** The conjuncts of a requirement: `and(and(a, b), c)` is three separate assertions. */
@@ -152,6 +162,7 @@ const readOpcode: Record<ReadType, number> = {
   u8: opcode.readU8,
   u16: opcode.readU16,
   u32: opcode.readU32,
+  i32: opcode.readI32,
   u64: opcode.readU64,
   i64: opcode.readI64,
   u128: opcode.readU128,
@@ -163,6 +174,7 @@ const readWidth: Record<ReadType, number> = {
   u8: 1,
   u16: 2,
   u32: 4,
+  i32: 4,
   u64: 8,
   i64: 8,
   u128: 16,
@@ -174,6 +186,7 @@ const readResultType: Record<ReadType, ValueType> = {
   u8: 'u64',
   u16: 'u64',
   u32: 'u64',
+  i32: 'i64',
   u64: 'u64',
   i64: 'i64',
   u128: 'u128',
@@ -741,6 +754,21 @@ class Compiler {
       requireType(value, 'bool', 'not');
       return this.emit(opcode.not, 'bool', 0, value.register);
     }
+    if (current.kind === 'multiplyDivide') {
+      const left = this.compileExpression(current.left, inLoop, bindings);
+      const right = this.compileExpression(current.right, inLoop, bindings);
+      const divisor = this.compileExpression(current.divisor, inLoop, bindings);
+      if (left.type !== right.type || left.type !== divisor.type || !isUnsigned(left.type)) {
+        throw new TypeError('multiplyDivide requires three u64 or three u128 operands');
+      }
+      const operation = current.rounding === 'up' ? opcode.mulDivCeil : opcode.mulDiv;
+      return this.emit(operation, left.type, 0, left.register, right.register, divisor.register);
+    }
+    if (current.kind === 'powerOfTen') {
+      const exponent = this.compileExpression(current.exponent, inLoop, bindings);
+      requireType(exponent, 'u64', 'powerOfTen');
+      return this.emit(opcode.powerOfTen, 'u128', 0, exponent.register);
+    }
     if (current.kind === 'cast') {
       const value = this.compileExpression(current.value, inLoop, bindings);
       if (!isNumeric(value.type)) throw new TypeError('cast requires a numeric expression');
@@ -759,7 +787,20 @@ class Compiler {
     const left = this.compileExpression(current.left, inLoop, bindings);
     const right = this.compileExpression(current.right, inLoop, bindings);
     const operation = opcode[current.op];
-    if (['add', 'subtract', 'multiply', 'divide', 'min', 'max'].includes(current.op)) {
+    if (current.op === 'shiftLeft' || current.op === 'shiftRight') {
+      if (!isUnsigned(left.type)) {
+        throw new TypeError(`${current.op} requires a u64 or u128 value`);
+      }
+      requireType(right, 'u64', `${current.op} amount`);
+      return this.emit(operation, left.type, 0, left.register, right.register);
+    }
+    if (current.op === 'bitAnd' || current.op === 'bitOr' || current.op === 'bitXor') {
+      if (left.type !== right.type || !isUnsigned(left.type)) {
+        throw new TypeError(`${current.op} requires matching u64 or u128 operands`);
+      }
+      return this.emit(operation, left.type, 0, left.register, right.register);
+    }
+    if (['add', 'subtract', 'multiply', 'divide', 'min', 'max', 'remainder'].includes(current.op)) {
       if (left.type !== right.type || !isNumeric(left.type)) throw new TypeError(`${current.op} requires matching numeric types`);
       return this.emit(operation, left.type, 0, left.register, right.register);
     }
@@ -945,6 +986,11 @@ function requireType(value: ExpressionResult, expected: ValueType, context: stri
 
 function isNumeric(type: ValueType): boolean {
   return type === 'u64' || type === 'i64' || type === 'u128';
+}
+
+/** The two types the bitwise, shift, and multiply-divide opcodes accept; `i64` is signed and excluded. */
+function isUnsigned(type: ValueType): boolean {
+  return type === 'u64' || type === 'u128';
 }
 
 function fixedValueLength(type: Exclude<ValueType, 'bytes'>): number {

@@ -572,16 +572,31 @@ mod tests {
     #[test]
     fn labels_name_the_step_each_pc_belongs_to() {
         let examples = examples();
+        // Program counters move whenever a template changes, so this checks the shape of the map
+        // rather than particular numbers: the fill check is the last step, one step spans several
+        // consecutive pcs, and the floor it compares against is computed immediately before it.
         let swap = &examples["jupiterOracleCheckedSwap"];
-        for pc in 40..=43 {
-            assert_eq!(swap.label_at(pc), Some("fillBeatTheOracle"));
-        }
-        assert_eq!(swap.label_at(39), Some("computeOracleFloor"));
+        let fill: Vec<u16> = swap
+            .labels
+            .iter()
+            .filter(|(_, label)| label.as_str() == "fillBeatTheOracle")
+            .map(|(pc, _)| *pc)
+            .collect();
+        assert!(fill.len() > 1, "a labelled step spans several pcs: {fill:?}");
+        assert!(fill.windows(2).all(|pair| pair[1] == pair[0] + 1), "{fill:?}");
+        assert_eq!(fill.last(), swap.labels.keys().max());
+        assert_eq!(swap.label_at(fill[0] - 1), Some("computeOracleFloor"));
         // Inputs and constants are loaded before the first step, unlabelled.
         assert_eq!(swap.label_at(0), None);
         let sweep = &examples["tokenSweepIntoSwap"];
-        assert_eq!(sweep.label_at(9), Some("worthSelling"));
-        assert_eq!(sweep.label_at(10), Some("worthSelling"));
+        let worth: Vec<u16> = sweep
+            .labels
+            .iter()
+            .filter(|(_, label)| label.as_str() == "worthSelling")
+            .map(|(pc, _)| *pc)
+            .collect();
+        assert!(worth.len() > 1, "{worth:?}");
+        assert!(worth.windows(2).all(|pair| pair[1] == pair[0] + 1), "{worth:?}");
     }
 
     fn names(names: &[&str]) -> Vec<String> {

@@ -15,11 +15,14 @@ import {
   ensureAssociatedTokenAccount,
   expression,
   inspectTemplate,
+  opcode,
   planTemplateUpload,
   resumeTemplateUpload,
   step,
   systemTransfer,
   type CompiledTemplate,
+  type Step,
+  type TemplateInput,
 } from './index.js';
 
 const address = (byte: number) => new Uint8Array(32).fill(byte);
@@ -849,3 +852,110 @@ function encodeAccount(compiled: ReturnType<typeof compileTemplate>, state: 0 | 
   output.set(compiled.bytes.slice(0, written), 80);
   return output;
 }
+
+/** Every 16-byte instruction record of a compiled payload. */
+function records(compiled: CompiledTemplate): Uint8Array[] {
+  return Array.from({ length: compiled.stats.instructions }, (_, pc) => {
+    const offset = instructionOffset(compiled, pc);
+    return compiled.bytes.slice(offset, offset + INSTRUCTION_LENGTH);
+  });
+}
+
+/** The minimum data length recorded for fixed account `index`: a u32 at byte 4 of its record. */
+function minDataLength(compiled: CompiledTemplate, index: number): number {
+  const view = new DataView(compiled.bytes.buffer, compiled.bytes.byteOffset);
+  return view.getUint32(HEADER_LENGTH + index * ACCOUNT_RECORD_LENGTH + 4, true);
+}
+
+describe('math expressions', () => {
+  const compileSteps = (inputs: TemplateInput['inputs'], steps: Step[]) =>
+    compileTemplate(defineTemplate({ inputs, accounts: {}, steps }));
+
+  test('multiplyDivide lowers to one three-operand record, rounding by opcode', () => {
+    const compiled = compileSteps(
+      { a: { type: 'u64' }, b: { type: 'u64' }, c: { type: 'u64' } },
+      [
+        step.let('down', expression.multiplyDivide(expression.input('a'), expression.input('b'), expression.input('c'))),
+        step.let('up', expression.multiplyDivide(expression.input('a'), expression.input('b'), expression.input('c'), 'up')),
+        step.require(expression.lessThanOrEqual(expression.variable('down'), expression.variable('up'))),
+      ],
+    );
+    const mulDivs = records(compiled).filter(
+      (record) => record[0] === opcode.mulDiv || record[0] === opcode.mulDivCeil,
+    );
+    expect(mulDivs.map((record) => record[0])).toEqual([opcode.mulDiv, opcode.mulDivCeil]);
+    // Operands a, b, c are the three hoisted input loads, registers 0 to 2.
+    expect([...mulDivs[0]!.slice(2, 5)]).toEqual([0, 1, 2]);
+  });
+
+  test('multiplyDivide rejects mixed or signed operands', () => {
+    expect(() =>
+      compileSteps({ a: { type: 'u64' }, b: { type: 'u128' } }, [
+        step.let('x', expression.multiplyDivide(expression.input('a'), expression.input('a'), expression.input('b'))),
+      ]),
+    ).toThrow(/multiplyDivide/);
+    expect(() =>
+      compileSteps({ a: { type: 'i64' } }, [
+        step.let('x', expression.multiplyDivide(expression.input('a'), expression.input('a'), expression.input('a'))),
+      ]),
+    ).toThrow(/multiplyDivide/);
+  });
+
+  test('shifts take an unsigned value and a u64 amount; bitwise ops need matching unsigned operands', () => {
+    expect(() =>
+      compileSteps({ a: { type: 'u128' }, n: { type: 'u64' } }, [
+        step.let('x', expression.shiftLeft(expression.input('a'), expression.input('n'))),
+        step.let('y', expression.shiftRight(expression.input('a'), expression.input('n'))),
+        step.let('z', expression.bitXor(expression.input('a'), expression.variable('x'))),
+      ]),
+    ).not.toThrow();
+    expect(() =>
+      compileSteps({ a: { type: 'i64' }, n: { type: 'u64' } }, [
+        step.let('x', expression.shiftLeft(expression.input('a'), expression.input('n'))),
+      ]),
+    ).toThrow(/shiftLeft/);
+    expect(() =>
+      compileSteps({ a: { type: 'u64' }, b: { type: 'u128' } }, [
+        step.let('x', expression.bitAnd(expression.input('a'), expression.input('b'))),
+      ]),
+    ).toThrow(/bitAnd/);
+  });
+
+  test('remainder works on every numeric type; powerOfTen takes a u64 and yields a u128', () => {
+    for (const type of ['u64', 'i64', 'u128'] as const) {
+      const compiled = compileSteps({ a: { type } }, [
+        step.let('r', expression.remainder(expression.input('a'), expression.input('a'))),
+      ]);
+      expect(records(compiled).some((record) => record[0] === opcode.remainder)).toBe(true);
+    }
+    expect(() =>
+      compileSteps({ a: { type: 'i64' }, e: { type: 'u64' } }, [
+        step.let('r', expression.remainder(expression.input('a'), expression.input('a'))),
+        step.require(expression.equal(expression.powerOfTen(expression.input('e')), expression.u128(1_000n))),
+      ]),
+    ).not.toThrow();
+    expect(() =>
+      compileSteps({ a: { type: 'u64' }, b: { type: 'i64' } }, [
+        step.let('x', expression.remainder(expression.input('a'), expression.input('b'))),
+      ]),
+    ).toThrow(/remainder/);
+    expect(() =>
+      compileSteps({ a: { type: 'u128' } }, [step.let('x', expression.powerOfTen(expression.input('a')))]),
+    ).toThrow(/powerOfTen/);
+  });
+
+  test('an i32 read is typed i64 and raises the data floor to cover its four bytes', () => {
+    const compiled = compileTemplate(
+      defineTemplate({
+        accounts: { feed: { owner: address(7) } },
+        steps: [
+          step.require(
+            expression.lessThan(expression.accountData(account.fixed('feed'), 89, 'i32'), expression.i64(0)),
+          ),
+        ],
+      }),
+    );
+    expect(records(compiled).some((record) => record[0] === opcode.readI32)).toBe(true);
+    expect(minDataLength(compiled, 0)).toBe(93);
+  });
+});

@@ -59,6 +59,12 @@ export const JITO_TIP_ACCOUNTS: readonly Address[] = [
 export const TOKEN_ACCOUNT_AMOUNT_OFFSET = 64;
 export const TOKEN_ACCOUNT_LENGTH = 165;
 
+/** SPL Token account: the mint is the first field. */
+export const TOKEN_ACCOUNT_MINT_OFFSET = 0;
+
+/** SPL Token `Mint`: `decimals` is the u8 at offset 44 of the 82-byte layout. */
+export const SPL_MINT = { length: 82, decimals: 44 } as const;
+
 /**
  * Pyth `PriceUpdateV2`.
  *

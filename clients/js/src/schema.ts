@@ -18,7 +18,7 @@ export const ValueTypeSchema = z.enum(['bool', 'u64', 'i64', 'u128', 'pubkey', '
 export type ValueType = z.infer<typeof ValueTypeSchema>;
 
 /** Widths a template can read from account data or return data. */
-export const ReadTypeSchema = z.enum(['bool', 'u8', 'u16', 'u32', 'u64', 'i64', 'u128', 'pubkey']);
+export const ReadTypeSchema = z.enum(['bool', 'u8', 'u16', 'u32', 'i32', 'u64', 'i64', 'u128', 'pubkey']);
 export type ReadType = z.infer<typeof ReadTypeSchema>;
 
 export const InputSchema = z.discriminatedUnion('type', [
@@ -121,10 +121,25 @@ export type Expression =
         | 'greaterThan'
         | 'greaterThanOrEqual'
         | 'and'
-        | 'or';
+        | 'or'
+        | 'remainder'
+        | 'shiftLeft'
+        | 'shiftRight'
+        | 'bitAnd'
+        | 'bitOr'
+        | 'bitXor';
       left: Expression;
       right: Expression;
     }
+  | {
+      /** `left × right ÷ divisor` with the product computed exactly. */
+      kind: 'multiplyDivide';
+      left: Expression;
+      right: Expression;
+      divisor: Expression;
+      rounding: 'down' | 'up';
+    }
+  | { kind: 'powerOfTen'; exponent: Expression }
   | { kind: 'not'; value: Expression }
   | { kind: 'select'; condition: Expression; ifTrue: Expression; ifFalse: Expression }
   | { kind: 'cast'; to: 'u64' | 'i64' | 'u128'; value: Expression };
@@ -185,11 +200,27 @@ export const ExpressionSchema: z.ZodType<Expression> = z.lazy(() =>
           'greaterThanOrEqual',
           'and',
           'or',
+          'remainder',
+          'shiftLeft',
+          'shiftRight',
+          'bitAnd',
+          'bitOr',
+          'bitXor',
         ]),
         left: ExpressionSchema,
         right: ExpressionSchema,
       })
       .strict(),
+    z
+      .object({
+        kind: z.literal('multiplyDivide'),
+        left: ExpressionSchema,
+        right: ExpressionSchema,
+        divisor: ExpressionSchema,
+        rounding: z.enum(['down', 'up']),
+      })
+      .strict(),
+    z.object({ kind: z.literal('powerOfTen'), exponent: ExpressionSchema }).strict(),
     z.object({ kind: z.literal('not'), value: ExpressionSchema }).strict(),
     z
       .object({
@@ -434,6 +465,19 @@ export const expression = {
   divide: binary('divide'),
   min: binary('min'),
   max: binary('max'),
+  remainder: binary('remainder'),
+  shiftLeft: binary('shiftLeft'),
+  shiftRight: binary('shiftRight'),
+  bitAnd: binary('bitAnd'),
+  bitOr: binary('bitOr'),
+  bitXor: binary('bitXor'),
+  multiplyDivide: (
+    left: Expression,
+    right: Expression,
+    divisor: Expression,
+    rounding: 'down' | 'up' = 'down',
+  ): Expression => ({ kind: 'multiplyDivide', left, right, divisor, rounding }),
+  powerOfTen: (exponent: Expression): Expression => ({ kind: 'powerOfTen', exponent }),
   equal: binary('equal'),
   notEqual: binary('notEqual'),
   lessThan: binary('lessThan'),

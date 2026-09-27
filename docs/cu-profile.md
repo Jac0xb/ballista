@@ -227,7 +227,7 @@ readings are compiled into the program.
 ## Whole runs, tracked over time
 
 `pnpm cu:bench` runs [mollusk-svm-bencher](https://docs.rs/mollusk-svm-bencher), the compute-unit
-bencher that comes with Mollusk, over nine fixed runs. It adds the results to
+bencher that comes with Mollusk, over ten fixed runs. It adds the results to
 `benches/compute_units.md`, with the change since the previous results. That file is committed, so
 any change to the program's compute cost shows up in review. The runs are defined in
 `tests/ballista/src/cases.rs`. The latest results:

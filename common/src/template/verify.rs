@@ -39,6 +39,12 @@ impl RegisterInfo {
     pub const fn is_numeric(self) -> bool {
         matches!(self.value_type, VALUE_U64 | VALUE_I64 | VALUE_U128)
     }
+
+    /// Whether this register holds one of the two types the bitwise, shift, and multiply-divide
+    /// opcodes accept: `i64` is signed and excluded.
+    pub const fn is_unsigned(self) -> bool {
+        matches!(self.value_type, VALUE_U64 | VALUE_U128)
+    }
 }
 
 impl ProgramView<'_> {
@@ -349,7 +355,7 @@ impl ProgramView<'_> {
                 self.write_register(registers, instruction.dst, scalar(VALUE_BOOL))?;
             }
             OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_U128
-            | OP_READ_PUBKEY | OP_READ_BOOL => {
+            | OP_READ_PUBKEY | OP_READ_BOOL | OP_READ_I32 => {
                 if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
                     self.require_account(instruction.a, in_loop)?;
                     self.require_type(registers, instruction.b, VALUE_U64)?;
@@ -359,26 +365,52 @@ impl ProgramView<'_> {
                 } else {
                     self.verify_read_bounds(instruction, instruction_index, in_loop)?;
                 }
-                let value_type = match instruction.opcode {
-                    OP_READ_I64 => VALUE_I64,
-                    OP_READ_U128 => VALUE_U128,
-                    OP_READ_PUBKEY => VALUE_PUBKEY,
-                    OP_READ_BOOL => VALUE_BOOL,
-                    _ => VALUE_U64,
-                };
-                self.write_register(registers, instruction.dst, scalar(value_type))?;
+                self.write_register(
+                    registers,
+                    instruction.dst,
+                    scalar(read_type(instruction.opcode)),
+                )?;
             }
             OP_CLOCK_SLOT => self.write_register(registers, instruction.dst, scalar(VALUE_U64))?,
             OP_CLOCK_TIMESTAMP => {
                 self.write_register(registers, instruction.dst, scalar(VALUE_I64))?
             }
-            OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_MIN | OP_MAX => {
+            OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_REM | OP_MIN | OP_MAX => {
                 let left = self.read_register(registers, instruction.a)?;
                 let right = self.read_register(registers, instruction.b)?;
                 if left != right || !left.is_numeric() {
                     return Err(TemplateError::TypeMismatch);
                 }
                 self.write_register(registers, instruction.dst, left)?;
+            }
+            OP_BIT_AND | OP_BIT_OR | OP_BIT_XOR => {
+                let left = self.read_register(registers, instruction.a)?;
+                let right = self.read_register(registers, instruction.b)?;
+                if left != right || !left.is_unsigned() {
+                    return Err(TemplateError::TypeMismatch);
+                }
+                self.write_register(registers, instruction.dst, left)?;
+            }
+            OP_SHL | OP_SHR => {
+                let value = self.read_register(registers, instruction.a)?;
+                self.require_type(registers, instruction.b, VALUE_U64)?;
+                if !value.is_unsigned() {
+                    return Err(TemplateError::TypeMismatch);
+                }
+                self.write_register(registers, instruction.dst, value)?;
+            }
+            OP_MUL_DIV | OP_MUL_DIV_CEIL => {
+                let a = self.read_register(registers, instruction.a)?;
+                let b = self.read_register(registers, instruction.b)?;
+                let c = self.read_register(registers, instruction.c)?;
+                if a != b || a != c || !a.is_unsigned() {
+                    return Err(TemplateError::TypeMismatch);
+                }
+                self.write_register(registers, instruction.dst, a)?;
+            }
+            OP_POW10 => {
+                self.require_type(registers, instruction.a, VALUE_U64)?;
+                self.write_register(registers, instruction.dst, scalar(VALUE_U128))?;
             }
             OP_EQ | OP_NE => {
                 let left = self.read_register(registers, instruction.a)?;
@@ -454,14 +486,7 @@ impl ProgramView<'_> {
                 {
                     return Err(TemplateError::InvalidReturnData(instruction_index));
                 }
-                let value_type = match instruction.a {
-                    OP_READ_I64 => VALUE_I64,
-                    OP_READ_U128 => VALUE_U128,
-                    OP_READ_PUBKEY => VALUE_PUBKEY,
-                    OP_READ_BOOL => VALUE_BOOL,
-                    _ => VALUE_U64,
-                };
-                self.write_register(registers, instruction.dst, scalar(value_type))?;
+                self.write_register(registers, instruction.dst, scalar(read_type(instruction.a)))?;
             }
             OP_DERIVE_PDA => {
                 self.verify_pda_seeds(instruction, instruction_index, in_loop, registers)?;
@@ -809,11 +834,25 @@ pub const fn read_width(opcode: u8) -> usize {
     match opcode {
         OP_READ_U8 | OP_READ_BOOL => 1,
         OP_READ_U16 => 2,
-        OP_READ_U32 => 4,
+        OP_READ_U32 | OP_READ_I32 => 4,
         OP_READ_U64 | OP_READ_I64 => 8,
         OP_READ_U128 => 16,
         OP_READ_PUBKEY => 32,
         _ => 0,
+    }
+}
+
+/// Register type produced by each `OP_READ_*` opcode; also the result type `OP_RETURN_DATA`
+/// selects when its width operand names one of them. Any other opcode falls back to `VALUE_U64`,
+/// so callers must first confirm the opcode is actually a read (or that `read_width` is nonzero),
+/// as both call sites do.
+pub const fn read_type(opcode: u8) -> u8 {
+    match opcode {
+        OP_READ_I64 | OP_READ_I32 => VALUE_I64,
+        OP_READ_U128 => VALUE_U128,
+        OP_READ_PUBKEY => VALUE_PUBKEY,
+        OP_READ_BOOL => VALUE_BOOL,
+        _ => VALUE_U64,
     }
 }
 
@@ -1008,6 +1047,25 @@ mod tests {
             (OP_REQUIRE, None, None, Err(TemplateError::RegisterNotInitialized(0))),
             (OP_LOAD_INPUT, None, None, Err(TemplateError::InvalidInstruction(0))),
             (OP_LOOP_INDEX, None, None, Err(TemplateError::InvalidInstruction(0))),
+            (OP_REM, Some(VALUE_U64), Some(VALUE_U64), Ok(())),
+            (OP_REM, Some(VALUE_I64), Some(VALUE_I64), Ok(())),
+            (OP_REM, Some(VALUE_U128), Some(VALUE_U128), Ok(())),
+            (OP_REM, Some(VALUE_U64), Some(VALUE_I64), Err(TemplateError::TypeMismatch)),
+            (OP_REM, Some(VALUE_BOOL), Some(VALUE_BOOL), Err(TemplateError::TypeMismatch)),
+            (OP_SHL, Some(VALUE_U64), Some(VALUE_U64), Ok(())),
+            (OP_SHR, Some(VALUE_U128), Some(VALUE_U64), Ok(())),
+            (OP_SHL, Some(VALUE_I64), Some(VALUE_U64), Err(TemplateError::TypeMismatch)),
+            (OP_SHR, Some(VALUE_U64), Some(VALUE_U128), Err(TemplateError::TypeMismatch)),
+            (OP_SHL, Some(VALUE_U64), None, Err(TemplateError::RegisterNotInitialized(1))),
+            (OP_BIT_AND, Some(VALUE_U64), Some(VALUE_U64), Ok(())),
+            (OP_BIT_OR, Some(VALUE_U128), Some(VALUE_U128), Ok(())),
+            (OP_BIT_XOR, Some(VALUE_I64), Some(VALUE_I64), Err(TemplateError::TypeMismatch)),
+            (OP_BIT_AND, Some(VALUE_U64), Some(VALUE_U128), Err(TemplateError::TypeMismatch)),
+            (OP_BIT_OR, Some(VALUE_BOOL), Some(VALUE_BOOL), Err(TemplateError::TypeMismatch)),
+            (OP_POW10, Some(VALUE_U64), None, Ok(())),
+            (OP_POW10, Some(VALUE_I64), None, Err(TemplateError::TypeMismatch)),
+            (OP_POW10, Some(VALUE_U128), None, Err(TemplateError::TypeMismatch)),
+            (OP_POW10, None, None, Err(TemplateError::RegisterNotInitialized(0))),
             (39, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
             (0xfe, Some(VALUE_U64), Some(VALUE_U64), Err(TemplateError::InvalidInstruction(2))),
         ];
@@ -1023,6 +1081,185 @@ mod tests {
             let result = verify_builder(&builder).map(|_| ());
             assert_eq!(&result, expected, "opcode {opcode} with a={a:?} b={b:?}");
         }
+    }
+
+    /// `(opcode, operand types for a/b/c, expected outcome)`, for
+    /// [`multiply_divide_takes_three_matching_unsigned_operands`].
+    type MulDivTypeCase = (u8, [Option<u8>; 3], Result<(), TemplateError>);
+
+    #[test]
+    fn multiply_divide_takes_three_matching_unsigned_operands() {
+        let cases: &[MulDivTypeCase] = &[
+            (OP_MUL_DIV, [Some(VALUE_U64); 3], Ok(())),
+            (OP_MUL_DIV_CEIL, [Some(VALUE_U128); 3], Ok(())),
+            (OP_MUL_DIV, [Some(VALUE_I64); 3], Err(TemplateError::TypeMismatch)),
+            (
+                OP_MUL_DIV,
+                [Some(VALUE_U64), Some(VALUE_U64), Some(VALUE_U128)],
+                Err(TemplateError::TypeMismatch),
+            ),
+            (
+                OP_MUL_DIV_CEIL,
+                [Some(VALUE_U128), Some(VALUE_U64), Some(VALUE_U128)],
+                Err(TemplateError::TypeMismatch),
+            ),
+            (
+                OP_MUL_DIV,
+                [Some(VALUE_U64), Some(VALUE_U64), None],
+                Err(TemplateError::RegisterNotInitialized(2)),
+            ),
+        ];
+        for (opcode, types, expected) in cases {
+            let mut builder = ProgramBuilder::new();
+            let a = typed_register(&mut builder, types[0]);
+            let b = typed_register(&mut builder, types[1]);
+            let c = typed_register(&mut builder, types[2]);
+            builder.op(*opcode, a, b, c, 0);
+            let outcome = verify_builder(&builder).map(|_| ());
+            assert_eq!(&outcome, expected, "opcode {opcode} with {types:?}");
+        }
+    }
+
+    #[test]
+    fn destination_types() {
+        // Every new math opcode pins its destination's type: a witness of that type must be
+        // accepted, and a witness of either other numeric type must be rejected.
+        let cases: &[(u8, [u8; 3], u8)] = &[
+            (OP_MUL_DIV, [VALUE_U64; 3], VALUE_U64),
+            (OP_MUL_DIV_CEIL, [VALUE_U128; 3], VALUE_U128),
+            (OP_REM, [VALUE_U64, VALUE_U64, VALUE_U64], VALUE_U64),
+            (OP_REM, [VALUE_I64, VALUE_I64, VALUE_U64], VALUE_I64),
+            (OP_SHL, [VALUE_U128, VALUE_U64, VALUE_U64], VALUE_U128),
+            (OP_SHR, [VALUE_U64, VALUE_U64, VALUE_U64], VALUE_U64),
+            (OP_BIT_AND, [VALUE_U64, VALUE_U64, VALUE_U64], VALUE_U64),
+            (OP_BIT_XOR, [VALUE_U128, VALUE_U128, VALUE_U64], VALUE_U128),
+            (OP_POW10, [VALUE_U64, VALUE_U64, VALUE_U64], VALUE_U128),
+        ];
+        for (opcode, types, expected) in cases {
+            for witness in [VALUE_U64, VALUE_I64, VALUE_U128] {
+                let mut builder = ProgramBuilder::new();
+                let a = typed_register(&mut builder, Some(types[0]));
+                let b = typed_register(&mut builder, Some(types[1]));
+                let c = typed_register(&mut builder, Some(types[2]));
+                let result = builder.op(*opcode, a, b, c, 0);
+                let other = typed_register(&mut builder, Some(witness));
+                builder.binary(OP_EQ, result, other);
+                let outcome = verify_builder(&builder).map(|_| ());
+                if witness == *expected {
+                    assert_eq!(outcome, Ok(()), "opcode {opcode} dst should be {expected}");
+                } else {
+                    assert_eq!(
+                        outcome,
+                        Err(TemplateError::TypeMismatch),
+                        "opcode {opcode} dst vs {witness}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn math_ops_reject_flags() {
+        // None of these are read opcodes, so the dynamic-offset flag is never theirs to claim.
+        for opcode in [
+            OP_MUL_DIV, OP_MUL_DIV_CEIL, OP_REM, OP_SHL, OP_SHR, OP_BIT_AND, OP_BIT_OR,
+            OP_BIT_XOR, OP_POW10,
+        ] {
+            let mut builder = ProgramBuilder::new();
+            let a = builder.const_u64(1);
+            let b = builder.const_u64(1);
+            let c = builder.const_u64(1);
+            builder.op(opcode, a, b, c, 0);
+            assert!(verify_builder(&builder).is_ok(), "opcode {opcode} unflagged");
+            builder.instructions_mut()[3].flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET;
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidFlags(3)),
+                "opcode {opcode}"
+            );
+        }
+    }
+
+    #[test]
+    fn i32_reads_are_typed_i64() {
+        // A fixed-offset i32 read is typed i64: it adds to an i64 and not to a u64.
+        let mut builder = ProgramBuilder::new();
+        let feed = builder.account(0, None, None, 8);
+        let exponent = builder.read(OP_READ_I32, feed, 4);
+        let one = builder.const_i64(1);
+        builder.binary(OP_ADD, exponent, one);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()));
+
+        let mut builder = ProgramBuilder::new();
+        let feed = builder.account(0, None, None, 8);
+        let exponent = builder.read(OP_READ_I32, feed, 4);
+        let one = builder.const_u64(1);
+        builder.binary(OP_ADD, exponent, one);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(TemplateError::TypeMismatch));
+
+        // The four bytes must fit the declared minimum data length, as for every fixed read.
+        let mut builder = ProgramBuilder::new();
+        let feed = builder.account(0, None, None, 8);
+        builder.read(OP_READ_I32, feed, 5);
+        assert!(matches!(verify_builder(&builder), Err(TemplateError::ReadOutOfBounds(_))));
+
+        // As a `RETURN_DATA` selector this opcode picks a four-byte width; that path's typing is
+        // checked by `return_data_i32_selector_is_i64`.
+        assert_eq!(read_width(OP_READ_I32), 4);
+    }
+
+    #[test]
+    fn dynamic_i32_read() {
+        // A dynamic-offset i32 read is typed i64 too, and still needs a u64 offset register and
+        // a zero immediate.
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 0);
+        let offset = builder.const_u64(4);
+        let value = builder.read_dynamic(OP_READ_I32, account, offset);
+        let one = builder.const_i64(1);
+        builder.binary(OP_ADD, value, one);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()));
+
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 0);
+        let offset = builder.const_i64(4);
+        builder.read_dynamic(OP_READ_I32, account, offset);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TypeMismatch));
+
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 0);
+        let offset = builder.const_u64(4);
+        builder.read_dynamic(OP_READ_I32, account, offset);
+        builder.instructions_mut()[1].immediate_le = 8u64.to_le_bytes();
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidFlags(1)));
+    }
+
+    #[test]
+    fn return_data_i32_selector_is_i64() {
+        for (witness, expected) in [
+            (VALUE_I64, Ok(())),
+            (VALUE_U64, Err(TemplateError::TypeMismatch)),
+        ] {
+            let mut builder = ProgramBuilder::new();
+            let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+            let cpi = builder.cpi(program, &[], &[]);
+            builder.invoke(cpi, None);
+            let value = builder.return_data(OP_READ_I32, MAX_RETURN_DATA_LEN as u64 - 4);
+            let other = typed_register(&mut builder, Some(witness));
+            builder.binary(OP_ADD, value, other);
+            assert_eq!(verify_builder(&builder).map(|_| ()), expected, "witness {witness}");
+        }
+
+        // The four bytes must still fit inside the return-data buffer, as for any width.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.invoke(cpi, None);
+        builder.return_data(OP_READ_I32, MAX_RETURN_DATA_LEN as u64 - 3);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidReturnData(1))
+        );
     }
 
     #[test]
@@ -1730,6 +1967,7 @@ mod tests {
             (OP_READ_I64, 8),
             (OP_READ_U128, 16),
             (OP_READ_PUBKEY, 32),
+            (OP_READ_I32, 4),
         ];
         for (opcode, width) in widths {
             let mut builder = ProgramBuilder::new();
@@ -1942,6 +2180,7 @@ mod tests {
             (OP_READ_I64, 8),
             (OP_READ_U128, 16),
             (OP_READ_PUBKEY, 32),
+            (OP_READ_I32, 4),
         ] {
             let mut builder = ProgramBuilder::new();
             let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
@@ -2181,7 +2420,7 @@ mod tests {
     /// Every compiler fixture must parse and verify; the TypeScript suite keeps the files current.
     #[test]
     fn every_shared_fixture_parses_and_verifies() {
-        let fixtures: [(&str, &str); 14] = [
+        let fixtures: [(&str, &str); 15] = [
             ("system-transfer", include_str!("../../../fixtures/system-transfer.hex")),
             ("batch-transfer-30", include_str!("../../../fixtures/batch-transfer-30.hex")),
             ("ensure-ata", include_str!("../../../fixtures/ensure-ata.hex")),
@@ -2202,6 +2441,7 @@ mod tests {
             ("pinned-mint-read", include_str!("../../../fixtures/pinned-mint-read.hex")),
             ("payroll-row-amounts", include_str!("../../../fixtures/payroll-row-amounts.hex")),
             ("group-forward-transfer", include_str!("../../../fixtures/group-forward-transfer.hex")),
+            ("math-ops", include_str!("../../../fixtures/math-ops.hex")),
         ];
         for (name, hex) in fixtures {
             let bytes = decode_hex(hex);

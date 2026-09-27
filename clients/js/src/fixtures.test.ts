@@ -298,6 +298,78 @@ export const fixtures: Record<string, () => Template> = {
       ],
     }),
 
+  'math-ops': () =>
+    defineTemplate({
+      inputs: {
+        amount: { type: 'u64' },
+        price: { type: 'u64' },
+        divisor: { type: 'u64' },
+        flags: { type: 'u64' },
+        exponent: { type: 'u64' },
+      },
+      accounts: { feed: { owner: TOKEN_PROGRAM_ADDRESS_BYTES } },
+      steps: [
+        // 1,000,003 × 7 = 7,000,021, and ÷ 3 is 2,333,340⅓.
+        step.require(
+          expression.equal(
+            expression.multiplyDivide(expression.input('amount'), expression.input('price'), expression.input('divisor')),
+            expression.u64(2_333_340),
+          ),
+          'floor',
+        ),
+        step.require(
+          expression.equal(
+            expression.multiplyDivide(expression.input('amount'), expression.input('price'), expression.input('divisor'), 'up'),
+            expression.u64(2_333_341),
+          ),
+          'ceiling',
+        ),
+        // (2^100 + 1)^2 ÷ 2^90 needs the 256-bit path.
+        step.require(
+          expression.equal(
+            expression.multiplyDivide(
+              expression.u128((1n << 100n) + 1n),
+              expression.u128((1n << 100n) + 1n),
+              expression.u128(1n << 90n),
+            ),
+            expression.u128((1n << 110n) + 2048n),
+          ),
+          'wideFloor',
+        ),
+        step.require(
+          expression.equal(expression.remainder(expression.input('amount'), expression.input('divisor')), expression.u64(1)),
+          'remainder',
+        ),
+        step.require(
+          expression.equal(
+            expression.shiftRight(expression.bitAnd(expression.input('flags'), expression.u64(0xff00)), expression.u64(8)),
+            expression.u64(0xab),
+          ),
+          'highByte',
+        ),
+        step.require(
+          expression.equal(expression.shiftLeft(expression.u64(1), expression.u64(63)), expression.u64(1n << 63n)),
+          'topBit',
+        ),
+        step.require(
+          expression.equal(
+            expression.bitOr(expression.bitXor(expression.input('flags'), expression.u64(0xffff)), expression.u64(0x000f)),
+            expression.u64(0x543f),
+          ),
+          'xorThenOr',
+        ),
+        step.require(
+          expression.equal(expression.powerOfTen(expression.input('exponent')), expression.u128(10n ** 18n)),
+          'powerOfTen',
+        ),
+        // The feed's amount is 0xfffffff8, whose low four bytes are the i32 −8.
+        step.require(
+          expression.equal(expression.accountData(account.fixed('feed'), 64, 'i32'), expression.i64(-8)),
+          'signedRead',
+        ),
+      ],
+    }),
+
   'return-data': () =>
     defineTemplate({
       accounts: {

@@ -10,6 +10,7 @@ use pinocchio::{
 };
 use solana_address::Address;
 
+use super::math;
 use crate::error::{vm_error, BallistaError};
 use crate::utils::pda;
 
@@ -34,7 +35,10 @@ pub enum RuntimeValue<'data> {
 ///
 /// VM failures carry their location into the custom error code so callers can tell which
 /// instruction or account failed. Failures returned by the runtime or by an invoked program pass
-/// through untouched so their codes are never confused with Ballista's.
+/// through unchanged, including custom codes that fall in Ballista's own range: Anchor programs
+/// number their errors from 6000 too (Orca, Jupiter, Kamino and marginfi among them), so a
+/// callee's 6001 is the same number as Ballista's `InvalidTemplateAccount`. A code on its own
+/// does not say which program raised it; the transaction logs show which program failed.
 #[derive(Debug, PartialEq, Eq)]
 pub enum RunError {
     /// A VM failure whose context (the program counter) is attached by the dispatch loop.
@@ -583,8 +587,8 @@ fn execute_root<'data>(
     dispatch(&mut machine)
 }
 
-/// The dispatch loop, for the whole program including the batch body. `execute_instruction` is
-/// inlined here, so an instruction costs a dispatch rather than a call. The FOREACH body runs in
+/// The dispatch loop, for the whole program including the batch body. `step` is inlined here, so
+/// an instruction costs a dispatch rather than a call. The FOREACH body runs in
 /// this same loop: reaching the end of the body hands over to `next_iteration`, which rewinds to
 /// the body's first instruction until every row has run, so a row costs no call and no frame.
 #[inline(never)]
@@ -618,15 +622,7 @@ fn dispatch<'data>(machine: &mut Machine<'_, 'data>) -> ProgramResult {
             rest = &instructions[start..end];
             continue;
         }
-        if let Err(error) = execute_instruction(
-            machine.program,
-            machine.inputs,
-            machine.accounts,
-            machine.registers,
-            machine.scratch,
-            instruction,
-            loop_context,
-        ) {
+        if let Err(error) = step(machine, instruction, loop_context) {
             return Err(error.at(index_of(instructions, instruction), instruction));
         }
         rest = tail;
@@ -758,6 +754,10 @@ fn finish_batch(machine: &mut Machine<'_, '_>) {
     machine.scratch.data_invariant = false;
 }
 
+/// Executes one instruction from its parts, for the unit tests and the formal specifications. The
+/// dispatch loop calls `step` directly. `iterations` is only read by the loop's own batch
+/// handling, never by `step`, so zero stands in for it here.
+#[cfg(any(test, feature = "spec-api"))]
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 pub fn execute_instruction<'data>(
@@ -769,6 +769,31 @@ pub fn execute_instruction<'data>(
     instruction: &InstructionRecord,
     loop_context: Option<(usize, usize)>,
 ) -> RunResult<()> {
+    let mut machine = Machine {
+        program,
+        inputs,
+        accounts,
+        registers,
+        scratch,
+        iterations: 0,
+    };
+    step(&mut machine, instruction, loop_context)
+}
+
+/// Executes one instruction; `dispatch` inlines it. It takes the whole `Machine` so that its call
+/// to `extended_instruction` can pass one pointer: the machine's fields, the instruction and the
+/// loop context came to nine words, too many for registers, and five went on the stack.
+#[inline(always)]
+fn step<'data>(
+    machine: &mut Machine<'_, 'data>,
+    instruction: &InstructionRecord,
+    loop_context: Option<(usize, usize)>,
+) -> RunResult<()> {
+    let program = machine.program;
+    let inputs = machine.inputs;
+    let accounts = machine.accounts;
+    let registers = &mut *machine.registers;
+    let scratch = &mut *machine.scratch;
     let dst = instruction.dst as usize;
     match instruction.opcode {
         OP_LOAD_INPUT => {
@@ -846,25 +871,12 @@ pub fn execute_instruction<'data>(
             let account = resolve(program, accounts, instruction.a, loop_context)?;
             set(registers, dst, RuntimeValue::Bool(account.is_data_empty()))?;
         }
+        // `OP_READ_I32` is left out of this arm on purpose and reaches `read_account` through `_`.
+        // A case of its own reshapes the comparison tree this match compiles to (see `_` below):
+        // it cost "run, sum 30 rows" 60 compute units, a template that never reads an i32.
         OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_U128
         | OP_READ_PUBKEY | OP_READ_BOOL => {
-            let account = resolve(program, accounts, instruction.a, loop_context)?;
-            let offset = if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
-                match registers.get(instruction.b as usize) {
-                    Some(RuntimeValue::U64(value)) => usize::try_from(*value)
-                        .map_err(|_| BallistaError::InvalidRuntimeAccount)?,
-                    Some(RuntimeValue::Unset) | None => {
-                        return Err(BallistaError::InvalidRegister.into())
-                    }
-                    Some(_) => return Err(BallistaError::TypeMismatch.into()),
-                }
-            } else {
-                instruction.immediate() as usize
-            };
-            let data = account.try_borrow()?;
-            decode_value(instruction.opcode, &data, offset, |value| {
-                set(registers, dst, value)
-            })?;
+            read_account(program, accounts, registers, instruction, loop_context)?
         }
         OP_CLOCK_SLOT => set(registers, dst, RuntimeValue::U64(Clock::get()?.slot))?,
         OP_CLOCK_TIMESTAMP => set(
@@ -956,9 +968,108 @@ pub fn execute_instruction<'data>(
                 scratch.executed |= 1u64 << slot;
             }
         }
-        _ => return Err(BallistaError::InvalidTemplateProgram.into()),
+        // Every opcode from `OP_MUL_DIV` up, and any the executor does not run. SBF has no
+        // indirect jump, so this match compiles to a tree of comparisons, and a case added here
+        // reshapes the tree for every other opcode. Keep this arm one unconditional call: LLVM
+        // folds a guard or an `if` on the opcode back into the match as a case of its own, and
+        // that measured exactly as badly as giving the math opcodes an arm. Add new opcodes
+        // inside `extended_instruction`, never as an arm here. The commits "Keep the math opcodes
+        // out of the dispatch loop's way" and "Route new opcodes through a thin out-of-line
+        // helper" measure the alternatives; `fixtures/cu-ceilings.json` and
+        // `fixtures/example-ceilings.json` hold the line.
+        _ => extended_instruction(machine, instruction, loop_context)?,
     }
     Ok(())
+}
+
+/// Runs every opcode from `OP_MUL_DIV` up out of line; any other opcode it sees is one the executor
+/// does not run, and fails. As arms of the dispatch loop, the math opcodes cost every run compute
+/// units whether it used them or not; behind this call they cost only the templates that use them.
+///
+/// It returns `RunResult<()>` and writes the destination register itself. Returning the value
+/// instead would give the dispatch loop a return slot of its own for this call, and LLVM hoists
+/// such a slot's address to the loop's entry, where every run pays for it: that is how
+/// `#[inline(never)]` on `math::integer` and `math::pow10` cost 12 more units per run. Each arm
+/// also stores its own result: a value merged from the arms into one store after the match is
+/// written piecewise, which cost each opcode 4 to 18 units.
+#[inline(never)]
+fn extended_instruction<'data>(
+    machine: &mut Machine<'_, 'data>,
+    instruction: &InstructionRecord,
+    loop_context: Option<(usize, usize)>,
+) -> RunResult<()> {
+    let registers = &mut *machine.registers;
+    let dst = instruction.dst as usize;
+    match instruction.opcode {
+        OP_MUL_DIV | OP_MUL_DIV_CEIL => mul_div_instruction(registers, instruction),
+        OP_POW10 => {
+            let exponent = operand(registers, instruction.a)?;
+            let value =
+                math::pow10(*exponent).map_err(|error| unset_first(error, exponent, exponent))?;
+            set(registers, dst, value)
+        }
+        OP_REM | OP_SHL | OP_SHR | OP_BIT_AND | OP_BIT_OR | OP_BIT_XOR => {
+            let left = operand(registers, instruction.a)?;
+            let right = operand(registers, instruction.b)?;
+            let value = math::integer(instruction.opcode, *left, *right)
+                .map_err(|error| unset_first(error, left, right))?;
+            set(registers, dst, value)
+        }
+        OP_READ_I32 => read_account(
+            machine.program,
+            machine.accounts,
+            registers,
+            instruction,
+            loop_context,
+        ),
+        _ => Err(BallistaError::InvalidTemplateProgram.into()),
+    }
+}
+
+/// `MUL_DIV` and `MUL_DIV_CEIL`, out of line from `extended_instruction`. Inside it, their three
+/// operands and the call to `math::mul_div` nearly doubled the helper's stack use, 160 bytes to
+/// 312, and each multiply-divide cost about 25 units more than it does from here.
+#[inline(never)]
+fn mul_div_instruction<'data>(
+    registers: &mut [RuntimeValue<'data>],
+    instruction: &InstructionRecord,
+) -> RunResult<()> {
+    let a = operand(registers, instruction.a)?;
+    let b = operand(registers, instruction.b)?;
+    let c = operand(registers, instruction.c)?;
+    // `c` fills both slots: `unset_first` only needs to know whether it is `Unset`.
+    let value = math::mul_div(instruction.opcode == OP_MUL_DIV_CEIL, *a, *b, *c)
+        .map_err(|error| unset_first(unset_first(error, a, b), c, c))?;
+    set(registers, instruction.dst as usize, value)
+}
+
+/// Reads a typed value from an account's data into the destination register, for the read arm of
+/// the dispatch loop and for `READ_I32` in `extended_instruction`. Inlined into both: out of line,
+/// it would add a call to every read in every template.
+#[inline(always)]
+fn read_account<'data>(
+    program: &ProgramView<'data>,
+    accounts: &'data [AccountView],
+    registers: &mut [RuntimeValue<'data>],
+    instruction: &InstructionRecord,
+    loop_context: Option<(usize, usize)>,
+) -> RunResult<()> {
+    let account = resolve(program, accounts, instruction.a, loop_context)?;
+    let offset = if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
+        match registers.get(instruction.b as usize) {
+            Some(RuntimeValue::U64(value)) => {
+                usize::try_from(*value).map_err(|_| BallistaError::InvalidRuntimeAccount)?
+            }
+            Some(RuntimeValue::Unset) | None => return Err(BallistaError::InvalidRegister.into()),
+            Some(_) => return Err(BallistaError::TypeMismatch.into()),
+        }
+    } else {
+        instruction.immediate() as usize
+    };
+    let data = account.try_borrow()?;
+    decode_value(instruction.opcode, &data, offset, |value| {
+        set(registers, instruction.dst as usize, value)
+    })
 }
 
 /// Derives the address a `DERIVE_PDA` or `CREATE_PDA` names. Out of line: its seed buffers are
@@ -1117,6 +1228,9 @@ fn decode_value<'data, T>(
         )),
         OP_READ_U64 => sink(RuntimeValue::U64(u64::from_le_bytes(*read_array(data, offset)?))),
         OP_READ_I64 => sink(RuntimeValue::I64(i64::from_le_bytes(*read_array(data, offset)?))),
+        OP_READ_I32 => sink(RuntimeValue::I64(
+            i32::from_le_bytes(*read_array(data, offset)?) as i64,
+        )),
         OP_READ_U128 => sink(RuntimeValue::U128(*read_array(data, offset)?)),
         OP_READ_PUBKEY => sink(RuntimeValue::Pubkey(*read_array(data, offset)?)),
         OP_READ_BOOL => match read_array::<1>(data, offset)?[0] {
@@ -2345,13 +2459,23 @@ mod tests {
         };
         let invalid = Err(err(BallistaError::InvalidRegister));
         let mismatch = Err(err(BallistaError::TypeMismatch));
-        for opcode in [OP_ADD, OP_EQ, OP_LT] {
+        for opcode in [
+            OP_ADD, OP_EQ, OP_LT, OP_REM, OP_SHL, OP_SHR, OP_BIT_AND, OP_BIT_OR, OP_BIT_XOR,
+        ] {
             assert_eq!(run(record(opcode, 1, 0, 1, NO_INDEX, 0, 0)), invalid, "unset left, {opcode}");
             assert_eq!(run(record(opcode, 1, 1, 0, NO_INDEX, 0, 0)), invalid, "unset right, {opcode}");
             assert_eq!(run(record(opcode, 1, 0, 2, NO_INDEX, 0, 0)), invalid, "unset beside a bool, {opcode}");
             assert_eq!(run(record(opcode, 1, 3, 0, NO_INDEX, 0, 0)), invalid, "a mismatched left does not win, {opcode}");
             assert_eq!(run(record(opcode, 1, 4, 1, NO_INDEX, 0, 0)), invalid, "out of range, {opcode}");
             assert_eq!(run(record(opcode, 1, 1, 3, NO_INDEX, 0, 0)), mismatch, "u64 against i64, {opcode}");
+        }
+        assert_eq!(run(record(OP_POW10, 1, 0, NO_INDEX, NO_INDEX, 0, 0)), invalid);
+        assert_eq!(run(record(OP_POW10, 1, 2, NO_INDEX, NO_INDEX, 0, 0)), mismatch);
+        for opcode in [OP_MUL_DIV, OP_MUL_DIV_CEIL] {
+            assert_eq!(run(record(opcode, 1, 0, 1, 1, 0, 0)), invalid, "unset a, {opcode}");
+            assert_eq!(run(record(opcode, 1, 1, 0, 1, 0, 0)), invalid, "unset b, {opcode}");
+            assert_eq!(run(record(opcode, 1, 1, 1, 0, 0, 0)), invalid, "unset c, {opcode}");
+            assert_eq!(run(record(opcode, 1, 1, 1, 3, 0, 0)), mismatch, "u64 against i64 in c, {opcode}");
         }
         assert_eq!(run(record(OP_CAST_U128, 1, 0, NO_INDEX, NO_INDEX, 0, 0)), invalid);
         assert_eq!(run(record(OP_CAST_U128, 1, 2, NO_INDEX, NO_INDEX, 0, 0)), mismatch);
@@ -2368,6 +2492,41 @@ mod tests {
         assert_eq!(run(record(OP_SELECT, 1, 2, 0, 1, 0, 0)), invalid, "the selected operand is unset");
         assert_eq!(run(record(OP_MOVE, 1, 0, NO_INDEX, NO_INDEX, 0, 0)), invalid);
         assert_eq!(registers[1], U64(7), "no failed instruction wrote its destination");
+    }
+
+    /// An opcode the executor does not run reaches `extended_instruction` through the fallback
+    /// arm, as every opcode from `OP_MUL_DIV` up does. It must still fail as an invalid program
+    /// before anything else is checked: an operand or destination out of range must not turn the
+    /// failure into `InvalidRegister`, and nothing may be written.
+    #[test]
+    fn opcodes_the_executor_does_not_run_fail_before_reading_operands() {
+        let mut builder = ProgramBuilder::new();
+        builder.register();
+        builder.const_bool(true);
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut scratch = Scratch::new(&program);
+        let mut registers = vec![U64(7)];
+        // 39 is unassigned, and FOREACH reaches the executor only from inside a loop body. The
+        // runtime extensions assign opcodes up to 74, so 75 and 0xfe stay free.
+        for opcode in [0, 39, OP_FOREACH, 75, 0xfe] {
+            for dst in [0, 9] {
+                assert_eq!(
+                    execute_instruction(
+                        &program,
+                        &[],
+                        &[],
+                        &mut registers,
+                        &mut scratch,
+                        &record(opcode, dst, 9, 9, 9, 0, 0),
+                        None,
+                    ),
+                    Err(err(BallistaError::InvalidTemplateProgram)),
+                    "opcode {opcode}, destination {dst}"
+                );
+            }
+        }
+        assert_eq!(registers[0], U64(7));
     }
 
     #[test]
@@ -2402,5 +2561,13 @@ mod tests {
             read_value(OP_ADD, &data, 0),
             Err(err(BallistaError::InvalidTemplateProgram))
         );
+    }
+
+    #[test]
+    fn i32_reads_sign_extend() {
+        let data = [0xf8, 0xff, 0xff, 0xff, 0x2a, 0x00, 0x00, 0x00];
+        assert_eq!(read_value(OP_READ_I32, &data, 0), Ok(RuntimeValue::I64(-8)));
+        assert_eq!(read_value(OP_READ_I32, &data, 4), Ok(RuntimeValue::I64(42)));
+        assert!(read_value(OP_READ_I32, &data, 5).is_err());
     }
 }

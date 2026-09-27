@@ -507,6 +507,256 @@
       }
     ]
   },
+  "math-ops": {
+    "hash": "1262ac9b880ae75a8c6b9dbcb6afda4b5b9cc01f3ab642acc54df166f365793c",
+    "stats": {
+      "payloadBytes": 948,
+      "fixedAccounts": 1,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 5,
+      "registers": 41,
+      "instructions": 50,
+      "cpis": 0,
+      "maxExpandedCpis": 0,
+      "maxCpiDataLength": 0,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "inputs.amount"
+      },
+      {
+        "pc": 1,
+        "path": "inputs.price"
+      },
+      {
+        "pc": 2,
+        "path": "inputs.divisor"
+      },
+      {
+        "pc": 3,
+        "path": "inputs.flags"
+      },
+      {
+        "pc": 4,
+        "path": "inputs.exponent"
+      },
+      {
+        "pc": 5,
+        "path": "constants[0]"
+      },
+      {
+        "pc": 6,
+        "path": "constants[1]"
+      },
+      {
+        "pc": 7,
+        "path": "constants[2]"
+      },
+      {
+        "pc": 8,
+        "path": "constants[3]"
+      },
+      {
+        "pc": 9,
+        "path": "constants[4]"
+      },
+      {
+        "pc": 10,
+        "path": "constants[5]"
+      },
+      {
+        "pc": 11,
+        "path": "constants[6]"
+      },
+      {
+        "pc": 12,
+        "path": "constants[7]"
+      },
+      {
+        "pc": 13,
+        "path": "constants[8]"
+      },
+      {
+        "pc": 14,
+        "path": "constants[9]"
+      },
+      {
+        "pc": 15,
+        "path": "constants[10]"
+      },
+      {
+        "pc": 16,
+        "path": "constants[11]"
+      },
+      {
+        "pc": 17,
+        "path": "constants[12]"
+      },
+      {
+        "pc": 18,
+        "path": "constants[13]"
+      },
+      {
+        "pc": 19,
+        "path": "constants[14]"
+      },
+      {
+        "pc": 20,
+        "path": "constants[15]"
+      },
+      {
+        "pc": 21,
+        "path": "steps[0]",
+        "label": "floor"
+      },
+      {
+        "pc": 22,
+        "path": "steps[0]",
+        "label": "floor"
+      },
+      {
+        "pc": 23,
+        "path": "steps[0]",
+        "label": "floor"
+      },
+      {
+        "pc": 24,
+        "path": "steps[1]",
+        "label": "ceiling"
+      },
+      {
+        "pc": 25,
+        "path": "steps[1]",
+        "label": "ceiling"
+      },
+      {
+        "pc": 26,
+        "path": "steps[1]",
+        "label": "ceiling"
+      },
+      {
+        "pc": 27,
+        "path": "steps[2]",
+        "label": "wideFloor"
+      },
+      {
+        "pc": 28,
+        "path": "steps[2]",
+        "label": "wideFloor"
+      },
+      {
+        "pc": 29,
+        "path": "steps[2]",
+        "label": "wideFloor"
+      },
+      {
+        "pc": 30,
+        "path": "steps[3]",
+        "label": "remainder"
+      },
+      {
+        "pc": 31,
+        "path": "steps[3]",
+        "label": "remainder"
+      },
+      {
+        "pc": 32,
+        "path": "steps[3]",
+        "label": "remainder"
+      },
+      {
+        "pc": 33,
+        "path": "steps[4]",
+        "label": "highByte"
+      },
+      {
+        "pc": 34,
+        "path": "steps[4]",
+        "label": "highByte"
+      },
+      {
+        "pc": 35,
+        "path": "steps[4]",
+        "label": "highByte"
+      },
+      {
+        "pc": 36,
+        "path": "steps[4]",
+        "label": "highByte"
+      },
+      {
+        "pc": 37,
+        "path": "steps[5]",
+        "label": "topBit"
+      },
+      {
+        "pc": 38,
+        "path": "steps[5]",
+        "label": "topBit"
+      },
+      {
+        "pc": 39,
+        "path": "steps[5]",
+        "label": "topBit"
+      },
+      {
+        "pc": 40,
+        "path": "steps[6]",
+        "label": "xorThenOr"
+      },
+      {
+        "pc": 41,
+        "path": "steps[6]",
+        "label": "xorThenOr"
+      },
+      {
+        "pc": 42,
+        "path": "steps[6]",
+        "label": "xorThenOr"
+      },
+      {
+        "pc": 43,
+        "path": "steps[6]",
+        "label": "xorThenOr"
+      },
+      {
+        "pc": 44,
+        "path": "steps[7]",
+        "label": "powerOfTen"
+      },
+      {
+        "pc": 45,
+        "path": "steps[7]",
+        "label": "powerOfTen"
+      },
+      {
+        "pc": 46,
+        "path": "steps[7]",
+        "label": "powerOfTen"
+      },
+      {
+        "pc": 47,
+        "path": "steps[8]",
+        "label": "signedRead"
+      },
+      {
+        "pc": 48,
+        "path": "steps[8]",
+        "label": "signedRead"
+      },
+      {
+        "pc": 49,
+        "path": "steps[8]",
+        "label": "signedRead"
+      }
+    ]
+  },
   "return-data": {
     "hash": "5bfabdb94fbbdd8990689415bfaf3cb223c655d88a96a49195968ca1cbb59808",
     "stats": {

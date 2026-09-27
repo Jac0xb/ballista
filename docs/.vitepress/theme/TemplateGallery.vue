@@ -581,11 +581,22 @@ watch(selected, async () => {
   if (codePanel.value) codePanel.value.scrollTop = 0;
   measure();
 });
+// On phones the drawing is cropped to its content and its labels set larger (see style.css), so
+// they stay readable; one label that would no longer fit its box is shortened.
+const narrow = ref(false);
+let narrowQuery: MediaQueryList | null = null;
+const onNarrow = () => (narrow.value = !!narrowQuery?.matches);
 onMounted(() => {
   measure();
   window.addEventListener('resize', measure);
+  narrowQuery = window.matchMedia('(max-width: 767px)');
+  onNarrow();
+  narrowQuery.addEventListener('change', onNarrow);
 });
-onBeforeUnmount(() => window.removeEventListener('resize', measure));
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', measure);
+  narrowQuery?.removeEventListener('change', onNarrow);
+});
 
 const tabs = ref<HTMLButtonElement[]>([]);
 function select(index: number) {
@@ -662,7 +673,7 @@ async function move(step: number) {
             </div>
           </div>
 
-          <svg class="flow-drawing" viewBox="0 0 480 340" role="img" :aria-label="`${current.name}. ${active.outcome}`">
+          <svg class="flow-drawing" :viewBox="narrow ? '24 12 432 316' : '0 0 480 340'" role="img" :aria-label="`${current.name}. ${active.outcome}`">
             <defs>
               <pattern id="gallery-grid" width="16" height="16" patternUnits="userSpaceOnUse"><circle cx="8" cy="8" r=".6" fill="#d4d4ca" /></pattern>
             </defs>
@@ -687,7 +698,7 @@ async function move(step: number) {
                 <text x="137" y="107" class="small-label">YES</text>
                 <rect x="40" y="199" width="144" height="39" />
                 <text x="112" y="216" text-anchor="middle">call Create</text>
-                <text x="112" y="231" text-anchor="middle" class="small-label">ASSOCIATED TOKEN PROGRAM</text>
+                <text x="112" y="231" text-anchor="middle" class="small-label">{{ narrow ? 'ATA PROGRAM' : 'ASSOCIATED TOKEN PROGRAM' }}</text>
                 <path d="M112 238v31h128" stroke="currentColor" fill="none" :stroke-dasharray="dash('left')" />
               </g>
               <g class="branch" :class="{ 'is-active': branch === 'right' }">

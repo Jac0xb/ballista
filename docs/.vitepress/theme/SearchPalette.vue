@@ -1,7 +1,9 @@
 <script setup lang="ts">
 // Replaces VitePress's local search box (see the alias in ../config.mts) and reads the same index.
 // Over the default it adds: synonyms (CU, PDA, CPI, …), a strict-then-loose query, results grouped
-// by page with a snippet of where the words matched, section filters, and recent searches.
+// by page with a snippet of where the words matched, section filters, recent searches, typo
+// tolerance with a "did you mean", and the combobox pattern (the input keeps focus and points at the
+// selected result with aria-activedescendant).
 import localSearchIndex from '@localSearchIndex';
 import MiniSearch, { type SearchResult } from 'minisearch';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
@@ -80,6 +82,17 @@ const SYNONYMS: Record<string, string[]> = {
   fail: ['error', 'require'],
   check: ['require', 'assert'],
   upload: ['finalize', 'template'],
+  audit: ['security', 'trust'],
+  safe: ['security', 'guardrails'],
+  safety: ['security', 'guardrails'],
+  trust: ['security'],
+  debug: ['inspect', 'failure', 'error'],
+  decode: ['inspect'],
+  inspect: ['decode'],
+  why: ['failure'],
+  term: ['glossary'],
+  terms: ['glossary'],
+  define: ['glossary'],
 };
 
 const tokenize = (text: string) => text.toLowerCase().split(/[^\p{L}\p{N}_]+/u).filter(Boolean);
@@ -89,22 +102,52 @@ function run(terms: string[], combineWith: 'AND' | 'OR') {
   return index.value.search(terms.join(' '), {
     combineWith,
     prefix: (term, position, all) => position === all.length - 1 || term.length > 3,
-    fuzzy: (term) => (term.length > 4 ? 0.2 : false),
+    // Long words tolerate two slips, so transposed letters ("comptue", "recieve") still match.
+    // A word already corrected is searched as spelled.
+    fuzzy: (term) => (corrected.has(term) ? false : term.length >= 6 ? 0.3 : term.length > 4 ? 0.2 : false),
     boost: { title: 5, titles: 2.5, text: 1 },
     tokenize,
   }) as Hit[];
 }
 
+/** Whether any indexed word starts with this one. */
+function known(term: string) {
+  return !!index.value && index.value.search(term, { prefix: true, fuzzy: false, tokenize }).length > 0;
+}
+const corrected = new Set<string>();
+/** A word the index has never seen, with two neighbouring letters swapped into one it has ("comptue"). */
+function correct(term: string) {
+  if (term.length < 4 || /\d/.test(term) || known(term)) return term;
+  for (let at = 0; at < term.length - 1; at++) {
+    const swapped = term.slice(0, at) + term[at + 1] + term[at] + term.slice(at + 2);
+    if (swapped !== term && known(swapped)) {
+      corrected.add(swapped);
+      return swapped;
+    }
+  }
+  return term;
+}
+const terms = computed(() => {
+  corrected.clear();
+  return index.value ? tokenize(query.value).map(correct) : [];
+});
+/** Set when a typo was corrected, so the palette can say what it searched for. */
+const correction = computed(() => {
+  const typed = tokenize(query.value).join(' ');
+  const used = terms.value.join(' ');
+  return used !== typed ? used : '';
+});
+
 const results = computed<Hit[]>(() => {
-  const terms = tokenize(query.value);
-  if (!terms.length || !index.value) return [];
+  const words = terms.value;
+  if (!words.length || !index.value) return [];
   const started = performance.now();
   // Every word first; if that finds little, any word, synonyms included, ranked below.
-  const strict = run(terms, 'AND');
+  const strict = run(words, 'AND');
   let hits = strict;
   if (strict.length < 6) {
     const seen = new Set(strict.map((hit) => hit.id));
-    const expanded = [...new Set(terms.flatMap((term) => [term, ...(SYNONYMS[term] ?? [])]))];
+    const expanded = [...new Set(words.flatMap((term) => [term, ...(SYNONYMS[term] ?? [])]))];
     const loose = run(expanded, 'OR').filter((hit) => !seen.has(hit.id)).map((hit) => ({ ...hit, score: hit.score * 0.4 }));
     hits = [...strict, ...loose];
   }
@@ -128,6 +171,39 @@ const groups = computed<Group[]>(() => {
   return [...byPage.values()].slice(0, 12);
 });
 const flat = computed(() => groups.value.flatMap((group) => group.hits));
+const hitId = (hit: Hit) => `search-hit-${flat.value.indexOf(hit)}`;
+
+/** Edit distance counting a swap of neighbouring letters as one edit. */
+function distance(a: string, b: string) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+    }
+  }
+  return d[a.length][b.length];
+}
+/** When nothing matches, the query with each unknown word replaced by the closest word the docs use. */
+const didYouMean = computed(() => {
+  const typed = tokenize(query.value);
+  if (!index.value || !typed.length || groups.value.length) return '';
+  const fixed = typed.map((term) => {
+    if (term.length < 3 || known(term)) return term;
+    const candidates = new Set(index.value!.autoSuggest(term, { fuzzy: 0.6, prefix: false, tokenize }).flatMap((item) => item.terms));
+    let best = term;
+    let bestDistance = Math.max(1, Math.floor(term.length / 3)) + 1;
+    for (const candidate of candidates) {
+      const d = distance(term, candidate);
+      if (d < bestDistance || (d === bestDistance && candidate.length < best.length)) [best, bestDistance] = [candidate, d];
+    }
+    return best;
+  });
+  const suggestion = fixed.join(' ');
+  return suggestion !== typed.join(' ') ? suggestion : '';
+});
 const counts = computed(() => {
   const all = results.value.length;
   return { all, pages: groups.value.length };
@@ -182,11 +258,12 @@ function remember(term: string) {
     // Recent searches are a convenience; the palette works without them.
   }
 }
-const suggestions = ['sweep a balance', 'PDA bump', 'compute units', 'loops', 'errors', 'account groups', 'limits'];
+const suggestions = ['sweep a balance', 'PDA bump', 'compute units', 'loops', 'failure modes', 'inspect a template', 'security', 'limits'];
 const startHere = [
   { title: 'Getting started', path: '/guide/getting-started' },
-  { title: 'Mental model', path: '/guide/mental-model' },
+  { title: 'How it works', path: '/guide/mental-model' },
   { title: 'All examples', path: '/examples/' },
+  { title: 'Glossary', path: '/reference/glossary' },
   { title: 'Limits', path: '/reference/limits' },
 ];
 
@@ -206,14 +283,28 @@ function move(step: number) {
   selected.value = (selected.value + step + flat.value.length) % flat.value.length;
   nextTick(() => list.value?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }));
 }
+const filters = ['all', 'guide', 'examples', 'reference'] as const;
+/** Section filters are a tab row: click one, or focus it and use the arrow keys. */
+function onFilterKey(event: KeyboardEvent) {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+  event.preventDefault();
+  const row = event.currentTarget as HTMLElement;
+  const step = event.key === 'ArrowRight' ? 1 : -1;
+  filter.value = filters[(filters.indexOf(filter.value) + step + filters.length) % filters.length];
+  nextTick(() => row.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
+}
 function onKey(event: KeyboardEvent) {
-  if (event.key === 'ArrowDown') {
+  const inResults = !!list.value?.contains(document.activeElement);
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    // The selection moves; if focus is already in the results it moves with it.
     event.preventDefault();
-    move(1);
-  } else if (event.key === 'ArrowUp') {
+    move(event.key === 'ArrowDown' ? 1 : -1);
+    if (inResults) nextTick(() => document.getElementById(`search-hit-${selected.value}`)?.focus());
+  } else if (event.key === 'Tab' && !event.shiftKey && event.target === input.value && flat.value.length) {
+    // Tab steps from the query into the results, starting at the selected one.
     event.preventDefault();
-    move(-1);
-  } else if (event.key === 'Enter') {
+    document.getElementById(`search-hit-${selected.value}`)?.focus();
+  } else if (event.key === 'Enter' && (event.target === input.value || inResults)) {
     const hit = flat.value[selected.value];
     if (hit) {
       event.preventDefault();
@@ -222,14 +313,12 @@ function onKey(event: KeyboardEvent) {
   } else if (event.key === 'Escape') {
     event.preventDefault();
     emit('close');
-  } else if (event.key === 'Tab' && !event.shiftKey && query.value) {
-    event.preventDefault();
-    const order = ['all', 'guide', 'examples', 'reference'] as const;
-    filter.value = order[(order.indexOf(filter.value) + 1) % order.length];
   }
 }
 watch([query, filter], () => (selected.value = 0));
 
+// Focus goes back where it was when the palette closes.
+const previousFocus = typeof document === 'undefined' ? null : (document.activeElement as HTMLElement | null);
 let previousOverflow = '';
 onMounted(async () => {
   readRecent();
@@ -240,6 +329,12 @@ onMounted(async () => {
 });
 onBeforeUnmount(() => {
   document.body.style.overflow = previousOverflow;
+  const target = previousFocus;
+  if (target && target !== document.body && typeof target.focus === 'function') {
+    requestAnimationFrame(() => {
+      if (target.isConnected) target.focus({ preventScroll: true });
+    });
+  }
 });
 </script>
 
@@ -258,24 +353,31 @@ onBeforeUnmount(() => {
             aria-label="Search"
             autocomplete="off"
             spellcheck="false"
+            role="combobox"
+            aria-autocomplete="list"
             aria-controls="search-results"
+            :aria-expanded="flat.length > 0"
+            :aria-activedescendant="flat.length ? `search-hit-${selected}` : undefined"
           />
           <kbd @click="emit('close')">esc</kbd>
         </label>
 
-        <div class="search-filters" role="tablist" aria-label="Section">
+        <div class="search-filters">
+          <div class="search-filter-tabs" role="tablist" aria-label="Section" @keydown="onFilterKey">
           <button
-            v-for="option in (['all', 'guide', 'examples', 'reference'] as const)"
+            v-for="option in filters"
             :key="option"
             type="button"
             role="tab"
             :aria-selected="filter === option"
+            :tabindex="filter === option ? 0 : -1"
             @click="filter = option; input?.focus()"
           >{{ option === 'all' ? 'Everything' : option[0].toUpperCase() + option.slice(1) }}</button>
+          </div>
           <span v-if="query" class="search-stats">{{ counts.all }} match{{ counts.all === 1 ? '' : 'es' }} · {{ counts.pages }} page{{ counts.pages === 1 ? '' : 's' }} · {{ took }} ms</span>
         </div>
 
-        <div id="search-results" ref="list" class="search-results" role="listbox">
+        <div id="search-results" ref="list" class="search-results" :role="flat.length ? 'listbox' : undefined" aria-label="Results">
           <template v-if="!query">
             <section v-if="recent.length" class="search-group">
               <h3>Recent</h3>
@@ -298,23 +400,39 @@ onBeforeUnmount(() => {
           </template>
 
           <p v-else-if="!index" class="search-empty">Loading the index…</p>
-          <p v-else-if="!groups.length" class="search-empty">
-            Nothing for “{{ query }}”. Try fewer words, or <button type="button" @click="filter = 'all'">search everything</button>.
-          </p>
+          <template v-else-if="!groups.length">
+            <p class="search-empty">
+              Nothing for “{{ query }}”.
+              <template v-if="didYouMean">Did you mean <button type="button" class="search-suggest" @click="query = didYouMean; input?.focus()">{{ didYouMean }}</button>?</template>
+              <template v-else-if="filter !== 'all'">Try <button type="button" @click="filter = 'all'; input?.focus()">searching everything</button>.</template>
+              <template v-else>Try fewer or shorter words.</template>
+            </p>
+            <section class="search-group">
+              <h3>Or start here</h3>
+              <a v-for="item in startHere" :key="item.path" class="search-hit" :href="withBase(item.path)" @click.prevent="open(withBase(item.path))">
+                <span class="search-hit-title">{{ item.title }}</span>
+              </a>
+            </section>
+          </template>
 
-          <section v-for="group in groups" :key="group.page" class="search-group">
-            <h3>
+          <p v-if="correction && groups.length" class="search-correction">
+            Showing results for <strong>{{ correction }}</strong>
+          </p>
+          <section v-for="(group, groupIndex) in groups" :key="group.page" class="search-group" role="group" :aria-labelledby="`search-group-${groupIndex}`">
+            <h3 :id="`search-group-${groupIndex}`">
               <span>{{ group.title }}</span>
               <span class="search-section">{{ sectionOf(group.page) }}</span>
             </h3>
             <a
               v-for="hit in group.hits"
               :key="hit.id"
+              :id="hitId(hit)"
               class="search-hit"
               role="option"
               :href="String(hit.id)"
               :aria-selected="flat[selected]?.id === hit.id"
               @mouseenter="selected = flat.indexOf(hit)"
+              @focus="selected = flat.indexOf(hit)"
               @click.prevent="open(String(hit.id), $event.metaKey || $event.ctrlKey)"
             >
               <span class="search-hit-title" v-html="markTerms(breadcrumb(hit), hit.terms)" />
@@ -327,7 +445,7 @@ onBeforeUnmount(() => {
           <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
           <span><kbd>↵</kbd> open</span>
           <span><kbd>⌘</kbd><kbd>↵</kbd> new tab</span>
-          <span><kbd>tab</kbd> section</span>
+          <span><kbd>tab</kbd> into results</span>
         </footer>
       </div>
     </div>
@@ -341,6 +459,8 @@ onBeforeUnmount(() => {
   z-index: 300;
   display: flex;
   justify-content: center;
+  /* The panel is as tall as its results, up to its max height. */
+  align-items: flex-start;
   padding: 11vh 16px 16px;
 }
 .search-backdrop {
@@ -387,7 +507,7 @@ onBeforeUnmount(() => {
   background: transparent;
 }
 .search-field input::placeholder {
-  color: var(--faint);
+  color: var(--muted);
 }
 .search-field input::-webkit-search-cancel-button {
   display: none;
@@ -416,6 +536,11 @@ kbd {
   font-family: var(--vp-font-family-mono);
   font-size: 11px;
 }
+.search-filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
 .search-filters button {
   padding: 4px 10px;
   border: 1px solid transparent;
@@ -432,7 +557,7 @@ kbd {
 }
 .search-stats {
   margin-left: auto;
-  color: var(--faint);
+  color: var(--muted);
 }
 .search-results {
   flex: 0 1 auto;
@@ -457,7 +582,7 @@ kbd {
   color: var(--muted);
 }
 .search-section {
-  color: var(--faint);
+  color: var(--muted);
 }
 .search-hit {
   display: grid;
@@ -511,6 +636,19 @@ kbd {
   font-size: 14px;
   color: var(--muted);
 }
+.search-correction {
+  margin: 6px 24px 0;
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.search-correction strong {
+  font-weight: 500;
+  color: var(--signal);
+}
+.search-empty + .search-group {
+  padding-top: 0;
+}
 .search-empty button {
   color: var(--signal);
   text-decoration: underline;
@@ -554,6 +692,21 @@ kbd {
   }
   .search-keys {
     display: none;
+  }
+  /* The counts get their own row rather than squeezing the filters. */
+  .search-filters {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    padding: 10px 12px;
+  }
+  .search-stats {
+    flex-basis: 100%;
+    margin-left: 10px;
+  }
+  .search-filters,
+  .search-group h3,
+  kbd {
+    font-size: 11px;
   }
 }
 </style>

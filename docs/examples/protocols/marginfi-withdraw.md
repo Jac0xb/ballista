@@ -1,11 +1,17 @@
-# Empty a position, then insist it was worth it
+# Withdraw everything, with a minimum
 
-`lending_account_withdraw(amount, withdraw_all)` will empty a position. It does not tell the
-caller how much that was, and the caller cannot condition on it.
+This template empties a marginfi position, reverts unless enough came out, and sends the proceeds
+on to a treasury account.
 
-A withdrawal that returns far less than expected — the bank was drained, utilization capped it,
-the position had been liquidated — still succeeds. Whatever was sequenced after it then proceeds
-on a false assumption.
+marginfi's `lending_account_withdraw(amount, withdraw_all)` can empty a position, but it doesn't
+tell the caller how much came out, so nothing later in the transaction can depend on it. A
+withdrawal that returns far less than expected still succeeds: the bank may have been drained, its
+utilization (the share of deposits lent out) may have capped the withdrawal, or the position may
+have been liquidated. Whatever comes next then runs on a wrong assumption.
+
+The template records the destination token balance, withdraws everything, and measures how much
+arrived. If that is less than `minimumWithdrawn`, the run reverts. Otherwise it transfers the
+withdrawn amount to the treasury token account.
 
 ::: code-group
 
@@ -15,7 +21,16 @@ on a false assumption.
 
 :::
 
-The two trailing bytes are `Option::Some(true)` for `withdraw_all`. The `amount` before them is
-ignored in that mode, but Borsh still reads it, so it still has to be there.
+The last two bytes of the withdrawal's instruction data are `Option::Some(true)` for
+`withdraw_all`. In that mode marginfi ignores `amount`, but the field still has to be there,
+because Borsh (the binary format Anchor programs use for instruction arguments) reads every field.
 
-[All live-protocol examples](/examples/protocols/) · [reading offsets](/examples/protocols/#reading-offsets-from-an-account)
+The Rust tab builds the run for [act only on a fresh price](/examples/protocols/pyth-gate). Build
+this template's run the same way, with its own accounts and inputs in the order the template
+declares them. This template has no account group, so leave out the `.groups(...)` call and the
+extra accounts at the end.
+
+Not yet run against marginfi: the template compiles and passes Ballista's verifier, but no test
+calls marginfi.
+
+[All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

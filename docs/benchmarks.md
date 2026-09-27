@@ -1,71 +1,117 @@
-# Measurements
+# What a run costs
 
-Measurements are produced by the Agave 4.1-aligned Mollusk 0.14 suite from the compiled SBF
-program. They are regression evidence, not cluster-wide fee or latency
-promises. Run `cargo test --manifest-path tests/ballista/Cargo.toml -- --nocapture` and grep for
-`compute units` to reproduce them.
+To run a template, a transaction sends one instruction to the Ballista program. Ballista reads the
+template stored on chain and makes each program call in it, with the checks between them. This page
+compares what that costs with sending the same calls yourself as **plain instructions**: ordinary
+instructions listed directly in one transaction, with no Ballista in between.
 
-| Scenario | Compute units |
-| --- | ---: |
-| 1 SOL transfer, plain template with the run event enabled | 2,886 |
-| 1 SOL transfer with a guard input and a pre/post balance assertion | 3,505 |
-| 8 SOL transfers in a batch | 15,939 |
-| 30 SOL transfers in a batch | 56,783 |
-| 58 CPIs each carrying 1,000 bytes of data | 104,320 |
-| 118 PDA derivations of 15 seeds across 59 rows | 523,473 |
-| Nested template: one template running another through CPI | 5,291 |
-| Guarded ATA creation, repeat run that skips the CPI | about 1,400 |
+Two costs are compared:
 
-The fixed cost of a run rose by several hundred compute units against version 2 while the per-CPI
-cost fell slightly. The fixed cost covers checked table lookups, typed error propagation, and the
-one-time scratch allocation; the per-CPI saving comes from reusing that scratch instead of
-allocating per invocation.
+- **Compute units (CU).** Solana counts the work a program does in compute units. Every
+  transaction has a compute limit, at most 1.4 million units, and a transaction that runs out
+  fails.
+- **Transaction bytes.** The size of the serialized transaction. A version 1 transaction can be at
+  most 4,096 bytes; see [Transaction v1](/guide/transaction-v1).
 
-A 30-recipient Ballista-only v1 message built and measured with Solana Kit 8.2 is **1,240 bytes**
-against the v1 limit of 4,096 bytes. Its Run instruction contains 33 account metas (template,
-System Program, source, and 30 recipients), and the transaction has 34 unique account keys after
-including the Ballista program. Account locks and compute therefore become relevant well before
-template bytes, which are stored on-chain and absent from `Run` data.
+## In short
 
-## Example cost tables
+- **Compute: a template always uses more.** A template that makes one SOL transfer uses 2,938
+  compute units. The same transfer sent as a plain instruction uses 150. A 30-row payroll uses
+  51,741 against 4,500.
+- **Bytes: a template uses fewer once a batch is big enough.** Templates that make one or two calls
+  are 54 to 107 bytes larger than the plain transaction. A simple batch of transfers is smaller
+  from five or six rows, and a 30-row payroll is 430 bytes smaller.
+- **Once per template: upload and rent.** Uploading a template is a separate step, done once, and
+  every example here uploads in a single transaction. The account that stores the template must
+  hold a minimum balance for its size, which Solana calls rent: 0.00183 to 0.00345 SOL for the
+  examples here. A finished template cannot be closed, so that balance stays locked.
 
-Every pattern in the [example cookbook](/examples/) carries a measured table: what the run costs in
-compute units, what the transaction weighs, and what the same work costs as plain instructions.
+## Why a template uses more compute
 
-The numbers come from one pipeline. `pnpm benchmarks` compiles each example and measures its
-transaction with Solana Kit; the Mollusk benchmark in `tests/ballista` runs the template and the
-plain sequence against the same accounts and records compute units;
-`node scripts/benchmark-tables.mjs` writes the tables. The System Program is Mollusk's builtin, and
-the Token and Associated Token programs are mainnet dumps, so their costs are the current on-chain
-ones. Where an example names a third-party protocol, the callee is a System transfer with padded
-data: the CPI is real, and the protocol's own work is excluded from both sides of the comparison.
+In a plain transaction, each instruction goes straight to the program it names. With a template,
+the transaction calls Ballista, and Ballista calls each program in turn. A call from one program to
+another is a **cross-program invocation**, or CPI. Three costs come with that:
 
-The last column answers the question the tables exist for. A pattern marked **Yes, same
-guarantees** is one a plain transaction already handles, where Ballista buys a single instruction
-and a stored, verified shape. **Yes, weaker guarantees** means the instructions can be sent, but a
-check that Ballista performs on chain is left to whoever builds the transaction. **No, needs a
-program** means no instruction sequence expresses it, because the decision depends on state read
-during execution.
+1. **Solana's CPI fee.** The runtime charges a flat 946 compute units for every CPI, before the
+   called program does any work. (That is the figure in Agave 4.1, the validator version these
+   measurements use.) Instructions sent directly in the transaction don't pay it.
+2. **Ballista's work for each call.** Ballista reads the call's description from the template,
+   looks up its accounts, assembles its data and hands it to the runtime. For a SOL transfer that
+   is about 630 units.
+3. **Fixed work for each run.** Before the first call, Ballista loads the template, checks the
+   accounts you passed against what the template expects, and reads your inputs. That is 1,014
+   units for the smallest possible template, plus a little for each account and input.
+
+The called program's own work costs the same either way: the System Program spends 150 units on a
+SOL transfer whether it arrives as a plain instruction or from Ballista. Put together, one SOL
+transfer made from a template costs about 1,730 units: 946 for the CPI fee, 150 for the transfer
+and about 630 for Ballista. Checks and arithmetic between calls add 80 to 210 units per step.
+
+The table below shows whole runs, fixed cost included. A batch repeats the template's steps once for
+each row of accounts, here once per recipient:
+
+| Run | Template | Plain instructions |
+| --- | ---: | ---: |
+| Smallest possible template: one check, no calls | 1,014 | none |
+| One SOL transfer | 2,938 | 150 |
+| 8 SOL transfers in a batch | 14,989 | 1,200 |
+| 30 SOL transfers in a batch | 51,741 | 4,500 |
+
+Most of the difference is the CPI fee, and it is not specific to Ballista. Any program that calls
+other programs pays it, including one you write yourself. In the 30-transfer batch the fee is
+28,380 of the 47,241 extra units. What a template adds beyond the fee is the fixed cost of a run
+and about 600 units per call. Templates that derive a PDA pay more. A PDA is an account address
+computed from a program's ID and a few chosen values, called seeds, instead of from a key pair, and
+finding one can take several attempts at 1,500 units each. [Where the compute goes](/cu-profile)
+breaks down every step.
+
+The overhead matters less when the called programs do more work. Creating an associated token
+account costs 13,518 units as a plain instruction and 16,658 from the template in
+[Conditional ATA setup](/examples/token-accounts#conditional-ata-setup): about 3,000 units more, on a
+much larger total.
+
+## Cost of each example {#example-cost-tables}
+
+Each measured example in the guide and the [examples](/examples/) has a cost table on its own page.
+The table below collects them, grouped by the last column. The columns:
+
+- **CU per run** and **Plain CU**: compute units for one run of the template, and for the same
+  calls sent as plain instructions.
+- **Bytes per run** and **Plain bytes**: the size of each transaction.
+- **Template rent**: the balance locked in the account that stores the template.
+- **Without a program?**: whether plain instructions can get the same result without you
+  deploying a program of your own.
+  - **Yes, same guarantees**: plain instructions already do the job. A template gives you one
+    instruction instead of many, and a fixed sequence, stored on chain and checked when it was
+    uploaded, that anyone can run again.
+  - **Yes, weaker guarantees**: you can send the instructions, but a check the template makes on
+    chain, such as a minimum amount or an expected account owner, is left to whoever builds the
+    transaction.
+  - **No, needs a program**: no fixed list of instructions can do it, because the right action
+    depends on something read while the transaction runs, such as a balance, a price or the time.
+    For these rows the plain columns show the closest plain transaction: the same calls, with
+    amounts fixed at signing and without the checks. It does not do the same job; it shows what
+    the calls alone cost.
 
 <!-- benchmark:summary -->
 
 | Pattern | CU per run | Plain CU | Bytes per run | Plain bytes | Template rent | Without a program? |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| [Sweep above a reserve](/examples/runtime-values#sweep-above-a-reserve) | 3,437 | 150 | 283 | 220 | 0.00215 SOL | No, needs a program |
-| [Forward the whole token balance](/examples/runtime-values#forward-the-whole-token-balance) | 3,350 | 76 | 308 | 250 | 0.00209 SOL | No, needs a program |
-| [Repay exactly what is owed](/examples/runtime-values#repay-exactly-what-is-owed) | 3,252 | 150 | 308 | 220 | 0.00201 SOL | No, needs a program |
-| [Split what arrived](/examples/runtime-values#split-what-arrived) | 5,754 | 300 | 324 | 270 | 0.00272 SOL | No, needs a program |
-| [Claim only when there is something](/examples/conditional#claim-only-when-there-is-something) | 3,336 | 150 | 308 | 220 | 0.00209 SOL | No, needs a program |
-| [Liquidate only when unhealthy](/examples/conditional#liquidate-only-when-unhealthy) | 3,435 | 150 | 316 | 220 | 0.00211 SOL | No, needs a program |
-| [Top up only when low](/examples/conditional#top-up-only-when-low) | 3,376 | 150 | 291 | 220 | 0.00209 SOL | No, needs a program |
-| [Initialize only if missing](/examples/conditional#initialize-only-if-missing) | 2,956 | 150 | 275 | 220 | 0.00189 SOL | No, needs a program |
-| [Waterfall until the money runs out](/examples/loops#waterfall-until-the-money-runs-out) | 23,452 | 1,200 | 578 | 570 | 0.00258 SOL | No, needs a program |
-| [Consolidate only the funded accounts](/examples/loops#consolidate-only-the-funded-accounts) | 18,611 | 608 | 539 | 586 | 0.00209 SOL | No, needs a program |
-| [Crank only the ripe entries](/examples/loops#crank-only-the-ripe-entries) | 19,209 | 1,200 | 506 | 570 | 0.00213 SOL | No, needs a program |
-| [Distribute a runtime pot pro rata](/examples/loops#distribute-a-runtime-pot-pro-rata) | 21,022 | 1,200 | 578 | 570 | 0.00242 SOL | No, needs a program |
-| [Oracle price band](/examples/guardrails#oracle-price-band) | 4,081 | 150 | 324 | 220 | 0.00254 SOL | No, needs a program |
-| [Maximum lamport spend](/examples/guardrails#maximum-lamport-spend) | 3,624 | 150 | 283 | 220 | 0.00232 SOL | No, needs a program |
-| [Canonical position account](/examples/guardrails#canonical-position-account) | 5,630 | 150 | 285 | 220 | 0.00256 SOL | No, needs a program |
+| [Sweep above a reserve](/guide/runtime-values#sweep-above-a-reserve) | 3,437 | 150 | 283 | 220 | 0.00215 SOL | No, needs a program |
+| [Forward the whole token balance](/guide/runtime-values#forward-the-whole-token-balance) | 3,350 | 76 | 308 | 250 | 0.00209 SOL | No, needs a program |
+| [Repay exactly what is owed](/guide/runtime-values#repay-exactly-what-is-owed) | 3,252 | 150 | 308 | 220 | 0.00201 SOL | No, needs a program |
+| [Split what arrived](/guide/runtime-values#split-what-arrived) | 5,754 | 300 | 324 | 270 | 0.00272 SOL | No, needs a program |
+| [Claim only when there is something](/guide/conditional#claim-only-when-there-is-something) | 3,336 | 150 | 308 | 220 | 0.00209 SOL | No, needs a program |
+| [Liquidate only when unhealthy](/guide/conditional#liquidate-only-when-unhealthy) | 3,435 | 150 | 316 | 220 | 0.00211 SOL | No, needs a program |
+| [Top up only when low](/guide/conditional#top-up-only-when-low) | 3,376 | 150 | 291 | 220 | 0.00209 SOL | No, needs a program |
+| [Initialize only if missing](/guide/conditional#initialize-only-if-missing) | 2,956 | 150 | 275 | 220 | 0.00189 SOL | No, needs a program |
+| [Waterfall until the money runs out](/guide/loops#waterfall-until-the-money-runs-out) | 23,452 | 1,200 | 578 | 570 | 0.00258 SOL | No, needs a program |
+| [Consolidate only the funded accounts](/guide/loops#consolidate-only-the-funded-accounts) | 18,611 | 608 | 539 | 586 | 0.00209 SOL | No, needs a program |
+| [Crank only the ripe entries](/guide/loops#crank-only-the-ripe-entries) | 19,209 | 1,200 | 506 | 570 | 0.00213 SOL | No, needs a program |
+| [Distribute a runtime pot pro rata](/guide/loops#distribute-a-runtime-pot-pro-rata) | 21,022 | 1,200 | 578 | 570 | 0.00242 SOL | No, needs a program |
+| [Oracle price band](/guide/guardrails#oracle-price-band) | 4,081 | 150 | 324 | 220 | 0.00254 SOL | No, needs a program |
+| [Maximum lamport spend](/guide/guardrails#maximum-lamport-spend) | 3,624 | 150 | 283 | 220 | 0.00232 SOL | No, needs a program |
+| [Canonical position account](/guide/guardrails#canonical-position-account) | 5,630 | 150 | 285 | 220 | 0.00256 SOL | No, needs a program |
 | [Time-gated governance execution](/examples/composition#time-gated-governance-execution) | 3,828 | 150 | 342 | 240 | 0.0023 SOL | No, needs a program |
 | [Basis-point revenue split](/examples/payments#basis-point-revenue-split) | 5,729 | 300 | 324 | 270 | 0.00272 SOL | Yes, weaker guarantees |
 | [Index-weighted rewards](/examples/payments#index-weighted-rewards) | 68,356 | 4,500 | 1,240 | 1,670 | 0.00224 SOL | Yes, weaker guarantees |
@@ -73,8 +119,8 @@ during execution.
 | [Reserve-preserving sweep](/examples/payments#reserve-preserving-sweep) | 4,097 | 150 | 291 | 220 | 0.00258 SOL | Yes, weaker guarantees |
 | [Close empty token accounts](/examples/token-accounts#close-empty-token-accounts) | 34,064 | 1,888 | 803 | 842 | 0.00205 SOL | Yes, weaker guarantees |
 | [Exact token debit](/examples/token-accounts#exact-token-debit) | 3,780 | 76 | 316 | 250 | 0.00227 SOL | Yes, weaker guarantees |
-| [Deadline and minimum output](/examples/guardrails#deadline-and-minimum-output) | 4,064 | 150 | 333 | 240 | 0.00248 SOL | Yes, weaker guarantees |
-| [Pinned program and owner](/examples/guardrails#pinned-program-and-owner) | 2,959 | 150 | 283 | 220 | 0.00183 SOL | Yes, weaker guarantees |
+| [Deadline and minimum output](/guide/guardrails#deadline-and-minimum-output) | 4,064 | 150 | 333 | 240 | 0.00248 SOL | Yes, weaker guarantees |
+| [Pinned program and owner](/guide/guardrails#pinned-program-and-owner) | 2,959 | 150 | 283 | 220 | 0.00183 SOL | Yes, weaker guarantees |
 | [Swap then deposit](/examples/composition#swap-then-deposit) | 5,783 | 300 | 385 | 278 | 0.00282 SOL | Yes, weaker guarantees |
 | [Primary or fallback route](/examples/composition#primary-or-fallback-route) | 3,512 | 150 | 345 | 240 | 0.0023 SOL | Yes, weaker guarantees |
 | [Bounded SOL payroll](/examples/payments#bounded-sol-payroll) | 51,741 | 4,500 | 1,240 | 1,670 | 0.00191 SOL | Yes, same guarantees |
@@ -86,19 +132,23 @@ during execution.
 
 <!-- /benchmark -->
 
-### Where the bytes go
+In the example names, a *lamport* is the smallest unit of SOL (one billionth of a SOL), and an
+*ATA* (associated token account) is the standard token account for a given wallet and token.
 
-Bytes are the weakest argument for a template, so read this section as a bound rather than a
-pitch: a 30-recipient batch already fits a plain transaction with room to spare, and the saving
-below never decides anything on its own.
+## Where the bytes go
 
-A recipient's address has to appear in the transaction either way. What a plain transaction adds on
-top, for every row, is another instruction envelope: the program index, the account index list, and
-the instruction data. Ballista carries those once and repeats only the account index.
+Transaction size rarely decides whether to use a template. The plain version of a 30-row payroll
+is 1,670 bytes, well under the 4,096-byte limit. The template itself is stored on chain, so its
+bytes are never part of a run's transaction. What changes is how each row is encoded.
 
-A run also pays a fixed 63 bytes for two account keys a plain transaction does not need, the
-template account and the Ballista program, so small batches are larger and the lines cross a few
-rows in.
+A plain transaction repeats a whole instruction for every row: which program to call, which
+accounts it uses, and its data. A template describes the call once, so each extra row adds only
+the row's address and a one-byte reference to it, 33 bytes. The address has to be in the
+transaction either way.
+
+A run also names two accounts that a plain transaction does not need, the template account and
+the Ballista program, at 32 bytes each. So with one row the template's transaction is larger: by
+63 bytes for a SOL transfer and 66 for a token transfer. The savings start a few rows in.
 
 <!-- benchmark:chart -->
 
@@ -128,51 +178,40 @@ Measured: a SOL transfer costs 33 bytes per row through Ballista against 50 plai
 
 <!-- /benchmark -->
 
-### Where the compute goes
+In a large batch, the number of accounts runs out before the bytes do. A version 1 transaction can
+name at most 64 account addresses. A 30-row payroll run already names 34 of them, but uses only
+1,240 of its 4,096 bytes.
 
-Most of the difference is not interpretation. Measured on templates that do nothing but repeat a
-System transfer:
+## How the numbers are measured
 
-| Calls in the template | Compute units |
-| ---: | ---: |
-| 0 | 1,326 |
-| 1 | 2,913 |
-| 2 | 4,670 |
-| 3 | 6,429 |
-| 4 | 8,182 |
+Both versions run in [Mollusk](https://github.com/anza-xyz/mollusk), Anza's harness for testing
+Solana programs, which executes them with the Agave 4.1 runtime. Each starts from the same accounts.
+The template side runs the compiled Ballista program. The plain side runs each plain instruction
+and adds up their compute units. The System Program is the runtime's built-in version, and the
+Token and Associated Token programs are copies of the mainnet programs that come with Mollusk.
+Transaction bytes come from building both transactions as version 1 transactions with Solana Kit
+8.2, the JavaScript SDK.
 
-A run starts at about 1,300 compute units, which covers parsing the stored template, checking every
-runtime account against its schema, and allocating the register file. Each call then adds about
-1,757, against 150 for the same System transfer sent as a plain instruction. That gap splits three
-ways: Solana charges a flat 1,000 units for any cross-program invocation, the callee still costs
-its 150, and the remaining 600 or so is Ballista assembling the call from the template.
+Where an example calls another protocol, such as a swap or a lending market, the benchmark calls
+the System Program instead: a transfer with extra bytes at the end of its data, which the System
+Program ignores. The call from Ballista is real and costs what any call costs, but the protocol's
+own work is missing from both columns.
 
-[The compute profile](/cu-profile) breaks this down three ways: what one more of each feature
-costs, where a single run's budget goes phase by phase, and a tracked table of whole instructions
-produced by Anza's Mollusk bencher. The 1,000-unit charge is what any composing program pays. A hand-written Rust program that made the
-same calls would pay it too, so it is the price of doing the work inside a program at all rather
-than the price of a template. What a template adds on top is the fixed 1,300 and roughly 600 per
-call, plus a few hundred per batch row and more where a pattern derives a PDA.
+`pnpm benchmarks` compiles every example, measures both transactions, runs both versions and
+rewrites the tables. The results describe this program on this runtime version. They are not fee
+quotes: simulate the exact transaction you plan to send.
 
-## Heap and parsing boundary
+## Memory
 
-The register file is sized to the template's declared register count, at most 64 slots of 40
-bytes. A batch allocates one additional snapshot of the same size so root registers can be restored
-around each iteration. One set of CPI scratch buffers is allocated per run and reused by every
-invocation: 64 account metas, 64 account views, and a data buffer sized to the largest declared CPI
-payload. PDA seeds are assembled in a 480-byte stack buffer.
+A run's memory use does not grow with the number of calls. Solana gives a program 32 KiB of heap
+(memory it can reserve while it runs) by default, and the standard allocator never frees any of it
+during an instruction. So Ballista reserves what it needs once per run and reuses it for every
+call: room for the template's working values (at most 64, of up to 40 bytes each, plus one saved
+copy while a batch runs) and one set of buffers for building calls. PDA seeds are assembled on the
+stack, not the heap. The template is read where it is stored, not copied.
 
-The two heap-stress scenarios above previously failed with an access violation at the 32 KiB heap
-boundary, because the bump allocator never frees and every CPI allocated fresh vectors. They now
-run with constant heap.
-
-Program and account record tables are borrowed directly from immutable template data. `Run` does
-not allocate or deserialize an AST.
-
-## Stack frames
-
-The program is built for SBPF version 0, which gives every function a fixed 4 KiB stack frame.
-The Certora platform tools report frames that exceed it; the regular toolchain does not. Two did:
-the CPI path, whose 64-slot account array now lives in a frame of its own, and the return-data
-read, which now copies through the syscall into one buffer. Both are under 4 KiB and every
-function in the program compiles without a frame warning.
+The test suite checks this with two templates that would run out of heap if each call reserved
+its own memory: one makes 58 transfers with 1,000 bytes of data each, and one derives two PDAs on
+each of 59 rows. Both fit in the default heap. The
+[formal verification](/guide/formal-verification) build also checks that every function fits in
+the 4 KiB stack frame Solana gives it. [Limits](/reference/limits) lists the hard limits.

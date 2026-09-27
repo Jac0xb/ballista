@@ -1,133 +1,84 @@
-# Example cookbook
+# Examples
 
-Batching is not the reason to use Ballista. Thirty transfers already fit in a 1,240-byte
-transaction, well inside the 4,096-byte limit, and a plain transaction sends them without a
-template, without rent, and without the compute a run costs. If a pattern is just "do these N
-things", send N instructions.
+Complete templates you can copy, grouped by what they do. Each one shows the template and the code
+that runs it.
 
-The reason is everything a transaction cannot say. Instruction data is fixed at signing, so a
-transaction cannot move *what is there*, repay *what is owed*, skip a call that would fail, or
-let one row's payment depend on the last. A template runs on chain, reads state as it goes, and
-decides.
+New to Ballista? [Getting started](/guide/getting-started) takes one template from definition to a
+run instruction in TypeScript, then [builds the same template in Rust](/guide/getting-started#author-it-in-rust). To
+see what a template can do that an ordinary transaction can't, read the guide pages on
+[amounts read at run time](/guide/runtime-values), [conditional calls](/guide/conditional),
+[loops](/guide/loops) and [guardrails](/guide/guardrails).
 
-The cookbook is ordered that way. The patterns at the top are the ones with no plain equivalent:
+Every example outside the protocol section has a measured cost table. It shows the compute units
+(Solana's measure of execution cost) and transaction bytes one run uses, next to the plain
+instructions that do the same work. The **Plain transaction?** column below says whether you can
+get the same result without Ballista:
 
-- [Amounts nobody knows at signing](/examples/runtime-values) — read the balance, then spend it
-- [Work that should not always happen](/examples/conditional) — skip a call instead of reverting
-- [Loops that read as they go](/examples/loops) — each row decides from what it finds
-- [Safety guardrails](/examples/guardrails) — prove something after the call returns
-- [Protocol composition](/examples/composition) — chain protocols on runtime values
-- [Live protocols](/examples/protocols/) — twelve of these against Jupiter, Kamino, Pyth, Orca,
-  Drift, marginfi and Jito, with real instruction names and offsets checked against live accounts
+- **Yes**: ordinary instructions in one transaction do the same thing, for less compute. What the
+  template adds is a single instruction and a sequence of calls that is stored on chain and was
+  checked when it was uploaded.
+- **Yes, weaker**: you can send the same instructions, but a check the template makes on chain is
+  left to whoever builds the transaction.
+- **No**: no sequence of instructions can do it, because a decision depends on account data read
+  while the transaction runs.
 
-Below those come the patterns a transaction can already express, kept because they are common and
-because the measurements are the honest answer to "should I use this here": [payments](/examples/payments),
-[token accounts](/examples/token-accounts).
+The full numbers are in [What a run costs](/benchmarks#example-cost-tables).
 
-New to the SDK? [Author and run in both languages](/examples/end-to-end) shows one template four
-ways: authored in TypeScript, run from TypeScript, authored in Rust with the shared builder, and
-run from Rust with typed inputs.
+## Protocol templates {#live-protocols}
 
-## Cost and alternatives
+Templates that work with Jupiter, Kamino, marginfi, Drift, Orca, Pyth and Jito. They use the real
+program addresses and instruction names, but none has been run against the protocols themselves,
+and none has a measured cost. See [what has been tested](/examples/protocols/#what-has-been-tested).
 
-Every pattern is measured: what one run costs in compute units, what the transaction weighs, and
-what the same work costs as plain instructions. The last column is the question worth asking
-first, and the table is sorted by it.
+| Recipe | Protocol | Decided during the run |
+| --- | --- | --- |
+| [Deposit swap output](/examples/protocols/jupiter-deposit) | Jupiter → Kamino | How much the swap produced |
+| [Oracle-checked swap](/examples/protocols/jupiter-oracle-swap) | Jupiter + Pyth | Whether the swap paid at least the oracle price, less a tolerance |
+| [Sell whole balance](/examples/protocols/token-sweep) | SPL Token → Jupiter | How much there is to sell |
+| [Repay from swap](/examples/protocols/kamino-repay) | Jupiter → Kamino | How much the swap produced |
+| [Liquidate](/examples/protocols/kamino-liquidate) | Kamino | How much collateral the liquidator received |
+| [Withdraw](/examples/protocols/marginfi-withdraw) | marginfi | How much the withdrawal returned |
+| [Rebalance](/examples/protocols/drift-rebalance) | marginfi → Drift | How much marginfi released |
+| [Settle and withdraw](/examples/protocols/drift-settle) | Drift | Whether the withdrawal reached the wallet |
+| [Compound fees](/examples/protocols/orca-compound) | Orca | How much the position had earned |
+| [Harvest](/examples/protocols/orca-harvest) | Orca | Which positions have earned enough to collect |
+| [Price gate](/examples/protocols/pyth-gate) | Pyth → Jupiter | Whether the price is recent, precise and in range |
+| [Conditional tip](/examples/protocols/jito-tip) | Jupiter → Jito | Whether the trade's profit covered the tip |
 
-**No, needs a program** means no instruction sequence expresses it, because the decision depends
-on state read during execution. **Yes, weaker guarantees** means the instructions can be sent,
-but a check Ballista performs on chain falls to whoever builds the transaction. **Yes, same
-guarantees** means a plain transaction already does this, and Ballista buys one instruction and a
-stored, verified shape — read those rows as a cost, not a pitch.
+## Composition
 
-<!-- benchmark:summary -->
+Templates that call other programs in sequence, with checks between the calls. Your client still
+finds routes, quotes and accounts; the template fixes the order of the calls and the checks.
 
-| Pattern | CU per run | Plain CU | Bytes per run | Plain bytes | Template rent | Without a program? |
-| --- | ---: | ---: | ---: | ---: | ---: | --- |
-| [Sweep above a reserve](/examples/runtime-values#sweep-above-a-reserve) | 3,437 | 150 | 283 | 220 | 0.00215 SOL | No, needs a program |
-| [Forward the whole token balance](/examples/runtime-values#forward-the-whole-token-balance) | 3,350 | 76 | 308 | 250 | 0.00209 SOL | No, needs a program |
-| [Repay exactly what is owed](/examples/runtime-values#repay-exactly-what-is-owed) | 3,252 | 150 | 308 | 220 | 0.00201 SOL | No, needs a program |
-| [Split what arrived](/examples/runtime-values#split-what-arrived) | 5,754 | 300 | 324 | 270 | 0.00272 SOL | No, needs a program |
-| [Claim only when there is something](/examples/conditional#claim-only-when-there-is-something) | 3,336 | 150 | 308 | 220 | 0.00209 SOL | No, needs a program |
-| [Liquidate only when unhealthy](/examples/conditional#liquidate-only-when-unhealthy) | 3,435 | 150 | 316 | 220 | 0.00211 SOL | No, needs a program |
-| [Top up only when low](/examples/conditional#top-up-only-when-low) | 3,376 | 150 | 291 | 220 | 0.00209 SOL | No, needs a program |
-| [Initialize only if missing](/examples/conditional#initialize-only-if-missing) | 2,956 | 150 | 275 | 220 | 0.00189 SOL | No, needs a program |
-| [Waterfall until the money runs out](/examples/loops#waterfall-until-the-money-runs-out) | 23,452 | 1,200 | 578 | 570 | 0.00258 SOL | No, needs a program |
-| [Consolidate only the funded accounts](/examples/loops#consolidate-only-the-funded-accounts) | 18,611 | 608 | 539 | 586 | 0.00209 SOL | No, needs a program |
-| [Crank only the ripe entries](/examples/loops#crank-only-the-ripe-entries) | 19,209 | 1,200 | 506 | 570 | 0.00213 SOL | No, needs a program |
-| [Distribute a runtime pot pro rata](/examples/loops#distribute-a-runtime-pot-pro-rata) | 21,022 | 1,200 | 578 | 570 | 0.00242 SOL | No, needs a program |
-| [Oracle price band](/examples/guardrails#oracle-price-band) | 4,081 | 150 | 324 | 220 | 0.00254 SOL | No, needs a program |
-| [Maximum lamport spend](/examples/guardrails#maximum-lamport-spend) | 3,624 | 150 | 283 | 220 | 0.00232 SOL | No, needs a program |
-| [Canonical position account](/examples/guardrails#canonical-position-account) | 5,630 | 150 | 285 | 220 | 0.00256 SOL | No, needs a program |
-| [Time-gated governance execution](/examples/composition#time-gated-governance-execution) | 3,828 | 150 | 342 | 240 | 0.0023 SOL | No, needs a program |
-| [Basis-point revenue split](/examples/payments#basis-point-revenue-split) | 5,729 | 300 | 324 | 270 | 0.00272 SOL | Yes, weaker guarantees |
-| [Index-weighted rewards](/examples/payments#index-weighted-rewards) | 68,356 | 4,500 | 1,240 | 1,670 | 0.00224 SOL | Yes, weaker guarantees |
-| [Deadline refund](/examples/payments#deadline-refund) | 3,480 | 150 | 291 | 220 | 0.00209 SOL | Yes, weaker guarantees |
-| [Reserve-preserving sweep](/examples/payments#reserve-preserving-sweep) | 4,097 | 150 | 291 | 220 | 0.00258 SOL | Yes, weaker guarantees |
-| [Close empty token accounts](/examples/token-accounts#close-empty-token-accounts) | 34,064 | 1,888 | 803 | 842 | 0.00205 SOL | Yes, weaker guarantees |
-| [Exact token debit](/examples/token-accounts#exact-token-debit) | 3,780 | 76 | 316 | 250 | 0.00227 SOL | Yes, weaker guarantees |
-| [Deadline and minimum output](/examples/guardrails#deadline-and-minimum-output) | 4,064 | 150 | 333 | 240 | 0.00248 SOL | Yes, weaker guarantees |
-| [Pinned program and owner](/examples/guardrails#pinned-program-and-owner) | 2,959 | 150 | 283 | 220 | 0.00183 SOL | Yes, weaker guarantees |
-| [Swap then deposit](/examples/composition#swap-then-deposit) | 5,783 | 300 | 385 | 278 | 0.00282 SOL | Yes, weaker guarantees |
-| [Primary or fallback route](/examples/composition#primary-or-fallback-route) | 3,512 | 150 | 345 | 240 | 0.0023 SOL | Yes, weaker guarantees |
-| [Bounded SOL payroll](/examples/payments#bounded-sol-payroll) | 51,741 | 4,500 | 1,240 | 1,670 | 0.00191 SOL | Yes, same guarantees |
-| [Assert, create, then transfer](/examples/token-accounts#assert-create-then-transfer) | 191,260 | 123,752 | 1,007 | 1,122 | 0.00345 SOL | Yes, same guarantees |
-| [Existing-account token payroll](/examples/token-accounts#existing-account-token-payroll) | 55,183 | 2,432 | 1,339 | 1,738 | 0.00195 SOL | Yes, same guarantees |
-| [Conditional ATA setup](/examples/token-accounts#conditional-ata-setup) | 16,658 | 13,518 | 407 | 341 | 0.00224 SOL | Yes, same guarantees |
-| [Claim then distribute](/examples/composition#claim-then-distribute) | 30,432 | 1,366 | 974 | 1,148 | 0.00258 SOL | Yes, same guarantees |
-| [Bounded keeper crank](/examples/composition#bounded-keeper-crank) | 45,396 | 3,600 | 1,826 | 2,162 | 0.00194 SOL | Yes, same guarantees |
-
-<!-- /benchmark -->
-
-[How these are measured](/benchmarks#example-cost-tables). Ballista is never cheaper in compute. A
-run starts at about 1,300 units and each call it makes costs about 1,757 against 150 for the same
-call sent plainly, most of that gap being the flat 1,000 units Solana charges any program for a
-cross-program invocation. See [where the compute goes](/benchmarks#where-the-compute-goes). It is
-often cheaper in bytes for batches, and the guards travel with the template rather than the client.
+| Recipe | What it does | Plain transaction? |
+| --- | --- | --- |
+| [Swap then deposit](/examples/composition#swap-then-deposit) | Swap, check that enough arrived, then deposit | Yes, weaker |
+| [Claim then distribute](/examples/composition#claim-then-distribute) | Claim rewards once, then pay each recipient the same amount | Yes |
+| [Fallback route](/examples/composition#primary-or-fallback-route) | Exactly one of two routes runs | Yes, weaker |
+| [Time-gated governance](/examples/composition#time-gated-governance-execution) | Execute only once a proposal is approved and its time has passed | No |
+| [Keeper crank](/examples/composition#bounded-keeper-crank) | Same maintenance call over many accounts | Yes |
 
 ## Payments
 
-| Pattern | Core primitives |
-| --- | --- |
-| [Bounded SOL payroll](/examples/payments#bounded-sol-payroll) | account rows, loop, System CPI |
-| [Basis-point revenue split](/examples/payments#basis-point-revenue-split) | checked math, multiple CPIs |
-| [Index-weighted rewards](/examples/payments#index-weighted-rewards) | `loopIndex`, checked multiply |
-| [Deadline refund](/examples/payments#deadline-refund) | clock, guard |
-| [Reserve-preserving sweep](/examples/payments#reserve-preserving-sweep) | snapshot, require, `min` |
+Templates that pay out SOL.
+
+| Recipe | What it does | Plain transaction? |
+| --- | --- | --- |
+| [SOL payroll](/examples/payments#bounded-sol-payroll) | Pay up to 30 recipients in one instruction | Yes |
+| [Revenue split](/examples/payments#basis-point-revenue-split) | Split an amount by basis points, losing nothing to rounding | Yes, weaker |
+| [Weighted rewards](/examples/payments#index-weighted-rewards) | Pay the first recipient 1 × base, the second 2 × base, and so on | Yes, weaker |
+| [Deadline refund](/examples/payments#deadline-refund) | Refund only before a deadline | Yes, weaker |
+| [Reserve-preserving sweep](/examples/payments#reserve-preserving-sweep) | Move SOL up to a cap without dropping below a reserve | Yes, weaker |
 
 ## Token accounts
 
-| Pattern | Core primitives |
-| --- | --- |
-| [Assert, create, then transfer](/examples/token-accounts#assert-create-then-transfer) | PDA assertion, emptiness guard, two CPIs |
-| [Existing-account token payroll](/examples/token-accounts#existing-account-token-payroll) | owner constraints, batch transfer |
-| [Conditional ATA setup](/examples/token-accounts#conditional-ata-setup) | stride-two rows, guarded Create |
-| [Close empty token accounts](/examples/token-accounts#close-empty-token-accounts) | fixed data read, guarded CPI |
-| [Exact token debit](/examples/token-accounts#exact-token-debit) | snapshot, post-CPI invariant |
+Templates that create, pay into, close and check SPL token accounts. An ATA (associated token
+account) is the standard token account for a given wallet and mint.
 
-## Safety guardrails
-
-| Pattern | Core primitives |
-| --- | --- |
-| [Deadline and minimum output](/examples/guardrails#deadline-and-minimum-output) | `AND`, clock, comparisons |
-| [Pinned program and owner](/examples/guardrails#pinned-program-and-owner) | account schema constraints |
-| [Oracle price band](/examples/guardrails#oracle-price-band) | fixed-width account read |
-| [Maximum lamport spend](/examples/guardrails#maximum-lamport-spend) | pre/post snapshot |
-| [Canonical position account](/examples/guardrails#canonical-position-account) | generic PDA assertion |
-
-## Protocol composition
-
-| Pattern | Core primitives |
-| --- | --- |
-| [Swap then deposit](/examples/composition#swap-then-deposit) | client bytes, two generic CPIs |
-| [Claim then distribute](/examples/composition#claim-then-distribute) | root CPI plus batch loop |
-| [Primary or fallback route](/examples/composition#primary-or-fallback-route) | complementary guards |
-| [Time-gated governance execution](/examples/composition#time-gated-governance-execution) | clock and state reads |
-| [Bounded keeper crank](/examples/composition#bounded-keeper-crank) | repeated generic CPI |
-
-::: tip Two authoring surfaces, one bytecode
-The TypeScript compiler and the Rust `ProgramBuilder` emit identical bytes for the same template;
-the repository checks this against shared fixtures. The compiler adds pin lints, inferred data
-lengths, and a source map; the builder is lower level and leaves those decisions to you. Either
-artifact can be uploaded and run from either language.
-:::
+| Recipe | What it does | Plain transaction? |
+| --- | --- | --- |
+| [Create then transfer](/examples/token-accounts#assert-create-then-transfer) | Check each recipient's ATA address, create it if missing, then pay | Yes |
+| [Token payroll](/examples/token-accounts#existing-account-token-payroll) | Pay many existing token accounts | Yes |
+| [Conditional ATA setup](/examples/token-accounts#conditional-ata-setup) | Create an ATA only if it doesn't exist yet | Yes |
+| [Close empty accounts](/examples/token-accounts#close-empty-token-accounts) | Close each account whose balance is zero | Yes, weaker |
+| [Exact token debit](/examples/token-accounts#exact-token-debit) | Check the transfer took exactly the stated amount | Yes, weaker |

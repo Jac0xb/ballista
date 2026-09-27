@@ -413,7 +413,7 @@ cases.push({
   },
   baseline: {
     verdict: 'impossible',
-    note: 'Claiming nothing is an error in most protocols, and an error reverts the transaction. A keeper that guesses wrong pays the fee and lands nothing, including the work batched alongside it.',
+    note: 'Claiming nothing is an error in most protocols, and an error reverts the transaction. A caller that guesses wrong pays the fee and gets nothing done, including the other work in the same transaction.',
     instructions: [
       {
         program: 'system-program',
@@ -464,7 +464,7 @@ cases.push({
   inputs: { threshold: 2n },
   baseline: {
     verdict: 'impossible',
-    note: 'Health is read from the position at execution. A liquidation sent on a stale read reverts when someone else got there first, and reverts again for every keeper racing the same block.',
+    note: 'Health is read from the position at execution. A liquidation sent on a stale read reverts when someone else got there first, and again for every other liquidator trying the same position.',
     instructions: [
       {
         program: 'system-program',
@@ -502,7 +502,7 @@ cases.push({
   inputs: { floor: 2_000_000_000n, topUp: AMOUNT },
   baseline: {
     verdict: 'impossible',
-    note: 'A cron that tops up unconditionally drains the funder; one that checks first has read a balance that may have changed by the time the transfer lands.',
+    note: 'A scheduled job that always tops up drains the funder; one that checks first has read a balance that may have changed by the time the transfer lands.',
     instructions: [
       {
         program: 'system-program',
@@ -542,7 +542,7 @@ cases.push({
   accounts: { protocolProgram: 'system-program', payer: 'signer', position: 'empty-account' },
   baseline: {
     verdict: 'impossible',
-    note: 'Only a handful of programs ship an idempotent Create. For the rest the caller must know whether the account exists, and be right about it at execution, or the whole transaction fails.',
+    note: 'Only a few programs have an instruction that creates an account only if it is missing. For the rest the caller must know whether the account exists, and be right about it at execution, or the whole transaction fails.',
     instructions: [
       {
         program: 'system-program',
@@ -703,7 +703,7 @@ cases.push({
   rows: Array.from({ length: RIPE_ROWS }, () => ({ entry: 'state-account' as Role })),
   baseline: {
     verdict: 'impossible',
-    note: 'Which entries are due depends on the clock at execution. Sending one instruction per entry reverts the whole batch on the first one that is not ready yet, and filtering beforehand races the block.',
+    note: 'Which entries are due depends on the clock at execution. Sending one instruction per entry reverts the whole transaction on the first one that is not ready yet, and filtering beforehand can be out of date by the time it runs.',
     instructions: Array.from({ length: RIPE_ROWS }, (_, index) => ({
       program: 'system-program' as Role,
       accounts: [
@@ -1054,7 +1054,7 @@ cases.push({
   inputs: { amount: 1_000n },
   baseline: {
     verdict: 'equivalent',
-    note: 'ATA CreateIdempotent then Transfer per recipient. The ATA program derives the address itself, so the guarantee matches.',
+    note: "The associated token account program's create-if-missing instruction, then a transfer, for each recipient. That program derives the address itself, so the guarantee matches.",
     instructions: Array.from({ length: ATA_ROWS }, (_, index) => [
       {
         program: 'ata-program' as Role,
@@ -1164,7 +1164,7 @@ cases.push({
   },
   baseline: {
     verdict: 'equivalent',
-    note: 'ATA CreateIdempotent is the same behavior in one instruction.',
+    note: "The associated token account program's create-if-missing instruction does the same in one instruction.",
     instructions: [
       {
         program: 'ata-program',
@@ -1220,7 +1220,7 @@ cases.push({
   rows: Array.from({ length: CLOSE_ROWS }, () => ({ tokenAccount: 'empty-tokens' as Role })),
   baseline: {
     verdict: 'weaker',
-    note: 'CloseAccount per candidate works only while every candidate is empty: SPL Token rejects a funded account, which fails the whole transaction instead of skipping that row.',
+    note: 'One close instruction per account works only while every account is empty: the token program refuses to close a funded account, which fails the whole transaction instead of skipping that account.',
     instructions: Array.from({ length: CLOSE_ROWS }, (_, index) => ({
       program: 'token-program' as Role,
       accounts: [
@@ -1331,7 +1331,7 @@ cases.push({
   },
   baseline: {
     verdict: 'weaker',
-    note: 'The route instruction alone. Deadline and minimum output are whatever the client checked before signing.',
+    note: 'The swap instruction alone. The deadline and minimum output are only what the client checked before signing.',
     instructions: [
       {
         program: 'system-program',
@@ -1372,7 +1372,7 @@ cases.push({
   inputs: { amount: AMOUNT },
   baseline: {
     verdict: 'weaker',
-    note: 'The same instruction with no schema: a substituted program ID or a wrong-owner account is accepted as far as the transaction is concerned.',
+    note: "The same instruction without the template's account checks: the transaction itself accepts a different program or an account with the wrong owner.",
     instructions: [
       {
         program: 'system-program',
@@ -1609,7 +1609,7 @@ cases.push({
   },
   baseline: {
     verdict: 'weaker',
-    note: 'Both instructions can be sent back to back, but the intermediate token delta is never checked, so a bad fill still deposits.',
+    note: 'Both instructions can be sent back to back, but nothing checks how many tokens the swap produced, so a swap that returns too little still deposits.',
     instructions: [
       {
         program: 'system-program',

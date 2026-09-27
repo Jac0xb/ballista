@@ -1,23 +1,24 @@
-# Compute profile
+# Where the compute goes
 
-Three measurements of the same program, each answering a different question.
+Solana counts the work a program does in **compute units**, and every transaction has a limit on
+how many it can use. This page shows where a Ballista run spends them. For what each example costs
+against sending the same calls yourself, see [What a run costs](/benchmarks).
 
-| Tool | Question it answers | How to run it |
-| --- | --- | --- |
-| Marginal profile | What does one more of *this* cost? | `pnpm benchmarks` |
-| Phase profile | Where does a run's budget actually go? | `pnpm cu:phases` |
-| [Mollusk bencher](https://docs.rs/mollusk-svm-bencher) | Did this change move any whole instruction? | `pnpm cu:bench` |
+In brief: every run starts with about 1,000 units of fixed work. After that, calls to other
+programs cost the most, and most of what a call costs is charged by Solana, not by Ballista. The
+other large cost is deriving a PDA, an account address computed from a program's ID instead of
+from a key pair. Everything else is small.
 
-The marginal profile is the table below. The phase profile splits one run into the stages it
-passes through. The bencher is Anza's own compute-unit bencher, the one most Solana programs use;
-it writes `benches/compute_units.md` with a delta column against the last committed run, so a
-regression shows up as a diff.
+All figures come from running the compiled program in [Mollusk](https://github.com/anza-xyz/mollusk),
+Anza's harness for testing Solana programs, on the Agave 4.1 runtime.
 
-## What one more of something costs
+## Cost of each feature
 
-Every figure below is a difference between two templates that differ only in how many times they
-do one thing, so the fixed cost of a run cancels and what is left is the price of that feature.
-The harness lives in `tests/ballista/src/profile.rs`.
+Each figure below is the difference between two templates that are identical except for how many
+times they do one thing. The fixed cost of a run cancels out, and what is left is the cost of one
+more of that thing. Two words in the table are Ballista's own: a **register** is one of the
+numbered slots that hold a template's working values, and an **invocation** is a call to another
+program.
 
 <!-- profile:table -->
 
@@ -64,37 +65,67 @@ The harness lives in `tests/ballista/src/profile.rs`.
 
 <!-- /profile -->
 
-## Reading it
+**Fixed cost.** The smallest possible template checks a constant and does nothing else. It costs
+1,014 units. Every run pays at least this much to load the template, check the accounts passed to
+it and read its inputs.
 
-A run starts at about a thousand compute units and then pays for what the template actually does.
-Nothing in the interpreter is expensive on its own. Three things dominate any real template:
+**Calls.** A call from one program to another is a cross-program invocation, or CPI. A SOL
+transfer costs 1,730 units when a template makes it. Most of that is not Ballista's: the Solana
+runtime charges a flat 946 units for every CPI, and the System Program spends 150 on the transfer,
+the same as it would for a plain instruction. The other 630 or so is Ballista reading the call's
+description from the template, looking up its accounts, assembling its data and handing it over.
+Each extra account passed to a call adds 136 units, to look it up and add it to the call's account
+list. The size of the call's data barely matters: 1,000 extra bytes added less than 10 units.
 
-**Address derivation is the one big cost, unless you supply the bump.** A canonical derivation
-hashes with bump 255, then 254, and so on until the result is off-curve, and the runtime charges
-1,500 units for every attempt. Pass the bump instead and there is one attempt: about 1,900 units
-against about 4,850, and flat however deep the canonical bump happens to be. See
-[PDA assertions](/guide/pda-assertions).
+**PDAs.** A PDA (program derived address) is an account address computed from a program's ID and a
+few chosen values, called seeds, instead of from a key pair. To find it, the runtime adds a
+one-byte **bump** to the seeds, trying 255 first and counting down until the result is a valid
+PDA, and it charges 1,500 units for every attempt. That search makes deriving a PDA the most
+expensive single step: 4,852 units in the table, for one seed written into the template as a fixed
+value (a literal). Given the bump, the template makes one attempt: 1,898 units, whatever the bump
+is. The check then proves less: the address comes from those seeds and that bump, which need not be
+the canonical one. [PDA and ATA assertions](/guide/pda-assertions) shows how to pass the bump and
+when that matters.
 
-**Cross-program invocation is mostly not ours.** Of the units an invocation costs, the runtime
-charges a flat 1,000 for the call itself and the callee charges its own. What Ballista adds is the
-remainder, spent resolving accounts and building the instruction.
+**Everything else is small.** A step between calls costs 80 to 210 units: a comparison, a sum,
+reading the clock, or reading a field from an account, such as its balance in lamports (the
+smallest unit of SOL). Each account the template declares costs 46 to 67 units to check, and each
+input 63 to 78 to decode.
 
-**Everything else is small and linear.** An instruction costs between 85 and 210 units, an account
-between 45 and 70 to validate, an input under 80 to decode, and a loop iteration adds almost
-nothing beyond the instructions inside it.
+**Batches.** A batch repeats the same steps for each row of accounts. A row that makes one SOL
+transfer costs 1,671 units, and a row that reads an account and checks it, without a call, costs
+478. When a batch makes the same call on every row, Ballista keeps the call's account list, and its
+data if that does not change, from one row to the next, and swaps in only the row's own accounts.
+An account that is the same on every row still costs 57 units per row, because it is passed to the
+call on every row. At the start of each row, Ballista resets the template's working values to where
+they stood before the loop, apart from any the template keeps from row to row, such as a running
+total. That reset costs under 0.01 units per value.
 
-## Where a run's budget goes
+## Cost of each phase of a run
 
-The program can be built with a `cu-profile` feature that reads `sol_remaining_compute_units` at
-each phase boundary and returns the samples as the instruction's return data. The harness in
-`tests/ballista/src/phases.rs` runs every case twice, once on that build and once on the ordinary
-one, and reports the phases against the ordinary total, so the instrumentation is excluded rather
-than smeared across the table.
+The table above prices one feature at a time. The tables below follow four runs from start to
+finish: the smallest possible template, a payroll batch of one row and of 30 rows (one SOL
+transfer per row), and a batch that adds up the balances of 30 accounts without making any calls.
+Each table starts with the run's total and its number of calls, which the tables call invokes. The
+stages are:
 
-Reading the counter is itself a syscall, measured at 115 units in the run that uses it, and every
-interval has that subtracted. The feature compiles to nothing when it is off: against a build with
-the hooks deleted from the source, the ordinary binary has a byte-identical `.text` and differs
-only in 31 bytes of panic-location metadata, where the added lines moved some line numbers.
+- **Entrypoint and account deserialization**: Solana starts the program, which reads the list of
+  accounts passed to the instruction. This grows with the number of accounts.
+- **Instruction parse and dispatch**: working out which Ballista instruction was sent.
+- **Template account load and header parse**: checking the template account and reading the header
+  at the start of the template.
+- **Runtime account validation**: checking each account passed to the run against what the
+  template declares for it, such as its address, owner or size.
+- **Run input parse**: decoding the inputs passed to this run.
+- **Register file allocation**: reserving memory for the template's working values, which Ballista
+  calls registers.
+- **Invocation scratch allocation**: reserving the buffers that every call reuses.
+- **Interpreter**: running the template's steps. In runs that make calls, this is split in three.
+  **Interpreter, other instructions** is every step except the calls, including the loop.
+  **Invoke build: accounts and data** is looking up each call's accounts and assembling its data.
+  **Invoke itself: runtime and callee** is the call: Solana's CPI fee, the called program's work,
+  and handing the call over.
+- **Return and unattributed remainder**: whatever the stages above do not account for.
 
 <!-- profile:phases -->
 
@@ -168,152 +199,72 @@ only in 31 bytes of panic-location metadata, where the added lines moved some li
 
 <!-- /phases -->
 
-Three things stand out. The invoke dominates anything that invokes, and most of it belongs to the
-runtime, not to Ballista. Building each invocation — resolving its accounts and encoding its data
-— is the largest piece Ballista actually controls. And the fixed prologue is genuinely small: a
-template's header parse, input parse and allocation together cost under 700 units no matter how
-big the batch is.
+What the tables show:
 
-## Where the golf is
+- **The call itself is the largest stage** in every run that makes calls: 36.8% of the one-row
+  payroll and 70.2% of the 30-row payroll. Each SOL transfer costs 1,210 units here, and 946 of
+  them are Solana's CPI fee and 150 the System Program's work. A program written by hand to make
+  the same calls would pay both. (The 1,730 in the feature table also covers building the call.)
+- **Building calls is the largest part Ballista controls.** It takes 398 units for the single call
+  in the one-row payroll, and 5,270 for the thirty calls in the 30-row payroll, about 176 each,
+  because every row after the first reuses the account list and data.
+- **Start-up work is small and does not grow with the batch.** Loading the template, decoding the
+  inputs and the two allocations come to 723 units in both payrolls. What grows with the batch is
+  the work per account: reading the accounts at the start, and checking them.
+- **Without calls, running the steps is most of the run**: 86.8% of the 30-row sum.
 
-Every claim here is a measurement, and the ones that did not survive measurement are listed too.
+### How the phases are measured
 
-### Landed
+The program has an optional `cu-profile` build feature. With it on, the program reads how much of
+its compute budget is left (the `sol_remaining_compute_units` system call) at each stage boundary
+and around each call, and returns the readings as the instruction's return data. Each reading
+costs 115 units, measured in the same run, and that is subtracted from every stage. The test in
+`tests/ballista/src/phases.rs` runs each case on both the profiling build and the normal build.
+The stages come from the profiling build; the totals and percentages come from the normal build,
+and anything the stages leave over is shown as the remainder. With the feature off, none of the
+readings are compiled into the program.
 
-**Take the bump as an input.** `expression.pda(program, seeds, bump)` and the `bump` option on
-`assertPda` and `assertAta` compile to `CREATE_PDA`, which derives once instead of searching down
-from 255. Measured at 1,898 units against 4,852, and the saving grows with the bump's depth: for
-an associated token account whose canonical bump is 250, the search costs 11,325 units and the
-supplied bump 4,069, flat. The check stays exactly as strong, because a wrong bump either fails
-to be a program address or produces a different one, and the comparison rejects it either way.
+## Whole runs, tracked over time
 
-**Build each invocation once per batch, not once per row.** A batch rebuilt the whole invocation
-on every row: resolving every account in its list, and encoding every byte of its data, though
-usually only the row account differs. At loop entry the executor now works out what can be kept.
-It keeps the account list and re-resolves only the row slots; it keeps the program account; and
-when no segment of the data reads a register the body writes, it keeps the encoded bytes too. A
-body that invokes more than one descriptor would overwrite the shared buffers, so it opts out and
-pays nothing.
+`pnpm cu:bench` runs [mollusk-svm-bencher](https://docs.rs/mollusk-svm-bencher), the compute-unit
+bencher that comes with Mollusk, over nine fixed runs. It adds the results to
+`benches/compute_units.md`, with the change since the previous results. That file is committed, so
+any change to the program's compute cost shows up in review. The runs are defined in
+`tests/ballista/src/cases.rs`. The latest results:
 
-That last part needs the compiler's help, which is the next entry.
+| Run | Compute units |
+| --- | ---: |
+| Smallest possible template: one check, no calls | 1,014 |
+| One SOL transfer | 2,938 |
+| 8 SOL transfers in a batch | 14,989 |
+| 30 SOL transfers in a batch | 51,741 |
+| Add up the balances of 30 accounts, no calls | 18,208 |
+| Compare a value in an account with two inputs, no calls | 1,932 |
+| Derive one PDA, searching for the bump | 6,015 |
+| Derive one PDA, bump supplied | 3,147 |
+| Upload a 30-row payroll template | 6,817 |
 
-**Load fixed inputs before the loop, once.** The SDK compiled `expression.input('amount')` where
-it was used, so a payroll loaded the same unchanging amount on every row — and because the loop
-restores every register its body writes, that load also told the executor the invocation data
-might have changed. Fixed inputs now load before the first step and are shared between uses, so
-the data cache above actually engages. It also removes a duplicate load when an input is read
-twice.
+## Regression checks
 
-Together, across the cookbook, **28,054 compute units, 5.0%**:
+The integration tests (`pnpm test:integration`) fail when a run uses more compute than the limit
+recorded for it. `fixtures/cu-ceilings.json` holds a limit for each tracked run above, and
+`fixtures/example-ceilings.json` one for every example. Updating the recorded numbers
+(`pnpm cu:ceilings` for the tracked runs, `pnpm benchmarks` for the examples) lowers a limit when a
+change makes a run cheaper, but never raises one. An increase has to be edited into the file by
+hand, where a reviewer sees it.
 
-| Template | Before | After | Change |
-| --- | ---: | ---: | ---: |
-| Existing-account token payroll, 32 rows | 64,497 | 55,183 | **−14.4%** |
-| Bounded SOL payroll, 30 rows | 59,368 | 51,741 | **−12.8%** |
-| Claim then distribute, 16 rows | 34,844 | 30,432 | −12.7% |
-| Close empty token accounts, 16 rows | 37,143 | 35,095 | −5.5% |
-| Index-weighted rewards, 30 rows | 73,700 | 70,339 | −4.6% |
-| Bounded keeper crank, 24 rows | 51,052 | 50,303 | −1.5% |
-| Swap then deposit, no batch | 5,734 | 5,783 | +0.9% |
+The tracked runs and the examples use fixed account addresses. Every bump search therefore takes
+the same number of attempts, and costs the same, on every run and every machine.
 
-Deciding what a loop can keep costs a little on every run, which is the +0.9% on templates with
-no batch to amortise it. The worst case across all twenty examples is 49 compute units.
+## Reproducing the numbers
 
-**Materialize constants before the loop too, and share them.** A literal inside a batch body was
-rebuilt on every row at about 86 units each, and two uses of the same value took two registers.
-Constants now compile once, ahead of the first step, keyed by value. No example got worse and
-four got materially better: bounded keeper crank **−9.8%**, close empty token accounts −2.9%,
-index-weighted rewards −2.8%, basis-point revenue split −1.5%, for another 8,007 units.
+| Numbers | Command |
+| --- | --- |
+| Cost of each feature, and every example's cost table | `pnpm benchmarks` |
+| Cost of each phase | `pnpm cu:phases` |
+| Tracked whole runs | `pnpm cu:bench` |
+| Check that nothing got more expensive | `pnpm test:integration` |
 
-Across everything measured here, the cookbook went from 555,835 compute units to 519,774: **6.5%
-less for the same twenty templates**, with no change to what any of them guarantee.
-
-**Derive the template address once per upload.** `create_template` computed the template PDA in
-its account check and again for the bump. Only 30 units, because the optimizer was already
-merging the two syscalls, but the code no longer depends on it noticing.
-
-### Measured and rejected
-
-**Skip the input decoder and the invocation buffers when a template has neither.** Allocation is
-a real part of the fixed cost — the register file is 116 units and the three invocation buffers
-56, together 17% of the 1,014-unit floor — and a template with no inputs or no invocations could
-skip them. Measured on the micro-benchmarks it looked like a 13% cut to the floor. Measured on
-the cookbook it was **677 units worse**, because every real template has both inputs and an
-invocation, so the fast paths never fire and only the extra branches remain. Reverted. The
-lesson is in the method, not the code: a micro-benchmark of a template nobody writes will happily
-recommend a regression.
-
-**Restore only the registers a loop body writes.** The loop copies the register file back from a
-snapshot on every iteration, which looked like a `memcpy` per row. Replacing it with a mask of
-the registers the body writes made a 30-row batch with no invoke **3,004 units worse**: iterating
-set bits costs more per register than the copy costs for the whole file. Reverted. The marginal
-cost of a declared register per iteration measures 0.00 units, so there is nothing here.
-
-### Still open
-
-**Share repeated account reads within a step.** A template that reads the same account field
-twice in one expression pays for both: the oracle band reads its price field twice, 174 units.
-Reads cannot be shared across a step boundary, because an invocation in between can change the
-account, but within one step they can.
-
-Note that hoisting account reads out of a loop would be wrong for the same reason: a batch that
-transfers from one treasury must see the balance the previous row left behind.
-
-**Cache more than one invocation per body.** A body that invokes two different programs — assert
-the ATA, create it, then transfer — opts out of all of the above, because the account list and
-the data buffer are shared. Giving each descriptor its own slot would extend the win to the
-cookbook's most expensive example.
-
-**Fuse compare with assert.** A requirement is almost always a comparison feeding an assertion,
-two dispatches where one would do, so roughly 90 units per guard. That is 0.2% of a payroll but
-up to 6% of a small guardrail template, which is where the fixed costs dominate.
-
-**Take the template bump on upload.** An upload's largest single cost is the canonical search for
-the template's own address, 1,500 units per rejected bump. Accepting it in the instruction would
-make uploads cheaper and, more usefully, constant. One-time per template.
-
-**Trim the fixed floor.** Of the 1,005-unit floor, 221 units go to parsing run inputs for a
-template that has none and 169 to allocating the register file and scratch. Stack buffers instead
-of `Vec` would plausibly recover a few hundred units: 0.5% of a payroll, 10% of a guardrail.
-
-The costs not worth chasing are account validation and input decoding, and above all the invoke
-itself: 1,000 of its ~1,210 units are the runtime's flat charge for any cross-program invocation,
-which a hand-written program making the same calls would pay too.
-
-### Keeping the wins
-
-`fixtures/cu-ceilings.json` records the best figure every benchmark case has reached, and
-`cargo test` fails when one of them costs more. `pnpm cu:ceilings` lowers a ceiling an improvement
-has beaten but never raises one, so a regression has to be accepted explicitly, in the same commit,
-where a reviewer sees it. That ratchet is what caught the register-restore change above. It also caught a case whose
-compute depended on `Pubkey::new_unique`, a counter shared with every other test in the binary,
-which made the case's template address — and so its bump search — depend on what else had run.
-
-The ratchet covers both halves. `fixtures/cu-ceilings.json` holds the hand-built cases, which
-measure the executor, and `fixtures/example-ceilings.json` holds every cookbook example, which
-measures the compiler as well — the two largest wins above were compiler changes that the first
-file could not see.
-
-Both sets are reproducible now. They were not at first: the harnesses drew addresses from
-`Pubkey::new_unique`, whose counter is shared with every other test in the binary, so a template's
-own address — and the depth of the bump search that derives it — depended on which tests happened
-to run alongside. Two examples moved by thousands of units between runs. They now draw from a
-fixed sequence.
-
-Raising a ceiling is deliberate. The batch work above costs every run a few units to decide what
-it can keep, so six ceilings went up by 9 to 39 units while the batched examples fell by
-thousands; those six were edited by hand, which is the point.
-
-## Whole instructions, tracked over time
-
-`pnpm cu:bench` runs [`mollusk-svm-bencher`](https://docs.rs/mollusk-svm-bencher) over a fixed set
-of instructions and writes `benches/compute_units.md`. The file is committed, so the next run
-prints a delta against it and any change to the program shows its compute cost in the diff. The
-cases are in `tests/ballista/benches/compute_units.rs`.
-
-::: tip Why not a VM trace
-`agave-ledger-tool program run --trace` would give a per-opcode trace, but `program run` in Agave
-4.1.0 exits with `The argument 'accounts_index_limit' wasn't found` before it executes anything.
-Sampling the compute meter from inside the program gets the same attribution without depending on
-that path.
-:::
+`pnpm cu:phases` builds the two versions of the program it needs. The others measure the program
+in `target/deploy/`, so build it first with `pnpm build:program`. `pnpm benchmarks` and
+`pnpm cu:phases` finish by rewriting every generated table in the docs.

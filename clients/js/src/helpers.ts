@@ -18,10 +18,11 @@ export function assertPda(input: {
   program: AccountReference;
   seeds: Expression[];
   /**
-   * The canonical bump, usually `expression.input('bump')`. Supplying it derives the address once
-   * instead of searching down from 255, which is the difference between about 4,800 and 1,500
-   * compute units. A wrong bump makes the derivation fail or produce a different address, so the
-   * assertion still rejects a substituted account.
+   * The bump to derive with, such as `expression.input('bump')`. Supplying it derives the address
+   * once instead of searching down from 255: about 1,900 compute units instead of about 4,850 for a
+   * search three bumps deep. The assertion then proves only that the account derives from these
+   * seeds and this bump, which need not be the canonical one. Leave it out, or write the canonical
+   * bump into the template, when only the canonical address will do.
    */
   bump?: Expression;
   label?: string;

@@ -1,17 +1,32 @@
 # Token-account patterns
 
-Offsets below use the legacy SPL Token account layout. Pin the Token Program address, account owner,
-and minimum data length whenever reading raw fields.
+Templates that create, pay into, close and check SPL token accounts. An ATA (associated token
+account) is the standard token account for a given wallet and mint.
 
-Several patterns here are conveniences: a plain transaction sends the same instructions with the
-same guarantees, and the measured tables say so. The ones that earn a template read a balance or
-a flag mid-run — [forward the whole token balance](/examples/runtime-values#forward-the-whole-token-balance)
-and [consolidate only the funded accounts](/examples/loops#consolidate-only-the-funded-accounts).
+Each recipe ends with a cost table, measured with Mollusk (a tool that runs Solana programs
+locally). It compares one Ballista run with the plain instructions that do the same work, in
+compute units (Solana's measure of execution cost) and transaction bytes. Where the column is
+headed just **Plain instructions**, a plain transaction does the same work with the same
+guarantees, for less compute. **Plain instructions, weaker checks** means the plain version can't enforce
+the template's check on chain. Templates earn their cost when they read a balance or a flag while
+the transaction runs, as in [forward the whole token balance](/guide/runtime-values#forward-the-whole-token-balance)
+and [consolidate only the funded accounts](/guide/loops#consolidate-only-the-funded-accounts).
+
+Some recipes read a token account's balance straight from its data. In the SPL Token account
+layout, the balance is a `u64` at byte offset 64. When a template reads raw bytes like this, have it
+also require the Token Program's address, the account's owner and its minimum data length (165
+bytes for a token account), so it can't be handed a different kind of account.
 
 ## Assert, create, then transfer
 
-Validate that the destination is the recipient's canonical ATA, create it only when empty, then
-transfer tokens—all atomically.
+For each recipient, check that the destination is the recipient's ATA, create it if it doesn't
+exist yet, then transfer `amount` tokens to it. An ATA's address is a PDA (an address derived from
+seeds, with no private key) of the Associated Token Account program, and its seeds are the owner,
+the token program and the mint. `assertAta` derives that address and fails the run if the account
+passed in doesn't match. If any step fails, the whole run reverts.
+
+Each recipient is one row of a batch: two accounts, the recipient's wallet and its ATA.
+`step.forEach` runs the three steps once per row.
 
 ::: code-group
 
@@ -64,11 +79,15 @@ let run = ballista_sdk::run_instruction(template, metas, &amount.to_le_bytes());
 | Transaction bytes, upload once | 747 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00345 SOL for 551 bytes | none | — |
 
-One Ballista instruction covering 8 rows against 16 plain instructions, measured with Mollusk. ATA CreateIdempotent then Transfer per recipient. The ATA program derives the address itself, so the guarantee matches. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
+One Ballista instruction for 8 rows, compared with 16 plain instructions. The associated token account program's create-if-missing instruction, then a transfer, for each recipient. That program derives the address itself, so the guarantee matches. What the template adds is one instruction and a sequence of calls stored on chain, not something plain instructions cannot do.
 
 <!-- /benchmark -->
 
 ## Existing-account token payroll
+
+Send the same token amount to up to 32 token accounts that already exist. Each destination must be
+owned by the Token Program and be at least 165 bytes long, the size of a token account, so the
+template can't be pointed at a different kind of account.
 
 ::: code-group
 
@@ -76,7 +95,7 @@ One Ballista instruction covering 8 rows against 16 plain instructions, measured
 batch: {
   maxIterations: 32,
   row: {
-    destination: { writable: true, owner: TOKEN_PROGRAM_BYTES, minDataLength: 165 },
+    destination: { writable: true, owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: 165 },
   },
 },
 steps: [step.forEach([
@@ -108,13 +127,17 @@ let run = ballista_sdk::run_instruction(template, metas, &amount.to_le_bytes());
 | Transaction bytes, upload once | 451 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00195 SOL for 255 bytes | none | — |
 
-One Ballista instruction covering 32 rows against 32 plain instructions, measured with Mollusk. One SPL Token transfer per destination does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
+One Ballista instruction for 32 rows, compared with 32 plain instructions. One SPL Token transfer per destination does the same work. What the template adds is one instruction and a sequence of calls stored on chain, not something plain instructions cannot do.
 
 <!-- /benchmark -->
 
 ## Conditional ATA setup
 
-Use ordinary ATA `Create`, not `CreateIdempotent`, so the `isEmpty` guard has observable value.
+Create an ATA only if it doesn't exist yet. `ensureAssociatedTokenAccount` calls the ATA program's
+`Create` instruction with a `when` condition that the account is empty, so a repeat run skips the
+call instead of failing. It uses `Create` rather than `CreateIdempotent` so that the condition is
+what does the work. As the cost table shows, `CreateIdempotent` on its own does the same job as one
+plain instruction.
 
 ::: code-group
 
@@ -161,13 +184,16 @@ let run = ballista_sdk::run_instruction(
 | Transaction bytes, upload once | 508 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00224 SOL for 312 bytes | none | — |
 
-One Ballista instruction against 1 plain instruction, measured with Mollusk. ATA CreateIdempotent is the same behavior in one instruction. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
+One Ballista instruction, compared with 1 plain instruction. The associated token account program's create-if-missing instruction does the same in one instruction. What the template adds is one instruction and a sequence of calls stored on chain, not something plain instructions cannot do.
 
 <!-- /benchmark -->
 
 ## Close empty token accounts
 
-Read the token amount at offset 64 and invoke SPL Token `CloseAccount` only when it is zero.
+For each token account in the list, read its balance (the `u64` at byte offset 64) and call SPL
+Token's `CloseAccount` only if it is zero. Accounts that still hold tokens are skipped, so one
+funded account doesn't fail the whole run. Closing an account returns its rent (the SOL deposit
+that keeps an account open) to `rentDestination`.
 
 ::: code-group
 
@@ -199,7 +225,7 @@ let run = ballista_sdk::run_instruction(template, metas, &[]);
 
 <!-- benchmark:close-empty-token-accounts -->
 
-| Cost | Ballista | Plain instructions, weaker | Difference |
+| Cost | Ballista | Plain instructions, weaker checks | Difference |
 | --- | ---: | ---: | ---: |
 | Compute units, every run | 34,064 | 1,888 | +32,176 |
 | Transaction bytes, every run | 803 | 842 | −39 |
@@ -207,11 +233,15 @@ let run = ballista_sdk::run_instruction(template, metas, &[]);
 | Transaction bytes, upload once | 471 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00205 SOL for 275 bytes | none | — |
 
-One Ballista instruction covering 16 rows against 16 plain instructions, measured with Mollusk. CloseAccount per candidate works only while every candidate is empty: SPL Token rejects a funded account, which fails the whole transaction instead of skipping that row. Enforcing that on chain any other way means deploying your own program.
+One Ballista instruction for 16 rows, compared with 16 plain instructions. One close instruction per account works only while every account is empty: the token program refuses to close a funded account, which fails the whole transaction instead of skipping that account. Enforcing that on chain any other way means deploying your own program.
 
 <!-- /benchmark -->
 
 ## Exact token debit
+
+Transfer tokens, then check that the source balance dropped by exactly `amount`. The template
+records the balance before the transfer and compares it afterwards; any other change fails the
+whole run.
 
 ::: code-group
 
@@ -226,14 +256,14 @@ step.require(expression.equal(
 
 ```rust [Rust · run]
 let run = ballista_sdk::run_instruction(template, token_metas, &amount.to_le_bytes());
-// Unexpected fees or debits make the post-CPI requirement fail atomically.
+// If the source changes by anything other than `amount`, the check after the transfer fails the run.
 ```
 
 :::
 
 <!-- benchmark:exact-token-debit -->
 
-| Cost | Ballista | Plain instructions, weaker | Difference |
+| Cost | Ballista | Plain instructions, weaker checks | Difference |
 | --- | ---: | ---: | ---: |
 | Compute units, every run | 3,780 | 76 | +3,704 |
 | Transaction bytes, every run | 316 | 250 | +66 |
@@ -241,6 +271,6 @@ let run = ballista_sdk::run_instruction(template, token_metas, &amount.to_le_byt
 | Transaction bytes, upload once | 515 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00227 SOL for 319 bytes | none | — |
 
-One Ballista instruction against 1 plain instruction, measured with Mollusk. A bare transfer moves the tokens; nothing proves the source was debited by exactly that amount and no more. Enforcing that on chain any other way means deploying your own program.
+One Ballista instruction, compared with 1 plain instruction. A bare transfer moves the tokens; nothing proves the source was debited by exactly that amount and no more. Enforcing that on chain any other way means deploying your own program.
 
 <!-- /benchmark -->

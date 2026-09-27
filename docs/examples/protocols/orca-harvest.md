@@ -1,12 +1,18 @@
 # Harvest only the positions that earned
 
-A liquidity manager holds dozens of positions. Most have earned something since the last harvest
-and some have not, and which is which depends on trades that happen after the transaction is
+This template collects fees from up to 12 Orca positions in one transaction, skipping the ones
+that have not earned enough.
+
+A liquidity provider may hold dozens of positions. Some have earned fees since the last harvest
+and some haven't, and which is which depends on trades that happen after the transaction is
 signed.
 
-One `collect_fees` per position reverts the whole batch on the first position the protocol
-refuses. Filtering beforehand races the block: a position that looked empty when the list was
-built may have earned by the time it lands, and the reverse.
+Sending one `collect_fees` per position fails the whole transaction at the first position Orca
+refuses. Filtering the list before signing doesn't solve it: a position that looked empty may have
+earned by the time the transaction lands, and the reverse.
+
+For each position, the template reads `fee_owed_a` from the position account during the run and
+calls `collect_fees` only if it is above `dustFloor`.
 
 ::: code-group
 
@@ -16,7 +22,14 @@ built may have earned by the time it lands, and the reverse.
 
 :::
 
-The row count is fixed by the account list. Whether each row acts is decided during execution
-from that row's own `fee_owed_a`.
+The positions form a batch. In the run, each position is one row of two accounts, the position and
+its position token account, and the template repeats its steps once per row. You choose which
+positions to include; the template decides during the run which of them to collect from.
 
-[All live-protocol examples](/examples/protocols/) · [reading offsets](/examples/protocols/#reading-offsets-from-an-account)
+The fee offset comes from Orca's `Position` account; see
+[reading offsets](/examples/protocols/#reading-offsets-from-an-account).
+
+Not yet run against Orca: the template compiles and passes Ballista's verifier, and an opt-in test
+checks its offsets against devnet accounts, but no test calls Orca.
+
+[All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

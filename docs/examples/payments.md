@@ -1,17 +1,30 @@
 # Payment patterns
 
+Templates that pay out SOL: a payroll, a revenue split, weighted rewards, a refund with a deadline
+and a capped sweep. Each shows the template, the code that runs it, and a cost table.
+
+Each cost table was measured with Mollusk, a tool that runs Solana programs locally. It compares
+one Ballista run with the plain System Program transfers that do the same work, in compute units
+(Solana's measure of execution cost) and transaction bytes. A column headed **Plain instructions,
+weaker checks** means the plain transfers move the same SOL but can't enforce the template's check on
+chain. The upload rows are paid once, when the template is stored.
+
 ::: warning Batching alone is not a reason
-Thirty transfers fit in a 1,240-byte transaction, comfortably inside the 4,096-byte limit. Where
-the table below says **Yes, same guarantees**, a plain transaction already does the job for a
-fraction of the compute and no rent; the template buys one instruction and a stored, verified
-shape, and nothing else. The patterns worth reaching for are the ones whose amounts or decisions
-only exist during execution — see [amounts nobody knows at signing](/examples/runtime-values) and
-[loops that read as they go](/examples/loops).
+A plain transaction can already send many transfers. Thirty System transfers fit in one 1,670-byte
+transaction, well inside the 4,096-byte limit of a [v1 transaction](/guide/transaction-v1), and use
+far less compute than the template. The payroll below is one of those cases: the template adds a
+single instruction and a sequence of calls that is stored on chain and was checked when it was
+uploaded, and nothing else. Templates earn their cost when an amount or a decision only exists
+while the transaction runs; see [amounts nobody knows at signing](/guide/runtime-values) and
+[loops that read as they go](/guide/loops).
 :::
 
 ## Bounded SOL payroll
 
-Pay up to 30 recipients the same amount while sending only one Ballista instruction.
+Pay the same amount to up to 30 recipients with one Ballista instruction. The recipients form a
+batch: a list of accounts supplied when the template runs, where each entry is a row.
+`step.forEach` runs the transfer once per row. The Rust tabs build the same template with the
+lower-level `ProgramBuilder`, introduced in [Author it in Rust](/guide/getting-started#author-it-in-rust).
 
 ::: code-group
 
@@ -87,14 +100,17 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 | Transaction bytes, upload once | 444 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00191 SOL for 248 bytes | none | — |
 
-One Ballista instruction covering 30 rows against 30 plain instructions, measured with Mollusk. One System transfer per recipient does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
+One Ballista instruction for 30 rows, compared with 30 plain instructions. One System transfer per recipient does the same work. What the template adds is one instruction and a sequence of calls stored on chain, not something plain instructions cannot do.
 
 <!-- /benchmark -->
 
 ## Basis-point revenue split
 
-Split an input amount among two fixed recipients. The final transfer uses subtraction, so integer
-rounding cannot create or lose lamports inside the split.
+Split `total` lamports (the smallest unit of SOL) between a partner and a treasury. `partnerBps` is
+the partner's share in basis points, or hundredths of a percent, so 10,000 is 100%. The template
+rejects a share above 10,000, pays the partner `total × partnerBps / 10,000` rounded down, and pays
+the treasury `total` minus that. Because the treasury's amount is a subtraction, rounding can't
+create or lose lamports.
 
 ::: code-group
 
@@ -132,7 +148,7 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 
 <!-- benchmark:basis-point-revenue-split -->
 
-| Cost | Ballista | Plain instructions, weaker | Difference |
+| Cost | Ballista | Plain instructions, weaker checks | Difference |
 | --- | ---: | ---: | ---: |
 | Compute units, every run | 5,729 | 300 | +5,429 |
 | Transaction bytes, every run | 324 | 270 | +54 |
@@ -140,13 +156,15 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 | Transaction bytes, upload once | 604 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00272 SOL for 408 bytes | none | — |
 
-One Ballista instruction against 2 plain instructions, measured with Mollusk. Two transfers with client-computed amounts settle the same way, but nothing on chain ties the two amounts to one total or bounds the share. Enforcing that on chain any other way means deploying your own program.
+One Ballista instruction, compared with 2 plain instructions. Two transfers with client-computed amounts settle the same way, but nothing on chain ties the two amounts to one total or bounds the share. Enforcing that on chain any other way means deploying your own program.
 
 <!-- /benchmark -->
 
 ## Index-weighted rewards
 
-Use the bounded iteration index to pay row `n` exactly `(n + 1) × base`.
+Pay each recipient a multiple of `base` set by its place in the list: the first gets 1 × `base`,
+the second 2 × `base`, and so on. `expression.loopIndex()` is the current row's position, starting
+at 0.
 
 ::: code-group
 
@@ -167,14 +185,14 @@ step.forEach([
 ```rust [Rust · run]
 let inputs = base.to_le_bytes();
 let run = ballista_sdk::run_instruction(template, ordered_recipient_metas, &inputs);
-// Account-row order defines the reward multiplier.
+// The order of the recipient accounts sets each one's multiple of base.
 ```
 
 :::
 
 <!-- benchmark:index-weighted-rewards -->
 
-| Cost | Ballista | Plain instructions, weaker | Difference |
+| Cost | Ballista | Plain instructions, weaker checks | Difference |
 | --- | ---: | ---: | ---: |
 | Compute units, every run | 68,356 | 4,500 | +63,856 |
 | Transaction bytes, every run | 1,240 | 1,670 | −430 |
@@ -182,13 +200,15 @@ let run = ballista_sdk::run_instruction(template, ordered_recipient_metas, &inpu
 | Transaction bytes, upload once | 508 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00224 SOL for 312 bytes | none | — |
 
-One Ballista instruction covering 30 rows against 30 plain instructions, measured with Mollusk. Transfers with client-computed weights settle the same way; the weighting rule itself is not enforced on chain. Enforcing that on chain any other way means deploying your own program.
+One Ballista instruction for 30 rows, compared with 30 plain instructions. Transfers with client-computed weights settle the same way; the weighting rule itself is not enforced on chain. Enforcing that on chain any other way means deploying your own program.
 
 <!-- /benchmark -->
 
 ## Deadline refund
 
-Execute a refund only while a signed quote remains valid.
+Refund `refundAmount` lamports to the customer only if the run executes at or before `deadline`, a
+Unix timestamp. After the deadline, the `when` condition skips the transfer and the run still
+succeeds.
 
 ::: code-group
 
@@ -213,13 +233,14 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 :::
 
 ::: warning Authorization
-Ballista does not control the escrow. `escrowAuthority` must already sign the transaction, or the
-downstream program must authorize the operation from its own state.
+Ballista has no authority over the escrow. `escrowAuthority` must sign the transaction itself. If
+the refund comes from a call to an escrow program instead, that program must approve it by its own
+rules.
 :::
 
 <!-- benchmark:deadline-refund -->
 
-| Cost | Ballista | Plain instructions, weaker | Difference |
+| Cost | Ballista | Plain instructions, weaker checks | Difference |
 | --- | ---: | ---: | ---: |
 | Compute units, every run | 3,480 | 150 | +3,330 |
 | Transaction bytes, every run | 291 | 220 | +71 |
@@ -227,13 +248,16 @@ downstream program must authorize the operation from its own state.
 | Transaction bytes, upload once | 480 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00209 SOL for 284 bytes | none | — |
 
-One Ballista instruction against 1 plain instruction, measured with Mollusk. A bare transfer refunds unconditionally; the deadline is only checked by whoever builds the transaction. Enforcing that on chain any other way means deploying your own program.
+One Ballista instruction, compared with 1 plain instruction. A bare transfer refunds unconditionally; the deadline is only checked by whoever builds the transaction. Enforcing that on chain any other way means deploying your own program.
 
 <!-- /benchmark -->
 
 ## Reserve-preserving sweep
 
-Sweep at most `cap` while proving the payer remains above its required reserve.
+Move up to `cap` lamports from `payer` to `vault` without letting `payer` fall below `reserve`. The
+template records the balance and fails if it is already below `reserve`. It then sends the smaller
+of `cap` and the amount above the reserve, and checks that the balance is still at least
+`reserve`.
 
 ::: code-group
 
@@ -265,7 +289,7 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 
 <!-- benchmark:reserve-preserving-sweep -->
 
-| Cost | Ballista | Plain instructions, weaker | Difference |
+| Cost | Ballista | Plain instructions, weaker checks | Difference |
 | --- | ---: | ---: | ---: |
 | Compute units, every run | 4,097 | 150 | +3,947 |
 | Transaction bytes, every run | 291 | 220 | +71 |
@@ -273,6 +297,6 @@ let run = ballista_sdk::run_instruction(template, metas, &inputs);
 | Transaction bytes, upload once | 576 in 1 transaction | none | — |
 | Rent locked in the template account | 0.00258 SOL for 380 bytes | none | — |
 
-One Ballista instruction against 1 plain instruction, measured with Mollusk. A transfer of a client-computed amount can be built, but no on-chain check proves the reserve survived. Enforcing that on chain any other way means deploying your own program.
+One Ballista instruction, compared with 1 plain instruction. A transfer of a client-computed amount can be built, but no on-chain check proves the reserve survived. Enforcing that on chain any other way means deploying your own program.
 
 <!-- /benchmark -->

@@ -1,11 +1,30 @@
 # Repay what the swap produced
 
-Deleveraging means selling collateral and repaying with the proceeds. Both halves are unknown at
-signing: what the swap returns, and what the debt has grown to. Interest accrues per slot, so a
-figure quoted to the client is stale on arrival, and repaying more than is owed is rejected.
+This template sells collateral through Jupiter and repays a Kamino loan with what the sale
+produced, in one transaction.
 
-The template swaps, measures what landed, and repays the smaller of that and the wallet's
-balance. `refresh_reserve` runs first because a repayment is priced against a refreshed reserve.
+Deleveraging means selling collateral and repaying a loan with the proceeds. Two numbers are
+unknown when you sign: how much the swap returns, and how much you owe by the time the transaction
+runs. Interest keeps accruing, so a debt figure fetched by the client is already out of date when
+the transaction lands.
+
+The template handles the first number. It swaps, measures how much of the borrowed token arrived,
+and requires at least `minimumRepayment`. It then refreshes the Kamino reserve, because a repayment
+is priced against a freshly refreshed reserve, and repays the amount the swap produced.
+
+It does not read the debt: it repays exactly what the swap produced.
+
+Jupiter's `route` starts its account list with the token program, the signer, and the signer's
+source and destination token accounts: here the collateral account and the borrowed-token account.
+The template passes those four itself; the rest of the route's accounts arrive as an
+[account group](/guide/account-groups). `routeArgs` is Jupiter's instruction data without its
+eight-byte discriminator; the template adds the `route` discriminator itself.
+
+::: tip Requesting the route
+Ask Jupiter's Swap API for `useSharedAccounts: false`. The template always sends Jupiter's `route`
+instruction. The API's default, `shared_accounts_route`, is a different instruction whose accounts
+are in a different order.
+:::
 
 ::: code-group
 
@@ -15,7 +34,12 @@ balance. `refresh_reserve` runs first because a repayment is priced against a re
 
 :::
 
-The `min` is the point. The swap output is the intent; the balance is the truth; the smaller of
-the two is what can actually be repaid.
+The Rust tab builds the run for [deposit exactly what a swap produced](/examples/protocols/jupiter-deposit).
+This template's run has the same form, with the route's remaining accounts passed as an account
+group, but uses its own accounts and inputs in the order the template declares them.
 
-[All live-protocol examples](/examples/protocols/) · [reading offsets](/examples/protocols/#reading-offsets-from-an-account)
+Not yet run against Jupiter or Kamino: the template compiles and passes Ballista's verifier, and a
+test checks that it calls `route` with its accounts in `route`'s order, but no test calls either
+program.
+
+[All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

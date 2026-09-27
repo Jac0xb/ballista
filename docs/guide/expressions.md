@@ -1,10 +1,15 @@
 # Inputs and expressions
 
-Expressions produce one of six VM types: `bool`, `u64`, `i64`, `u128`, `pubkey`, or bounded
-`bytes`. Arithmetic and casts are checked; overflow, invalid narrowing, and division by zero fail
-the transaction.
+This page covers the values a template works with: the inputs a caller passes, the expressions that
+combine them, and the account data a template can read.
+
+Every expression has one of six types: `bool`, `u64`, `i64`, `u128`, `pubkey`, or `bytes` with a
+declared maximum length. Arithmetic and casts are checked: an overflow, a cast whose target type
+cannot hold the value, or a division by zero fails the transaction.
 
 ## Named inputs
+
+A template names each input and gives it a type. A `bytes` input also declares its maximum length.
 
 ```ts
 const template = defineTemplate({
@@ -18,8 +23,9 @@ const template = defineTemplate({
 });
 ```
 
-Inputs are encoded in deterministic declaration order. Byte inputs carry a little-endian `u16`
-length followed by their contents.
+Inputs are encoded one after another in declaration order, with no padding. Numbers are
+little-endian: 8 bytes for `u64` and `i64`, 16 for `u128`. A `pubkey` is its 32 bytes, a `bool` is
+one byte (0 or 1), and a `bytes` input is a little-endian `u16` length followed by the contents.
 
 ::: code-group
 
@@ -44,6 +50,10 @@ data.extend_from_slice(&route_data);
 :::
 
 ## Checked math and booleans
+
+Expressions combine inputs, account reads, and the clock with checked arithmetic, comparisons, and
+the boolean operators `and`, `or`, and `not`. `min` and `max` return the smaller or larger of two
+values, and `select` returns one of two values depending on a condition.
 
 ```ts
 const acceptable = expression.and(
@@ -71,10 +81,20 @@ const mint = expression.accountData(account.fixed('tokenAccount'), 0, 'pubkey');
 const initialized = expression.accountData(account.fixed('stateAccount'), 8, 'bool');
 ```
 
-Account offsets and widths are fixed in the template. The account schema should additionally pin
-the expected owner and minimum data length.
+`expression.accountData(account, offset, type)` reads the value stored at a byte offset in an
+account's data. The type sets the width: 8 bytes for `u64`, 32 for `pubkey`, 1 for `bool`, and so
+on. Reads of `u8`, `u16`, and `u32` produce a `u64`. The offset is usually a number fixed in the
+template, but it can also be a `u64` expression evaluated during the run.
+
+An offset only means something in a known layout, so the compiler refuses to read an account's data
+unless the account's declaration fixes its `owner` or its `address`, or explicitly
+[opts out](/guide/trust-model#opting-out). For a fixed offset, the
+compiler also raises the account's minimum data length so the read always fits, and a run rejects a
+shorter account before any step runs. An offset computed during the run gets no such check: a read
+past the end of the data fails the run.
 
 ## Values intentionally missing
 
-There are no strings, maps, floating-point numbers, arbitrary structs, heap objects, or dynamically
-decoded protocol accounts. Read fixed fields and let SDK helpers map well-known layouts.
+There are no strings, maps, floating-point numbers, structs, or heap objects, and a template cannot
+decode a protocol's account format during a run. Read the fields you need at their known offsets
+instead. The [protocol templates](/examples/protocols/) read real protocol accounts this way.

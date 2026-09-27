@@ -29,6 +29,15 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
 sha2 = "0.10"                 # verify manifest hashes
+# Kamino Lend's instruction builders and account layouts, at the build deployed on mainnet
+# (verify.osec.io: Kamino-Finance/klend@a08760976f = release/v1.25.0). crates.io's 0.6.0 predates
+# it. It speaks solana 2.x; src/kamino.rs converts at its boundary.
+klend-interface = { git = "https://github.com/Kamino-Finance/klend", rev = "a08760976f51a3a58c4a0c6ea27b4a0e565bca79" }
+# The 2.x types klend-interface speaks, renamed so they cannot be mistaken for this crate's own.
+solana-pubkey-v2 = { package = "solana-pubkey", version = "2.1" }
+solana-instruction-v2 = { package = "solana-instruction", version = "2.1" }
+# No marginfi crate: at the deployed commit its type crate pins solana-instruction =3.4.0, and
+# LiteSVM needs ~3.5. See src/marginfi.rs.
 # litesvm features = ["precompiles"] only if a scenario signs Ed25519/secp256k1 (builds OpenSSL)
 
 # `Snapshot::load` hashes about 25 MB; unoptimized, sha2 spends most of a second on it per load.

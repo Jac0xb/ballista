@@ -4,14 +4,19 @@
 //! - [`snapshot`] loads the committed one-slot mainnet snapshot, checks every hash, and builds a
 //!   LiteSVM from it with Ballista built from source.
 //! - [`wallet`] funds test wallets and writes their token balances.
-//! - [`oracle`] moves a Pyth price.
+//! - [`oracle`] moves a Pyth or a Scope price.
 //! - [`template`] uploads a template with Ballista's own instructions and builds runs by the
 //!   account and input names recorded in `fixtures/protocol-examples.json`.
 //! - [`tx`] signs and sends, checks the wire size, and names the program that failed.
+//! - [`kamino`] builds Kamino Lend's instructions and reads its reserves and obligations.
+//! - [`lending`] loads the lending snapshot and holds the setup the Kamino and marginfi scenarios
+//!   share.
 //!
 //! Tests may write only three kinds of state directly: test wallets' SOL and token balances,
 //! oracle prices, and the clock. Every other change goes through the protocols' own instructions.
 
+pub mod kamino;
+pub mod lending;
 pub mod oracle;
 pub mod snapshot;
 pub mod template;

@@ -17,20 +17,18 @@ import {
 } from './index.js';
 import * as protocols from '../examples/protocols/index.js';
 import {
-  driftSettleWhenProfitable,
   jitoProfitGuardedTip,
   jupiterDepositExactOutput,
   jupiterOracleCheckedSwap,
   kaminoLiquidateWithProof,
   kaminoRepaySwapOutput,
+  marginfiToKaminoRebalance,
   marginfiWithdrawAllWithFloor,
   pythFreshPriceGate,
   tokenSweepIntoSwap,
 } from '../examples/protocols/index.js';
 import { buildJupiterDepositRun } from '../examples/protocols/run-jupiter-deposit.js';
 import {
-  BORSH_TRUE,
-  DRIFT_WITHDRAW,
   JUPITER_ROUTE,
   JUPITER_V6,
   KAMINO_DEPOSIT,
@@ -38,6 +36,7 @@ import {
   KAMINO_LEND,
   KAMINO_LIQUIDATE,
   KAMINO_REPAY,
+  MARGINFI_V2,
   MARGINFI_WITHDRAW,
   PYTH,
   SPL_MINT,
@@ -292,10 +291,28 @@ const kaminoCalls: [string, Template, { discriminator: Uint8Array; declared: num
   ['jupiterDepositExactOutput', jupiterDepositExactOutput, { discriminator: KAMINO_DEPOSIT, declared: 14, amount: { kind: 'variable', name: 'received' } }],
   ['kaminoRepaySwapOutput', kaminoRepaySwapOutput, { discriminator: KAMINO_REPAY, declared: 9, amount: { kind: 'variable', name: 'swapped' } }],
   ['kaminoLiquidateWithProof', kaminoLiquidateWithProof, { discriminator: KAMINO_LIQUIDATE, declared: 20, amount: { kind: 'input', name: 'liquidityAmount' } }],
+  ['marginfiToKaminoRebalance', marginfiToKaminoRebalance, { discriminator: KAMINO_DEPOSIT, declared: 14, amount: { kind: 'variable', name: 'moved' } }],
 ];
-const kaminoDeposits: Template[] = [jupiterDepositExactOutput];
+const kaminoDeposits: Template[] = [jupiterDepositExactOutput, marginfiToKaminoRebalance];
+
+/** The examples whose `accounts` pin `program`, by name. */
+function pinning(program: string): string[] {
+  const pinned = [...addressBytes(program)].join();
+  return Object.entries(protocols)
+    .filter(([, template]) =>
+      Object.values(template.accounts).some(
+        (constraint) => constraint.address !== undefined && [...constraint.address].join() === pinned,
+      ),
+    )
+    .map(([name]) => name)
+    .sort();
+}
 
 describe('Kamino calls are v2, forward the farm tail as a group, and leave refreshing to the transaction', () => {
+  test('every example that pins Kamino is listed here', () => {
+    expect(pinning(KAMINO_LEND)).toEqual(kaminoCalls.map(([name]) => name).sort());
+  });
+
   test.each(kaminoCalls)('%s', (_, template, expected) => {
     const calls = invokesOf(template, 'kamino');
     expect(calls).toHaveLength(1);
@@ -331,9 +348,16 @@ describe('the Kamino liquidation', () => {
   });
 });
 
-const marginfiWithdrawals: [string, Template][] = [['marginfiWithdrawAllWithFloor', marginfiWithdrawAllWithFloor]];
+const marginfiWithdrawals: [string, Template][] = [
+  ['marginfiToKaminoRebalance', marginfiToKaminoRebalance],
+  ['marginfiWithdrawAllWithFloor', marginfiWithdrawAllWithFloor],
+];
 
 describe('marginfi withdrawals', () => {
+  test('every example that pins marginfi is listed here', () => {
+    expect(pinning(MARGINFI_V2)).toEqual(marginfiWithdrawals.map(([name]) => name).sort());
+  });
+
   test.each(marginfiWithdrawals)("%s forwards the health check's banks and oracles after withdraw's eight accounts", (_, template) => {
     const [withdraw] = invokesOf(template, 'marginfi') as [Invoke];
     const [discriminator] = withdraw.data;
@@ -342,18 +366,6 @@ describe('marginfi withdrawals', () => {
     expect(withdraw.accountGroup).toBe('healthAccounts');
     // The vault authority is a PDA marginfi signs for; nothing writes it.
     expect(withdraw.accounts[5]!.writable).toBe(false);
-  });
-});
-
-describe('the Drift settle', () => {
-  test('withdraws with reduce_only set, so it can never open a borrow', () => {
-    const [withdraw] = invokesOf(driftSettleWhenProfitable, 'drift').filter(
-      (call) => call.data[0]?.kind === 'literal' && [...call.data[0].bytes].join() === [...DRIFT_WITHDRAW].join(),
-    );
-    expect(withdraw).toBeDefined();
-    // `withdraw(market_index: u16, amount: u64, reduce_only: bool)`: the flag is the last part.
-    const reduceOnly = withdraw!.data.at(-1);
-    expect(reduceOnly?.kind === 'literal' ? [...reduceOnly.bytes] : []).toEqual([...BORSH_TRUE]);
   });
 });
 

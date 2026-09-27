@@ -6,7 +6,7 @@
 //!
 //! A runner never sees the bytecode. It needs three things from the template author: the order
 //! of the fixed accounts, the order of the inputs, and — for a batched template — the row shape.
-//! There are only three run shapes across all twelve examples, and they are all below.
+//! There are only three run shapes across all eleven examples, and they are all below.
 //!
 //! ```bash
 //! cargo run -p ballista-sdk --example protocol_runs

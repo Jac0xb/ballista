@@ -295,7 +295,7 @@ mod tests {
     use super::*;
 
     /// Every address a reserve names is in the snapshot under the manifest's name for it, so the
-    /// Rust side cannot drift from `lending.json`.
+    /// Rust side cannot fall out of step with `lending.json`.
     #[test]
     fn the_snapshot_holds_everything_the_reserves_name() {
         let named = |name: &str| snapshot().named(name);

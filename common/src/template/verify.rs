@@ -2469,7 +2469,7 @@ mod tests {
                 .unwrap_or_else(|error| panic!("protocol example {examples}: {error}"));
             examples += 1;
         }
-        assert_eq!(examples, 12, "every protocol example is verified");
+        assert_eq!(examples, 11, "every protocol example is verified");
         let carry = decode_hex(include_str!("../../../fixtures/carry-sum.hex"));
         let program = ProgramView::parse(&carry).unwrap();
         assert_eq!(program.header.batch_min_iterations(), 1);

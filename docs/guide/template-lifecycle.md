@@ -1,7 +1,7 @@
 # Template lifecycle
 
-This page shows how to upload a template, in one instruction or in several, and what you can and
-cannot do with it afterwards.
+How to upload a template, in one instruction or in several, and what you can and cannot do with it
+afterwards.
 
 A template is stored in its own account. The account's address is a PDA (program-derived address:
 an address owned by a program, with no private key) derived from the seeds
@@ -27,7 +27,7 @@ if (plan.mode === 'oneShot') {
 ```
 
 ```rust [Rust]
-let payload = std::fs::read("artifacts/template.bvm")?;
+let payload = builder.build()?; // the template's bytes, from ProgramBuilder
 let instruction = ballista_sdk::create_template_instruction(
     creator,
     42,
@@ -93,5 +93,5 @@ send(ballista_sdk::finalize_template_instruction(creator, template)).await?;
 
 An upload that has not been finalized can be cancelled with `CancelTemplate`. That closes the
 account and returns its rent deposit, in lamports (the smallest unit of SOL), to the creator. A
-finalized template can never be changed or closed; to publish a revision, upload it under a new
-template ID.
+finalized template can never be changed or closed, and its rent deposit stays locked. To publish a
+revision, upload it under a new template ID; see [Failure modes and recovery](/guide/failure-modes).

@@ -88,35 +88,20 @@ for (const page of pages.keys()) {
   }
 }
 
+// Only examples whose page keeps a `<!-- benchmark:name -->` marker get a table; the docs currently keep none.
 for (const [page, items] of pages) {
   const path = fileURLToPath(new URL(`docs/${sitePath(page)}.md`, root));
   let text = readFileSync(path, 'utf8');
-  for (const { name, anchor } of items) {
-    const block = table(name);
+  let written = 0;
+  for (const { name } of items) {
     const existing = new RegExp(`<!-- benchmark:${name} -->[\\s\\S]*?<!-- /benchmark -->`);
-    if (existing.test(text)) {
-      text = text.replace(existing, block);
-      continue;
-    }
-    // Insert before the next top-level heading after this example's own heading.
-    const lines = text.split('\n');
-    const headingIndex = lines.findIndex(
-      (line) => line.startsWith('## ') && slug(line.slice(3)) === anchor,
-    );
-    if (headingIndex === -1) throw new Error(`No heading for ${anchor} in ${page}.md`);
-    let end = lines.length;
-    for (let index = headingIndex + 1; index < lines.length; index += 1) {
-      if (lines[index].startsWith('## ')) {
-        end = index;
-        break;
-      }
-    }
-    while (end > headingIndex && lines[end - 1].trim() === '') end -= 1;
-    lines.splice(end, 0, '', block);
-    text = lines.join('\n');
+    if (!existing.test(text)) continue;
+    text = text.replace(existing, table(name));
+    written += 1;
   }
+  if (!written) continue;
   writeFileSync(path, text.endsWith('\n') ? text : `${text}\n`);
-  console.log(`${page}.md: ${items.length} tables`);
+  console.log(`${page}.md: ${written} tables`);
 }
 
 // Most useful first: what no transaction can express, then what one expresses without enforcing,
@@ -237,6 +222,7 @@ function savingsCaption(sweeps) {
 const chartBlock = `<!-- benchmark:chart -->\n\n${savingsChart(sweeps)}\n\nMeasured: ${savingsCaption(sweeps)}.\n\n<!-- /benchmark -->`;
 for (const page of ['docs/benchmarks.md']) {
   const chartPagePath = fileURLToPath(new URL(page, root));
+  if (!existsSync(chartPagePath)) continue;
   const chartText = readFileSync(chartPagePath, 'utf8');
   const marker = /<!-- benchmark:chart -->[\s\S]*?<!-- \/benchmark -->/;
   if (!marker.test(chartText)) {
@@ -250,6 +236,7 @@ for (const page of ['docs/benchmarks.md']) {
 const summaryBlock = `<!-- benchmark:summary -->\n\n${summary}\n\n<!-- /benchmark -->`;
 for (const page of ['docs/benchmarks.md']) {
   const summaryPath = fileURLToPath(new URL(page, root));
+  if (!existsSync(summaryPath)) continue;
   const summaryText = readFileSync(summaryPath, 'utf8');
   const marker = /<!-- benchmark:summary -->[\s\S]*?<!-- \/benchmark -->/;
   if (!marker.test(summaryText)) {
@@ -281,7 +268,8 @@ for (const groupName of profileOrder) {
   }
 }
 const profilePath = fileURLToPath(new URL('docs/cu-profile.md', root));
-let profileText = readFileSync(profilePath, 'utf8');
+const hasProfilePage = existsSync(profilePath);
+let profileText = hasProfilePage ? readFileSync(profilePath, 'utf8') : '';
 const profileMarker = /<!-- profile:table -->[\s\S]*?<!-- \/profile -->/;
 if (profileMarker.test(profileText)) {
   profileText = profileText.replace(
@@ -323,7 +311,7 @@ if (existsSync(phasesPath) && phasesMarker.test(profileText)) {
 } else {
   console.log('cu-profile.md: no phases marker, skipped');
 }
-writeFileSync(profilePath, profileText);
+if (hasProfilePage) writeFileSync(profilePath, profileText);
 
 function slug(heading) {
   return heading

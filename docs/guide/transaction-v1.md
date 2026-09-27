@@ -1,8 +1,7 @@
 # Transaction v1
 
 Solana's version 1 transaction format (v1) raises the maximum size of a transaction from 1,232
-bytes to 4,096 bytes. This page shows how to build a v1 transaction that runs a Ballista template,
-and which limits you will reach first.
+bytes to 4,096 bytes. Here is how to build one that runs a Ballista template.
 
 A template's steps are stored on chain in its template account, so a `Run` instruction carries
 only the template account, the run's accounts, and its inputs. Each account adds its 32-byte
@@ -58,19 +57,13 @@ a margin (`marginBps` is in basis points, so `1_000` adds 10%), and rounds the m
 data up to the next multiple of 32 KiB. In Rust, measure both values by simulating the transaction,
 then set them in the message's `TransactionConfig`.
 
-## Practical limits
+## Limits
 
-- A v1 transaction can list at most 64 account addresses, and it cannot use address lookup tables
-  (on-chain lists of addresses that v0 transactions use to reference more accounts).
-- Ballista accepts up to 120 runtime accounts in one run (the accounts after the template
-  account), but a v1 transaction reaches its 64-address limit first. Every program a template
-  calls is already one of its runtime accounts. On top of those, the template account and the
-  Ballista program take two of the 64 addresses, and the fee payer takes a third unless it is also
-  one of the run's accounts. A run with more than about 60 accounts needs a v0 transaction with an
-  address lookup table, which must fit in 1,232 bytes.
+A v1 transaction lists at most 64 account addresses and cannot use address lookup tables, so a run
+fits about 60 runtime accounts. [Limits](/reference/limits#accounts-per-transaction) has the
+details, and when a larger run needs a v0 transaction instead.
+
 - A run of a 30-recipient SOL payroll template measures 1,240 bytes as a v1 transaction.
-- The compute limit, or the number of accounts a transaction can use, usually runs out before the
-  4,096-byte size limit does.
 - Encode large transactions as base64 when you send or simulate them.
 - When you fetch transactions or blocks over RPC, pass `maxSupportedTransactionVersion: 1`.
 

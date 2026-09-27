@@ -1,6 +1,6 @@
 # Template language
 
-This page lists everything a template can contain: the types of values it works with, the inputs
+Everything a template can contain: the types of values it works with, the inputs
 and accounts it declares, the expressions it can compute, and the steps it runs. Function names are
 from the TypeScript SDK. The Rust `ProgramBuilder` produces the same bytecode at a lower level; see
 [Rust SDK](/reference/rust).
@@ -359,37 +359,8 @@ cannot be read after the loop.
 
 ## Bounds
 
-"Bytecode" limits come from the bytecode format. The verifier checks them when a template is
-finalized, and the TypeScript compiler checks them before you upload. "TypeScript" limits come
-from the TypeScript SDK only; a template built with the Rust builder is not bound by them.
-
-| Bound | Limit | Source |
-| --- | ---: | --- |
-| Registers | 64 | Bytecode |
-| Inputs, fixed plus row | 32 | Bytecode |
-| Row inputs per batch row | 8 | Bytecode |
-| Input values per run, fixed plus rows | 256 | Bytecode |
-| `bytes` input or literal length | 1,024 | Bytecode |
-| Top-level steps | 128 | TypeScript |
-| Steps in a loop body | 64 | TypeScript |
-| Batch rows | 60 | TypeScript |
-| Accounts per batch row | 8 | Bytecode |
-| Runtime accounts: fixed, plus batch rows, plus account group members | 120 | Bytecode |
-| Account groups | 8 | Bytecode |
-| CPIs per run, counting each loop iteration | 64 | Bytecode |
-| Accounts per CPI, listed plus group members | 64 | Bytecode |
-| Data parts per CPI | 64 | TypeScript |
-| Instruction data per CPI | 4,096 bytes | Bytecode |
-| PDA seeds | 15 | Bytecode |
-| Bytes per PDA seed | 32 | Bytecode |
-
-Account group sizes are only known at run time, so the program checks the two limits that include
-group members during each run.
-
-Fixed accounts plus the row width times the maximum number of rows must fit in 120. With eight
-accounts per row, 14 rows use 112 slots and leave 8 for fixed accounts. Account groups count
-toward the same 120, but the transaction's own limits usually stop a run first; see
-[Limits](/reference/limits#transaction-ceilings).
+Every maximum, such as 64 registers, 64 CPIs per run and 120 runtime accounts, is on
+[Limits](/reference/limits). The TypeScript SDK adds a few of its own, such as 60 batch rows.
 
 ## What the language excludes
 

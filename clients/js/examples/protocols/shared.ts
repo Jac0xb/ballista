@@ -39,6 +39,12 @@ export const DRIFT_V2 = 'dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH' as const;
 export const PYTH_RECEIVER = 'rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ' as const;
 
 /**
+ * Jito's Tip Payment program. It owns all eight tip accounts, as program addresses holding eight
+ * bytes of data, so none of them is a plain System account.
+ */
+export const JITO_TIP_PAYMENT = 'T1pyyaTNZsKv2WcRAB8oVnk93mLJw2XzjtVYqCsaHqt' as const;
+
+/**
  * The eight Jito tip accounts. A tip is a plain SOL transfer to one of these and may be made by
  * CPI; the minimum is 1,000 lamports.
  */
@@ -61,6 +67,12 @@ export const TOKEN_ACCOUNT_LENGTH = 165;
 
 /** SPL Token account: the mint is the first field. */
 export const TOKEN_ACCOUNT_MINT_OFFSET = 0;
+
+/** SPL Token account: the owner, the wallet the balance belongs to, follows the mint. */
+export const TOKEN_ACCOUNT_OWNER_OFFSET = 32;
+
+/** The wrapped SOL mint. Its token accounts count their balance in lamports. */
+export const WRAPPED_SOL_MINT = 'So11111111111111111111111111111111111111112' as const;
 
 /** SPL Token `Mint`: `decimals` is the u8 at offset 44 of the 82-byte layout. */
 export const SPL_MINT = { length: 82, decimals: 44 } as const;

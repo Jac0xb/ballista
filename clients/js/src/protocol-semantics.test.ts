@@ -29,6 +29,7 @@ import { buildJupiterDepositRun } from '../examples/protocols/run-jupiter-deposi
 import {
   BORSH_TRUE,
   DRIFT_WITHDRAW,
+  JITO_TIP_PAYMENT,
   JUPITER_ROUTE,
   JUPITER_V6,
   KAMINO_REPAY,
@@ -36,6 +37,8 @@ import {
   SPL_MINT,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_MINT_OFFSET,
+  TOKEN_ACCOUNT_OWNER_OFFSET,
+  WRAPPED_SOL_MINT,
   addressBytes,
   anchorDiscriminator,
 } from '../examples/protocols/shared.js';
@@ -163,9 +166,10 @@ const jupiterCalls: [string, Template, { program: string; accounts: string[] }][
   ],
   ['pythFreshPriceGate', pythFreshPriceGate, { program: 'actionProgram', accounts: ['tokenProgram', 'actor'] }],
   [
+    // A round trip: it starts and ends in the one account the template measures.
     'jitoProfitGuardedTip',
     jitoProfitGuardedTip,
-    { program: 'strategyProgram', accounts: ['tokenProgram', 'searcher'] },
+    { program: 'strategyProgram', accounts: ['tokenProgram', 'searcher', 'wsolAccount', 'wsolAccount'] },
   ],
 ];
 
@@ -269,6 +273,70 @@ describe('the token sweep', () => {
     expect(
       quotedOut?.kind === 'encoded' && dependsOn(quotedOut.value, bindings, sourceBalance),
     ).toBe(true);
+  });
+});
+
+describe('the Jito tip', () => {
+  const bindings = bindingsOf(jitoProfitGuardedTip);
+  const check = requireLabeled(jitoProfitGuardedTip, 'profitCoversTheTip');
+  const lamportsOf = (candidate: Expression) => candidate.kind === 'accountField' && candidate.field === 'lamports';
+
+  // Measured against the real programs in tests/protocols/tests/jito_tip.rs: Jupiter's `route`
+  // moves token accounts only, and the Swap API wraps and unwraps SOL in instructions of their own
+  // before and after it, so the searcher's lamports do not move while the route runs.
+  test('measures profit on the wrapped-SOL account the round trip ends in, not on lamports', () => {
+    expect(dependsOn(check.condition, bindings, reads('wsolAccount', TOKEN_ACCOUNT_AMOUNT_OFFSET))).toBe(true);
+    expect(dependsOn(check.condition, bindings, lamportsOf)).toBe(false);
+  });
+
+  test('counts profit in lamports, the unit of the tip, by requiring wrapped SOL', () => {
+    const holdsWrappedSol = requireLabeled(jitoProfitGuardedTip, 'wsolAccountHoldsWrappedSol');
+    expect(
+      dependsOn(holdsWrappedSol.condition, bindings, reads('wsolAccount', TOKEN_ACCOUNT_MINT_OFFSET)),
+    ).toBe(true);
+    const wrappedSolMint = [...addressBytes(WRAPPED_SOL_MINT)].join();
+    expect(
+      dependsOn(
+        holdsWrappedSol.condition,
+        bindings,
+        (candidate) =>
+          candidate.kind === 'literal' &&
+          candidate.value.type === 'pubkey' &&
+          [...candidate.value.value].join() === wrappedSolMint,
+      ),
+    ).toBe(true);
+  });
+
+  test('counts only profit that reaches the searcher, who pays the tip', () => {
+    const ownsIt = requireLabeled(jitoProfitGuardedTip, 'searcherOwnsTheWsolAccount');
+    expect(dependsOn(ownsIt.condition, bindings, reads('wsolAccount', TOKEN_ACCOUNT_OWNER_OFFSET))).toBe(true);
+    expect(dependsOn(ownsIt.condition, bindings, accountKey('searcher'))).toBe(true);
+  });
+
+  // A subtraction of the balance before from the balance after underflows on a loss, and the run
+  // then fails with ArithmeticOverflow before the requirement is ever reached.
+  test('fails a loss at the requirement: nothing on the way to it subtracts', () => {
+    const subtracts = (candidate: Expression) => candidate.kind === 'binary' && candidate.op === 'subtract';
+    expect(dependsOn(check.condition, bindings, subtracts)).toBe(false);
+    for (const input of ['tipLamports', 'minimumEdge']) {
+      expect(
+        dependsOn(check.condition, bindings, (candidate) => candidate.kind === 'input' && candidate.name === input),
+      ).toBe(true);
+    }
+  });
+
+  test('reads the balance before the strategy, and checks it after the strategy and before the tip', () => {
+    const at = (matches: (step: Step) => boolean) => jitoProfitGuardedTip.steps.findIndex(matches);
+    const readBefore = at((step) => step.kind === 'let' && step.label === 'readBalanceBeforeStrategy');
+    const strategy = at((step) => step.kind === 'invoke' && step.label === 'runStrategy');
+    const requirement = at((step) => step.kind === 'require' && step.label === 'profitCoversTheTip');
+    const tip = at((step) => step.kind === 'invoke' && step.label === 'payJitoTip');
+    expect([readBefore, strategy, requirement, tip].every((index) => index >= 0)).toBe(true);
+    expect(readBefore < strategy && strategy < requirement && requirement < tip).toBe(true);
+  });
+
+  test("pays only an account of Jito's Tip Payment program", () => {
+    expect(jitoProfitGuardedTip.accounts.jitoTip?.owner).toEqual(addressBytes(JITO_TIP_PAYMENT));
   });
 });
 

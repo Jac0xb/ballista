@@ -1,24 +1,34 @@
 /**
  * Build the Orca harvest run: the other run-side shape, batch rows.
  *
- * `orca-harvest-many-positions.ts` declares a row of two accounts and up to twelve iterations.
+ * `orca-harvest-many-positions.ts` declares a row of four accounts and up to twelve iterations.
  * The caller passes one record per position and the iteration count follows from how many were
  * passed — there is no count in the instruction data to get wrong.
  *
  * Every other example on this page binds accounts by name and needs nothing beyond
  * `buildKitRunInstruction`; this one and `run-jupiter-deposit.ts` are the two that do not.
  */
-import { address, type Address, type Instruction } from '@solana/kit';
+import {
+  address,
+  getAddressEncoder,
+  getProgramDerivedAddress,
+  type Address,
+  type Instruction,
+} from '@solana/kit';
 
 import { explainRunError } from '../../src/index.js';
 import { BALLISTA_ADDRESS, buildKitRunInstruction, getTemplateAddress } from '../../src/kit.js';
 import { compiled } from './orca-harvest-many-positions.js';
 import { ORCA_WHIRLPOOL } from './shared.js';
 
-/** One position and the token account that proves ownership of it. */
+/** One position, the token account holding its NFT, and the tick arrays holding its two bounds. */
 export interface HarvestRow {
   position: Address;
   positionTokenAccount: Address;
+  /** The tick array holding the position's lower tick: `getOrcaTickArrayAddress`. */
+  tickArrayLower: Address;
+  /** The tick array holding the position's upper tick. */
+  tickArrayUpper: Address;
 }
 
 export interface HarvestAccounts {
@@ -32,6 +42,27 @@ export interface HarvestAccounts {
 
 /** The template's declared ceiling; more positions than this need a second run. */
 export const MAX_POSITIONS_PER_RUN = 12;
+
+/** Ticks in one Whirlpool tick array. */
+const TICKS_PER_ARRAY = 88;
+
+/**
+ * The tick array holding `tickIndex` in a pool whose tick spacing is `tickSpacing`: the PDA
+ * `["tick_array", whirlpool, start]`, where `start` is the array's first tick as a decimal string.
+ */
+export async function getOrcaTickArrayAddress(
+  whirlpool: Address,
+  tickIndex: number,
+  tickSpacing: number,
+): Promise<Address> {
+  const span = TICKS_PER_ARRAY * tickSpacing;
+  const start = Math.floor(tickIndex / span) * span;
+  const [tickArray] = await getProgramDerivedAddress({
+    programAddress: address(ORCA_WHIRLPOOL),
+    seeds: ['tick_array', getAddressEncoder().encode(whirlpool), String(start)],
+  });
+  return tickArray;
+}
 
 export async function buildOrcaHarvestRun(input: {
   creator: Address;
@@ -69,6 +100,8 @@ export async function buildOrcaHarvestRun(input: {
     batchRows: input.positions.map((row) => ({
       position: { address: row.position },
       positionTokenAccount: { address: row.positionTokenAccount },
+      tickArrayLower: { address: row.tickArrayLower },
+      tickArrayUpper: { address: row.tickArrayUpper },
     })),
   });
 }

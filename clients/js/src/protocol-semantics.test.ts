@@ -5,7 +5,7 @@
  * directly: which accounts reach Jupiter in which position, and which on-chain reads a guarantee
  * actually depends on. Each one pins a mistake an example once made.
  */
-import { getAddressDecoder, type Address } from '@solana/kit';
+import { AccountRole, address, getAddressDecoder, type Address } from '@solana/kit';
 import { describe, expect, test } from 'vitest';
 
 import {
@@ -26,6 +26,7 @@ import {
   tokenSweepIntoSwap,
 } from '../examples/protocols/index.js';
 import { buildJupiterDepositRun } from '../examples/protocols/run-jupiter-deposit.js';
+import { buildOrcaHarvestRun, getOrcaTickArrayAddress } from '../examples/protocols/run-orca-harvest.js';
 import {
   BORSH_TRUE,
   DRIFT_WITHDRAW,
@@ -361,5 +362,54 @@ describe('the Jupiter deposit runner', () => {
         minimumOut: 1n,
       }),
     ).rejects.toThrow(/useSharedAccounts/);
+  });
+});
+
+describe('the Orca harvest runner', () => {
+  const decoder = getAddressDecoder();
+  const key = (byte: number): Address => decoder.decode(new Uint8Array(32).fill(byte));
+  const accounts = {
+    positionAuthority: key(2),
+    whirlpool: key(3),
+    tokenOwnerAccountA: key(4),
+    tokenOwnerAccountB: key(5),
+    tokenVaultA: key(6),
+    tokenVaultB: key(7),
+  };
+
+  test('passes each row as the position, its NFT account and its two tick arrays', async () => {
+    const instruction = await buildOrcaHarvestRun({
+      creator: key(1),
+      templateId: 0,
+      accounts,
+      positions: [
+        { position: key(10), positionTokenAccount: key(11), tickArrayLower: key(12), tickArrayUpper: key(13) },
+        { position: key(20), positionTokenAccount: key(21), tickArrayLower: key(12), tickArrayUpper: key(13) },
+      ],
+      dustFloor: 5n,
+    });
+    const metas = (instruction.accounts ?? []).map((meta) => [meta.address, meta.role]);
+    // The template, then eight fixed accounts. Each row's update writes the pool.
+    expect(metas[4]).toEqual([key(3), AccountRole.WRITABLE]);
+    expect(metas.slice(9)).toEqual([
+      [key(10), AccountRole.WRITABLE],
+      [key(11), AccountRole.READONLY],
+      [key(12), AccountRole.READONLY],
+      [key(13), AccountRole.READONLY],
+      [key(20), AccountRole.WRITABLE],
+      [key(21), AccountRole.READONLY],
+      [key(12), AccountRole.READONLY],
+      [key(13), AccountRole.READONLY],
+    ]);
+  });
+
+  test('finds the tick array holding a tick, as mainnet derives it', async () => {
+    const solUsdc = address('Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE');
+    expect(await getOrcaTickArrayAddress(solUsdc, -20_980, 4)).toBe('FdtvWk8j5u1a64YK2Uxk9eXxKZJTwLHDGx8aJPbJyw2Q');
+    // An array starts at a multiple of 88 tick spacings; the tick below it is in the previous one.
+    expect(await getOrcaTickArrayAddress(solUsdc, -21_120, 4)).toBe('FdtvWk8j5u1a64YK2Uxk9eXxKZJTwLHDGx8aJPbJyw2Q');
+    expect(await getOrcaTickArrayAddress(solUsdc, -21_121, 4)).toBe('6hA1LN1fzCiXqymDiQXeBFn5da1b7STP1L7JmDc6hR3M');
+    const thin = address('HJPjoWUrhoZzkNfRpHuieeFk9WcZWjwy6PBjZ81ngndJ');
+    expect(await getOrcaTickArrayAddress(thin, -20_989, 64)).toBe('CEstjhG1v4nUgvGDyFruYEbJ18X8XeN4sX1WFCLt4D5c');
   });
 });

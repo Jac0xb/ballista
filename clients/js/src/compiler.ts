@@ -95,6 +95,16 @@ export const opcode = {
   returnData: 48,
   move: 49,
   createPda: 50,
+  mulDiv: 51,
+  mulDivCeil: 52,
+  remainder: 53,
+  shiftLeft: 54,
+  shiftRight: 55,
+  bitAnd: 56,
+  bitOr: 57,
+  bitXor: 58,
+  powerOfTen: 59,
+  readI32: 60,
 } as const;
 
 /** The conjuncts of a requirement: `and(and(a, b), c)` is three separate assertions. */

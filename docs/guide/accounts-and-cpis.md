@@ -19,41 +19,26 @@ Ballista passes on only the signatures the outer transaction already carries, an
 a PDA (program-derived address: an address a program controls, with no private key) of its own, so
 a template cannot create authority the transaction did not already have.
 
-```ts
-accounts: {
-  tokenProgram: {
-    executable: true,
-    address: TOKEN_PROGRAM_ADDRESS_BYTES,
-  },
-  authority: { signer: true },
-  source: {
-    writable: true,
-    owner: TOKEN_PROGRAM_ADDRESS_BYTES,
-    minDataLength: 165,
-  },
-  destination: {
-    writable: true,
-    owner: TOKEN_PROGRAM_ADDRESS_BYTES,
-    minDataLength: 165,
-  },
-}
-```
-
 ## Protocol helper
 
-```ts
-tokenTransfer({
-  tokenProgram: account.fixed('tokenProgram'),
-  source: account.fixed('source'),
-  destination: account.fixed('destination'),
-  authority: account.fixed('authority'),
-  amount: expression.input('amount'),
-});
-```
+This template moves tokens between two token accounts. Its `accounts` section shows each kind of
+requirement: a pinned program, a signer, and two writable token accounts pinned by owner and size.
+
+::: code-group
+
+<<< @/../clients/js/examples/docs/token-transfer.ts#template [TypeScript · Template]
+
+<<< @/../clients/js/examples/docs/token-transfer.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#token-transfer [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#token-transfer [Rust · Run]
+
+:::
 
 `tokenTransfer` is a shortcut, not a special instruction in the Ballista program. It compiles to an
 ordinary CPI: the Token Program's accounts, the byte that selects its Transfer instruction, and the
-amount encoded as a `u64`.
+amount encoded as a `u64`. The Rust tab builds exactly that CPI, and produces the same bytes.
 
 ## Generic CPI
 
@@ -63,39 +48,21 @@ optional `when` condition is covered [below](#conditional-invocation).
 
 ::: code-group
 
-```ts [TypeScript · template]
-step.invoke({
-  program: account.fixed('program'),
-  accounts: [
-    { account: account.fixed('vault'), writable: true, signer: false },
-    { account: account.fixed('authority'), writable: false, signer: true },
-  ],
-  data: [
-    data.literal(MY_DISCRIMINATOR),
-    data.encode('u64', expression.input('amount')),
-    data.encode('bytes', expression.input('clientPayload')),
-  ],
-  when: expression.input('enabled'),
-});
-```
+<<< @/../clients/js/examples/docs/generic-cpi.ts#template [TypeScript · Template]
 
-```rust [Rust · call]
-let run = ballista_sdk::run_instruction(
-    template,
-    vec![
-        AccountMeta::new_readonly(program, false),
-        AccountMeta::new(vault, false),
-        AccountMeta::new_readonly(authority, true),
-    ],
-    &encoded_inputs,
-);
-```
+<<< @/../clients/js/examples/docs/generic-cpi.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#generic-cpi [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#generic-cpi [Rust · Run]
 
 :::
 
-The Rust tab shows the caller's side: the run instruction passes the accounts in the order the
-template declares them. A CPI's data can be at most 4,096 bytes. Finalization works out the largest
-size each CPI's data can reach and rejects a template that could exceed the limit.
+`MY_PROGRAM` and `MY_DISCRIMINATOR` are placeholders for your program's address and instruction.
+A CPI's data can be at most 4,096 bytes. Finalization works out the largest size each CPI's data
+can reach, here 8 + 8 + 128 bytes, and rejects a template that could exceed the limit. The Rust
+builder cannot see a `bytes` input's maximum length from the segment, so the Rust tab states it with
+`set_cpi_max_data_len`.
 
 ## Account groups
 

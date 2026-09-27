@@ -39,12 +39,14 @@ const data = encodeRunInputs(compiled, {
 ```
 
 ```rust [Rust encoding]
-let mut data = Vec::new();
-data.extend_from_slice(&25_000u64.to_le_bytes());
-data.extend_from_slice(&1_800_000_000i64.to_le_bytes());
-data.push(1); // true
-data.extend_from_slice(&(route_data.len() as u16).to_le_bytes());
-data.extend_from_slice(&route_data);
+use ballista_sdk::RunInputs;
+
+let data = RunInputs::new()
+    .u64(25_000)
+    .i64(1_800_000_000)
+    .bool(true)
+    .bytes(&route_data) // a u16 length, then the bytes
+    .finish();
 ```
 
 :::
@@ -86,7 +88,9 @@ account's data. The type sets the width: 8 bytes for `u64`, 32 for `pubkey`, 1 f
 on. Reads of `u8`, `u16`, and `u32` produce a `u64`. The offset is usually a number fixed in the
 template, but it can also be a `u64` expression evaluated during the run.
 
-An offset only means something in a known layout, so the compiler refuses to read an account's data
+To find a field's offset, add up the sizes of the fields before it in the program's account layout;
+[amounts read at run time](/guide/runtime-values#forward-the-whole-token-balance) shows how. An
+offset only means something in a known layout, so the compiler refuses to read an account's data
 unless the account's declaration fixes its `owner` or its `address`, or explicitly
 [opts out](/guide/trust-model#opting-out). For a fixed offset, the
 compiler also raises the account's minimum data length so the read always fits, and a run rejects a

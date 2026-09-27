@@ -5,7 +5,7 @@
  * directly: which accounts reach Jupiter in which position, and which on-chain reads a guarantee
  * actually depends on. Each one pins a mistake an example once made.
  */
-import { getAddressDecoder, type Address } from '@solana/kit';
+import { getAddressDecoder, isWritableRole, type Address } from '@solana/kit';
 import { describe, expect, test } from 'vitest';
 
 import {
@@ -31,9 +31,13 @@ import {
   DRIFT_WITHDRAW,
   JUPITER_ROUTE,
   JUPITER_V6,
+  KAMINO_DEPOSIT,
+  KAMINO_FARMS,
+  KAMINO_LEND,
   KAMINO_REPAY,
   PYTH,
   SPL_MINT,
+  SYSVAR_INSTRUCTIONS,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_MINT_OFFSET,
   addressBytes,
@@ -272,6 +276,44 @@ describe('the token sweep', () => {
   });
 });
 
+/**
+ * Kamino's v1 lending handlers refuse every caller but Kamino itself and a short whitelist
+ * (`CpiDisabled`), so a template calls the `_v2` handler. v2 checks only that the reserves and
+ * the obligation were refreshed in the current slot, so the refreshes go ahead of the run in the
+ * transaction, and no template makes them. v2's list ends in farm accounts that are writable when
+ * the reserve has the farm and the Kamino program when it does not, so a template forwards that
+ * tail as `farmAccounts`, a group, which keeps each account's own writable flag.
+ */
+const kaminoCalls: [string, Template, { discriminator: Uint8Array; declared: number; amount: Expression }][] = [
+  ['jupiterDepositExactOutput', jupiterDepositExactOutput, { discriminator: KAMINO_DEPOSIT, declared: 14, amount: { kind: 'variable', name: 'received' } }],
+];
+const kaminoDeposits: Template[] = [jupiterDepositExactOutput];
+
+describe('Kamino calls are v2, forward the farm tail as a group, and leave refreshing to the transaction', () => {
+  test.each(kaminoCalls)('%s', (_, template, expected) => {
+    const calls = invokesOf(template, 'kamino');
+    expect(calls).toHaveLength(1);
+    const [call] = calls as [Invoke];
+    const [discriminator, amount] = call.data;
+    expect(discriminator?.kind === 'literal' ? [...discriminator.bytes] : []).toEqual([...expected.discriminator]);
+    expect(amount).toEqual({ kind: 'encoded', encoding: 'u64', value: expected.amount });
+    expect(call.accounts).toHaveLength(expected.declared);
+    expect(call.accountGroup).toBe('farmAccounts');
+  });
+
+  test('a deposit passes the liquidity mint, the Kamino program as its unused placeholder, and the instructions sysvar', () => {
+    for (const template of kaminoDeposits) {
+      const [deposit] = invokesOf(template, 'kamino') as [Invoke];
+      const names = deposit.accounts.map((entry) => nameOf(entry.account));
+      expect(names[5]).toBe('reserveLiquidityMint');
+      expect(names[10]).toBe('kamino');
+      expect(deposit.accounts[10]!.writable).toBe(false);
+      expect(names.slice(11)).toEqual(['tokenProgram', 'tokenProgram', 'instructionsSysvar']);
+      expect(template.accounts.instructionsSysvar?.address).toEqual(addressBytes(SYSVAR_INSTRUCTIONS));
+    }
+  });
+});
+
 describe('the Drift settle', () => {
   test('withdraws with reduce_only set, so it can never open a borrow', () => {
     const [withdraw] = invokesOf(driftSettleWhenProfitable, 'drift').filter(
@@ -308,6 +350,7 @@ describe('the Jupiter deposit runner', () => {
     reserveLiquiditySupply: key(14),
     reserveCollateralMint: key(15),
     reserveDestinationDepositCollateral: key(16),
+    reserveLiquidityMint: key(19),
   };
   // A `route` with an empty plan: the discriminator, a u32 zero, then the 19-byte tail.
   const data = Buffer.from([...JUPITER_ROUTE, 0, 0, 0, 0, ...new Uint8Array(19)]).toString('base64');
@@ -329,11 +372,25 @@ describe('the Jupiter deposit runner', () => {
       minimumOut: 1n,
     });
     const addresses = (instruction.accounts ?? []).map((meta) => meta.address);
-    expect(addresses.slice(-2)).toEqual([key(17), key(18)]);
+    // The route group, then Kamino's farm tail for a reserve without a farm.
+    expect(addresses.slice(-5)).toEqual([key(17), key(18), KAMINO_LEND, KAMINO_LEND, KAMINO_FARMS]);
     // The first four reach the template as declared accounts, not again through the group.
     for (const declared of [tokenProgram, key(8), kamino.destinationAta]) {
       expect(addresses.filter((entry) => entry === declared)).toHaveLength(1);
     }
+  });
+
+  test("forwards a reserve's collateral farm, writable, before the Farms program", async () => {
+    const instruction = await buildJupiterDepositRun({
+      creator: owner,
+      templateId: 0,
+      swap: { programId: JUPITER_V6, accounts: routeAccounts, data },
+      kamino: { ...kamino, farm: { reserveFarmState: key(30), obligationFarmUserState: key(31) } },
+      minimumOut: 1n,
+    });
+    const tail = (instruction.accounts ?? []).slice(-3);
+    expect(tail.map((meta) => meta.address)).toEqual([key(31), key(30), KAMINO_FARMS]);
+    expect(tail.map((meta) => isWritableRole(meta.role))).toEqual([true, true, false]);
   });
 
   test('refuses a list that does not start the way `route` does', async () => {

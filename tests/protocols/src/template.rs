@@ -530,7 +530,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            snapshot,
+            kamino, snapshot,
             wallet::{fund, keypair, SOL},
         },
         ballista_sdk::{
@@ -874,12 +874,20 @@ mod tests {
             AccountMeta::new(owner, true),
         ];
 
+        let farm_accounts = vec![
+            AccountMeta::new(key(22), false),
+            AccountMeta::new(key(23), false),
+            AccountMeta::new_readonly(kamino::FARMS, false),
+        ];
+
         let built = Run::new(template, example)
+            .group("farmAccounts", farm_accounts)
             .group("routeAccounts", route_accounts)
             .input_u64("minimumOut", 1_234_567)
             .account("reserveDestinationDepositCollateral", key(13), true, false)
             .account("reserveCollateralMint", key(12), true, false)
             .account("reserveLiquiditySupply", key(11), true, false)
+            .account("reserveLiquidityMint", key(14), false, false)
             .account("reserve", key(10), true, false)
             .account("lendingMarketAuthority", key(9), false, false)
             .account("lendingMarket", key(8), false, false)
@@ -887,13 +895,20 @@ mod tests {
             .account("destinationAta", key(6), true, false)
             .account("sourceAta", key(5), true, false)
             .account("owner", owner, true, true)
+            .account(
+                "instructionsSysvar",
+                kamino::INSTRUCTIONS_SYSVAR,
+                false,
+                false,
+            )
             .input_bytes("routeArgs", &route_args)
             .account("tokenProgram", TOKEN_PROGRAM_ID, false, false)
             .account("kamino", KAMINO, false, false)
             .account("jupiter", JUPITER, false, false)
             .build();
 
-        let mut data = vec![5, 3]; // `run`, then routeAccounts' length
+        // `run`, then routeAccounts' length and farmAccounts'.
+        let mut data = vec![5, 3, 3];
         data.extend_from_slice(&7u16.to_le_bytes());
         data.extend_from_slice(&route_args);
         data.extend_from_slice(&1_234_567u64.to_le_bytes());
@@ -904,6 +919,7 @@ mod tests {
                 AccountMeta::new_readonly(JUPITER, false),
                 AccountMeta::new_readonly(KAMINO, false),
                 AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+                AccountMeta::new_readonly(kamino::INSTRUCTIONS_SYSVAR, false),
                 AccountMeta::new(owner, true),
                 AccountMeta::new(key(5), false),
                 AccountMeta::new(key(6), false),
@@ -911,12 +927,16 @@ mod tests {
                 AccountMeta::new_readonly(key(8), false),
                 AccountMeta::new_readonly(key(9), false),
                 AccountMeta::new(key(10), false),
+                AccountMeta::new_readonly(key(14), false),
                 AccountMeta::new(key(11), false),
                 AccountMeta::new(key(12), false),
                 AccountMeta::new(key(13), false),
                 AccountMeta::new_readonly(JUPITER, false),
                 AccountMeta::new(key(21), false),
                 AccountMeta::new(owner, false),
+                AccountMeta::new(key(22), false),
+                AccountMeta::new(key(23), false),
+                AccountMeta::new_readonly(kamino::FARMS, false),
             ],
             data,
         };
@@ -941,7 +961,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "unbound in the run: accounts [\"kamino\", \"tokenProgram\", \"owner\", \"sourceAta\", \"destinationAta\", \"obligation\", \"lendingMarket\", \"lendingMarketAuthority\", \"reserve\", \"reserveLiquiditySupply\", \"reserveCollateralMint\", \"reserveDestinationDepositCollateral\"], inputs [\"routeArgs\", \"minimumOut\"], account groups [\"routeAccounts\"]"
+        expected = "unbound in the run: accounts [\"kamino\", \"tokenProgram\", \"instructionsSysvar\", \"owner\", \"sourceAta\", \"destinationAta\", \"obligation\", \"lendingMarket\", \"lendingMarketAuthority\", \"reserve\", \"reserveLiquidityMint\", \"reserveLiquiditySupply\", \"reserveCollateralMint\", \"reserveDestinationDepositCollateral\"], inputs [\"routeArgs\", \"minimumOut\"], account groups [\"routeAccounts\", \"farmAccounts\"]"
     )]
     fn a_missing_name_panics() {
         let examples = examples();

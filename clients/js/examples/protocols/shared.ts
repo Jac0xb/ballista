@@ -37,6 +37,10 @@ export const MARGINFI_V2 = 'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA' as cons
 export const DRIFT_V2 = 'dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH' as const;
 /** Pyth Solana receiver, the non-`pro-compatible` build. */
 export const PYTH_RECEIVER = 'rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ' as const;
+/** The instructions sysvar. Every Kamino v2 lending instruction takes it as an account. */
+export const SYSVAR_INSTRUCTIONS = 'Sysvar1nstructions1111111111111111111111111' as const;
+/** Kamino Farms, which Kamino Lend invokes whenever a lending instruction touches a reserve with a farm. */
+export const KAMINO_FARMS = 'FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr' as const;
 
 /**
  * The eight Jito tip accounts. A tip is a plain SOL transfer to one of these and may be made by

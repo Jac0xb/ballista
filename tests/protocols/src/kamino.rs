@@ -130,6 +130,32 @@ pub fn borrowed_sf(svm: &LiteSVM, obligation: &Address, reserve: &Address) -> u1
         .map_or(0, |borrow| u128::from(borrow.borrowed_amount_sf))
 }
 
+/// Checks what a deposit asked to move `amount` did, against klend's rounding.
+///
+/// klend deposits only what whole cTokens are worth: it mints `floor(amount / rate)` cTokens and
+/// takes `ceil(cTokens × rate)` of the liquidity (`compute_depositable_amount_and_minted_collateral`
+/// in `state/reserve.rs`). So it takes all of `amount` but less than one cToken's worth, and that
+/// remainder stays in the source.
+/// - `taken`: what reached the reserve's supply vault;
+/// - `left`: what the deposit left in the source;
+/// - `minted`: the cTokens it minted.
+///
+/// The rate is at most `taken / minted`, so "less than one cToken's worth" is checked as
+/// `left × minted < taken`.
+#[track_caller]
+pub fn assert_deposit_took_all_but_rounding(amount: u64, taken: u64, left: u64, minted: u64) {
+    assert_eq!(
+        u128::from(taken) + u128::from(left),
+        u128::from(amount),
+        "of {amount}, {taken} reached the reserve and {left} stayed behind: the rest went elsewhere"
+    );
+    assert!(
+        u128::from(left) * u128::from(minted) < u128::from(taken),
+        "{left} of {amount} stayed behind for {minted} cTokens worth {taken}: a cToken's worth or \
+         more stayed behind"
+    );
+}
+
 /// Whether klend would liquidate `obligation` as its last refresh left it: its debt, adjusted by
 /// borrow factor, has reached its unhealthy borrow value.
 pub fn is_liquidatable(svm: &LiteSVM, obligation: &Address) -> bool {
@@ -514,6 +540,25 @@ mod tests {
         Address::from_str_const("955xWFhSDcDiUgUr4sBRtCpTLiMd4H5uZLAmgtP3R3sX");
     const USDC_FARM: Address =
         Address::from_str_const("JAvnB9AKtgPsTEoKmn24Bq64UMoYcrtWtq42HHBdsPkh");
+
+    /// A deposit of 100 at 1.1 liquidity per cToken mints 90 cTokens, worth 99 of the 100.
+    #[test]
+    fn a_deposit_keeps_back_less_than_one_ctoken() {
+        assert_deposit_took_all_but_rounding(100, 99, 1, 90);
+        assert_deposit_took_all_but_rounding(100, 100, 0, 90);
+    }
+
+    #[test]
+    #[should_panic(expected = "a cToken's worth or more stayed behind")]
+    fn a_deposit_that_keeps_back_a_ctoken_is_refused() {
+        assert_deposit_took_all_but_rounding(100, 98, 2, 89);
+    }
+
+    #[test]
+    #[should_panic(expected = "went elsewhere")]
+    fn a_deposit_that_loses_liquidity_is_refused() {
+        assert_deposit_took_all_but_rounding(100, 99, 0, 90);
+    }
 
     /// Why nothing here derives a vault: these reserves predate the seeds klend-interface uses.
     #[test]

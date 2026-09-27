@@ -11,11 +11,31 @@
  * that number. A plain transaction has to write it before the swap has happened: quote it high
  * and the deposit fails, quote it low and the remainder is stranded in the ATA.
  *
- * `route` takes the token program, the signing owner, and the owner's source and destination
- * token accounts first, and the template passes those four itself: the destination is the account
- * it measures, so what Jupiter credits is what gets deposited. The rest of the route's list varies
- * in length with the route, so it arrives as an account group. Group members are forwarded with
- * the transaction's own writable flag and never sign.
+ * `route` takes the token program, the signing owner, and the owner's source and destination token
+ * accounts first, and the template passes those four itself: the destination is the account it
+ * measures, so what Jupiter credits is what gets deposited. The rest of the route's list varies in
+ * length with the route, so it arrives as the `routeAccounts` group. Group members are forwarded
+ * with the transaction's own writable flag and never sign.
+ *
+ * The deposit is Kamino's `_v2` handler. The v1 handler refuses every caller but Kamino itself and
+ * a short whitelist (`CpiDisabled`), so a template cannot call it at all. v2 takes 17 accounts:
+ * - The 14 declared below. The unused `placeholder_user_destination_collateral` slot holds the
+ *   Kamino program: Kamino requires every optional slot to be present and reads its own ID as
+ *   "none". Both token-program slots hold the SPL Token program.
+ * - Then `farmAccounts`: the obligation's farm user state and the reserve's collateral farm, then
+ *   the Farms program. When the reserve has no collateral farm, both farm slots hold the Kamino
+ *   program. A group carries them because they are writable when present and read-only when they
+ *   are the Kamino program, and a declared slot has one fixed writable flag. Before an
+ *   obligation's first deposit into a reserve with a farm, `init_obligation_farms_for_reserve` must
+ *   create its user state.
+ *
+ * Kamino mints whole cTokens only, and takes just what they are worth: of the amount it is asked
+ * for, less than one cToken's worth (a base unit or so) can stay in `destinationAta`.
+ *
+ * Kamino takes a deposit only into an obligation refreshed in the same slot. It does not care
+ * where in the transaction that happened, so the refreshes belong to the transaction, not the
+ * template. Put `refresh_reserve` for each reserve the obligation holds, then `refresh_obligation`
+ * with those reserves, before this run.
  */
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -31,6 +51,7 @@ import {
   JUPITER_V6,
   KAMINO_DEPOSIT,
   KAMINO_LEND,
+  SYSVAR_INSTRUCTIONS,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_LENGTH,
   addressBytes,
@@ -47,6 +68,7 @@ export const jupiterDepositExactOutput = defineTemplate({
     jupiter: { executable: true, address: addressBytes(JUPITER_V6) },
     kamino: { executable: true, address: addressBytes(KAMINO_LEND) },
     tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
+    instructionsSysvar: { address: addressBytes(SYSVAR_INSTRUCTIONS) },
     owner: { signer: true, writable: true },
     /** What the route sells from. */
     sourceAta: { writable: true },
@@ -60,12 +82,16 @@ export const jupiterDepositExactOutput = defineTemplate({
     lendingMarket: {},
     lendingMarketAuthority: {},
     reserve: { writable: true },
+    reserveLiquidityMint: {},
     reserveLiquiditySupply: { writable: true },
     reserveCollateralMint: { writable: true },
     reserveDestinationDepositCollateral: { writable: true },
   },
-  /** Jupiter's own account list, whose length depends on the route the API returned. */
-  accountGroups: ['routeAccounts'],
+  /**
+   * `routeAccounts`: Jupiter's own list, whose length depends on the route. `farmAccounts`:
+   * Kamino's v2 tail, described above.
+   */
+  accountGroups: ['routeAccounts', 'farmAccounts'],
   steps: [
     step.snapshot(
       'balanceBefore',
@@ -108,12 +134,20 @@ export const jupiterDepositExactOutput = defineTemplate({
         { account: account.fixed('lendingMarket'), signer: false, writable: false },
         { account: account.fixed('lendingMarketAuthority'), signer: false, writable: false },
         { account: account.fixed('reserve'), signer: false, writable: true },
+        { account: account.fixed('reserveLiquidityMint'), signer: false, writable: false },
         { account: account.fixed('reserveLiquiditySupply'), signer: false, writable: true },
         { account: account.fixed('reserveCollateralMint'), signer: false, writable: true },
         { account: account.fixed('reserveDestinationDepositCollateral'), signer: false, writable: true },
+        // The deposit draws from the account the swap paid into.
         { account: account.fixed('destinationAta'), signer: false, writable: true },
+        // `placeholder_user_destination_collateral`, never used: the Kamino program means "none".
+        { account: account.fixed('kamino'), signer: false, writable: false },
+        // `collateral_token_program`, then `liquidity_token_program`.
         { account: account.fixed('tokenProgram'), signer: false, writable: false },
+        { account: account.fixed('tokenProgram'), signer: false, writable: false },
+        { account: account.fixed('instructionsSysvar'), signer: false, writable: false },
       ],
+      accountGroup: 'farmAccounts',
       data: [
         data.literal(KAMINO_DEPOSIT),
         // Exactly what the swap produced, measured a moment ago.

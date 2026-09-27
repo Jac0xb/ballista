@@ -21,6 +21,12 @@ const TOKEN_PROGRAM: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5
 const ORCA_WHIRLPOOL: Pubkey = pubkey!("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc");
 const KAMINO_LEND: Pubkey = pubkey!("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");
 const PYTH_RECEIVER: Pubkey = pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
+const JUPITER_V6: Pubkey = pubkey!("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
+const KAMINO_FARMS: Pubkey = pubkey!("FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr");
+const INSTRUCTIONS_SYSVAR: Pubkey = pubkey!("Sysvar1nstructions1111111111111111111111111");
+/// The first eight bytes of `sha256("global:refresh_reserve")` and `…refresh_obligation`.
+const REFRESH_RESERVE: [u8; 8] = [0x02, 0xda, 0x8a, 0xeb, 0x4f, 0xc9, 0x19, 0x66];
+const REFRESH_OBLIGATION: [u8; 8] = [0x21, 0x84, 0x93, 0xe4, 0x97, 0xc0, 0x48, 0x59];
 
 // #region plain
 /// Shape one: fixed accounts and fixed inputs, in the order the template declares them.
@@ -67,49 +73,131 @@ pub fn run_price_gate(
 // #endregion plain
 
 // #region group
-/// Shape two: an account group, for a callee whose account list is not a fixed length.
+/// Kamino's reserve-side accounts for the deposit, and the reserve's collateral farm if it has one.
+pub struct KaminoDeposit {
+    pub obligation: Pubkey,
+    pub lending_market: Pubkey,
+    pub lending_market_authority: Pubkey,
+    pub reserve: Pubkey,
+    pub reserve_liquidity_mint: Pubkey,
+    pub reserve_liquidity_supply: Pubkey,
+    pub reserve_collateral_mint: Pubkey,
+    pub reserve_collateral_supply: Pubkey,
+    /// `(obligation farm user state, reserve farm state)` when the reserve has a collateral farm.
+    pub farm: Option<(Pubkey, Pubkey)>,
+}
+
+/// Shape two: account groups, for callees whose account lists are not a fixed length.
 ///
-/// This is `jupiter-deposit-exact-output`. Jupiter's `route` starts its account list with the
-/// token program, the signing owner, and the owner's source and destination token accounts. The
-/// template passes those four itself, so `route_accounts` is the Swap API's list from the fifth
-/// account on, and it arrives as a group: one template serves every route the aggregator returns.
-/// `route_args` is the Swap API's instruction data after its eight-byte discriminator, and
-/// `token_accounts` the owner's source and destination token accounts.
+/// This is `jupiter-deposit-exact-output`.
+/// - Jupiter's `route` starts with the token program, the signing owner, and the owner's source
+///   and destination token accounts. The template passes those four itself, so `route_accounts`
+///   is the Swap API's list from the fifth account on, and one template serves every route.
+///   `route_args` is the Swap API's instruction data after its eight-byte discriminator.
+/// - Kamino's deposit ends in two farm accounts, writable when the reserve has a collateral farm
+///   and the Kamino program ID when it does not, then the Farms program. They travel as a second
+///   group, which keeps each account's own writable flag.
+///
+/// Send the run after [`kamino_refreshes`], in the same transaction.
 pub fn run_jupiter_deposit(
     template: Pubkey,
     owner: Pubkey,
     token_accounts: (Pubkey, Pubkey),
-    kamino_accounts: [Pubkey; 7],
+    kamino: &KaminoDeposit,
     route_args: &[u8],
     route_accounts: Vec<AccountMeta>,
     minimum_out: u64,
 ) -> Instruction {
+    let mut farm_accounts = match kamino.farm {
+        Some((user_state, farm_state)) => vec![
+            AccountMeta::new(user_state, false),
+            AccountMeta::new(farm_state, false),
+        ],
+        None => vec![AccountMeta::new_readonly(KAMINO_LEND, false); 2],
+    };
+    farm_accounts.push(AccountMeta::new_readonly(KAMINO_FARMS, false));
+    // Group lengths come first, before any value, one byte per declared group.
     let inputs = RunInputs::new()
-        .groups(&[route_accounts.len() as u8])
+        .groups(&[route_accounts.len() as u8, farm_accounts.len() as u8])
         .bytes(route_args)
         .u64(minimum_out)
         .finish();
 
     let mut accounts = vec![
-        AccountMeta::new_readonly(pubkey!("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"), false),
+        AccountMeta::new_readonly(JUPITER_V6, false),
         AccountMeta::new_readonly(KAMINO_LEND, false),
         AccountMeta::new_readonly(TOKEN_PROGRAM, false),
+        AccountMeta::new_readonly(INSTRUCTIONS_SYSVAR, false),
         AccountMeta::new(owner, true),
         AccountMeta::new(token_accounts.0, false),
         AccountMeta::new(token_accounts.1, false),
+        AccountMeta::new(kamino.obligation, false),
+        AccountMeta::new_readonly(kamino.lending_market, false),
+        AccountMeta::new_readonly(kamino.lending_market_authority, false),
+        AccountMeta::new(kamino.reserve, false),
+        AccountMeta::new_readonly(kamino.reserve_liquidity_mint, false),
+        AccountMeta::new(kamino.reserve_liquidity_supply, false),
+        AccountMeta::new(kamino.reserve_collateral_mint, false),
+        AccountMeta::new(kamino.reserve_collateral_supply, false),
     ];
-    accounts.extend(kamino_accounts.iter().enumerate().map(|(index, key)| {
-        // The obligation and reserve accounts are written; the market and its authority are not.
-        if matches!(index, 1 | 2) {
-            AccountMeta::new_readonly(*key, false)
-        } else {
-            AccountMeta::new(*key, false)
-        }
-    }));
+    // The groups follow the declared accounts, in declaration order.
     accounts.extend(route_accounts);
+    accounts.extend(farm_accounts);
     run_instruction(template, accounts, &inputs)
 }
 // #endregion group
+
+// #region refresh
+/// Kamino's refreshes. A run that deposits into, repays or liquidates an obligation needs them
+/// earlier in the same transaction. Kamino's v2 instructions check only that the reserves they
+/// price and the obligation were refreshed in the current slot, not where.
+///
+/// - `held` is every reserve the obligation holds: deposits in its deposit order, then borrows in
+///   its borrow order.
+/// - `touched` adds any reserve the run uses that the obligation does not hold yet.
+/// - Each reserve comes with the Scope price account its config names. The main market prices by
+///   Scope alone, so the Pyth and Switchboard slots take the Kamino program ID, which it reads as
+///   "none".
+pub fn kamino_refreshes(
+    lending_market: Pubkey,
+    obligation: Pubkey,
+    held: &[(Pubkey, Pubkey)],
+    touched: &[(Pubkey, Pubkey)],
+) -> Vec<Instruction> {
+    let refresh_reserve = |&(reserve, scope_prices): &(Pubkey, Pubkey)| Instruction {
+        program_id: KAMINO_LEND,
+        accounts: vec![
+            AccountMeta::new(reserve, false),
+            AccountMeta::new_readonly(lending_market, false),
+            AccountMeta::new_readonly(KAMINO_LEND, false), // Pyth
+            AccountMeta::new_readonly(KAMINO_LEND, false), // Switchboard price
+            AccountMeta::new_readonly(KAMINO_LEND, false), // Switchboard TWAP
+            AccountMeta::new_readonly(scope_prices, false),
+        ],
+        data: REFRESH_RESERVE.to_vec(),
+    };
+    let mut refreshed: Vec<Pubkey> = Vec::new();
+    let mut instructions = Vec::new();
+    for entry in held.iter().chain(touched) {
+        if !refreshed.contains(&entry.0) {
+            refreshed.push(entry.0);
+            instructions.push(refresh_reserve(entry));
+        }
+    }
+    let mut accounts = vec![
+        AccountMeta::new_readonly(lending_market, false),
+        AccountMeta::new(obligation, false),
+    ];
+    // Every reserve the obligation holds, writable, in its own order.
+    accounts.extend(held.iter().map(|&(reserve, _)| AccountMeta::new(reserve, false)));
+    instructions.push(Instruction {
+        program_id: KAMINO_LEND,
+        accounts,
+        data: REFRESH_OBLIGATION.to_vec(),
+    });
+    instructions
+}
+// #endregion refresh
 
 // #region rows
 /// Shape three: batch rows. The iteration count comes from how many rows are passed, so there is
@@ -164,16 +252,29 @@ fn main() {
     );
     println!("price gate        {} accounts, {} data bytes", gate.accounts.len(), gate.data.len());
 
+    let kamino = KaminoDeposit {
+        obligation: key(),
+        lending_market: key(),
+        lending_market_authority: key(),
+        reserve: key(),
+        reserve_liquidity_mint: key(),
+        reserve_liquidity_supply: key(),
+        reserve_collateral_mint: key(),
+        reserve_collateral_supply: key(),
+        farm: Some((key(), key())),
+    };
     let deposit = run_jupiter_deposit(
         template,
         key(),
         (key(), key()),
-        [key(), key(), key(), key(), key(), key(), key()],
+        &kamino,
         &[0xc1; 96],
         vec![AccountMeta::new(key(), false); 24],
         1_000_000,
     );
     println!("jupiter deposit   {} accounts, {} data bytes", deposit.accounts.len(), deposit.data.len());
+    let refreshes = kamino_refreshes(key(), key(), &[(key(), key())], &[]);
+    println!("kamino refreshes  {} instructions before the run", refreshes.len());
 
     let positions: Vec<(Pubkey, Pubkey)> = (0..5).map(|_| (key(), key())).collect();
     let harvest = run_orca_harvest(

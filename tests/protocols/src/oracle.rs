@@ -59,22 +59,22 @@ pub fn pyth_feed_id(svm: &LiteSVM, feed: &Address) -> Address {
 
 /// Writes a `PriceUpdateV2`'s price, confidence, exponent and publish time, and nothing else.
 ///
+/// To move one field, update what [`pyth_price`] read:
+///
+/// ```text
+/// let market = pyth_price(&svm, &feed);
+/// set_pyth_price(&mut svm, &feed, PythPrice { price: market.price * 105 / 100, ..market });
+/// ```
+///
 /// # Panics
 ///
 /// If `feed` is not a fully verified `PriceUpdateV2`.
-pub fn set_pyth_price(
-    svm: &mut LiteSVM,
-    feed: &Address,
-    price: i64,
-    conf: u64,
-    exponent: i32,
-    publish_time: i64,
-) {
+pub fn set_pyth_price(svm: &mut LiteSVM, feed: &Address, price: PythPrice) {
     let mut account = price_update(svm, feed);
-    account.data[PRICE..PRICE + 8].copy_from_slice(&price.to_le_bytes());
-    account.data[CONF..CONF + 8].copy_from_slice(&conf.to_le_bytes());
-    account.data[EXPONENT..EXPONENT + 4].copy_from_slice(&exponent.to_le_bytes());
-    account.data[PUBLISH_TIME..PUBLISH_TIME + 8].copy_from_slice(&publish_time.to_le_bytes());
+    account.data[PRICE..PRICE + 8].copy_from_slice(&price.price.to_le_bytes());
+    account.data[CONF..CONF + 8].copy_from_slice(&price.conf.to_le_bytes());
+    account.data[EXPONENT..EXPONENT + 4].copy_from_slice(&price.exponent.to_le_bytes());
+    account.data[PUBLISH_TIME..PUBLISH_TIME + 8].copy_from_slice(&price.publish_time.to_le_bytes());
     svm.set_account(*feed, account)
         .unwrap_or_else(|error| panic!("writing price update {feed} failed: {error:?}"));
 }
@@ -159,15 +159,22 @@ mod tests {
             exponent: -5,
             publish_time: snapshotted.publish_time + 3_600,
         };
-        set_pyth_price(
-            &mut svm,
-            &SOL_USD,
-            moved.price,
-            moved.conf,
-            moved.exponent,
-            moved.publish_time,
-        );
+        set_pyth_price(&mut svm, &SOL_USD, moved);
         assert_eq!(pyth_price(&svm, &SOL_USD), moved);
+
+        // One field at a time, the others as read.
+        let raised = PythPrice {
+            price: snapshotted.price * 105 / 100,
+            ..pyth_price(&svm, &SOL_USD)
+        };
+        set_pyth_price(&mut svm, &SOL_USD, raised);
+        assert_eq!(
+            pyth_price(&svm, &SOL_USD),
+            PythPrice {
+                price: snapshotted.price * 105 / 100,
+                ..moved
+            }
+        );
 
         let after = svm.get_account(&SOL_USD).unwrap();
         assert_eq!(
@@ -191,6 +198,12 @@ mod tests {
         let (mut svm, mut account, _) = sol_usd();
         account.data[VERIFICATION_LEVEL] = 0;
         svm.set_account(SOL_USD, account).unwrap();
-        set_pyth_price(&mut svm, &SOL_USD, 1, 1, -8, 1);
+        let price = PythPrice {
+            price: 1,
+            conf: 1,
+            exponent: -8,
+            publish_time: 1,
+        };
+        set_pyth_price(&mut svm, &SOL_USD, price);
     }
 }

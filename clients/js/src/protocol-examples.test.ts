@@ -2,9 +2,10 @@
  * The live-protocol examples are real source files, and this is what keeps them real.
  *
  * Each one compiles here, and its payload — together with its fixed-account, input, row-input,
- * batch-account and account-group order — is written to `fixtures/protocol-examples.json`. The
- * Rust suite feeds the payload to the on-chain verifier, and the LiteSVM harness uses the
- * recorded order to build each run instruction by name instead of by hand-copied position. A
+ * batch-account and account-group order, and the step label of each program counter — is written
+ * to `fixtures/protocol-examples.json`. The Rust suite feeds the payload to the on-chain verifier,
+ * and the LiteSVM harness uses the recorded order to build each run instruction by name instead of
+ * by hand-copied position, and the labels to name the step a failed run stopped at. A
  * template that stops compiling, or that the verifier would reject, fails the build rather than
  * being discovered at upload time.
  *
@@ -54,6 +55,11 @@ describe('live protocol examples', () => {
             rowInputs: compiled.rowInputOrder,
             batchAccounts: compiled.batchAccountOrder,
             accountGroups: compiled.accountGroupOrder,
+            // Program counter to step label. A labelled step spans several instructions, so a
+            // failure's pc names its step, never the other way round.
+            labels: Object.fromEntries(
+              compiled.sourceMap.filter((entry) => entry.label !== undefined).map((entry) => [entry.pc, entry.label]),
+            ),
           },
         ];
       }),

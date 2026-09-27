@@ -43,8 +43,13 @@ pub fn wallet() -> Keypair {
 ///
 /// # Panics
 ///
-/// If the address holds anything but a plain System account: only wallets may be written.
+/// If the address is off the curve, a program's rather than a wallet's, or holds anything but a
+/// plain System account: only wallets may be written.
 pub fn fund(svm: &mut LiteSVM, address: &Address, lamports: u64) {
+    assert!(
+        address.is_on_curve(),
+        "{address} is off the curve, so no wallet signs for it; only wallets may be funded"
+    );
     let mut account = svm.get_account(address).unwrap_or(Account {
         lamports: 0,
         data: vec![],
@@ -92,8 +97,13 @@ pub fn associated_token_address(owner: &Address, mint: &Address) -> Address {
 ///
 /// # Panics
 ///
-/// If `mint` is not an SPL Token mint in the SVM.
+/// If `owner` is off the curve, so that the account would be a program's rather than a wallet's,
+/// or `mint` is not an SPL Token mint in the SVM.
 pub fn token_account(svm: &mut LiteSVM, owner: &Address, mint: &Address, amount: u64) -> Address {
+    assert!(
+        owner.is_on_curve(),
+        "{owner} is off the curve, so its token accounts belong to a program; only wallets' may be written"
+    );
     let mint_account = svm
         .get_account(mint)
         .unwrap_or_else(|| panic!("mint {mint} is not in the SVM"));
@@ -195,10 +205,45 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "only wallets may be funded")]
+    #[should_panic(expected = "is not a wallet (owner BPFLoaderUpgradeab1e")]
     fn funding_refuses_a_program_owned_account() {
         let mut svm = LiteSVM::new();
         fund(&mut svm, &TOKEN_PROGRAM_ID, SOL);
+    }
+
+    /// A System account with data is a nonce account or the like, not a wallet.
+    #[test]
+    #[should_panic(expected = "is not a wallet (owner 11111111111111111111111111111111, 80 bytes")]
+    fn funding_refuses_a_system_account_with_data() {
+        let mut svm = LiteSVM::new();
+        let key = keypair(b"ballista-protocol-tests-nonce-01").pubkey();
+        let nonce = Account {
+            lamports: SOL,
+            data: vec![0; 80],
+            owner: SYSTEM_PROGRAM_ID,
+            executable: false,
+            rent_epoch: u64::MAX,
+        };
+        svm.set_account(key, nonce).unwrap();
+        fund(&mut svm, &key, 2 * SOL);
+    }
+
+    fn program_address() -> Address {
+        Address::find_program_address(&[b"vault"], &TOKEN_PROGRAM_ID).0
+    }
+
+    #[test]
+    #[should_panic(expected = "is off the curve, so no wallet signs for it")]
+    fn funding_refuses_a_program_address() {
+        let mut svm = LiteSVM::new();
+        fund(&mut svm, &program_address(), SOL);
+    }
+
+    #[test]
+    #[should_panic(expected = "is off the curve, so its token accounts belong to a program")]
+    fn token_accounts_refuse_a_program_owner() {
+        let mut svm = LiteSVM::new();
+        token_account(&mut svm, &program_address(), &WSOL_MINT, 1);
     }
 
     fn token_instruction(accounts: Vec<AccountMeta>, data: Vec<u8>) -> Instruction {
@@ -209,8 +254,57 @@ mod tests {
         }
     }
 
+    /// What `token_account` writes is, byte for byte, what the Associated Token program creates,
+    /// and for wrapped SOL what a transfer and `SyncNative` then leave: `is_native` records the
+    /// rent-exempt reserve, and the lamports are the reserve plus the amount.
+    #[test]
+    fn written_token_accounts_are_the_ones_the_programs_make() {
+        let mut svm = Snapshot::load(crate::snapshot::SNAPSHOT_DIR).into_svm();
+        let owner = wallet();
+        fund(&mut svm, &owner.pubkey(), 10 * SOL);
+        for (mint, amount) in [(USDC_MINT, 0), (WSOL_MINT, 2 * SOL)] {
+            let address = associated_token_address(&owner.pubkey(), &mint);
+            // CreateIdempotent.
+            let mut instructions = vec![Instruction {
+                program_id: ASSOCIATED_TOKEN_PROGRAM_ID,
+                accounts: vec![
+                    AccountMeta::new(owner.pubkey(), true),
+                    AccountMeta::new(address, false),
+                    AccountMeta::new_readonly(owner.pubkey(), false),
+                    AccountMeta::new_readonly(mint, false),
+                    AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
+                    AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+                ],
+                data: vec![1],
+            }];
+            if mint == WSOL_MINT {
+                // A System transfer into the account, then SyncNative.
+                let mut transfer = vec![2, 0, 0, 0];
+                transfer.extend_from_slice(&amount.to_le_bytes());
+                instructions.push(Instruction {
+                    program_id: SYSTEM_PROGRAM_ID,
+                    accounts: vec![
+                        AccountMeta::new(owner.pubkey(), true),
+                        AccountMeta::new(address, false),
+                    ],
+                    data: transfer,
+                });
+                instructions.push(token_instruction(
+                    vec![AccountMeta::new(address, false)],
+                    vec![17],
+                ));
+            }
+            tx::send(&mut svm, &owner, &[], &instructions, &[]).unwrap();
+            let made = svm.get_account(&address).unwrap();
+
+            token_account(&mut svm, &owner.pubkey(), &mint, amount);
+            assert_eq!(svm.get_account(&address), Some(made), "{mint}");
+        }
+    }
+
     /// Mainnet's Token program accepts the accounts as written: it moves a balance between two
-    /// of them, and unwrapping SOL pays out exactly the reserve plus the amount.
+    /// of them, syncing wrapped SOL leaves its balance alone, and unwrapping pays out exactly the
+    /// reserve plus the amount.
     #[test]
     fn written_token_accounts_work_with_the_mainnet_token_program() {
         let mut svm = Snapshot::load(crate::snapshot::SNAPSHOT_DIR).into_svm();
@@ -243,6 +337,11 @@ mod tests {
         assert_eq!(token_balance(&svm, &wrapped), 2 * SOL);
         let reserve = svm.minimum_balance_for_rent_exemption(TOKEN_ACCOUNT_LEN);
         assert_eq!(svm.get_balance(&wrapped), Some(reserve + 2 * SOL));
+        // SyncNative: tag 17. It sets the balance to the lamports above the reserve, which it
+        // recomputes from the Rent sysvar, so it cannot tell whether the recorded one was right.
+        let sync = token_instruction(vec![AccountMeta::new(wrapped, false)], vec![17]);
+        tx::send(&mut svm, &owner, &[], &[sync], &[]).unwrap();
+        assert_eq!(token_balance(&svm, &wrapped), 2 * SOL);
         let before = svm.get_balance(&owner.pubkey()).unwrap();
         // CloseAccount: tag 9. The lamports go to the owner.
         let close = token_instruction(

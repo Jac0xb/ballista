@@ -396,6 +396,7 @@ dependencies = [
  "solana-address 2.7.0",
  "solana-clock 3.2.1",
  "solana-compute-budget-interface",
+ "solana-epoch-schedule",
  "solana-instruction 3.5.1",
  "solana-keypair",
  "solana-message",

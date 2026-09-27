@@ -14,6 +14,7 @@ use {
     solana_account::Account,
     solana_address::Address,
     solana_clock::Clock,
+    solana_epoch_schedule::EpochSchedule,
     solana_instruction::{AccountMeta, Instruction},
     solana_message::AddressLookupTableAccount,
     solana_sdk_ids::{address_lookup_table, native_loader, sysvar},
@@ -48,6 +49,8 @@ pub struct Snapshot {
     /// The Clock sysvar as it was at that slot.
     pub clock: Clock,
     accounts: Vec<(Address, Account)>,
+    /// The manifest's names for accounts and programs: `pythSolUsd`, `jupiter`.
+    names: BTreeMap<String, Address>,
     lookup_tables: BTreeMap<Address, AddressLookupTableAccount>,
     routes: BTreeMap<String, Route>,
 }
@@ -120,8 +123,9 @@ impl Snapshot {
     ///
     /// # Panics
     ///
-    /// If a file is missing or malformed, a hash differs, a program file is still a Git LFS
-    /// pointer, or the snapshot holds a builtin or a sysvar.
+    /// If a file is missing or malformed, a hash differs, an account is missing or repeated, a
+    /// program file is still a Git LFS pointer, the snapshot holds a builtin or a sysvar, or a
+    /// lookup table is not fully usable at the snapshot's slot.
     pub fn load(dir: impl AsRef<Path>) -> Snapshot {
         let dir = dir.as_ref();
         let manifest: ManifestFile = read_json(&dir.join("manifest.json"));
@@ -153,33 +157,61 @@ impl Snapshot {
             .iter()
             .map(|program| (program.file.as_str(), read_program(dir, program)))
             .collect();
-        let expected: HashMap<&str, &ManifestAccount> = manifest
+
+        // Each account in accounts.json is checked off the manifest's list, so one listed twice
+        // cannot stand in for one that is missing.
+        let mut expected: HashMap<&str, &ManifestAccount> = manifest
             .accounts
             .iter()
             .map(|account| (account.address.as_str(), account))
             .collect();
-        assert!(
-            expected.len() == manifest.accounts.len() && stored.len() == manifest.accounts.len(),
-            "accounts.json holds {} accounts and the manifest {} distinct ones of {}",
-            stored.len(),
+        assert_eq!(
             expected.len(),
-            manifest.accounts.len()
+            manifest.accounts.len(),
+            "the manifest lists an account twice"
         );
-
         let mut accounts = Vec::with_capacity(stored.len());
         for entry in &stored {
-            let recorded = expected.get(entry.address.as_str()).unwrap_or_else(|| {
-                panic!("{} is in accounts.json but not the manifest", entry.address)
+            let recorded = expected.remove(entry.address.as_str()).unwrap_or_else(|| {
+                panic!(
+                    "{} is in accounts.json twice, or is not in the manifest",
+                    entry.address
+                )
             });
             let account = entry.rebuild(&programs);
             check_account(entry, recorded, &account);
             accounts.push((parse_address(&entry.address), account));
         }
+        assert!(
+            expected.is_empty(),
+            "accounts.json lacks {:?}",
+            expected.keys().collect::<Vec<_>>()
+        );
+
+        let mut names = BTreeMap::new();
+        for account in &manifest.accounts {
+            // `account pythSolUsd` and `program jupiter` name an account. The other roles
+            // (`route solToUsdc`, `programData jupiter`, `lookup table, …`) say why it is here.
+            for role in &account.roles {
+                let name = role
+                    .strip_prefix("account ")
+                    .or_else(|| role.strip_prefix("program "));
+                if let Some(name) = name {
+                    let previous = names.insert(name.to_string(), parse_address(&account.address));
+                    assert!(previous.is_none(), "two accounts are named {name:?}");
+                }
+            }
+        }
 
         let lookup_tables: BTreeMap<Address, AddressLookupTableAccount> = accounts
             .iter()
             .filter(|(_, account)| account.owner == address_lookup_table::ID)
-            .map(|(address, account)| (*address, decode_lookup_table(*address, account)))
+            .map(|(address, account)| {
+                (
+                    *address,
+                    decode_lookup_table(*address, account, manifest.slot),
+                )
+            })
             .collect();
         assert_eq!(
             lookup_tables.len(),
@@ -213,6 +245,7 @@ impl Snapshot {
             slot: manifest.slot,
             clock,
             accounts,
+            names,
             lookup_tables,
             routes,
         }
@@ -220,7 +253,8 @@ impl Snapshot {
 
     /// A LiteSVM holding the snapshot, with Ballista built from source.
     ///
-    /// - The clock is the snapshot's own, so oracles read as fresh and pools accept the time.
+    /// - The clock is the snapshot's own, so oracles read as fresh and pools accept the time. The
+    ///   epoch schedule is mainnet's, which has no warmup, so it agrees with the clock's epoch.
     /// - Accounts are written with ProgramData before Program: writing a Program account compiles
     ///   its ELF from its ProgramData, and without one it is cached as "not deployed". Mainnet's
     ///   Token program (p-token) replaces the build LiteSVM bundles.
@@ -228,19 +262,57 @@ impl Snapshot {
     ///
     /// # Panics
     ///
-    /// If a program fails to load, or `ballista.so` has not been built.
+    /// If a program fails to load or is left cached as not deployed, or `ballista.so` has not been
+    /// built.
     pub fn into_svm(self) -> LiteSVM {
         let mut svm = LiteSVM::new().with_log_bytes_limit(None);
         // Before the programs: each is deployed as of the current slot.
         svm.set_sysvar(&self.clock);
+        svm.set_sysvar(&EpochSchedule::without_warmup());
         let mut accounts = self.accounts;
         accounts.sort_by_key(|(_, account)| account.executable);
+        let mut programs = vec![ballista_sdk::ID];
         for (address, account) in accounts {
+            if account.executable {
+                programs.push(address);
+            }
             svm.set_account(address, account)
                 .unwrap_or_else(|error| panic!("loading {address} failed: {error:?}"));
         }
         add_ballista(&mut svm);
+        // LiteSVM reports a tombstone only when the program is called: "Program is not deployed".
+        for program in programs {
+            let deployed = svm
+                .accounts_db()
+                .programs_cache
+                .find(&program)
+                .is_some_and(|entry| !entry.is_tombstone());
+            assert!(
+                deployed,
+                "program {program} is cached as not deployed; its ProgramData must be written first"
+            );
+        }
         svm
+    }
+
+    /// [`Snapshot::into_svm`] for a snapshot that is used again, say for a fresh SVM per case.
+    pub fn svm(&self) -> LiteSVM {
+        self.clone().into_svm()
+    }
+
+    /// The account or program the manifest names `name`: `pythSolUsd`, `jitoTip`, `usdcMint`,
+    /// `wsolMint`, or a program such as `jupiter` or `token`.
+    ///
+    /// # Panics
+    ///
+    /// If the manifest names nothing so.
+    pub fn named(&self, name: &str) -> Address {
+        *self.names.get(name).unwrap_or_else(|| {
+            panic!(
+                "no account named {name:?}; the manifest names {:?}",
+                self.names.keys().collect::<Vec<_>>()
+            )
+        })
     }
 
     /// Every address lookup table in the snapshot, decoded.
@@ -292,15 +364,23 @@ impl Route {
 }
 
 impl LegInstructions {
-    /// Every instruction, in the order of Jupiter's own transaction.
-    pub fn all(&self) -> Vec<Instruction> {
+    /// Jupiter's own transaction with `route` replaced by `run`, a Ballista run that carries it:
+    /// the compute budget, the setup that creates the token accounts and wraps SOL, `run`, then
+    /// the cleanup that unwraps it. A token-ledger or other instruction, which the snapshot's
+    /// routes have none of, would keep its place.
+    pub fn with_swap(&self, run: Instruction) -> Vec<Instruction> {
         let mut instructions = self.compute_budget.clone();
         instructions.extend(self.setup.iter().cloned());
         instructions.extend(self.token_ledger.clone());
-        instructions.push(self.swap.clone());
+        instructions.push(run);
         instructions.extend(self.cleanup.clone());
         instructions.extend(self.other.iter().cloned());
         instructions
+    }
+
+    /// Every instruction, in the order of Jupiter's own transaction.
+    pub fn all(&self) -> Vec<Instruction> {
+        self.with_swap(self.swap.clone())
     }
 }
 
@@ -377,7 +457,8 @@ fn sha256_matches(bytes: &[u8], expected_hex: &str) -> bool {
     Sha256::digest(bytes).as_slice() == decode_hex(expected_hex)
 }
 
-fn decode_lookup_table(key: Address, account: &Account) -> AddressLookupTableAccount {
+/// A lookup table's addresses, all of them usable at `slot`.
+fn decode_lookup_table(key: Address, account: &Account, slot: u64) -> AddressLookupTableAccount {
     let data = &account.data;
     assert!(
         data.len() >= LOOKUP_TABLE_META_LEN && data[..4] == 1u32.to_le_bytes(),
@@ -389,6 +470,14 @@ fn decode_lookup_table(key: Address, account: &Account) -> AddressLookupTableAcc
         data[4..12],
         u64::MAX.to_le_bytes(),
         "lookup table {key} is deactivating"
+    );
+    // Entries added in the current slot are not usable until the next one: only those before
+    // `last_extended_slot_start_index` are. The snapshot tool refuses such a table, and so does
+    // this, so every address decoded here resolves.
+    let last_extended_slot = u64::from_le_bytes(data[12..20].try_into().unwrap());
+    assert!(
+        last_extended_slot < slot,
+        "lookup table {key} was extended at slot {last_extended_slot}, not before the snapshot's {slot}"
     );
     let (entries, rest) = data[LOOKUP_TABLE_META_LEN..].as_chunks::<32>();
     assert!(
@@ -467,6 +556,9 @@ struct ManifestProgram {
 #[serde(rename_all = "camelCase")]
 struct ManifestAccount {
     address: String,
+    /// Why the account is in the snapshot: `account pythSolUsd`, `program jupiter`,
+    /// `route solToUsdc`.
+    roles: Vec<String>,
     owner: String,
     lamports: u64,
     executable: bool,
@@ -707,29 +799,177 @@ mod tests {
         super::*,
         crate::{
             tx,
-            wallet::{fund, token_balance, SOL},
+            wallet::{fund, token_account, token_balance, SOL, WSOL_MINT},
         },
-        ballista_sdk::TOKEN_PROGRAM_ID,
+        ballista_sdk::{ASSOCIATED_TOKEN_PROGRAM_ID, SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID},
+        solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_sdk_ids::bpf_loader_upgradeable,
     };
 
+    fn program_data_address(program: &Address) -> Address {
+        Address::find_program_address(&[program.as_ref()], &bpf_loader_upgradeable::ID).0
+    }
+
     #[test]
-    fn the_svm_starts_at_the_snapshot_with_mainnet_programs() {
+    fn the_svm_holds_the_snapshot_at_its_slot() {
         let snapshot = Snapshot::load(SNAPSHOT_DIR);
+        let expected = snapshot.accounts.clone();
         let clock = snapshot.clock.clone();
         assert_eq!(clock.slot, snapshot.slot);
         let svm = snapshot.into_svm();
 
         assert_eq!(svm.get_sysvar::<Clock>(), clock);
-        // Mainnet's upgradeable p-token, not the loader-v2 build LiteSVM bundles.
-        let token = svm.get_account(&TOKEN_PROGRAM_ID).unwrap();
-        assert_eq!(token.owner, bpf_loader_upgradeable::ID);
-        let (program_data, _) = Address::find_program_address(
-            &[TOKEN_PROGRAM_ID.as_ref()],
-            &bpf_loader_upgradeable::ID,
+        let schedule = svm.get_sysvar::<EpochSchedule>();
+        assert_eq!(schedule.get_epoch(clock.slot), clock.epoch);
+        assert_eq!(
+            schedule.get_leader_schedule_epoch(clock.slot),
+            clock.leader_schedule_epoch
         );
-        assert_eq!(token.data[4..36], *program_data.as_ref());
-        assert!(svm.get_account(&ballista_sdk::ID).unwrap().executable);
+        for (address, account) in &expected {
+            assert_eq!(
+                svm.get_account(address).as_ref(),
+                Some(account),
+                "{address}"
+            );
+        }
+        // Ballista is deployed as of the snapshot's slot too: its ProgramData records the slot.
+        let ballista = svm
+            .get_account(&program_data_address(&ballista_sdk::ID))
+            .unwrap();
+        assert_eq!(ballista.data[4..12], clock.slot.to_le_bytes());
+    }
+
+    /// LiteSVM bundles a p-token build of its own at the Token program's address, upgradeable too
+    /// and with its ProgramData at the same derived address, so the owner and the ProgramData
+    /// address cannot tell the two apart. The bytes can.
+    #[test]
+    fn mainnet_token_replaces_the_build_litesvm_bundles() {
+        let snapshot = Snapshot::load(SNAPSHOT_DIR);
+        let program_data = program_data_address(&TOKEN_PROGRAM_ID);
+        let mainnet = [TOKEN_PROGRAM_ID, program_data]
+            .map(|address| snapshot.account(&address).unwrap().clone());
+        let bundled = LiteSVM::new().get_account(&program_data).unwrap();
+        assert_ne!(
+            bundled.data, mainnet[1].data,
+            "LiteSVM now bundles mainnet's build, so this test shows nothing"
+        );
+
+        let svm = snapshot.into_svm();
+        assert_eq!(
+            svm.get_account(&TOKEN_PROGRAM_ID).as_ref(),
+            Some(&mainnet[0])
+        );
+        assert_eq!(svm.get_account(&program_data).as_ref(), Some(&mainnet[1]));
+    }
+
+    /// Jupiter's own instructions for every leg of every route, each in a fresh SVM, signed by the
+    /// test wallet and sent with the leg's lookup tables. Between them they call every AMM the
+    /// snapshot routes through, so a program the loader left undeployed fails here.
+    #[test]
+    fn every_route_leg_replays_against_the_snapshot() {
+        let snapshot = Snapshot::load(SNAPSHOT_DIR);
+        let owner = wallet::wallet();
+        let mut replayed = 0;
+        for (name, route) in snapshot.routes() {
+            for (index, leg) in route.legs.iter().enumerate() {
+                let mut svm = snapshot.svm();
+                fund(&mut svm, &owner.pubkey(), 10 * SOL);
+                // A leg that sells SOL wraps it in its setup; any other input the wallet holds.
+                if leg.input_mint != WSOL_MINT {
+                    token_account(&mut svm, &owner.pubkey(), &leg.input_mint, leg.in_amount);
+                }
+                let before = svm.get_balance(&owner.pubkey()).unwrap();
+                let outcome = tx::send(
+                    &mut svm,
+                    &owner,
+                    &[],
+                    &leg.instructions.all(),
+                    &leg.lookup_tables,
+                )
+                .unwrap_or_else(|failure| panic!("{name} leg {index}: {failure:?}"));
+
+                assert_eq!(outcome.size, leg.transaction_size, "{name} leg {index}");
+                if let Some(cleanup) = &leg.instructions.cleanup {
+                    // It closes the wrapped SOL account.
+                    assert_eq!(svm.get_account(&cleanup.accounts[0].pubkey), None);
+                }
+                let received = if leg.output_mint == WSOL_MINT {
+                    // Unwrapped by the cleanup, which also returned the account's rent.
+                    svm.get_balance(&owner.pubkey()).unwrap() + outcome.fee - before
+                } else {
+                    token_balance(&svm, &leg.destination_token_account)
+                };
+                assert!(
+                    received >= leg.other_amount_threshold,
+                    "{name} leg {index}: received {received}, below the threshold {}\n{outcome:?}",
+                    leg.other_amount_threshold
+                );
+                replayed += 1;
+            }
+        }
+        assert!(replayed > 1, "only {replayed} legs to replay");
+    }
+
+    /// LiteSVM keeps 10 KB of logs by default; a failure deep in a route can come after that.
+    #[test]
+    fn long_logs_are_kept_whole() {
+        let snapshot = Snapshot::load(SNAPSHOT_DIR);
+        let usdc = snapshot.named("usdcMint");
+        let mut svm = snapshot.into_svm();
+        let owner = wallet::wallet();
+        fund(&mut svm, &owner.pubkey(), SOL);
+        let account = token_account(&mut svm, &owner.pubkey(), &usdc, 0);
+        // CreateIdempotent for an account that exists: four log lines for ten transaction bytes.
+        // A transaction runs at most 64 instructions, CPIs included.
+        let create = Instruction {
+            program_id: ASSOCIATED_TOKEN_PROGRAM_ID,
+            accounts: vec![
+                AccountMeta::new(owner.pubkey(), true),
+                AccountMeta::new(account, false),
+                AccountMeta::new_readonly(owner.pubkey(), false),
+                AccountMeta::new_readonly(usdc, false),
+                AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
+                AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+            ],
+            data: vec![1],
+        };
+        let mut instructions = vec![ComputeBudgetInstruction::set_compute_unit_limit(1_400_000)];
+        instructions.extend(std::iter::repeat_n(create, 60));
+
+        let outcome = tx::send(&mut svm, &owner, &[], &instructions, &[]).unwrap();
+        let logged: usize = outcome.logs.iter().map(String::len).sum();
+        assert!(logged > 10_000, "only {logged} bytes of logs");
+        assert!(!outcome.logs.iter().any(|line| line == "Log truncated"));
+    }
+
+    #[test]
+    fn accounts_and_programs_are_found_by_name() {
+        let snapshot = Snapshot::load(SNAPSHOT_DIR);
+        assert_eq!(
+            snapshot.named("pythSolUsd"),
+            Address::from_str_const("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE")
+        );
+        assert_eq!(
+            snapshot.named("usdcMint"),
+            Address::from_str_const("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
+        );
+        assert_eq!(snapshot.named("wsolMint"), WSOL_MINT);
+        assert_eq!(snapshot.named("token"), TOKEN_PROGRAM_ID);
+        assert_eq!(
+            snapshot.named("jupiter"),
+            Address::from_str_const("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4")
+        );
+        let tip = snapshot.account(&snapshot.named("jitoTip")).unwrap();
+        assert_eq!(
+            tip.owner,
+            Address::from_str_const("T1pyyaTNZsKv2WcRAB8oVnk93mLJw2XzjtVYqCsaHqt")
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "no account named \"pythEthUsd\"")]
+    fn an_unknown_name_panics() {
+        Snapshot::load(SNAPSHOT_DIR).named("pythEthUsd");
     }
 
     #[test]
@@ -767,34 +1007,44 @@ mod tests {
         assert_eq!(keys, expected);
     }
 
-    /// Jupiter's own instructions for one leg, signed by the test wallet and sent with the leg's
-    /// lookup tables: proves the loader, the tables, the size check, `send` and the wallet together.
+    /// A table's account data: the header, then two addresses.
+    fn lookup_table(deactivation_slot: u64, last_extended_slot: u64) -> Account {
+        let mut data = vec![0; LOOKUP_TABLE_META_LEN];
+        data[..4].copy_from_slice(&1u32.to_le_bytes());
+        data[4..12].copy_from_slice(&deactivation_slot.to_le_bytes());
+        data[12..20].copy_from_slice(&last_extended_slot.to_le_bytes());
+        data.extend_from_slice(&[7; 64]);
+        Account {
+            lamports: 1,
+            data,
+            owner: address_lookup_table::ID,
+            executable: false,
+            rent_epoch: u64::MAX,
+        }
+    }
+
     #[test]
-    fn a_jupiter_route_replays_against_the_snapshot() {
-        let snapshot = Snapshot::load(SNAPSHOT_DIR);
-        let leg = snapshot.route("solToUsdc").legs[0].clone();
-        let mut svm = snapshot.into_svm();
-        let owner = wallet::wallet();
-        fund(&mut svm, &owner.pubkey(), 10 * SOL);
+    fn an_active_table_decodes_to_its_addresses() {
+        let key = Address::new_from_array([1; 32]);
+        let decoded = decode_lookup_table(key, &lookup_table(u64::MAX, 99), 100);
+        assert_eq!(decoded.key, key);
+        assert_eq!(decoded.addresses, vec![Address::new_from_array([7; 32]); 2]);
+    }
 
-        let outcome = tx::send(
-            &mut svm,
-            &owner,
-            &[],
-            &leg.instructions.all(),
-            &leg.lookup_tables,
-        )
-        .unwrap();
+    #[test]
+    #[should_panic(expected = "is deactivating")]
+    fn a_deactivating_table_is_refused() {
+        decode_lookup_table(Address::new_from_array([1; 32]), &lookup_table(50, 10), 100);
+    }
 
-        assert_eq!(outcome.size, leg.transaction_size, "{outcome:?}");
-        let received = token_balance(&svm, &leg.destination_token_account);
-        assert!(
-            received >= leg.other_amount_threshold,
-            "received {received}, below the threshold {}\n{outcome:?}",
-            leg.other_amount_threshold
+    #[test]
+    #[should_panic(expected = "was extended at slot 100, not before the snapshot's 100")]
+    fn a_table_extended_in_the_snapshot_slot_is_refused() {
+        decode_lookup_table(
+            Address::new_from_array([1; 32]),
+            &lookup_table(u64::MAX, 100),
+            100,
         );
-        // The cleanup unwrapped what was left of the SOL.
-        assert_eq!(svm.get_account(&leg.source_token_account), None);
     }
 
     #[test]
@@ -808,39 +1058,80 @@ mod tests {
         assert_eq!(after.epoch, before.epoch);
     }
 
-    /// A copy of the snapshot with one account's data changed fails to load.
-    #[test]
-    #[should_panic(expected = "does not match the manifest's sha256")]
-    fn a_changed_account_is_caught() {
-        let copy =
-            std::env::temp_dir().join(format!("ballista-protocol-snapshot-{}", std::process::id()));
-        fs::create_dir_all(copy.join("programs")).unwrap();
-        for entry in fs::read_dir(Path::new(SNAPSHOT_DIR).join("programs")).unwrap() {
-            let path = entry.unwrap().path();
-            fs::copy(&path, copy.join("programs").join(path.file_name().unwrap())).unwrap();
-        }
-        for file in ["manifest.json", "routes.json"] {
-            fs::copy(Path::new(SNAPSHOT_DIR).join(file), copy.join(file)).unwrap();
-        }
-        let mut accounts: Vec<serde_json::Value> =
-            read_json(&Path::new(SNAPSHOT_DIR).join("accounts.json"));
-        let feed = accounts
-            .iter_mut()
-            .find(|account| account["address"] == "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE")
-            .unwrap();
-        let mut data = decode_base64(feed["data"].as_str().unwrap());
-        data[73] ^= 1;
-        feed["data"] = BASE64.encode(data).into();
-        fs::write(
-            copy.join("accounts.json"),
-            serde_json::to_vec(&accounts).unwrap(),
-        )
-        .unwrap();
-
-        let result = std::panic::catch_unwind(|| Snapshot::load(&copy));
-        fs::remove_dir_all(&copy).unwrap();
+    /// A scratch directory for one test, removed after `test` runs, whose panic propagates.
+    fn in_scratch_dir(name: &str, test: impl FnOnce(&Path) + std::panic::UnwindSafe) {
+        let dir =
+            std::env::temp_dir().join(format!("ballista-protocol-{name}-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let result = std::panic::catch_unwind(|| test(&dir));
+        fs::remove_dir_all(&dir).unwrap();
         if let Err(panic) = result {
             std::panic::resume_unwind(panic);
         }
+    }
+
+    /// Loads a copy of the snapshot whose `accounts.json` `edit` has changed.
+    fn load_edited(name: &str, edit: impl FnOnce(&mut Vec<serde_json::Value>)) {
+        let source = Path::new(SNAPSHOT_DIR);
+        let mut accounts: Vec<serde_json::Value> = read_json(&source.join("accounts.json"));
+        edit(&mut accounts);
+        in_scratch_dir(name, |copy| {
+            fs::create_dir(copy.join("programs")).unwrap();
+            for entry in fs::read_dir(source.join("programs")).unwrap() {
+                let path = entry.unwrap().path();
+                fs::copy(&path, copy.join("programs").join(path.file_name().unwrap())).unwrap();
+            }
+            for file in ["manifest.json", "routes.json"] {
+                fs::copy(source.join(file), copy.join(file)).unwrap();
+            }
+            fs::write(
+                copy.join("accounts.json"),
+                serde_json::to_vec(&accounts).unwrap(),
+            )
+            .unwrap();
+            Snapshot::load(copy);
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "does not match the manifest's sha256")]
+    fn a_changed_account_is_caught() {
+        load_edited("changed", |accounts| {
+            let feed = accounts
+                .iter_mut()
+                .find(|account| {
+                    account["address"] == "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE"
+                })
+                .unwrap();
+            let mut data = decode_base64(feed["data"].as_str().unwrap());
+            data[73] ^= 1;
+            feed["data"] = BASE64.encode(data).into();
+        });
+    }
+
+    /// The list keeps its length, so only checking each entry off the manifest notices.
+    #[test]
+    #[should_panic(expected = "is in accounts.json twice, or is not in the manifest")]
+    fn an_account_repeated_in_place_of_another_is_caught() {
+        load_edited("repeated", |accounts| accounts[1] = accounts[0].clone());
+    }
+
+    #[test]
+    #[should_panic(expected = "is a Git LFS pointer, not the program; run `git lfs pull`")]
+    fn a_git_lfs_pointer_is_refused() {
+        in_scratch_dir("lfs", |dir| {
+            let pointer = "version https://git-lfs.github.com/spec/v1\n\
+                           oid sha256:6804554e69fd3a58caa191dc4a58f4c67223d30ca28ab8987f39fc18d2f7374d\n\
+                           size 105032\n";
+            fs::write(dir.join("program.so"), pointer).unwrap();
+            let program = ManifestProgram {
+                name: "associatedToken".to_string(),
+                file: "program.so".to_string(),
+                elf_length: 105_032,
+                elf_sha256: "6804554e69fd3a58caa191dc4a58f4c67223d30ca28ab8987f39fc18d2f7374d"
+                    .to_string(),
+            };
+            read_program(dir, &program);
+        });
     }
 }

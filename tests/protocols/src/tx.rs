@@ -1,6 +1,8 @@
-//! Sign and send transactions, keep them within the packet size, and name the program that failed.
+//! Sign and send transactions, keep them within the packet size, and name the program that failed
+//! and, when it was Ballista, the step.
 
 use {
+    crate::template::Example,
     ballista_sdk::decode_ballista_error,
     litesvm::{types::FailedTransactionMetadata, LiteSVM},
     solana_address::Address,
@@ -129,7 +131,8 @@ pub fn send(
 
 /// The name and context of a failure Ballista raised itself: `("RequirementFailed", pc)`, say.
 ///
-/// `None` when another program failed, even one whose code falls in Ballista's range.
+/// `None` when another program failed, even one whose code falls in Ballista's range, and when
+/// Ballista failed without a custom code of its own, such as a missing signature.
 pub fn ballista_error(failure: &Failure) -> Option<(&'static str, u16)> {
     if failure.program != ballista_sdk::ID {
         return None;
@@ -138,18 +141,77 @@ pub fn ballista_error(failure: &Failure) -> Option<(&'static str, u16)> {
     Some((decoded.name, decoded.context))
 }
 
+/// Ballista's failures whose context is always the program counter of the instruction that failed.
+/// The others carry an account or input index or a count (`InvalidRunInputs`,
+/// `InvalidAccountRange`, `AccountConstraintFailed`, `CpiAccountLimitExceeded`), one or the other
+/// (`InvalidTemplateProgram`), or nothing, being raised outside a run.
+const FAILURES_AT_A_PC: [&str; 10] = [
+    "InvalidRuntimeAccount",
+    "InvalidRegister",
+    "TypeMismatch",
+    "ArithmeticOverflow",
+    "DivisionByZero",
+    "RequirementFailed",
+    "CpiDataTooLarge",
+    "InvalidPdaDerivation",
+    "MissingReturnData",
+    "ReturnDataMismatch",
+];
+
+/// Asserts that Ballista itself failed with `kind` in the step `example` labels `label`.
+///
+/// The failure's program counter is looked up in the example's labels; a label is never turned
+/// into a pc, since a step spans several.
+///
+/// # Panics
+///
+/// If the failure is another, or if `kind`'s context is not a program counter, so that no step
+/// label can match it.
+#[track_caller]
+pub fn assert_ballista_failure(failure: &Failure, example: &Example, kind: &str, label: &str) {
+    assert!(
+        FAILURES_AT_A_PC.contains(&kind),
+        "{kind} does not carry a program counter, so no step label can match it; \
+         compare `ballista_error` with its context instead"
+    );
+    assert!(
+        example.labels.values().any(|labelled| labelled == label),
+        "the template has no step labelled {label:?}"
+    );
+    let Some((name, pc)) = ballista_error(failure) else {
+        panic!("expected Ballista's {kind} in {label:?}, but {failure:?}");
+    };
+    let step = example.label_at(pc);
+    assert!(
+        name == kind && step == Some(label),
+        "expected Ballista's {kind} in {label:?}, but it failed with {name} at pc {pc}, {}\n{failure:?}",
+        step.map_or_else(
+            || "an unlabelled instruction".to_string(),
+            |step| format!("in {step:?}")
+        )
+    );
+}
+
+/// Asserts that the requirement `example` labels `label` failed; see [`assert_ballista_failure`].
+#[track_caller]
+pub fn assert_requirement_failed(failure: &Failure, example: &Example, label: &str) {
+    assert_ballista_failure(failure, example, "RequirementFailed", label);
+}
+
 impl Failure {
     fn new(failed: FailedTransactionMetadata, instructions: &[Instruction]) -> Self {
         let FailedTransactionMetadata { err, meta } = failed;
+        // Nothing is logged past the limit, so truncated logs may hold none of the failure's lines,
+        // and the fallback below would blame the top-level instruction's program.
+        assert!(
+            !meta.logs.iter().any(|line| line == "Log truncated"),
+            "the logs were truncated, so they cannot say which program failed; build the SVM with \
+             `with_log_bytes_limit(None)`\n{}",
+            meta.logs.join("\n")
+        );
         let (program, code) = match innermost_failure(&meta.logs) {
             Some(failure) => failure,
             None => {
-                assert!(
-                    !meta.logs.iter().any(|line| line == "Log truncated"),
-                    "the logs were truncated before the failure; build the SVM with \
-                     `with_log_bytes_limit(None)`\n{}",
-                    meta.logs.join("\n")
-                );
                 // No `failed` line: the runtime rejected the instruction before its program ran.
                 let TransactionError::InstructionError(index, error) = &err else {
                     panic!(
@@ -223,18 +285,193 @@ mod tests {
     use {
         super::*,
         crate::{
-            decode_hex, snapshot,
-            template::upload,
-            wallet::{fund, keypair, SOL},
+            decode_hex,
+            snapshot::{self, Snapshot, SNAPSHOT_DIR},
+            template::{examples, upload, Run},
+            wallet::{self, fund, keypair, token_account, SOL},
         },
-        ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID},
+        ballista_sdk::{
+            ballista_common::template::encode_error, run_instruction, RunInputs, SYSTEM_PROGRAM_ID,
+            TOKEN_PROGRAM_ID,
+        },
+        litesvm::types::TransactionMetadata,
         solana_instruction::AccountMeta,
+        solana_sdk_ids::compute_budget,
     };
 
     const SYSTEM_TRANSFER_HEX: &str = include_str!("../../../fixtures/system-transfer.hex");
+    const JUPITER: Address = Address::from_str_const("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
+    const REQUIREMENT_FAILED: u32 = 6015;
 
     fn lines(logs: &[&str]) -> Vec<String> {
         logs.iter().map(|line| line.to_string()).collect()
+    }
+
+    /// A failure as `send` would report it, for checks that need no transaction.
+    fn failure(program: Address, code: u32) -> Failure {
+        Failure {
+            program,
+            code: Some(code),
+            err: TransactionError::InstructionError(0, InstructionError::Custom(code)),
+            logs: vec![],
+            fee: 5_000,
+        }
+    }
+
+    /// Jupiter's slippage error is 6001, which is also Ballista's `InvalidTemplateAccount`: only
+    /// the program tells them apart.
+    #[test]
+    fn another_program_s_code_in_ballista_s_range_is_not_ballista_s() {
+        assert_eq!(
+            decode_ballista_error(6001).map(|decoded| decoded.name),
+            Some("InvalidTemplateAccount")
+        );
+        assert_eq!(ballista_error(&failure(JUPITER, 6001)), None);
+        assert_eq!(
+            ballista_error(&failure(ballista_sdk::ID, 6001)),
+            Some(("InvalidTemplateAccount", 0))
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "the logs were truncated, so they cannot say which program failed")]
+    fn truncated_logs_are_refused_even_with_a_failed_line() {
+        let failed = FailedTransactionMetadata {
+            err: TransactionError::InstructionError(0, InstructionError::Custom(1)),
+            meta: TransactionMetadata {
+                logs: lines(&[
+                    "Program 11111111111111111111111111111111 invoke [1]",
+                    "Program 11111111111111111111111111111111 failed: custom program error: 0x1",
+                    "Log truncated",
+                ]),
+                ..TransactionMetadata::default()
+            },
+        };
+        let _ = Failure::new(failed, &[]);
+    }
+
+    /// A malformed compute-budget instruction fails the transaction before any program runs, so
+    /// no `failed` line names it. The instruction error's index does.
+    #[test]
+    fn a_failure_before_any_program_ran_is_blamed_on_its_instruction() {
+        let mut svm = LiteSVM::new();
+        let payer = keypair(b"ballista-protocol-tests-payer-01");
+        fund(&mut svm, &payer.pubkey(), SOL);
+        let mut transfer_data = vec![2, 0, 0, 0];
+        transfer_data.extend_from_slice(&1u64.to_le_bytes());
+        let transfer = Instruction {
+            program_id: SYSTEM_PROGRAM_ID,
+            accounts: vec![
+                AccountMeta::new(payer.pubkey(), true),
+                AccountMeta::new(payer.pubkey(), false),
+            ],
+            data: transfer_data,
+        };
+        // SetComputeUnitLimit without its limit.
+        let malformed = Instruction {
+            program_id: compute_budget::ID,
+            accounts: vec![],
+            data: vec![2],
+        };
+        let failure = send(&mut svm, &payer, &[], &[transfer, malformed], &[]).unwrap_err();
+        assert!(failure.logs.is_empty(), "{failure:?}");
+        assert_eq!(failure.program, compute_budget::ID);
+        assert_eq!(failure.code, None);
+        assert_eq!(
+            failure.err,
+            TransactionError::InstructionError(1, InstructionError::InvalidInstructionData)
+        );
+    }
+
+    /// A requirement in a real template fails, and the fixture's labels name its step:
+    /// `tokenSweepIntoSwap` will not sell a balance at its dust floor, and stops before Jupiter.
+    #[test]
+    fn a_failed_requirement_is_named_by_its_step() {
+        let snapshot = Snapshot::load(SNAPSHOT_DIR);
+        let usdc = snapshot.named("usdcMint");
+        let wsol = snapshot.named("wsolMint");
+        let jupiter = snapshot.named("jupiter");
+        let mut svm = snapshot.into_svm();
+        let seller = wallet::wallet();
+        let creator = keypair(b"ballista-protocol-tests-creator1");
+        for key in [seller.pubkey(), creator.pubkey()] {
+            fund(&mut svm, &key, SOL);
+        }
+        let examples = examples();
+        let sweep = &examples["tokenSweepIntoSwap"];
+        let template = upload(&mut svm, &creator, 1, &sweep.payload);
+        let source = token_account(&mut svm, &seller.pubkey(), &usdc, 1_000);
+        let destination = token_account(&mut svm, &seller.pubkey(), &wsol, 0);
+        let run = Run::new(template, sweep)
+            .account("jupiter", jupiter, false, false)
+            .account("tokenProgram", TOKEN_PROGRAM_ID, false, false)
+            .account("seller", seller.pubkey(), true, true)
+            .account("sourceAta", source, true, false)
+            .account("destinationAta", destination, true, false)
+            .input_bytes("routePlan", &[0; 4])
+            .input_u64("quotedInAmount", 1_000)
+            .input_u64("quotedOutAmount", 1)
+            .input_u64("slippageBps", 50)
+            .input_u64("platformFeeBps", 0)
+            .input_u64("dustFloor", 1_000)
+            .group("routeAccounts", [])
+            .build();
+        let failure = send(&mut svm, &seller, &[], &[run], &[]).unwrap_err();
+        assert_requirement_failed(&failure, sweep, "worthSelling");
+    }
+
+    #[test]
+    fn a_requirement_is_matched_at_any_pc_of_its_step() {
+        let examples = examples();
+        let sweep = &examples["tokenSweepIntoSwap"];
+        for pc in [9, 10] {
+            let failed = failure(ballista_sdk::ID, encode_error(REQUIREMENT_FAILED, pc));
+            assert_requirement_failed(&failed, sweep, "worthSelling");
+            assert_ballista_failure(&failed, sweep, "RequirementFailed", "worthSelling");
+        }
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "expected Ballista's RequirementFailed in \"saleMetTheQuote\", but it failed with RequirementFailed at pc 10, in \"worthSelling\""
+    )]
+    fn another_step_s_failure_does_not_match() {
+        let examples = examples();
+        let failed = failure(ballista_sdk::ID, encode_error(REQUIREMENT_FAILED, 10));
+        assert_requirement_failed(&failed, &examples["tokenSweepIntoSwap"], "saleMetTheQuote");
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "expected Ballista's RequirementFailed in \"worthSelling\", but JUP6"
+    )]
+    fn another_program_s_failure_does_not_match() {
+        let examples = examples();
+        let failed = failure(JUPITER, encode_error(REQUIREMENT_FAILED, 10));
+        assert_requirement_failed(&failed, &examples["tokenSweepIntoSwap"], "worthSelling");
+    }
+
+    #[test]
+    #[should_panic(expected = "the template has no step labelled \"worthSellin\"")]
+    fn a_misspelt_label_panics() {
+        let examples = examples();
+        let failed = failure(ballista_sdk::ID, encode_error(REQUIREMENT_FAILED, 10));
+        assert_requirement_failed(&failed, &examples["tokenSweepIntoSwap"], "worthSellin");
+    }
+
+    /// Its context is the index of the account that failed its constraint, which a label lookup
+    /// would read as a program counter.
+    #[test]
+    #[should_panic(expected = "AccountConstraintFailed does not carry a program counter")]
+    fn a_failure_without_a_program_counter_has_no_step() {
+        let examples = examples();
+        let failed = failure(ballista_sdk::ID, encode_error(6020, 9));
+        assert_ballista_failure(
+            &failed,
+            &examples["tokenSweepIntoSwap"],
+            "AccountConstraintFailed",
+            "worthSelling",
+        );
     }
 
     #[test]

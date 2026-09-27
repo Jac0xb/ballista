@@ -8,8 +8,8 @@ use {
     crate::{decode_hex, tx},
     ballista_sdk::{
         ballista_common::template::{
-            ProgramView, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, NO_INDEX, VALUE_BOOL, VALUE_BYTES,
-            VALUE_I64, VALUE_PUBKEY, VALUE_U128, VALUE_U64,
+            ProgramView, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, MAX_INPUT_BYTES, MAX_RUNTIME_ACCOUNTS,
+            NO_INDEX, VALUE_BOOL, VALUE_BYTES, VALUE_I64, VALUE_PUBKEY, VALUE_U128, VALUE_U64,
         },
         begin_template_instruction, create_template_instruction, finalize_template_instruction,
         find_template_pda, run_instruction, template_hash, write_template_chunk_instruction,
@@ -35,8 +35,8 @@ pub const EXAMPLES_PATH: &str = concat!(
 /// signature, three keys, the blockhash, and the instruction's 5-byte header.
 const WRITE_CHUNK_LEN: usize = 1_000;
 
-/// One example: its compiled payload and the order of each kind of name, as the compiler lays
-/// them out in a run.
+/// One example: its compiled payload, the order of each kind of name as the compiler lays them
+/// out in a run, and the step label of each program counter.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Example {
@@ -47,6 +47,17 @@ pub struct Example {
     pub row_inputs: Vec<String>,
     pub batch_accounts: Vec<String>,
     pub account_groups: Vec<String>,
+    /// The label of the step each instruction belongs to, by program counter. A step spans
+    /// several instructions, and unlabelled steps and hoisted loads have none.
+    pub labels: BTreeMap<u16, String>,
+}
+
+impl Example {
+    /// The label of the step the instruction at `pc` belongs to: where a run that failed with a
+    /// program counter stopped. There is no reverse: a labelled step spans several pcs.
+    pub fn label_at(&self, pc: u16) -> Option<&str> {
+        self.labels.get(&pc).map(String::as_str)
+    }
 }
 
 /// Every example in the fixture, by name: `&examples()["tokenSweepIntoSwap"]`.
@@ -105,7 +116,7 @@ pub fn upload(svm: &mut LiteSVM, creator: &Keypair, id: u16, payload: &[u8]) -> 
     let instructions = if tx::wire_size(&one_shot) <= tx::PACKET_DATA_SIZE {
         vec![create]
     } else {
-        let len = u32::try_from(payload.len()).expect("a payload is at most 10,240 bytes");
+        let len = u32::try_from(payload.len()).expect("the payload's length fits in a u32");
         let mut chunked = vec![begin_template_instruction(
             creator_address,
             id,
@@ -152,7 +163,8 @@ pub enum InputValue<'v> {
 ///
 /// Every binding is checked against the template: a name it does not declare, a name bound
 /// twice, flags other than the declared ones, an address other than a pinned one, or a value of
-/// another type panics, and so does [`Run::build`] with a name left unbound.
+/// another type panics. So does [`Run::build`] with a name left unbound, or a run larger than
+/// Ballista takes.
 ///
 /// ```text
 /// let run = Run::new(template, &examples["tokenSweepIntoSwap"])
@@ -269,7 +281,9 @@ impl<'a> Run<'a> {
     ///
     /// # Panics
     ///
-    /// If a name is unbound, or the row count is outside the template's batch bounds.
+    /// If a name is unbound, the row count is outside the template's batch bounds, or the run
+    /// passes more than 120 runtime accounts or 1,024 bytes of inputs, the limits the TypeScript
+    /// client enforces too.
     pub fn build(self) -> Instruction {
         check_bound(
             "in the run",
@@ -302,6 +316,16 @@ impl<'a> Run<'a> {
             data.extend(row_inputs.concat());
         }
         accounts.extend(groups.into_iter().flatten());
+        assert!(
+            accounts.len() <= MAX_RUNTIME_ACCOUNTS,
+            "the run passes {} runtime accounts; Ballista takes at most {MAX_RUNTIME_ACCOUNTS}",
+            accounts.len()
+        );
+        assert!(
+            data.len() <= MAX_INPUT_BYTES,
+            "the run's inputs are {} bytes; Ballista takes at most {MAX_INPUT_BYTES}",
+            data.len()
+        );
         run_instruction(self.template, accounts, &data)
     }
 }
@@ -454,22 +478,15 @@ fn bind_account(
 
 fn encode_input(view: &ProgramView, descriptor: usize, name: &str, value: InputValue) -> Vec<u8> {
     let descriptor = &view.inputs[descriptor];
-    let (value_type, encoded) = match value {
-        InputValue::Bool(value) => (VALUE_BOOL, RunInputs::new().bool(value)),
-        InputValue::U64(value) => (VALUE_U64, RunInputs::new().u64(value)),
-        InputValue::I64(value) => (VALUE_I64, RunInputs::new().i64(value)),
-        InputValue::U128(value) => (VALUE_U128, RunInputs::new().u128(value)),
-        InputValue::Pubkey(value) => (VALUE_PUBKEY, RunInputs::new().pubkey(&value)),
-        InputValue::Bytes(value) => {
-            assert!(
-                value.len() <= descriptor.max_len(),
-                "input {name:?} takes at most {} bytes; given {}",
-                descriptor.max_len(),
-                value.len()
-            );
-            (VALUE_BYTES, RunInputs::new().bytes(value))
-        }
+    let value_type = match value {
+        InputValue::Bool(_) => VALUE_BOOL,
+        InputValue::U64(_) => VALUE_U64,
+        InputValue::I64(_) => VALUE_I64,
+        InputValue::U128(_) => VALUE_U128,
+        InputValue::Pubkey(_) => VALUE_PUBKEY,
+        InputValue::Bytes(_) => VALUE_BYTES,
     };
+    // The type first: another type's maximum length says nothing useful.
     assert_eq!(
         descriptor.value_type,
         value_type,
@@ -477,6 +494,22 @@ fn encode_input(view: &ProgramView, descriptor: usize, name: &str, value: InputV
         type_name(descriptor.value_type),
         type_name(value_type)
     );
+    let encoded = match value {
+        InputValue::Bool(value) => RunInputs::new().bool(value),
+        InputValue::U64(value) => RunInputs::new().u64(value),
+        InputValue::I64(value) => RunInputs::new().i64(value),
+        InputValue::U128(value) => RunInputs::new().u128(value),
+        InputValue::Pubkey(value) => RunInputs::new().pubkey(&value),
+        InputValue::Bytes(value) => {
+            assert!(
+                value.len() <= descriptor.max_len(),
+                "input {name:?} takes at most {} bytes; given {}",
+                descriptor.max_len(),
+                value.len()
+            );
+            RunInputs::new().bytes(value)
+        }
+    };
     encoded.finish()
 }
 
@@ -519,10 +552,286 @@ mod tests {
     fn every_example_lines_up_with_its_payload() {
         let examples = examples();
         assert_eq!(examples.iter().count(), 12);
-        for (_, example) in examples.iter() {
+        for (name, example) in examples.iter() {
             // `Run::new` checks the header's counts against the name lists.
-            let _ = Run::new(key(1), example);
+            let view = Run::new(key(1), example).view;
+            assert!(!example.labels.is_empty(), "{name} labels no step");
+            let instructions = view.instructions.len();
+            assert!(
+                example
+                    .labels
+                    .keys()
+                    .all(|&pc| usize::from(pc) < instructions),
+                "{name} labels a pc past its {instructions} instructions"
+            );
         }
+    }
+
+    /// Every instruction of a labelled step carries the label, so any pc a failure reports in it
+    /// names the step.
+    #[test]
+    fn labels_name_the_step_each_pc_belongs_to() {
+        let examples = examples();
+        let swap = &examples["jupiterOracleCheckedSwap"];
+        for pc in 40..=43 {
+            assert_eq!(swap.label_at(pc), Some("fillBeatTheOracle"));
+        }
+        assert_eq!(swap.label_at(39), Some("computeOracleFloor"));
+        // Inputs and constants are loaded before the first step, unlabelled.
+        assert_eq!(swap.label_at(0), None);
+        let sweep = &examples["tokenSweepIntoSwap"];
+        assert_eq!(sweep.label_at(9), Some("worthSelling"));
+        assert_eq!(sweep.label_at(10), Some("worthSelling"));
+    }
+
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    /// Ballista built from source in a bare SVM, and a funded creator.
+    fn bare_svm() -> (LiteSVM, Keypair) {
+        let mut svm = LiteSVM::new();
+        snapshot::add_ballista(&mut svm);
+        let creator = keypair(b"ballista-protocol-tests-creator1");
+        fund(&mut svm, &creator.pubkey(), SOL);
+        (svm, creator)
+    }
+
+    /// `payroll-row-amounts` in `clients/js/src/fixtures.test.ts`: the treasury pays each row's
+    /// `recipient` that row's `amount`.
+    #[test]
+    fn a_run_with_batch_rows_lands() {
+        let example = Example {
+            payload: decode_hex(include_str!("../../../fixtures/payroll-row-amounts.hex")),
+            fixed_accounts: names(&["systemProgram", "treasury"]),
+            inputs: vec![],
+            row_inputs: names(&["amount"]),
+            batch_accounts: names(&["recipient"]),
+            account_groups: vec![],
+            labels: BTreeMap::new(),
+        };
+        let (mut svm, creator) = bare_svm();
+        let treasury = keypair(b"ballista-protocol-tests-sender-1");
+        let first = keypair(b"ballista-protocol-tests-receiver").pubkey();
+        let second = keypair(b"ballista-protocol-tests-receive2").pubkey();
+        for key in [treasury.pubkey(), first, second] {
+            fund(&mut svm, &key, SOL);
+        }
+        let template = upload(&mut svm, &creator, 1, &example.payload);
+        let run = Run::new(template, &example)
+            .account("systemProgram", SYSTEM_PROGRAM_ID, false, false)
+            .account("treasury", treasury.pubkey(), true, true)
+            .row(|row| {
+                row.account("recipient", first, true, false)
+                    .input_u64("amount", 100)
+            })
+            .row(|row| {
+                row.input_u64("amount", 250)
+                    .account("recipient", second, true, false)
+            })
+            .build();
+        tx::send(&mut svm, &treasury, &[], &[run], &[]).unwrap();
+        assert_eq!(svm.get_balance(&first), Some(SOL + 100));
+        assert_eq!(svm.get_balance(&second), Some(SOL + 250));
+    }
+
+    /// `group-forward-transfer` in `clients/js/src/fixtures.test.ts`: a transfer that forwards the
+    /// `extra` group after its own accounts.
+    #[test]
+    fn a_run_with_an_account_group_lands() {
+        let example = Example {
+            payload: decode_hex(include_str!("../../../fixtures/group-forward-transfer.hex")),
+            fixed_accounts: names(&["systemProgram", "source", "destination"]),
+            inputs: names(&["amount"]),
+            row_inputs: vec![],
+            batch_accounts: vec![],
+            account_groups: names(&["extra"]),
+            labels: BTreeMap::new(),
+        };
+        let (mut svm, creator) = bare_svm();
+        let source = keypair(b"ballista-protocol-tests-sender-1");
+        let destination = keypair(b"ballista-protocol-tests-receiver").pubkey();
+        let extra = keypair(b"ballista-protocol-tests-receive2").pubkey();
+        for key in [source.pubkey(), destination, extra] {
+            fund(&mut svm, &key, SOL);
+        }
+        let template = upload(&mut svm, &creator, 1, &example.payload);
+        let run = Run::new(template, &example)
+            .group(
+                "extra",
+                [
+                    AccountMeta::new(extra, false),
+                    AccountMeta::new_readonly(source.pubkey(), true),
+                ],
+            )
+            .account("systemProgram", SYSTEM_PROGRAM_ID, false, false)
+            .account("source", source.pubkey(), true, true)
+            .account("destination", destination, true, false)
+            .input_u64("amount", 555)
+            .build();
+        tx::send(&mut svm, &source, &[], &[run], &[]).unwrap();
+        assert_eq!(svm.get_balance(&destination), Some(SOL + 555));
+        assert_eq!(svm.get_balance(&extra), Some(SOL));
+    }
+
+    /// No fixture has every kind of name at once, so this template is authored here: once
+    /// `enabled`, the treasury pays each row's `recipient` its `amount`, forwarding the `extra`
+    /// group. The fixed input is a `bool` and the row input a `u64`, so a row input read against
+    /// the fixed inputs' descriptors fails, as would either kind of value in the other's place.
+    fn every_kind_of_name() -> Example {
+        let mut builder = ProgramBuilder::new();
+        builder.account_groups(1);
+        let system = builder.account(
+            ACCOUNT_EXECUTABLE,
+            Some(SYSTEM_PROGRAM_ID.to_bytes()),
+            None,
+            0,
+        );
+        let treasury = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let recipient = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
+        builder.batch(3, 1);
+        let enabled = builder.input(VALUE_BOOL, 0);
+        let amount = builder.row_input(VALUE_U64, 0);
+        let enabled = builder.load_input(enabled);
+        builder.require(enabled);
+        let transfer = builder.blob(&[2, 0, 0, 0]);
+        builder.for_each(0, |body| {
+            let amount = body.load_input(amount);
+            let pay = body.cpi_with_group(
+                system,
+                &[
+                    (treasury, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                    (recipient, ACCOUNT_WRITABLE),
+                ],
+                &[
+                    Segment::Literal(transfer),
+                    Segment::Register(DATA_REG_U64, amount),
+                ],
+                0,
+            );
+            body.invoke(pay, None);
+        });
+        Example {
+            payload: builder.build().unwrap(),
+            fixed_accounts: names(&["systemProgram", "treasury"]),
+            inputs: names(&["enabled"]),
+            row_inputs: names(&["amount"]),
+            batch_accounts: names(&["recipient"]),
+            account_groups: names(&["extra"]),
+            labels: BTreeMap::new(),
+        }
+    }
+
+    /// Accounts go fixed, rows, then groups; data goes group lengths, fixed inputs, then rows'
+    /// inputs. Bound out of order, the run must still land and pay each row its own amount.
+    #[test]
+    fn a_run_with_every_kind_of_name_lands() {
+        let example = every_kind_of_name();
+        let (mut svm, creator) = bare_svm();
+        let treasury = keypair(b"ballista-protocol-tests-sender-1");
+        let first = keypair(b"ballista-protocol-tests-receiver").pubkey();
+        let second = keypair(b"ballista-protocol-tests-receive2").pubkey();
+        let extra = keypair(b"ballista-protocol-tests-receive3").pubkey();
+        for key in [treasury.pubkey(), first, second, extra] {
+            fund(&mut svm, &key, SOL);
+        }
+        let template = upload(&mut svm, &creator, 1, &example.payload);
+        let run = Run::new(template, &example)
+            .group("extra", [AccountMeta::new_readonly(extra, false)])
+            .row(|row| {
+                row.input_u64("amount", 100)
+                    .account("recipient", first, true, false)
+            })
+            .input_bool("enabled", true)
+            .row(|row| {
+                row.account("recipient", second, true, false)
+                    .input_u64("amount", 250)
+            })
+            .account("treasury", treasury.pubkey(), true, true)
+            .account("systemProgram", SYSTEM_PROGRAM_ID, false, false)
+            .build();
+        let outcome = tx::send(&mut svm, &treasury, &[], &[run], &[]).unwrap();
+        assert_eq!(svm.get_balance(&first), Some(SOL + 100));
+        assert_eq!(svm.get_balance(&second), Some(SOL + 250));
+        assert_eq!(svm.get_balance(&extra), Some(SOL));
+        assert_eq!(
+            svm.get_balance(&treasury.pubkey()),
+            Some(SOL - 350 - outcome.fee)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "0 batch rows; the template takes 1 to 3")]
+    fn too_few_batch_rows_panic() {
+        let example = every_kind_of_name();
+        let _ = Run::new(key(99), &example)
+            .account("systemProgram", SYSTEM_PROGRAM_ID, false, false)
+            .account("treasury", key(1), true, true)
+            .input_bool("enabled", true)
+            .group("extra", [])
+            .build();
+    }
+
+    #[test]
+    #[should_panic(expected = "the run passes 121 runtime accounts; Ballista takes at most 120")]
+    fn more_than_120_runtime_accounts_panic() {
+        let examples = examples();
+        let example = &examples["tokenSweepIntoSwap"];
+        // Five fixed accounts and 116 route accounts.
+        let route: Vec<AccountMeta> = (0..116)
+            .map(|index| AccountMeta::new_readonly(key(index), false))
+            .collect();
+        let _ = Run::new(key(99), example)
+            .account("jupiter", JUPITER, false, false)
+            .account("tokenProgram", TOKEN_PROGRAM_ID, false, false)
+            .account("seller", key(1), true, true)
+            .account("sourceAta", key(2), true, false)
+            .account("destinationAta", key(3), true, false)
+            .input_bytes("routePlan", &[0; 4])
+            .input_u64("quotedInAmount", 1)
+            .input_u64("quotedOutAmount", 1)
+            .input_u64("slippageBps", 50)
+            .input_u64("platformFeeBps", 0)
+            .input_u64("dustFloor", 0)
+            .group("routeAccounts", route)
+            .build();
+    }
+
+    #[test]
+    #[should_panic(expected = "the run's inputs are 1026 bytes; Ballista takes at most 1024")]
+    fn more_than_1024_input_bytes_panic() {
+        let mut builder = ProgramBuilder::new();
+        builder.input(VALUE_BYTES, 1_024);
+        let example = Example {
+            payload: builder.build().unwrap(),
+            fixed_accounts: vec![],
+            inputs: names(&["blob"]),
+            row_inputs: vec![],
+            batch_accounts: vec![],
+            account_groups: vec![],
+            labels: BTreeMap::new(),
+        };
+        // Within the input's own bound, but its length prefix takes the run past Ballista's.
+        let _ = Run::new(key(99), &example)
+            .input_bytes("blob", &[0; 1_024])
+            .build();
+    }
+
+    #[test]
+    #[should_panic(expected = "input \"routeArgs\" takes at most 512 bytes; given 513")]
+    fn bytes_longer_than_declared_panic() {
+        let examples = examples();
+        let _ =
+            deposit_run(&examples["jupiterDepositExactOutput"]).input_bytes("routeArgs", &[0; 513]);
+    }
+
+    /// Another type's maximum length would say "at most 0 bytes", which is no help.
+    #[test]
+    #[should_panic(expected = "input \"minimumOut\" is a u64, not a bytes")]
+    fn a_value_of_another_type_is_named_before_its_length() {
+        let examples = examples();
+        let _ = deposit_run(&examples["jupiterDepositExactOutput"])
+            .input_bytes("minimumOut", &[0; 600]);
     }
 
     /// Bound in scrambled order, the run comes out in the fixture's order; compare with the same

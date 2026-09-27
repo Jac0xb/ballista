@@ -106,11 +106,29 @@ export async function buildOrcaHarvestRun(input: {
   });
 }
 
+/** The program named by the first `Program <id> failed: …` log line: the innermost that failed. */
+export function failedProgram(logs: readonly string[]): string | undefined {
+  for (const line of logs) {
+    const match = /^Program ([1-9A-HJ-NP-Za-km-z]{32,44}) failed: /.exec(line);
+    if (match) return match[1];
+  }
+  return undefined;
+}
+
 /**
- * A harvest cannot fail because a position had earned nothing — that row is skipped. A failure
- * here is a real one: a position that is not owned by Whirlpools, or a wrong vault.
+ * Says which program refused a harvest, and where, from the failed transaction's code and logs.
+ *
+ * Whirlpools numbers its errors from 6000, as Ballista does, so the code alone cannot say who
+ * refused: 6019 is Whirlpools' `MissingOrInvalidDelegate` and Ballista's `ReturnDataMismatch`. The
+ * logs can. A failing CPI logs `Program <id> failed` first and every caller repeats the code after
+ * it, so the first such line names the program the code belongs to.
  */
-export function describeFailure(code: number): string {
+export function describeFailure(code: number, logs: readonly string[]): string {
+  const program = failedProgram(logs);
+  if (program === undefined) return `code ${code}; the logs name no program that failed`;
+  if (program !== BALLISTA_ADDRESS) {
+    return `code ${code} came from ${program === ORCA_WHIRLPOOL ? 'Whirlpools' : program}, not Ballista`;
+  }
   const explanation = explainRunError(code, compiled);
-  return explanation ? explanation.message : `code ${code} came from Whirlpools, not Ballista`;
+  return explanation ? explanation.message : `code ${code} came from Ballista`;
 }

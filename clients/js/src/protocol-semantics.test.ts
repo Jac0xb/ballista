@@ -26,7 +26,11 @@ import {
   tokenSweepIntoSwap,
 } from '../examples/protocols/index.js';
 import { buildJupiterDepositRun } from '../examples/protocols/run-jupiter-deposit.js';
-import { buildOrcaHarvestRun, getOrcaTickArrayAddress } from '../examples/protocols/run-orca-harvest.js';
+import {
+  buildOrcaHarvestRun,
+  describeFailure,
+  getOrcaTickArrayAddress,
+} from '../examples/protocols/run-orca-harvest.js';
 import {
   BORSH_TRUE,
   DRIFT_WITHDRAW,
@@ -411,5 +415,43 @@ describe('the Orca harvest runner', () => {
     expect(await getOrcaTickArrayAddress(solUsdc, -21_121, 4)).toBe('6hA1LN1fzCiXqymDiQXeBFn5da1b7STP1L7JmDc6hR3M');
     const thin = address('HJPjoWUrhoZzkNfRpHuieeFk9WcZWjwy6PBjZ81ngndJ');
     expect(await getOrcaTickArrayAddress(thin, -20_989, 64)).toBe('CEstjhG1v4nUgvGDyFruYEbJ18X8XeN4sX1WFCLt4D5c');
+  });
+});
+
+describe('the Orca harvest runner names the program that refused', () => {
+  const BALLISTA = 'BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD';
+  const WHIRLPOOLS = 'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc';
+
+  test('blames Whirlpools for its own code, though Ballista uses the same number', () => {
+    const logs = [
+      `Program ${BALLISTA} invoke [1]`,
+      `Program ${WHIRLPOOLS} invoke [2]`,
+      'Program log: Instruction: UpdateFeesAndRewards',
+      `Program ${WHIRLPOOLS} consumed 7835 of 196554 compute units`,
+      `Program ${WHIRLPOOLS} success`,
+      `Program ${WHIRLPOOLS} invoke [2]`,
+      'Program log: Instruction: CollectFees',
+      'Program log: AnchorError occurred. Error Code: MissingOrInvalidDelegate. Error Number: 6019. Error Message: Position token account has a missing or invalid delegate.',
+      `Program ${WHIRLPOOLS} consumed 7400 of 186548 compute units`,
+      `Program ${WHIRLPOOLS} failed: custom program error: 0x1783`,
+      `Program ${BALLISTA} consumed 20852 of 200000 compute units`,
+      `Program ${BALLISTA} failed: custom program error: 0x1783`,
+    ];
+    expect(describeFailure(6019, logs)).toBe('code 6019 came from Whirlpools, not Ballista');
+  });
+
+  test('explains a refusal in Ballista by its account or step', () => {
+    const logs = [
+      `Program ${BALLISTA} invoke [1]`,
+      `Program ${BALLISTA} consumed 1200 of 200000 compute units`,
+      `Program ${BALLISTA} failed: custom program error: 0x81784`,
+    ];
+    expect(describeFailure((8 << 16) | 6020, logs)).toBe(
+      'AccountConstraintFailed: account position in row 0 does not satisfy its constraint',
+    );
+  });
+
+  test('does not guess without logs', () => {
+    expect(describeFailure(6019, [])).toBe('code 6019; the logs name no program that failed');
   });
 });

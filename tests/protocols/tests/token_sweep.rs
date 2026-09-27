@@ -67,6 +67,11 @@ impl<'a> Sweep<'a> {
     /// transaction with the run in place of `route`: the compute budget, the setup that creates
     /// the wrapped SOL account, the run, and the cleanup that unwraps it.
     fn sell(&mut self, balance: u64) -> Result<Outcome, Failure> {
+        self.sell_with_slippage(balance, self.leg.route.slippage_bps)
+    }
+
+    /// [`Sweep::sell`] with a slippage other than the quote's.
+    fn sell_with_slippage(&mut self, balance: u64, slippage_bps: u16) -> Result<Outcome, Failure> {
         let leg = self.leg;
         let seller = self.seller.pubkey();
         let source = token_account(&mut self.svm, &seller, &self.usdc, balance);
@@ -92,7 +97,7 @@ impl<'a> Sweep<'a> {
             .input_bytes("routePlan", &leg.route.route_plan)
             .input_u64("quotedInAmount", leg.route.in_amount)
             .input_u64("quotedOutAmount", leg.route.quoted_out_amount)
-            .input_u64("slippageBps", u64::from(leg.route.slippage_bps))
+            .input_u64("slippageBps", u64::from(slippage_bps))
             .input_u64("platformFeeBps", u64::from(leg.route.platform_fee_bps))
             .input_u64("dustFloor", DUST_FLOOR)
             .group("routeAccounts", swap.accounts[4..].iter().cloned())
@@ -188,9 +193,10 @@ fn a_balance_at_the_dust_floor_is_not_worth_selling() {
     sweep.assert_nothing_sold(DUST_FLOOR, before, &failure);
 }
 
-/// The route, not the template, bounds how far above the quote a balance may go. Far past it,
-/// the swap would cross into tick arrays the route's accounts do not include, so Raydium refuses
-/// inside the run and the seller keeps the balance.
+/// The route, not the template, bounds how far above the quote a balance may go. Ten thousand
+/// times the quote would carry the price past the tick arrays the route's accounts include, so
+/// Raydium refuses inside the run, and the seller keeps the balance. The measurement below finds
+/// where the bounds lie.
 #[test]
 fn a_balance_past_the_routes_tick_arrays_fails_in_raydium() {
     let snapshot = Snapshot::load(SNAPSHOT_DIR);
@@ -210,4 +216,58 @@ fn a_balance_past_the_routes_tick_arrays_fails_in_raydium() {
         "{failure:?}"
     );
     sweep.assert_nothing_sold(balance, before, &failure);
+}
+
+/// Measures how far above the quote a balance may go, for `findings/token-sweep.md`: the largest
+/// balance that lands with the quote's own slippage, then with the slippage relaxed so that only
+/// the route's tick arrays bound it, each searched to 1 USDC. Run it again after refreshing the
+/// snapshot:
+///
+/// ```text
+/// cargo test --manifest-path tests/protocols/Cargo.toml --test token_sweep -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "a measurement for the findings, not a check"]
+fn measure_how_far_above_the_quote_a_balance_may_go() {
+    const USDC: u64 = 1_000_000;
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+    let leg = &snapshot.route(ROUTE).legs[0];
+    let quoted = leg.route.in_amount;
+    for slippage_bps in [leg.route.slippage_bps, 500] {
+        let sell =
+            |balance: u64| Sweep::new(&snapshot, example).sell_with_slippage(balance, slippage_bps);
+        // Double the balance until a sale fails, then halve the gap.
+        let mut lands = quoted;
+        let mut fails = quoted;
+        let mut failure = loop {
+            fails = fails.checked_mul(2).expect("every balance landed");
+            match sell(fails) {
+                Ok(_) => lands = fails,
+                Err(failure) => break failure,
+            }
+        };
+        while fails - lands > USDC {
+            let middle = lands + (fails - lands) / 2;
+            match sell(middle) {
+                Ok(_) => lands = middle,
+                Err(next) => (fails, failure) = (middle, next),
+            }
+        }
+        let outcome = sell(lands).unwrap();
+        let error = failure.logs.iter().find_map(|line| {
+            let (_, rest) = line.split_once("Error Code: ")?;
+            rest.split('.').next()
+        });
+        println!(
+            "{slippage_bps} bps: {lands} lands ({:.1} times the quote, {} CU); {fails} fails in {} \
+             with {:?} {}",
+            lands as f64 / quoted as f64,
+            outcome.compute_units,
+            failure.program,
+            failure.code,
+            error.unwrap_or("")
+        );
+    }
 }

@@ -469,6 +469,62 @@ impl ProgramView<'_> {
                 self.require_type(registers, instruction.a, VALUE_U64)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_U128))?;
             }
+            OP_INSTRUCTION_COUNT | OP_INSTRUCTION_INDEX => {
+                self.require_instructions_sysvar(instruction, instruction_index)?;
+                self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
+            }
+            OP_INSTRUCTION_PROGRAM | OP_INSTRUCTION_ACCOUNT_COUNT | OP_INSTRUCTION_DATA_LEN => {
+                self.require_instructions_sysvar(instruction, instruction_index)?;
+                self.require_type(registers, instruction.b, VALUE_U64)?;
+                let value_type = if instruction.opcode == OP_INSTRUCTION_PROGRAM {
+                    VALUE_PUBKEY
+                } else {
+                    VALUE_U64
+                };
+                self.write_register(registers, instruction.dst, scalar(value_type))?;
+            }
+            OP_INSTRUCTION_ACCOUNT | OP_INSTRUCTION_ACCOUNT_FLAGS => {
+                self.require_instructions_sysvar(instruction, instruction_index)?;
+                self.require_type(registers, instruction.b, VALUE_U64)?;
+                self.require_type(registers, instruction.c, VALUE_U64)?;
+                let value_type = if instruction.opcode == OP_INSTRUCTION_ACCOUNT {
+                    VALUE_PUBKEY
+                } else {
+                    VALUE_U64
+                };
+                self.write_register(registers, instruction.dst, scalar(value_type))?;
+            }
+            OP_READ_INSTRUCTION_DATA => {
+                self.require_instructions_sysvar(instruction, instruction_index)?;
+                self.require_type(registers, instruction.b, VALUE_U64)?;
+                self.require_type(registers, instruction.c, VALUE_U64)?;
+                // The immediate names a read opcode, as `RETURN_DATA`'s `a` does. `read_type` falls
+                // back to `u64` for any other opcode, so the selector must be a read first.
+                let selector = u8::try_from(instruction.immediate())
+                    .ok()
+                    .filter(|selector| read_width(*selector) != 0)
+                    .ok_or(TemplateError::InvalidInstruction(instruction_index))?;
+                self.write_register(registers, instruction.dst, scalar(read_type(selector)))?;
+            }
+            OP_READ_INSTRUCTION_BYTES => {
+                self.require_instructions_sysvar(instruction, instruction_index)?;
+                self.require_type(registers, instruction.b, VALUE_U64)?;
+                self.require_type(registers, instruction.c, VALUE_U64)?;
+                let len = byte_read_len(instruction, instruction_index)?;
+                self.write_register(registers, instruction.dst, RegisterInfo::bytes(len))?;
+            }
+            OP_READ_ACCOUNT_BYTES => {
+                self.require_account(instruction.a, in_row_loop)?;
+                self.require_type(registers, instruction.b, VALUE_U64)?;
+                let len = byte_read_len(instruction, instruction_index)?;
+                self.write_register(registers, instruction.dst, RegisterInfo::bytes(len))?;
+            }
+            OP_BYTES_LEN => {
+                if self.read_register(registers, instruction.a)?.value_type != VALUE_BYTES {
+                    return Err(TemplateError::TypeMismatch);
+                }
+                self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
+            }
             OP_EQ | OP_NE => {
                 let left = self.read_register(registers, instruction.a)?;
                 let right = self.read_register(registers, instruction.b)?;
@@ -909,6 +965,25 @@ impl ProgramView<'_> {
         index == NO_INDEX || (index as usize) < self.pubkeys.len()
     }
 
+    /// Introspection reads the Instructions sysvar, so `a` must be a fixed account pinned to its
+    /// address. The executor borrows that account's data for the whole run on the strength of it.
+    fn require_instructions_sysvar(
+        &self,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
+    ) -> Result<(), TemplateError> {
+        // `in_row_loop` is false, so a row account never matches, even inside a loop body.
+        let pinned = self
+            .account_constraint(instruction.a, false)
+            .filter(|constraint| constraint.address_index != NO_INDEX)
+            .and_then(|constraint| self.pubkeys.get(constraint.address_index as usize))
+            .is_some_and(|address| address.bytes == INSTRUCTIONS_SYSVAR_ID);
+        if !pinned {
+            return Err(TemplateError::InvalidIntrospection(instruction_index));
+        }
+        Ok(())
+    }
+
     fn require_account(&self, reference: u8, in_row_loop: bool) -> Result<(), TemplateError> {
         self.account_constraint(reference, in_row_loop)
             .map(|_| ())
@@ -980,6 +1055,18 @@ const fn is_value_type(value_type: u8) -> bool {
     )
 }
 
+/// The length a byte read's immediate names: 1 to `MAX_INPUT_BYTES`, the bound on every `bytes`
+/// value, so the result fits wherever a `bytes` input would.
+fn byte_read_len(
+    instruction: &InstructionRecord,
+    instruction_index: usize,
+) -> Result<usize, TemplateError> {
+    usize::try_from(instruction.immediate())
+        .ok()
+        .filter(|len| (1..=MAX_INPUT_BYTES).contains(len))
+        .ok_or(TemplateError::InvalidInstruction(instruction_index))
+}
+
 fn valid_range(total: usize, offset: usize, len: usize) -> bool {
     offset.checked_add(len).is_some_and(|end| end <= total)
 }
@@ -1015,7 +1102,7 @@ pub const fn read_width(opcode: u8) -> usize {
 /// Register type produced by each `OP_READ_*` opcode; also the result type `OP_RETURN_DATA`
 /// selects when its width operand names one of them. Any other opcode falls back to `VALUE_U64`,
 /// so callers must first confirm the opcode is actually a read (or that `read_width` is nonzero),
-/// as both call sites do.
+/// as every call site does.
 pub const fn read_type(opcode: u8) -> u8 {
     match opcode {
         OP_READ_I64 | OP_READ_I32 => VALUE_I64,
@@ -1244,7 +1331,11 @@ mod tests {
                 Some(VALUE_U64),
                 Err(TemplateError::InvalidInstruction(2)),
             ),
-            (75, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
+            (OP_BYTES_LEN, Some(VALUE_BYTES), None, Ok(())),
+            (OP_BYTES_LEN, Some(VALUE_U64), None, Err(TemplateError::TypeMismatch)),
+            (OP_BYTES_LEN, Some(VALUE_PUBKEY), None, Err(TemplateError::TypeMismatch)),
+            (OP_BYTES_LEN, None, None, Err(TemplateError::RegisterNotInitialized(0))),
+            (OP_BYTES_LEN + 1, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
             (39, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
             (0xfe, Some(VALUE_U64), Some(VALUE_U64), Err(TemplateError::InvalidInstruction(2))),
         ];
@@ -1439,6 +1530,296 @@ mod tests {
             verify_builder(&builder),
             Err(TemplateError::InvalidReturnData(1))
         );
+    }
+
+    /// A builder whose fixed account 0 is pinned to the Instructions sysvar.
+    fn with_sysvar() -> (ProgramBuilder, u8) {
+        let mut builder = ProgramBuilder::new();
+        let sysvar = builder.account(0, Some(INSTRUCTIONS_SYSVAR_ID), None, 0);
+        (builder, sysvar)
+    }
+
+    /// A valid use of `opcode`, one of `OP_INSTRUCTION_COUNT` to `OP_BYTES_LEN`, as the last
+    /// instruction of its program. Returns the builder and the result register.
+    fn introspection_program(opcode: u8) -> (ProgramBuilder, u8) {
+        let (mut builder, sysvar) = with_sysvar();
+        let zero = builder.const_u64(0);
+        let result = match opcode {
+            OP_READ_INSTRUCTION_DATA => {
+                builder.read_instruction_data(OP_READ_U64, sysvar, zero, zero)
+            }
+            OP_READ_INSTRUCTION_BYTES => builder.read_instruction_bytes(sysvar, zero, zero, 8),
+            OP_READ_ACCOUNT_BYTES => builder.read_account_bytes(sysvar, zero, 8),
+            OP_BYTES_LEN => {
+                let bytes = builder.const_bytes(&[1, 2]);
+                builder.bytes_len(bytes)
+            }
+            _ => builder.introspect(opcode, sysvar, zero, zero),
+        };
+        (builder, result)
+    }
+
+    #[test]
+    fn introspection_and_byte_opcodes_type_their_results() {
+        let cases = [
+            (OP_INSTRUCTION_COUNT, VALUE_U64),
+            (OP_INSTRUCTION_INDEX, VALUE_U64),
+            (OP_INSTRUCTION_PROGRAM, VALUE_PUBKEY),
+            (OP_INSTRUCTION_ACCOUNT_COUNT, VALUE_U64),
+            (OP_INSTRUCTION_ACCOUNT, VALUE_PUBKEY),
+            (OP_INSTRUCTION_ACCOUNT_FLAGS, VALUE_U64),
+            (OP_INSTRUCTION_DATA_LEN, VALUE_U64),
+            (OP_READ_INSTRUCTION_DATA, VALUE_U64),
+            (OP_READ_INSTRUCTION_BYTES, VALUE_BYTES),
+            (OP_READ_ACCOUNT_BYTES, VALUE_BYTES),
+            (OP_BYTES_LEN, VALUE_U64),
+        ];
+        for (opcode, expected) in cases {
+            for witness in [VALUE_U64, VALUE_PUBKEY, VALUE_BYTES] {
+                let (mut builder, result) = introspection_program(opcode);
+                let other = typed_register(&mut builder, Some(witness));
+                builder.binary(OP_EQ, result, other);
+                let outcome = verify_builder(&builder).map(|_| ());
+                if witness == expected {
+                    assert_eq!(outcome, Ok(()), "opcode {opcode}");
+                } else {
+                    assert_eq!(
+                        outcome,
+                        Err(TemplateError::TypeMismatch),
+                        "opcode {opcode} vs {witness}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn introspection_needs_a_fixed_account_pinned_to_the_instructions_sysvar() {
+        for opcode in OP_INSTRUCTION_COUNT..=OP_READ_INSTRUCTION_BYTES {
+            let immediate = match opcode {
+                OP_READ_INSTRUCTION_DATA => OP_READ_U64 as u64,
+                OP_READ_INSTRUCTION_BYTES => 8,
+                _ => 0,
+            };
+            // Unpinned but owned by the sysvar's address, and pinned to another address.
+            for address in [None, Some([7; 32])] {
+                let mut builder = ProgramBuilder::new();
+                let account = builder.account(0, address, Some(INSTRUCTIONS_SYSVAR_ID), 0);
+                let zero = builder.const_u64(0);
+                builder.op(opcode, account, zero, zero, immediate);
+                assert_eq!(
+                    verify_builder(&builder),
+                    Err(TemplateError::InvalidIntrospection(1)),
+                    "opcode {opcode} with address {address:?}"
+                );
+            }
+            // An account the schema does not declare.
+            let (mut builder, _) = with_sysvar();
+            let zero = builder.const_u64(0);
+            builder.op(opcode, 1, zero, zero, immediate);
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidIntrospection(1)),
+                "opcode {opcode} with an undeclared account"
+            );
+            // A row account pinned to the sysvar is still not a fixed account.
+            let mut builder = ProgramBuilder::new();
+            let row = builder.row_account(0, Some(INSTRUCTIONS_SYSVAR_ID), None, 0);
+            builder.batch(1, 0);
+            let zero = builder.const_u64(0);
+            builder.for_each(0, |body| {
+                body.op(opcode, row, zero, zero, immediate);
+            });
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidIntrospection(2)),
+                "opcode {opcode} on a row account"
+            );
+            // The pinned fixed account works inside a loop body too.
+            let mut builder = ProgramBuilder::new();
+            let sysvar = builder.account(0, Some(INSTRUCTIONS_SYSVAR_ID), None, 0);
+            builder.row_account(0, None, None, 0);
+            builder.batch(1, 0);
+            let zero = builder.const_u64(0);
+            builder.for_each(0, |body| {
+                body.op(opcode, sysvar, zero, zero, immediate);
+            });
+            assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()), "opcode {opcode} in a loop");
+        }
+    }
+
+    #[test]
+    fn introspection_indexes_positions_and_offsets_are_u64_registers() {
+        let indexed = [
+            (OP_INSTRUCTION_PROGRAM, 0),
+            (OP_INSTRUCTION_ACCOUNT_COUNT, 0),
+            (OP_INSTRUCTION_ACCOUNT, 0),
+            (OP_INSTRUCTION_ACCOUNT_FLAGS, 0),
+            (OP_INSTRUCTION_DATA_LEN, 0),
+            (OP_READ_INSTRUCTION_DATA, OP_READ_U8 as u64),
+            (OP_READ_INSTRUCTION_BYTES, 1),
+        ];
+        for (opcode, immediate) in indexed {
+            let (mut builder, sysvar) = with_sysvar();
+            let index = builder.const_i64(0);
+            let zero = builder.const_u64(0);
+            builder.op(opcode, sysvar, index, zero, immediate);
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::TypeMismatch),
+                "opcode {opcode} index"
+            );
+
+            let (mut builder, sysvar) = with_sysvar();
+            let index = builder.register();
+            let zero = builder.const_u64(0);
+            builder.op(opcode, sysvar, index, zero, immediate);
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::RegisterNotInitialized(index)),
+                "opcode {opcode} unset index"
+            );
+        }
+        // The account opcodes take a position in `c`, the data reads an offset.
+        let positioned = [
+            (OP_INSTRUCTION_ACCOUNT, 0),
+            (OP_INSTRUCTION_ACCOUNT_FLAGS, 0),
+            (OP_READ_INSTRUCTION_DATA, OP_READ_U8 as u64),
+            (OP_READ_INSTRUCTION_BYTES, 1),
+        ];
+        for (opcode, immediate) in positioned {
+            let (mut builder, sysvar) = with_sysvar();
+            let zero = builder.const_u64(0);
+            let position = builder.const_u128(0);
+            builder.op(opcode, sysvar, zero, position, immediate);
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::TypeMismatch),
+                "opcode {opcode} c"
+            );
+        }
+    }
+
+    #[test]
+    fn instruction_data_reads_take_a_read_opcode_as_their_width() {
+        let selectors = [
+            (OP_READ_U8, VALUE_U64),
+            (OP_READ_U16, VALUE_U64),
+            (OP_READ_I32, VALUE_I64),
+            (OP_READ_I64, VALUE_I64),
+            (OP_READ_BOOL, VALUE_BOOL),
+            (OP_READ_U128, VALUE_U128),
+            (OP_READ_PUBKEY, VALUE_PUBKEY),
+        ];
+        for (selector, witness) in selectors {
+            let (mut builder, sysvar) = with_sysvar();
+            let zero = builder.const_u64(0);
+            let value = builder.read_instruction_data(selector, sysvar, zero, zero);
+            let other = typed_register(&mut builder, Some(witness));
+            builder.binary(OP_EQ, value, other);
+            assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()), "selector {selector}");
+        }
+        // Anything but a read opcode is refused, including a read opcode above the low byte.
+        let immediates = [
+            0,
+            OP_ADD as u64,
+            OP_READ_INSTRUCTION_DATA as u64,
+            0x100 | OP_READ_U64 as u64,
+            u64::MAX,
+        ];
+        for immediate in immediates {
+            let (mut builder, sysvar) = with_sysvar();
+            let zero = builder.const_u64(0);
+            builder.op(OP_READ_INSTRUCTION_DATA, sysvar, zero, zero, immediate);
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidInstruction(1)),
+                "immediate {immediate:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn byte_reads_take_one_to_1024_bytes_and_are_typed_that_long() {
+        for opcode in [OP_READ_INSTRUCTION_BYTES, OP_READ_ACCOUNT_BYTES] {
+            let lengths = [
+                (0, Err(TemplateError::InvalidInstruction(1))),
+                (1, Ok(())),
+                (MAX_INPUT_BYTES as u64, Ok(())),
+                (MAX_INPUT_BYTES as u64 + 1, Err(TemplateError::InvalidInstruction(1))),
+                (u64::MAX, Err(TemplateError::InvalidInstruction(1))),
+            ];
+            for (len, expected) in lengths {
+                let (mut builder, sysvar) = with_sysvar();
+                let zero = builder.const_u64(0);
+                builder.op(opcode, sysvar, zero, zero, len);
+                assert_eq!(
+                    verify_builder(&builder).map(|_| ()),
+                    expected,
+                    "opcode {opcode} len {len}"
+                );
+            }
+            // A CPI that forwards the bytes must declare exactly their length.
+            let (mut builder, sysvar) = with_sysvar();
+            let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+            let zero = builder.const_u64(0);
+            let bytes = builder.op(opcode, sysvar, zero, zero, 40);
+            let cpi = builder.cpi(program, &[], &[Segment::Register(DATA_REG_BYTES, bytes)]);
+            builder.set_cpi_max_data_len(cpi, 40);
+            builder.invoke(cpi, None);
+            assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()), "opcode {opcode}");
+            builder.set_cpi_max_data_len(cpi, 41);
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidCpi(0)),
+                "opcode {opcode}"
+            );
+        }
+    }
+
+    #[test]
+    fn account_byte_reads_take_any_declared_account_and_a_u64_offset() {
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 0);
+        let offset = builder.const_u64(0);
+        builder.read_account_bytes(account, offset, 8);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()), "a fixed account, unpinned");
+
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let offset = builder.const_u64(0);
+        builder.for_each(0, |body| {
+            body.read_account_bytes(row, offset, 8);
+        });
+        assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()), "a row account in its loop");
+
+        let mut builder = ProgramBuilder::new();
+        let offset = builder.const_u64(0);
+        builder.read_account_bytes(3, offset, 8);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidAccountConstraint(3)));
+
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 0);
+        let offset = builder.const_i64(0);
+        builder.read_account_bytes(account, offset, 8);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TypeMismatch));
+    }
+
+    #[test]
+    fn introspection_and_byte_opcodes_reject_flags() {
+        // None of them is a read opcode, so the dynamic-offset flag is never theirs to claim.
+        for opcode in OP_INSTRUCTION_COUNT..=OP_BYTES_LEN {
+            let (mut builder, _) = introspection_program(opcode);
+            assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()), "opcode {opcode} unflagged");
+            let last = builder.instructions_mut().len() - 1;
+            builder.instructions_mut()[last].flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET;
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidFlags(last)),
+                "opcode {opcode}"
+            );
+        }
     }
 
     #[test]

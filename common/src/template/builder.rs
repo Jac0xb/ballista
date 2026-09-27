@@ -253,6 +253,41 @@ impl ProgramBuilder {
         self.op(OP_POW10, exponent, NO_INDEX, NO_INDEX, 0)
     }
 
+    /// Emits one of the opcodes that read the Instructions sysvar in account `sysvar`, from
+    /// `OP_INSTRUCTION_COUNT` to `OP_INSTRUCTION_DATA_LEN`. `index` and `position` are `u64`
+    /// registers; pass `NO_INDEX` for an operand the opcode does not take.
+    pub fn introspect(&mut self, opcode: u8, sysvar: u8, index: u8, position: u8) -> u8 {
+        self.op(opcode, sysvar, index, position, 0)
+    }
+
+    /// A typed read from instruction `index`'s data at the `u64` offset in `offset`, with the
+    /// width and result type of `read_opcode`, one of the `OP_READ_*` opcodes.
+    pub fn read_instruction_data(
+        &mut self,
+        read_opcode: u8,
+        sysvar: u8,
+        index: u8,
+        offset: u8,
+    ) -> u8 {
+        self.op(OP_READ_INSTRUCTION_DATA, sysvar, index, offset, read_opcode as u64)
+    }
+
+    /// Exactly `len` bytes of instruction `index`'s data from the `u64` offset in `offset`.
+    pub fn read_instruction_bytes(&mut self, sysvar: u8, index: u8, offset: u8, len: u16) -> u8 {
+        self.op(OP_READ_INSTRUCTION_BYTES, sysvar, index, offset, len as u64)
+    }
+
+    /// Exactly `len` bytes of `account`'s data from the `u64` offset in `offset`. The run fails
+    /// unless the account is read-only in the transaction.
+    pub fn read_account_bytes(&mut self, account: u8, offset: u8, len: u16) -> u8 {
+        self.op(OP_READ_ACCOUNT_BYTES, account, offset, NO_INDEX, len as u64)
+    }
+
+    /// The length of the `bytes` value in `value`, as a `u64`.
+    pub fn bytes_len(&mut self, value: u8) -> u8 {
+        self.op(OP_BYTES_LEN, value, NO_INDEX, NO_INDEX, 0)
+    }
+
     pub fn loop_index(&mut self) -> u8 {
         self.op(OP_LOOP_INDEX, NO_INDEX, NO_INDEX, NO_INDEX, 0)
     }

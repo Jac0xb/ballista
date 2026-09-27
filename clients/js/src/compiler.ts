@@ -112,6 +112,17 @@ export const opcode = {
   repeat: 61,
   emit: 62,
   setReturnData: 63,
+  instructionCount: 64,
+  instructionIndex: 65,
+  instructionProgram: 66,
+  instructionAccountCount: 67,
+  instructionAccount: 68,
+  instructionAccountFlags: 69,
+  instructionDataLength: 70,
+  readInstructionData: 71,
+  readInstructionBytes: 72,
+  readAccountBytes: 73,
+  bytesLength: 74,
 } as const;
 
 /** The conjuncts of a requirement: `and(and(a, b), c)` is three separate assertions. */

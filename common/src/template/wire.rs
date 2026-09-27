@@ -29,6 +29,13 @@ pub const MAX_PDA_SEED_LEN: usize = 32;
 /// Maximum bytes of CPI return data the runtime exposes.
 pub const MAX_RETURN_DATA_LEN: usize = 1_024;
 
+/// `Sysvar1nstructions1111111111111111111111111`. Introspection opcodes read the transaction's
+/// instructions from this sysvar, which a template declares as a fixed account pinned to it.
+pub const INSTRUCTIONS_SYSVAR_ID: [u8; 32] = [
+    0x06, 0xa7, 0xd5, 0x17, 0x18, 0x7b, 0xd1, 0x66, 0x35, 0xda, 0xd4, 0x04, 0x55, 0xfd, 0xc2, 0xc0,
+    0xc1, 0x24, 0xc6, 0x8f, 0x21, 0x56, 0x75, 0xa5, 0xdb, 0xba, 0xcb, 0x5f, 0x08, 0x00, 0x00, 0x00,
+];
+
 pub const NO_INDEX: u8 = u8::MAX;
 pub const ITERATION_ACCOUNT_BIT: u8 = 0x80;
 /// `LOAD_INPUT` operand bit selecting a row input of the current iteration; the low seven bits
@@ -183,6 +190,32 @@ pub const OP_EMIT: u8 = 62;
 /// Encodes the data segments the immediate names and sets the bytes as the run's return data.
 /// Allowed once, outside every loop, after the last invoke. Writes no register.
 pub const OP_SET_RETURN_DATA: u8 = 63;
+/// The number of instructions in the transaction. `a` is the Instructions sysvar account, as for
+/// every opcode up to `OP_READ_INSTRUCTION_BYTES`.
+pub const OP_INSTRUCTION_COUNT: u8 = 64;
+/// The index of the instruction running this template.
+pub const OP_INSTRUCTION_INDEX: u8 = 65;
+/// The program of the instruction whose `u64` index is in register `b`.
+pub const OP_INSTRUCTION_PROGRAM: u8 = 66;
+/// How many accounts instruction `b` names.
+pub const OP_INSTRUCTION_ACCOUNT_COUNT: u8 = 67;
+/// The key of account `c` of instruction `b`, both `u64` registers.
+pub const OP_INSTRUCTION_ACCOUNT: u8 = 68;
+/// The flags of account `c` of instruction `b`: bit 0 signer, bit 1 writable.
+pub const OP_INSTRUCTION_ACCOUNT_FLAGS: u8 = 69;
+/// The data length of instruction `b`.
+pub const OP_INSTRUCTION_DATA_LEN: u8 = 70;
+/// A typed read from instruction `b`'s data at the `u64` offset in register `c`. The immediate is
+/// the `OP_READ_*` opcode whose width and result type the read takes.
+pub const OP_READ_INSTRUCTION_DATA: u8 = 71;
+/// Exactly `immediate` bytes of instruction `b`'s data from the offset in register `c`, borrowed
+/// from the sysvar rather than copied.
+pub const OP_READ_INSTRUCTION_BYTES: u8 = 72;
+/// Exactly `immediate` bytes of account `a`'s data from the `u64` offset in register `b`. The
+/// account must be read-only in the transaction, so the bytes can be borrowed for the whole run.
+pub const OP_READ_ACCOUNT_BYTES: u8 = 73;
+/// The length of the `bytes` value in register `a`, as a `u64`.
+pub const OP_BYTES_LEN: u8 = 74;
 
 pub const DATA_LITERAL: u8 = 0;
 pub const DATA_REG_U8: u8 = 1;

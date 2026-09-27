@@ -84,6 +84,17 @@ const rustName: Record<keyof typeof opcode, string> = {
   repeat: 'OP_REPEAT',
   emit: 'OP_EMIT',
   setReturnData: 'OP_SET_RETURN_DATA',
+  instructionCount: 'OP_INSTRUCTION_COUNT',
+  instructionIndex: 'OP_INSTRUCTION_INDEX',
+  instructionProgram: 'OP_INSTRUCTION_PROGRAM',
+  instructionAccountCount: 'OP_INSTRUCTION_ACCOUNT_COUNT',
+  instructionAccount: 'OP_INSTRUCTION_ACCOUNT',
+  instructionAccountFlags: 'OP_INSTRUCTION_ACCOUNT_FLAGS',
+  instructionDataLength: 'OP_INSTRUCTION_DATA_LEN',
+  readInstructionData: 'OP_READ_INSTRUCTION_DATA',
+  readInstructionBytes: 'OP_READ_INSTRUCTION_BYTES',
+  readAccountBytes: 'OP_READ_ACCOUNT_BYTES',
+  bytesLength: 'OP_BYTES_LEN',
 };
 
 test('every opcode has the same number in Rust and TypeScript', () => {

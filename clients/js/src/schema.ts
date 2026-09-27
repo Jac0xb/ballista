@@ -290,6 +290,21 @@ export type Step =
       label?: string;
     }
   | {
+      /** Logs the encoded parts as one `Program data:` field. */
+      kind: 'emit';
+      parts: DataPart[];
+      label?: string;
+    }
+  | {
+      /**
+       * Sets the encoded parts as the run's return data. Once per template, outside every loop, and
+       * after the last invoke, because invoking a program clears return data.
+       */
+      kind: 'setReturnData';
+      parts: DataPart[];
+      label?: string;
+    }
+  | {
       kind: 'forEach';
       steps: Step[];
       /** Variables defined before the loop whose values flow across iterations and out of it. */
@@ -328,6 +343,8 @@ export const StepSchema: z.ZodType<Step> = z.lazy(() =>
         label,
       })
       .strict(),
+    z.object({ kind: z.literal('emit'), parts: z.array(DataPartSchema).min(1).max(64), label }).strict(),
+    z.object({ kind: z.literal('setReturnData'), parts: z.array(DataPartSchema).min(1).max(64), label }).strict(),
     z
       .object({
         kind: z.literal('forEach'),
@@ -563,6 +580,14 @@ export const step = {
     ...(label ? { label } : {}),
   }),
   invoke: (input: Omit<Extract<Step, { kind: 'invoke' }>, 'kind'>): Step => ({ kind: 'invoke', ...input }),
+  /** Logs the parts, encoded as invocation data is, as one `Program data:` field. */
+  emit: (parts: DataPart[], label?: string): Step => ({ kind: 'emit', parts, ...(label ? { label } : {}) }),
+  /** Sets the parts, encoded as invocation data is, as the run's return data. */
+  setReturnData: (parts: DataPart[], label?: string): Step => ({
+    kind: 'setReturnData',
+    parts,
+    ...(label ? { label } : {}),
+  }),
   forEach: (steps: Step[], options: { carry?: string[]; label?: string } = {}): Step => ({
     kind: 'forEach',
     steps,

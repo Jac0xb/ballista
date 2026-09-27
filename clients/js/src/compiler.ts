@@ -354,6 +354,8 @@ class Compiler {
   location: { path: string; label?: string } = { path: 'template' };
   nextRegister = 0;
   maxCpiDataLength = 0;
+  /** Whether a `setReturnData` step has compiled; no invoke may follow it. */
+  returnDataSet = false;
 
   constructor(template: Template) {
     this.template = template;
@@ -579,6 +581,8 @@ class Compiler {
           requireType(condition, 'bool', 'require condition');
           this.pushInstruction(instructionRecord(opcode.require, NO_INDEX, condition.register));
         }
+      } else if (current.kind === 'emit' || current.kind === 'setReturnData') {
+        this.compileOutput(current, loop, bindings);
       } else {
         this.compileInvoke(current, loop, bindings);
       }
@@ -605,6 +609,9 @@ class Compiler {
   }
 
   compileInvoke(current: Extract<Step, { kind: 'invoke' }>, loop: LoopKind | undefined, bindings: Bindings): void {
+    if (this.returnDataSet) {
+      throw new TypeError('invoke cannot follow setReturnData: invoking a program clears the return data');
+    }
     const programAccount = this.encodeAccountReference(current.program, loop);
     const programConstraint = this.constraintFor(current.program, loop);
     this.requirePinnedProgram(current.program, programConstraint, 'Invoke program');
@@ -657,6 +664,25 @@ class Compiler {
       guard = result.register;
     }
     this.pushInstruction(instructionRecord(opcode.invoke, NO_INDEX, cpiIndex, guard));
+  }
+
+  /** EMIT and SET_RETURN_DATA: the parts are encoded as invocation data is, to at most 1,024 bytes. */
+  compileOutput(current: Extract<Step, { kind: 'emit' | 'setReturnData' }>, loop: LoopKind | undefined, bindings: Bindings): void {
+    if (current.kind === 'setReturnData') {
+      // Solana clears return data whenever a program is invoked, so what a run returns is set
+      // once, outside every loop, after its last invoke.
+      if (loop) throw new TypeError('setReturnData is not allowed inside a loop');
+      if (this.returnDataSet) throw new TypeError('setReturnData may appear only once');
+      this.returnDataSet = true;
+    }
+    const { segmentStart, maxLength } = this.compileDataParts(current.parts, loop, bindings);
+    if (maxLength > MAX_RETURN_DATA_LENGTH) {
+      throw new RangeError(`${current.kind} can encode ${maxLength} bytes; maximum is ${MAX_RETURN_DATA_LENGTH}`);
+    }
+    const operation = current.kind === 'emit' ? opcode.emit : opcode.setReturnData;
+    this.pushInstruction(
+      instructionRecord(operation, NO_INDEX, NO_INDEX, NO_INDEX, NO_INDEX, rangeImmediate(segmentStart, current.parts.length)),
+    );
   }
 
   compileReturnData(node: Extract<Expression, { kind: 'returnData' }>, previous: Step | undefined): ExpressionResult {

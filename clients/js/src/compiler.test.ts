@@ -910,6 +910,105 @@ describe('data segments', () => {
   });
 });
 
+describe('output steps', () => {
+  const compileSteps = (inputs: TemplateInput['inputs'], steps: Step[], batch?: TemplateInput['batch']) =>
+    compileTemplate(
+      defineTemplate({
+        inputs,
+        accounts: {
+          systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
+          payer: { signer: true, writable: true },
+        },
+        ...(batch ? { batch } : {}),
+        steps,
+      }),
+    );
+  const pay = (to: ReturnType<typeof account.fixed>) =>
+    systemTransfer({
+      systemProgram: account.fixed('systemProgram'),
+      from: account.fixed('payer'),
+      to,
+      lamports: expression.u64(1),
+    });
+  const rows = { maxIterations: 2, row: { recipient: { writable: true } } };
+
+  test('emit and setReturnData lower to one record naming a contiguous run of their parts', () => {
+    const compiled = compileSteps({ amount: { type: 'u64' } }, [
+      step.emit([data.literal(Uint8Array.of(1, 2)), data.encode('u64', expression.input('amount'))], 'log'),
+      step.setReturnData([data.encode('pubkey', expression.accountField(account.fixed('payer'), 'key'))], 'result'),
+    ]);
+    const outputs = records(compiled).filter(
+      (record) => record[0] === opcode.emit || record[0] === opcode.setReturnData,
+    );
+    // Opcode, then dst, a, b, c and flags: an output names no register and takes no flag.
+    expect(outputs.map((record) => [...record.slice(0, 6)])).toEqual([
+      [opcode.emit, 0xff, 0xff, 0xff, 0xff, 0],
+      [opcode.setReturnData, 0xff, 0xff, 0xff, 0xff, 0],
+    ]);
+    // The immediate is (first segment, segment count), two little-endian u32s.
+    expect([...outputs[0]!.slice(6, 14)]).toEqual([0, 0, 0, 0, 2, 0, 0, 0]);
+    expect([...outputs[1]!.slice(6, 14)]).toEqual([2, 0, 0, 0, 1, 0, 0, 0]);
+    expect(segmentTables(compiled).segments).toEqual([
+      { kind: 0, register: 0xff },
+      { kind: 4, register: 0 },
+      { kind: 7, register: 1 },
+    ]);
+    expect(compiled.sourceMap.filter((entry) => entry.label !== undefined)).toEqual([
+      { pc: 1, path: 'steps[0]', label: 'log' },
+      { pc: 2, path: 'steps[1]', label: 'result' },
+      { pc: 3, path: 'steps[1]', label: 'result' },
+    ]);
+  });
+
+  test('emit may appear anywhere, loops and invokes included', () => {
+    expect(() =>
+      compileSteps(
+        {},
+        [
+          step.emit([data.literal(Uint8Array.of(1))]),
+          step.forEach([
+            step.emit([data.encode('u64', expression.loopIndex())]),
+            pay(account.iteration('recipient')),
+            step.emit([data.encode('u64', expression.loopIndex())]),
+          ]),
+          step.emit([data.literal(Uint8Array.of(2))]),
+        ],
+        rows,
+      ),
+    ).not.toThrow();
+  });
+
+  test('setReturnData comes once, outside every loop, after every invoke', () => {
+    const result = step.setReturnData([data.literal(Uint8Array.of(1))]);
+    expect(() => compileSteps({}, [pay(account.fixed('payer')), result])).not.toThrow();
+    expect(() => compileSteps({}, [step.forEach([pay(account.iteration('recipient'))]), result], rows)).not.toThrow();
+    expect(() => compileSteps({}, [step.forEach([result])], rows)).toThrow(
+      'setReturnData is not allowed inside a loop',
+    );
+    expect(() => compileSteps({}, [result, result])).toThrow('setReturnData may appear only once');
+    expect(() => compileSteps({}, [result, pay(account.fixed('payer'))])).toThrow(
+      'invoke cannot follow setReturnData',
+    );
+    expect(() => compileSteps({}, [result, step.forEach([pay(account.iteration('recipient'))])], rows)).toThrow(
+      'invoke cannot follow setReturnData',
+    );
+  });
+
+  test('an output encodes at most 1,024 bytes, counting a bytes value at its maximum length', () => {
+    const memo = { memo: { type: 'bytes', maxLength: 1024 } } as const;
+    expect(() => compileSteps(memo, [step.setReturnData([data.encode('bytes', expression.input('memo'))])])).not.toThrow();
+    expect(() =>
+      compileSteps(memo, [
+        step.emit([data.encode('bytes', expression.input('memo')), data.literal(Uint8Array.of(0))]),
+      ]),
+    ).toThrow('emit can encode 1025 bytes; maximum is 1024');
+    expect(() => compileSteps({}, [step.setReturnData([data.literal(new Uint8Array(1025))])])).toThrow(
+      'setReturnData can encode 1025 bytes; maximum is 1024',
+    );
+    expect(() => compileSteps({}, [step.emit([])])).toThrow();
+  });
+});
+
 describe('math expressions', () => {
   const compileSteps = (inputs: TemplateInput['inputs'], steps: Step[]) =>
     compileTemplate(defineTemplate({ inputs, accounts: {}, steps }));

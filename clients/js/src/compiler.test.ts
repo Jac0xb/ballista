@@ -922,12 +922,23 @@ describe('math expressions', () => {
   });
 
   test('remainder works on every numeric type; powerOfTen takes a u64 and yields a u128', () => {
+    for (const type of ['u64', 'i64', 'u128'] as const) {
+      const compiled = compileSteps({ a: { type } }, [
+        step.let('r', expression.remainder(expression.input('a'), expression.input('a'))),
+      ]);
+      expect(records(compiled).some((record) => record[0] === opcode.remainder)).toBe(true);
+    }
     expect(() =>
       compileSteps({ a: { type: 'i64' }, e: { type: 'u64' } }, [
         step.let('r', expression.remainder(expression.input('a'), expression.input('a'))),
         step.require(expression.equal(expression.powerOfTen(expression.input('e')), expression.u128(1_000n))),
       ]),
     ).not.toThrow();
+    expect(() =>
+      compileSteps({ a: { type: 'u64' }, b: { type: 'i64' } }, [
+        step.let('x', expression.remainder(expression.input('a'), expression.input('b'))),
+      ]),
+    ).toThrow(/remainder/);
     expect(() =>
       compileSteps({ a: { type: 'u128' } }, [step.let('x', expression.powerOfTen(expression.input('a')))]),
     ).toThrow(/powerOfTen/);

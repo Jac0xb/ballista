@@ -82,6 +82,8 @@ const rustName: Record<keyof typeof opcode, string> = {
   powerOfTen: 'OP_POW10',
   readI32: 'OP_READ_I32',
   repeat: 'OP_REPEAT',
+  emit: 'OP_EMIT',
+  setReturnData: 'OP_SET_RETURN_DATA',
 };
 
 test('every opcode has the same number in Rust and TypeScript', () => {

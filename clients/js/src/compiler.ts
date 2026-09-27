@@ -106,6 +106,8 @@ export const opcode = {
   powerOfTen: 59,
   readI32: 60,
   repeat: 61,
+  emit: 62,
+  setReturnData: 63,
 } as const;
 
 /** The conjuncts of a requirement: `and(and(a, b), c)` is three separate assertions. */

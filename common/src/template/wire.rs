@@ -165,6 +165,12 @@ pub const OP_READ_I32: u8 = 60;
 /// immediate the carry mask, as for [`OP_FOREACH`]. It writes no register, so `dst` is
 /// [`NO_INDEX`]. A count above `c` fails the run.
 pub const OP_REPEAT: u8 = 61;
+/// Encodes the data segments the immediate names, as CPI data is encoded, and logs the bytes with
+/// `sol_log_data` as one field. Writes no register.
+pub const OP_EMIT: u8 = 62;
+/// Encodes the data segments the immediate names and sets the bytes as the run's return data.
+/// Allowed once, outside every loop, after the last invoke. Writes no register.
+pub const OP_SET_RETURN_DATA: u8 = 63;
 
 pub const DATA_LITERAL: u8 = 0;
 pub const DATA_REG_U8: u8 = 1;

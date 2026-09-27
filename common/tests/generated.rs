@@ -1,9 +1,12 @@
 //! Generated programs verify by construction. Run with `--features proptest`.
 
 use ballista_common::template::{
-    generate::any_program, ProgramView, TemplateAccount, TemplateAccountHeader,
+    generate::any_program, ProgramView, TemplateAccount, TemplateAccountHeader, OP_FOREACH,
+    OP_REPEAT,
 };
 use proptest::prelude::*;
+use proptest::strategy::ValueTree;
+use proptest::test_runner::TestRunner;
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
@@ -50,4 +53,26 @@ proptest! {
         prop_assert!(core::ptr::eq(slow.pubkeys, fast.pubkeys));
         prop_assert!(core::ptr::eq(slow.blob, fast.blob));
     }
+}
+
+/// The generator reaches what the loop rules allow, so the properties cover it: count loops, and
+/// more than one loop in a program.
+#[test]
+fn generated_programs_include_count_loops_and_several_loops() {
+    let mut runner = TestRunner::deterministic();
+    let (mut count_loops, mut several) = (0, 0);
+    for _ in 0..256 {
+        let program = any_program().new_tree(&mut runner).unwrap().current();
+        let parsed = ProgramView::parse(&program.bytes).unwrap();
+        let loops: Vec<u8> = parsed
+            .instructions
+            .iter()
+            .map(|record| record.opcode)
+            .filter(|opcode| matches!(*opcode, OP_FOREACH | OP_REPEAT))
+            .collect();
+        count_loops += usize::from(loops.contains(&OP_REPEAT));
+        several += usize::from(loops.len() > 1);
+    }
+    assert!(count_loops >= 32, "{count_loops} of 256 programs hold a count loop");
+    assert!(several >= 32, "{several} of 256 programs hold more than one loop");
 }

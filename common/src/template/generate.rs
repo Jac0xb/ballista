@@ -4,8 +4,8 @@
 //! Generation is driven by a stream of arbitrary `u32` choices so that proptest can shrink a
 //! failing program by shrinking the choices. Every emitted instruction respects the register
 //! typing rules, and every account read is a header field read, so the only failures a generated
-//! program may produce at run time are value-dependent: overflow, division by zero, or a failed
-//! requirement.
+//! program may produce at run time are value-dependent: overflow, division by zero, a failed
+//! requirement, or a count loop's count above its maximum.
 
 use proptest::prelude::*;
 
@@ -41,8 +41,9 @@ impl GeneratedProgram {
     }
 }
 
-/// Value-dependent runtime error kinds a generated program is allowed to produce.
-pub const ALLOWED_RUNTIME_ERRORS: [u32; 3] = [6013, 6014, 6015];
+/// Value-dependent runtime error kinds a generated program is allowed to produce: overflow,
+/// division by zero, a failed requirement, and `LoopCountExceeded`.
+pub const ALLOWED_RUNTIME_ERRORS: [u32; 4] = [6013, 6014, 6015, 6022];
 
 /// Runtime error kinds that indicate the verifier accepted something the executor rejects.
 pub const STRUCTURAL_RUNTIME_ERRORS: [u32; 3] = [6002, 6011, 6012];
@@ -131,7 +132,7 @@ impl GeneratedProgram {
         let mut registers = Registers { entries: Vec::new() };
 
         let fixed_accounts = choices.below(4);
-        let mut accounts: Vec<u8> = (0..fixed_accounts)
+        let accounts: Vec<u8> = (0..fixed_accounts)
             .map(|_| builder.account(0, None, None, 0))
             .collect();
         let batched = choices.below(2) == 1;
@@ -174,47 +175,28 @@ impl GeneratedProgram {
             emit_operation(&mut choices, &mut builder, &mut registers, &accounts, &inputs, false);
         }
 
-        if batched {
-            let row = builder.row_account(0, None, None, 0);
-            let carried = choices.pick(&registers.numeric());
-            let carry_mask = carried.map_or(0, |register| 1u64 << register);
-            let body_ops = 1 + choices.below(6);
-            let mut body_accounts = accounts.clone();
-            body_accounts.push(row);
-            let root_registers = registers.clone();
-            builder.for_each(carry_mask, |body| {
-                let mut body_registers = root_registers.clone();
-                for _ in 0..body_ops {
-                    emit_operation(
-                        &mut choices,
-                        body,
-                        &mut body_registers,
-                        &body_accounts,
-                        &body_inputs,
-                        true,
-                    );
-                }
-                if let Some(register) = carried {
-                    // Accumulate into the carried register with a same-typed operand.
-                    let kind = body_registers.type_of(register);
-                    let operands = body_registers.of_type(kind);
-                    let other = operands[choices.below(operands.len())];
-                    let sum = body.binary(OP_ADD, register, other);
-                    body_registers.push(sum, kind);
-                    body.mov(register, sum);
-                }
-                // Operations may emit nothing when no operand of the right type exists, so end
-                // every body with a requirement that always holds to keep it non-empty.
-                let always = body.const_bool(true);
-                body.require(always);
-            });
-            // Registers written inside the body are not visible afterwards; the type table for
-            // the root stays as it was before the loop.
+        // Loops run one after another and never nest. A batched program starts with a FOREACH,
+        // and every later loop is a FOREACH or a REPEAT at random; an unbatched program has only
+        // REPEATs, possibly none.
+        let row = batched.then(|| builder.row_account(0, None, None, 0));
+        let loops = if batched { 1 + choices.below(3) } else { choices.below(3) };
+        for index in 0..loops {
+            let foreach_row = row.filter(|_| index == 0 || choices.below(2) == 0);
+            emit_loop(
+                &mut choices,
+                &mut builder,
+                &mut registers,
+                &accounts,
+                &inputs,
+                &body_inputs,
+                foreach_row,
+            );
+            // Registers written inside a body are not visible afterwards; the type table for the
+            // root stays as it was before the loop.
             let after_ops = choices.below(4);
             for _ in 0..after_ops {
                 emit_operation(&mut choices, &mut builder, &mut registers, &accounts, &inputs, false);
             }
-            accounts.push(row);
         }
 
         let bytes = builder.build().expect("generated programs stay within the payload limit");
@@ -230,6 +212,59 @@ impl GeneratedProgram {
             min_iterations,
         }
     }
+}
+
+/// Emits one loop at the root: a FOREACH over the batch rows when `row` names the row account,
+/// otherwise a REPEAT. A FOREACH body may name the row account and load `foreach_inputs`, which
+/// include the row inputs; a REPEAT body has fixed accounts and fixed inputs only. A REPEAT's count
+/// is a fresh constant that can exceed its maximum, so some runs fail with `LoopCountExceeded`.
+fn emit_loop(
+    choices: &mut Choices<'_>,
+    builder: &mut ProgramBuilder,
+    registers: &mut Registers,
+    accounts: &[u8],
+    inputs: &[(u8, u8)],
+    foreach_inputs: &[(u8, u8)],
+    row: Option<u8>,
+) {
+    let count = if row.is_none() {
+        let max = 1 + choices.below(3);
+        let count = builder.const_u64(choices.below(max + 2) as u64);
+        registers.push(count, VALUE_U64);
+        Some((count, max as u8))
+    } else {
+        None
+    };
+    let carried = choices.pick(&registers.numeric());
+    let carry_mask = carried.map_or(0, |register| 1u64 << register);
+    let body_ops = 1 + choices.below(6);
+    let mut body_accounts = accounts.to_vec();
+    body_accounts.extend(row);
+    let body_inputs = if row.is_some() { foreach_inputs } else { inputs };
+    let root_registers = registers.clone();
+    let body = |body: &mut ProgramBuilder| {
+        let mut body_registers = root_registers.clone();
+        for _ in 0..body_ops {
+            emit_operation(choices, body, &mut body_registers, &body_accounts, body_inputs, true);
+        }
+        if let Some(register) = carried {
+            // Accumulate into the carried register with a same-typed operand.
+            let kind = body_registers.type_of(register);
+            let operands = body_registers.of_type(kind);
+            let other = operands[choices.below(operands.len())];
+            let sum = body.binary(OP_ADD, register, other);
+            body_registers.push(sum, kind);
+            body.mov(register, sum);
+        }
+        // Operations may emit nothing when no operand of the right type exists, so end every
+        // body with a requirement that always holds to keep it non-empty.
+        let always = body.const_bool(true);
+        body.require(always);
+    };
+    match count {
+        Some((count, max)) => builder.repeat(count, max, carry_mask, body),
+        None => builder.for_each(carry_mask, body),
+    };
 }
 
 fn encode_input(choices: &mut Choices<'_>, value_type: u8, output: &mut Vec<u8>) {
@@ -252,7 +287,9 @@ fn emit_operation(
     inputs: &[(u8, u8)],
     in_loop: bool,
 ) {
-    if registers.len() >= 56 {
+    // Loop bodies take registers the root never sees again, so the builder's own count is the
+    // one that must stay under the 64-register limit, with room for each loop's fixed extras.
+    if registers.len() >= 56 || builder.register_count() >= 48 {
         return;
     }
     match choices.below(16) {

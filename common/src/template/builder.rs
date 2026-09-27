@@ -129,6 +129,12 @@ impl ProgramBuilder {
         (offset, bytes.len() as u16)
     }
 
+    /// Registers allocated so far: the register count the header would declare if the program
+    /// were built now.
+    pub fn register_count(&self) -> u8 {
+        self.next_register
+    }
+
     /// Allocates the next register index without emitting an instruction.
     pub fn register(&mut self) -> u8 {
         let register = self.next_register;

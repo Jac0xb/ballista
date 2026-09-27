@@ -12,7 +12,7 @@ machine. Build the program first with `pnpm build:program`.
 | What | Command | Output |
 | --- | --- | --- |
 | Cost of each feature | `cargo test --manifest-path tests/ballista/Cargo.toml profile_compute_units -- --nocapture` | printed table |
-| Ten fixed cases | `pnpm cu:bench` | `benches/compute_units.md` |
+| Eleven fixed cases | `pnpm cu:bench` | `benches/compute_units.md` |
 | Every cookbook example | `cargo test --manifest-path tests/ballista/Cargo.toml measure_every_example -- --nocapture` | one line per example |
 | Where one run's compute goes | `pnpm cu:phases` | `fixtures/cu-phases.json` |
 | Lock in a win | `pnpm cu:ceilings`, `pnpm benchmarks` | lowers `fixtures/cu-ceilings.json`, `fixtures/example-ceilings.json` |
@@ -33,6 +33,26 @@ the same commit and says why here.
 ---
 
 ## Pending: runtime extensions, not merged
+
+### 2026-09-27 · Enter loops from the failure branch · `claude/runtime-loops`
+- **Change:**
+  - `dispatch` no longer compares every instruction's opcode with `FOREACH`. The handler already
+    fails an opcode it does not run, before reading an operand; at the root, that failure is
+    where a `FOREACH` or a `REPEAT` starts its loop.
+  - Both loop kinds share one `Loop` state, and every loop of a run snapshots its registers into
+    one buffer in `Scratch`.
+- **Measured** against the phase-1 tip (`1efbd24`):
+  - Ten fixed cases: −1,358 in total. Sum 30 rows without CPIs: 11,047 → 10,350. Oracle band:
+    1,083 → 1,037. Math opcodes: 2,797 → 2,546.
+  - Payroll 8 rows: 13,371 → 13,349.
+  - Create template: 4,446 → 4,470, the verifier's loop rules.
+  - Cookbook total: 557,356 → 552,195 (−5,161).
+  - A 30-pass count loop costs 8,201.
+- **Checked:** every host, SDK and Mollusk test. Eight loops over 64 registers run in the default
+  heap only because the snapshot is shared.
+- **Watch:** in a prototype on `dedc168`, a field added to `Machine` moved the dispatch loop's
+  register allocation and cost +1,686 over the nine fixed cases of the time, even on templates
+  without loops. Keep per-run state in `Scratch`.
 
 ### 2026-09-27 · Run the new opcodes behind the dispatch loop's fallback arm · `claude/runtime-extensions`
 - **Change:** The ten runtime-math opcodes, `MUL_DIV` (51) to `READ_I32` (60), run in one
@@ -223,6 +243,13 @@ combined numbers; the entries after it keep what each branch measured alone.
   - A guard or `if` on the opcode inside the fallback arm: LLVM folds it into the match as a case
     of its own, and it measured the same as an arm.
   - `#[cold]` on the helper: no better.
+- **Loop entry:**
+  - Testing `REPEAT` beside `FOREACH` ahead of every instruction: +23 over the ten fixed cases,
+    +160 over the cookbook.
+  - Keeping `FOREACH`'s test there and recognising only `REPEAT` on the failure branch: −272 and
+    −1,085, against −1,358 and −5,161 for both on the failure branch.
+  - A scope parameter on every account lookup in the verifier: 56 units on `create template` in
+    the prototype, against 24 for one check on each instruction in a count-loop body.
 
 ## Landed
 

@@ -51,6 +51,7 @@ pub fn cases() -> Vec<(&'static str, Case)> {
         ("run, pda derivation, bump supplied", pda_case(creator, 8, true)),
         ("create template, payroll 30 rows", upload(9)),
         ("run, math opcodes, no cpi", math_ops(creator, 10)),
+        ("run, count loop 30 passes, no cpi", count_loop(creator, 11, 30)),
     ]
 }
 
@@ -315,6 +316,29 @@ fn sum_rows(creator: Pubkey, template_id: u16, rows: u8) -> Case {
         runtime.push((AccountMeta::new_readonly(address, false), account));
     }
     run_case(creator, template_id, builder.build().expect("builds"), runtime, Vec::new())
+}
+
+/// Adding up the pass index over thirty passes of a count loop: what a pass costs without rows.
+fn count_loop(creator: Pubkey, template_id: u16, passes: u8) -> Case {
+    let mut builder = ProgramBuilder::new();
+    let count_input = builder.input(VALUE_U64, 0);
+    let total = builder.const_u64(0);
+    let count = builder.load_input(count_input);
+    builder.repeat(count, passes, 1u64 << total, |body| {
+        let index = body.loop_index();
+        let next = body.binary(OP_ADD, total, index);
+        body.mov(total, next);
+    });
+    let limit = builder.const_u64(u64::MAX);
+    let under = builder.binary(OP_LTE, total, limit);
+    builder.require(under);
+    run_case(
+        creator,
+        template_id,
+        builder.build().expect("builds"),
+        Vec::new(),
+        (passes as u64).to_le_bytes().to_vec(),
+    )
 }
 
 /// Uploading a template in one instruction: the one-time cost a template pays before any run.

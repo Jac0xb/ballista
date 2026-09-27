@@ -44,6 +44,8 @@ const JUPITER_INSTRUCTIONS = Object.fromEntries(
 
 /** `route`'s data ends `in_amount u64, quoted_out_amount u64, slippage_bps u16, platform_fee_bps u8`. */
 const ROUTE_TAIL_LENGTH = 19;
+/** The accounts `route` lists before the swaps' own, per the jupiter-cpi IDL. */
+const ROUTE_FIXED_ACCOUNTS = 9;
 
 // ------------------------------------------------------------------------------------- API
 
@@ -120,8 +122,19 @@ export async function fetchRouteLeg({ wallet, inputMint, outputMint, amount, dex
     throw new Error(`route in_amount ${route.inAmount} is not the ${request.amount} requested`);
   }
 
-  // `route` starts: token_program, user_transfer_authority (the one signer),
-  // user_source_token_account, user_destination_token_account.
+  // `route` fixes nine accounts before the swaps' own: token_program, user_transfer_authority (the
+  // one signer), user_source_token_account, user_destination_token_account,
+  // destination_token_account, destination_mint, platform_fee_account, event_authority, program.
+  const count = Array.isArray(swap.accounts) ? swap.accounts.length : 0;
+  if (count <= ROUTE_FIXED_ACCOUNTS) {
+    throw new Error(
+      `Jupiter's route for ${inputMint} → ${outputMint} has ${count} accounts, but route fixes ` +
+        `${ROUTE_FIXED_ACCOUNTS} before any swap's own, so the Swap API's account layout has changed. ` +
+        'Compare a fresh swap-instructions response with the jupiter-cpi IDL (github.com/jup-ag/jupiter-cpi), ' +
+        'and update this check and the templates that pass route accounts ' +
+        '(JUPITER_ROUTE_FIXED_ACCOUNTS in clients/js/examples/protocols/shared.ts) before snapshotting.',
+    );
+  }
   const [, authority, source, destination] = swap.accounts;
   if (authority?.pubkey !== wallet || !authority.isSigner) {
     throw new Error(`route's authority is ${authority?.pubkey}, not the wallet ${wallet}`);

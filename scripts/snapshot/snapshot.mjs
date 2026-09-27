@@ -23,7 +23,12 @@
  *   4. Check that each lookup table is active and was last extended before the snapshot slot
  *      (otherwise its newer entries do not resolve), and estimate the size of a transaction
  *      running each route inside a template.
- *   5. Write the snapshot, then print a summary and what changed since the previous one.
+ *   5. Write the snapshot into a new directory and swap it in for <snapshot-dir>, so an interrupted
+ *      run never leaves half of each. Then print a summary and what changed since the previous one.
+ *
+ * <snapshot-dir> belongs to the tool: a run replaces it whole, and refuses to start if it holds
+ * anything a snapshot does not. The output depends only on chain state and the APIs' answers, so
+ * identical inputs give byte-identical files.
  *
  * Left out, because LiteSVM provides them or the tests write them: builtin programs, sysvars
  * (the Clock is recorded in manifest.json instead), the instructions sysvar, and the test wallet
@@ -36,14 +41,25 @@
  *                  loader-v2 program account, `data` holds only the bytes before the ELF and `elf`
  *                  names the file with the rest: the account is `data ‖ elf`, zero-padded to
  *                  `dataLength`
- *   routes.json    each route's quote and instructions verbatim, `route`'s decoded arguments, the
- *                  wallet's token accounts, and the size estimates
+ *   routes.json    each route's instructions verbatim and its quote (less Jupiter's `timeTaken`),
+ *                  `route`'s decoded arguments, the wallet's token accounts, and the size estimates
  *   programs/<program id>.so  each program's ELF (stored with Git LFS)
  * u64 values are exact JSON numbers; read them as BigInt in JavaScript (`parseJson` in rpc.mjs).
  */
 import { createPrivateKey, createPublicKey } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   JUPITER_API,
@@ -194,6 +210,71 @@ function loadManifests(paths) {
   return plan;
 }
 
+// ---------------------------------------------------------------------------------- output
+
+/** Everything a snapshot directory holds. Finder's `.DS_Store` is tolerated and discarded. */
+const SNAPSHOT_ENTRIES = new Set(['manifest.json', 'accounts.json', 'routes.json', 'programs']);
+
+/** A run replaces `outDir` whole, so it must hold nothing but an earlier snapshot. */
+function assertReplaceable(outDir) {
+  if (!existsSync(outDir)) return;
+  const foreign = readdirSync(outDir).filter((entry) => !SNAPSHOT_ENTRIES.has(entry) && entry !== '.DS_Store');
+  const programsDir = join(outDir, 'programs');
+  if (existsSync(programsDir)) {
+    for (const entry of readdirSync(programsDir)) {
+      if (!entry.endsWith('.so') && entry !== '.DS_Store') foreign.push(`programs/${entry}`);
+    }
+  }
+  if (foreign.length > 0) {
+    throw new Error(
+      `${display(outDir)} holds ${foreign.join(', ')}, which no snapshot writes. A run replaces its ` +
+        'directory whole, so give it a new directory or an earlier snapshot.',
+    );
+  }
+}
+
+/**
+ * Writes `files` (`[relative path, contents]`) as the new `outDir`, all or nothing.
+ *
+ * Everything goes into a fresh directory beside `outDir`, on the same filesystem, and is swapped in
+ * by rename. rename(2) cannot replace a directory that has entries, so the old snapshot first moves
+ * aside and is deleted only after the new one is in place. A run killed between those two renames
+ * leaves no `outDir`, but both snapshots whole beside it as `.<name>.tmp-*` directories.
+ */
+function writeSnapshot(outDir, files) {
+  const parent = dirname(outDir);
+  mkdirSync(parent, { recursive: true });
+  const staging = mkdtempSync(join(parent, `.${basename(outDir)}.tmp-`));
+  try {
+    // mkdtemp creates 0700; keep the permissions of the directory being replaced.
+    chmodSync(staging, statSync(existsSync(outDir) ? outDir : parent).mode & 0o777);
+    for (const [path, contents] of files) {
+      mkdirSync(dirname(join(staging, path)), { recursive: true });
+      writeFileSync(join(staging, path), contents);
+    }
+  } catch (error) {
+    rmSync(staging, { recursive: true, force: true });
+    throw error;
+  }
+  if (!existsSync(outDir)) {
+    renameSync(staging, outDir);
+    return;
+  }
+  const retired = `${staging}.old`;
+  renameSync(outDir, retired);
+  try {
+    renameSync(staging, outDir);
+  } catch (error) {
+    renameSync(retired, outDir);
+    rmSync(staging, { recursive: true, force: true });
+    throw error;
+  }
+  rmSync(retired, { recursive: true, force: true });
+}
+
+/** Orders by a string key, by code unit, so the output does not depend on the machine's locale. */
+const byKey = (key) => (a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
+
 // ------------------------------------------------------------------------------------ main
 
 async function main() {
@@ -203,6 +284,7 @@ async function main() {
     process.exit(args.includes('--help') ? 0 : 2);
   }
   const outDir = resolve(args.at(-1));
+  assertReplaceable(outDir);
   const plan = loadManifests(args.slice(0, -1).map((path) => resolve(path)));
   const wallet = walletAddress(plan.seed);
   console.error(`wallet ${wallet} (seed "${plan.seed}"); RPC ${RPC_HOST}; Jupiter ${JUPITER_API}`);
@@ -337,7 +419,7 @@ async function main() {
       elfBytes: program.elf,
     });
   }
-  programs.sort((a, b) => a.name.localeCompare(b.name));
+  programs.sort(byKey((program) => `${program.name} ${program.programId}`));
 
   // 4. Lookup tables and transaction sizes.
   const tables = new Map();
@@ -373,12 +455,12 @@ async function main() {
     }
   }
 
-  // 5. Write.
+  // 5. Write. Every array is sorted and nothing records when the tool ran, so identical chain
+  // state and API answers give identical files; the Clock's `time` is the provenance.
   const previous = readPrevious(outDir);
-  const sortedAccounts = [...stored].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const sortedAccounts = [...stored].sort(byKey(([address]) => address));
   const manifest = {
     format: FORMAT,
-    createdAt: new Date().toISOString(),
     manifests: plan.sources,
     rpc: RPC_HOST,
     jupiter: JUPITER_API,
@@ -398,17 +480,19 @@ async function main() {
       dataLength: account.data.length,
       sha256: sha256Hex(account.data),
     })),
-    lookupTables: [...tables].map(([address, table]) => ({
-      address,
-      deactivationSlot: table.deactivationSlot,
-      lastExtendedSlot: u64(table.lastExtendedSlot),
-      lastExtendedSlotStartIndex: table.lastExtendedSlotStartIndex,
-      authority: table.authority,
-      entries: table.addresses.length,
-    })),
-    absent: absent.sort((a, b) => (a.address < b.address ? -1 : 1)),
+    lookupTables: [...tables]
+      .sort(byKey(([address]) => address))
+      .map(([address, table]) => ({
+        address,
+        deactivationSlot: table.deactivationSlot,
+        lastExtendedSlot: u64(table.lastExtendedSlot),
+        lastExtendedSlotStartIndex: table.lastExtendedSlotStartIndex,
+        authority: table.authority,
+        entries: table.addresses.length,
+      })),
+    absent: absent.sort(byKey(({ address }) => address)),
     skipped: [...skipped]
-      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .sort(byKey(([address]) => address))
       .map(([address, reason]) => ({ address, reason })),
   };
   const routesOut = {
@@ -437,19 +521,14 @@ async function main() {
             transaction: leg.transaction,
             instructions: leg.instructions,
             request: leg.request,
-            quote: leg.quote,
+            // As Jupiter returned it, less `timeTaken`: its server's timing, new on every call.
+            quote: { ...leg.quote, timeTaken: undefined },
           })),
         },
       ]),
     ),
   };
 
-  mkdirSync(join(outDir, 'programs'), { recursive: true });
-  const files = new Set(programs.map((program) => program.file));
-  for (const entry of readdirSync(join(outDir, 'programs'))) {
-    if (entry.endsWith('.so') && !files.has(`programs/${entry}`)) rmSync(join(outDir, 'programs', entry));
-  }
-  for (const program of programs) writeFileSync(join(outDir, program.file), program.elfBytes);
   const accountLines = sortedAccounts.map(([address, account]) =>
     stringifyJson({
       address,
@@ -462,9 +541,12 @@ async function main() {
       ...(account.elf && { elf: account.file }),
     }),
   );
-  writeFileSync(join(outDir, 'accounts.json'), `[\n${accountLines.join(',\n')}\n]\n`);
-  writeFileSync(join(outDir, 'routes.json'), `${stringifyJson(routesOut, 2)}\n`);
-  writeFileSync(join(outDir, 'manifest.json'), `${stringifyJson(manifest, 2)}\n`);
+  writeSnapshot(outDir, [
+    ...programs.map((program) => [program.file, program.elfBytes]),
+    ['accounts.json', `[\n${accountLines.join(',\n')}\n]\n`],
+    ['routes.json', `${stringifyJson(routesOut, 2)}\n`],
+    ['manifest.json', `${stringifyJson(manifest, 2)}\n`],
+  ]);
 
   printSummary({ manifest, routes: routesOut, stored, outDir });
   if (previous) printChanges(previous, { manifest, routes: routesOut });

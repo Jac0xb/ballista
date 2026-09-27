@@ -56,6 +56,14 @@ pub enum BallistaError {
     /// A `REPEAT` count above the loop's static maximum; the context is the program counter.
     #[error("loop count exceeds its maximum")]
     LoopCountExceeded,
+    /// An introspection index or position, or a byte range read from instruction or account
+    /// data, is outside what exists. The context is the program counter.
+    #[error("instruction, account position or byte range out of range")]
+    InstructionOutOfRange,
+    /// `READ_ACCOUNT_BYTES` named an account the transaction can write. Its bytes could change
+    /// under a CPI, so they are not lent to a register. The context is the program counter.
+    #[error("bytes were read from a writable account")]
+    WritableAccountBytesRead,
 }
 
 pub use ballista_common::template::RUNTIME_ERROR_NAMES;
@@ -115,6 +123,8 @@ mod tests {
             BallistaError::AccountConstraintFailed,
             BallistaError::CpiAccountLimitExceeded,
             BallistaError::LoopCountExceeded,
+            BallistaError::InstructionOutOfRange,
+            BallistaError::WritableAccountBytesRead,
         ];
         for (index, variant) in variants.iter().enumerate() {
             assert_eq!(variant.code(), 6000 + index as u32, "{variant:?}");

@@ -54,7 +54,7 @@ pub const VERIFIER_ERROR_BASE: u32 = 6_100;
 
 /// Runtime error names in code order, starting at [`RUNTIME_ERROR_BASE`]. The program's error
 /// enum and the SDKs are checked against this table.
-pub const RUNTIME_ERROR_NAMES: [&str; 23] = [
+pub const RUNTIME_ERROR_NAMES: [&str; 25] = [
     "InvalidInstructionData",
     "InvalidTemplateAccount",
     "InvalidTemplateProgram",
@@ -78,6 +78,8 @@ pub const RUNTIME_ERROR_NAMES: [&str; 23] = [
     "AccountConstraintFailed",
     "CpiAccountLimitExceeded",
     "LoopCountExceeded",
+    "InstructionOutOfRange",
+    "WritableAccountBytesRead",
 ];
 
 pub const ACCOUNT_SIGNER: u8 = 1 << 0;
@@ -679,6 +681,8 @@ pub enum TemplateError {
     /// An `EMIT` or `SET_RETURN_DATA` can encode more than `MAX_RETURN_DATA_LEN` bytes, or a
     /// `SET_RETURN_DATA` repeats, sits in a loop, or precedes an invoke.
     InvalidOutput(usize),
+    /// An introspection opcode's account is not a fixed account pinned to the Instructions sysvar.
+    InvalidIntrospection(usize),
 }
 
 impl TemplateError {
@@ -720,6 +724,7 @@ impl TemplateError {
             TemplateError::TooManyAccountGroups => (28, 0),
             TemplateError::InvalidLoop(index) => (29, clamp(index)),
             TemplateError::InvalidOutput(index) => (30, clamp(index)),
+            TemplateError::InvalidIntrospection(index) => (31, clamp(index)),
         };
         (VERIFIER_ERROR_BASE + index, context)
     }
@@ -727,7 +732,7 @@ impl TemplateError {
 
 /// Verifier error names in code order, shared with the SDK through
 /// `fixtures/verifier-error-names.txt`.
-pub const VERIFIER_ERROR_NAMES: [&str; 31] = [
+pub const VERIFIER_ERROR_NAMES: [&str; 32] = [
     "Truncated",
     "PayloadTooLarge",
     "InvalidMagic",
@@ -759,6 +764,7 @@ pub const VERIFIER_ERROR_NAMES: [&str; 31] = [
     "TooManyAccountGroups",
     "InvalidLoop",
     "InvalidOutput",
+    "InvalidIntrospection",
 ];
 
 /// Packs an error kind and a 16-bit context into one custom program error code.
@@ -868,13 +874,14 @@ mod tests {
             TemplateError::TooManyAccountGroups,
             TemplateError::InvalidLoop(15),
             TemplateError::InvalidOutput(15),
+            TemplateError::InvalidIntrospection(15),
         ];
         let mut codes: Vec<u32> = variants.iter().map(|error| error.code().0).collect();
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(codes.len(), variants.len());
         assert_eq!(codes[0], VERIFIER_ERROR_BASE);
-        assert_eq!(*codes.last().unwrap(), VERIFIER_ERROR_BASE + 30);
+        assert_eq!(*codes.last().unwrap(), VERIFIER_ERROR_BASE + 31);
         for variant in &variants {
             let (code, _) = variant.code();
             let name = format!("{variant:?}");
@@ -894,6 +901,6 @@ mod tests {
         assert_eq!(TemplateError::InvalidOutput(9).code(), (VERIFIER_ERROR_BASE + 30, 9));
         let decoded = decode_ballista_error(encode_error(VERIFIER_ERROR_BASE + 30, 9));
         assert_eq!(decoded.map(|error| error.name), Some("InvalidOutput"));
-        assert_eq!(decode_ballista_error(VERIFIER_ERROR_BASE + 31), None);
+        assert_eq!(decode_ballista_error(VERIFIER_ERROR_BASE + 32), None);
     }
 }

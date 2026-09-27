@@ -30,6 +30,8 @@ export const RUNTIME_ERROR_NAMES = [
   'AccountConstraintFailed',
   'CpiAccountLimitExceeded',
   'LoopCountExceeded',
+  'InstructionOutOfRange',
+  'WritableAccountBytesRead',
 ] as const;
 
 /** Verifier failures raised at create and finalize, in code order. */
@@ -65,6 +67,7 @@ export const VERIFIER_ERROR_NAMES = [
   'TooManyAccountGroups',
   'InvalidLoop',
   'InvalidOutput',
+  'InvalidIntrospection',
 ] as const;
 
 export type RuntimeErrorName = (typeof RUNTIME_ERROR_NAMES)[number];

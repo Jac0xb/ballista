@@ -52,10 +52,13 @@ describe('error decoding', () => {
     expect(decodeBallistaError((4 << 16) | 6022)).toMatchObject({ name: 'LoopCountExceeded', context: 4, source: 'runtime' });
     expect(decodeBallistaError((2 << 16) | 6129)).toMatchObject({ name: 'InvalidLoop', context: 2, source: 'verifier' });
     expect(decodeBallistaError(1)).toBeUndefined();
-    expect(decodeBallistaError(6023)).toBeUndefined();
+    expect(decodeBallistaError((4 << 16) | 6023)).toMatchObject({ name: 'InstructionOutOfRange', context: 4 });
+    expect(decodeBallistaError(6024)).toMatchObject({ name: 'WritableAccountBytesRead', source: 'runtime' });
+    expect(decodeBallistaError(6131)).toMatchObject({ name: 'InvalidIntrospection', source: 'verifier' });
+    expect(decodeBallistaError(6025)).toBeUndefined();
     expect(decodeBallistaError(6099)).toBeUndefined();
     expect(decodeBallistaError((5 << 16) | 6130)).toMatchObject({ name: 'InvalidOutput', context: 5, source: 'verifier' });
-    expect(decodeBallistaError(6131)).toBeUndefined();
+    expect(decodeBallistaError(6132)).toBeUndefined();
     expect(decodeBallistaError(-1)).toBeUndefined();
   });
 

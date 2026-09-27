@@ -48,6 +48,8 @@ pub fn rule_runtime_error_codes_carry_context_and_stay_in_range() {
         BallistaError::AccountConstraintFailed,
         BallistaError::CpiAccountLimitExceeded,
         BallistaError::LoopCountExceeded,
+        BallistaError::InstructionOutOfRange,
+        BallistaError::WritableAccountBytesRead,
     );
     let context: u16 = nondet();
     let ProgramError::Custom(code) = vm_error(kind, context) else {
@@ -99,7 +101,8 @@ pub fn rule_verifier_error_codes_are_distinct_and_in_range() {
         27 => TemplateError::InvalidMinIterations,
         28 => TemplateError::TooManyAccountGroups,
         29 => TemplateError::InvalidLoop(nondet()),
-        _ => TemplateError::InvalidOutput(nondet()),
+        30 => TemplateError::InvalidOutput(nondet()),
+        _ => TemplateError::InvalidIntrospection(nondet()),
     };
     let (code, _) = error.code();
     cvlr_assert!(code == VERIFIER_ERROR_BASE + index as u32);

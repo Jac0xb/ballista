@@ -21,3 +21,5 @@ ReturnDataMismatch
 AccountConstraintFailed
 CpiAccountLimitExceeded
 LoopCountExceeded
+InstructionOutOfRange
+WritableAccountBytesRead

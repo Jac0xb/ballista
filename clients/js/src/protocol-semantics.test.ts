@@ -21,6 +21,7 @@ import {
   jitoProfitGuardedTip,
   jupiterDepositExactOutput,
   jupiterOracleCheckedSwap,
+  kaminoLiquidateWithProof,
   kaminoRepaySwapOutput,
   pythFreshPriceGate,
   tokenSweepIntoSwap,
@@ -34,6 +35,7 @@ import {
   KAMINO_DEPOSIT,
   KAMINO_FARMS,
   KAMINO_LEND,
+  KAMINO_LIQUIDATE,
   KAMINO_REPAY,
   PYTH,
   SPL_MINT,
@@ -287,6 +289,7 @@ describe('the token sweep', () => {
 const kaminoCalls: [string, Template, { discriminator: Uint8Array; declared: number; amount: Expression }][] = [
   ['jupiterDepositExactOutput', jupiterDepositExactOutput, { discriminator: KAMINO_DEPOSIT, declared: 14, amount: { kind: 'variable', name: 'received' } }],
   ['kaminoRepaySwapOutput', kaminoRepaySwapOutput, { discriminator: KAMINO_REPAY, declared: 9, amount: { kind: 'variable', name: 'swapped' } }],
+  ['kaminoLiquidateWithProof', kaminoLiquidateWithProof, { discriminator: KAMINO_LIQUIDATE, declared: 20, amount: { kind: 'input', name: 'liquidityAmount' } }],
 ];
 const kaminoDeposits: Template[] = [jupiterDepositExactOutput];
 
@@ -312,6 +315,17 @@ describe('Kamino calls are v2, forward the farm tail as a group, and leave refre
       expect(names.slice(11)).toEqual(['tokenProgram', 'tokenProgram', 'instructionsSysvar']);
       expect(template.accounts.instructionsSysvar?.address).toEqual(addressBytes(SYSVAR_INSTRUCTIONS));
     }
+  });
+});
+
+describe('the Kamino liquidation', () => {
+  test('measures the bounty where Kamino pays the seized collateral', () => {
+    const bindings = bindingsOf(kaminoLiquidateWithProof);
+    const check = requireLabeled(kaminoLiquidateWithProof, 'liquidationPaidTheBounty');
+    expect(dependsOn(check.condition, bindings, reads('userDestinationLiquidity', TOKEN_ACCOUNT_AMOUNT_OFFSET))).toBe(true);
+    expect(dependsOn(check.condition, bindings, reads('userDestinationCollateral', TOKEN_ACCOUNT_AMOUNT_OFFSET))).toBe(false);
+    const [liquidate] = invokesOf(kaminoLiquidateWithProof, 'kamino') as [Invoke];
+    expect(nameOf(liquidate.accounts[15]!.account)).toBe('userDestinationLiquidity');
   });
 });
 

@@ -200,7 +200,8 @@ pub fn crank_once_per_waiting_entry() -> Vec<u8> {
 - `max`, from 1 to 255, is the most times the loop may run. A run whose count is above it fails
   with `LoopCountExceeded` (6022), so this template caps the count with `min`.
 - Finalization, the one-time check before a template is locked, counts the loop's calls at `max`:
-  here 8 of the 64 a run may make.
+  here 8 of the 64 a run may make. Solana's [instruction trace](/reference/limits#instruction-trace)
+  also counts the calls those programs make themselves, and can run out first.
 - `carry` and `expression.loopIndex()` (the pass number, from 0) work as they do in `forEach`.
   There are no rows, so `account.iteration` and `expression.rowInput` are rejected inside.
 

@@ -26,6 +26,10 @@ The Ballista program enforces these, whichever SDK built the template.
 | Instruction data per CPI | 4,096 bytes |
 | Readable CPI return data | 1,024 bytes |
 
+This limit counts only Ballista's own calls. Solana separately caps a transaction's
+[instruction trace](#instruction-trace), which also counts the calls the called programs make, and
+it often binds first.
+
 ### Inputs
 
 | Limit | Maximum |
@@ -115,6 +119,18 @@ Solana's own limits often bind before Ballista's.
 - Accounts used by other instructions in the same transaction count toward the same 64.
 
 See [Transaction v1](/guide/transaction-v1) for how to build one.
+
+### Instruction trace {#instruction-trace}
+
+A transaction runs at most **64 instructions in total**: its own instructions plus every CPI at
+every depth, including the calls a called program makes itself. Ballista's check can't see those
+nested calls, so size a loop to the trace, not only to its `max`.
+
+In a test that sells SOL through Jupiter in slices, one slice per pass of a count loop, Jupiter's
+setup takes 15 entries and each slice takes 7: the route and its event call, the pool's swap and two
+event calls, and two token transfers. Six slices is the most that fits in Jupiter's own
+transaction. The seventh fails with `MaxInstructionTraceLengthExceeded`, although the loop allows
+more.
 
 ### Size and compute
 

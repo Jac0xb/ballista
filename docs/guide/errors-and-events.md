@@ -212,3 +212,15 @@ const outputSteps = [
 
 The TypeScript compiler refuses a template that breaks these rules. One built another way fails
 when it is created or finalized, with `InvalidOutput` (6130).
+
+When you read outputs:
+
+- **Events are logged before the transaction is final.** A transaction that fails later still logs
+  the events of the steps before the failure. Check that the transaction succeeded before you trust
+  its events.
+- **A transaction's return data is its last instruction's.** Solana clears return data as each
+  instruction starts, so any instruction after the run, such as a swap's cleanup, replaces it. Put
+  the run last, simulate the transaction, or read the run's `Program return:` log line.
+- **Return data names the program, not the template.** It proves only that Ballista set it. A
+  template that reads a nested run's return data must pin the inner template's address. Otherwise
+  a run of any template could supply it.

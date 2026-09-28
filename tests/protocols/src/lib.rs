@@ -8,8 +8,10 @@
 //! - [`orca`] opens Orca positions, adds liquidity and swaps through Orca's own instructions, and
 //!   quotes fees with Orca's own math.
 //! - [`template`] uploads a template with Ballista's own instructions and builds runs by the
-//!   account and input names recorded in `fixtures/protocol-examples.json`.
-//! - [`tx`] signs and sends, checks the wire size, and names the program that failed.
+//!   account and input names recorded in `fixtures/protocol-examples.json`, or for the test-only
+//!   runtime scenarios in `fixtures/protocol-scenarios.json`.
+//! - [`tx`] signs and sends, checks the wire size, names the program that failed, and reads the
+//!   return data and the `Program data:` lines a transaction left.
 //! - [`kamino`] builds Kamino Lend's instructions and reads its reserves and obligations.
 //! - [`marginfi`] builds marginfi's instructions and reads its banks and accounts.
 //! - [`lending`] loads the lending snapshot and holds the setup the Kamino and marginfi scenarios

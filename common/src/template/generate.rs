@@ -199,6 +199,13 @@ impl GeneratedProgram {
             }
         }
 
+        // A run may set its return data once, after its last invoke. Generated programs invoke
+        // nothing, so the end of the root is always a legal place.
+        if choices.below(2) == 1 {
+            let part = output_part(&mut choices, &registers);
+            builder.set_return_data(&[part]);
+        }
+
         let bytes = builder.build().expect("generated programs stay within the payload limit");
         Self {
             bytes,
@@ -292,7 +299,7 @@ fn emit_operation(
     if registers.len() >= 56 || builder.register_count() >= 48 {
         return;
     }
-    match choices.below(16) {
+    match choices.below(17) {
         0 => {
             let value_type = SCALAR_TYPES[choices.below(SCALAR_TYPES.len())];
             let register = match value_type {
@@ -468,6 +475,18 @@ fn emit_operation(
             let register = builder.pow10(exponent);
             registers.push(register, VALUE_U128);
         }
+        15 => {
+            // A log line of one to three registers, sometimes after a literal byte. Outputs may
+            // appear anywhere, loop bodies included, and write no register.
+            let mut parts = Vec::new();
+            if choices.below(4) == 0 {
+                parts.push(Segment::Literal(builder.blob(&[choices.next() as u8])));
+            }
+            for _ in 0..1 + choices.below(3) {
+                parts.push(output_part(choices, registers));
+            }
+            builder.emit_data(&parts);
+        }
         _ => {
             if in_loop {
                 let register = builder.loop_index();
@@ -480,6 +499,21 @@ fn emit_operation(
             }
         }
     }
+}
+
+/// One output part: a register that holds a value, with an encoding its type accepts. Unsigned
+/// values may be narrowed, and a value too wide for its encoding fails the run with
+/// `ArithmeticOverflow`, an allowed value-dependent failure.
+fn output_part(choices: &mut Choices<'_>, registers: &Registers) -> Segment {
+    let (register, kind) = registers.entries[choices.below(registers.len())];
+    let encoding = match kind {
+        VALUE_BOOL => DATA_REG_BOOL,
+        VALUE_I64 => DATA_REG_I64,
+        VALUE_PUBKEY => DATA_REG_PUBKEY,
+        VALUE_U128 if choices.below(2) == 0 => DATA_REG_U128,
+        _ => [DATA_REG_U8, DATA_REG_U16, DATA_REG_U32, DATA_REG_U64][choices.below(4)],
+    };
+    Segment::Register(encoding, register)
 }
 
 /// A strategy producing programs that verify by construction.

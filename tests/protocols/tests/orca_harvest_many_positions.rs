@@ -3,7 +3,10 @@
 
 use {
     ballista_protocol_tests::{
-        orca::{self, Nft, Pool, Position, TokenWallet, SOL_USDC, SOL_USDC_THIN, USDC, WHIRLPOOL},
+        orca::{
+            self, Nft, Pool, Position, TokenWallet, COLLECT_FEES, SOL_USDC, SOL_USDC_THIN,
+            UPDATE_FEES, USDC, WHIRLPOOL,
+        },
         template::{examples, upload, Example, Run},
         tx::{self, ballista_error, Failure, Outcome},
         wallet::{fund, keypair, token_balance, SOL},
@@ -215,12 +218,64 @@ fn only_the_rows_that_earned_collect() {
         [out_of_range, empty].map(|position| orca::position_state(&setup.svm, &position)),
         untouched
     );
-    // Three updates (not the empty row) and two collects.
-    assert_eq!(orca::cpis_to(&outcome.logs, &WHIRLPOOL), 5);
+    // Row by row: `both` and `only_b` update and collect, `out_of_range` only updates, and
+    // `empty`, without liquidity, does neither. Every row with liquidity updates first, so a
+    // collect by an idle row would show here. It would leave no trace in any account.
+    assert_eq!(
+        orca::whirlpool_calls(&outcome.logs),
+        [
+            UPDATE_FEES,
+            COLLECT_FEES,
+            UPDATE_FEES,
+            COLLECT_FEES,
+            UPDATE_FEES
+        ]
+    );
     println!(
         "four rows: {} CU, {} bytes",
         outcome.compute_units, outcome.size
     );
+}
+
+/// `dustFloor` is compared with each row's own fees. `only_b` earned one fee, and at a floor of
+/// exactly that fee it is dust: the row updates, which records the fee, and leaves it owed for a
+/// later harvest. `both` earned more than the floor in token A, so it collects both its fees.
+#[test]
+fn a_row_whose_fees_are_at_the_floor_is_left_for_later() {
+    let examples = examples();
+    let example = &examples[EXAMPLE];
+    let mut setup = setup(example);
+    let Rows { both, only_b, .. } = four_rows(&mut setup);
+    let earned_both = orca::fees_owed_now(&setup.svm, &setup.pool, &both);
+    let earned_b = orca::fees_owed_now(&setup.svm, &setup.pool, &only_b);
+    let floor = earned_b.1;
+    assert!(
+        earned_b.0 == 0 && earned_both.0 > floor,
+        "{earned_both:?} {earned_b:?}"
+    );
+    let before = setup.balances();
+
+    let pool = setup.pool;
+    let owner = setup.owner.keypair.insecure_clone();
+    let run = harvest(
+        &setup,
+        example,
+        &owner,
+        &[(&both, &pool), (&only_b, &pool)],
+        floor,
+    );
+    let outcome = send(&mut setup, &owner, &[run]).unwrap_or_else(|failure| panic!("{failure:?}"));
+
+    assert_eq!(
+        orca::whirlpool_calls(&outcome.logs),
+        [UPDATE_FEES, COLLECT_FEES, UPDATE_FEES]
+    );
+    let after = setup.balances();
+    assert_eq!((after.0 - before.0, after.1 - before.1), earned_both);
+    let collected = orca::position_state(&setup.svm, &both);
+    assert_eq!((collected.fee_owed_a, collected.fee_owed_b), (0, 0));
+    let kept = orca::position_state(&setup.svm, &only_b);
+    assert_eq!((kept.fee_owed_a, kept.fee_owed_b), earned_b);
 }
 
 /// M6: Whirlpools numbers its errors from 6000, as Ballista does, so only the logs say who refused.
@@ -344,7 +399,10 @@ fn ten_rows_fit_one_legacy_transaction() {
     let ten = harvest(&setup, example, &owner, &rows[..10], 0);
     let outcome =
         send(&mut setup, &owner, &[budget, ten]).unwrap_or_else(|failure| panic!("{failure:?}"));
-    assert_eq!(orca::cpis_to(&outcome.logs, &WHIRLPOOL), 20);
+    assert_eq!(
+        orca::whirlpool_calls(&outcome.logs),
+        [UPDATE_FEES, COLLECT_FEES].repeat(10)
+    );
     println!(
         "ten rows: {} CU, {} bytes",
         outcome.compute_units, outcome.size

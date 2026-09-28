@@ -111,6 +111,39 @@ pub fn tick_array(pool: &Pool, tick: i32) -> Address {
         .0
 }
 
+/// Creates the tick array holding `tick` with Orca's `initialize_tick_array`, unless it exists,
+/// and returns its address. `payer` funds it. The snapshot holds only the arrays around each
+/// pool's price.
+pub fn initialize_tick_array(
+    svm: &mut LiteSVM,
+    pool: &Pool,
+    payer: &Keypair,
+    tick: i32,
+) -> Address {
+    let start = oq::get_tick_array_start_tick_index(tick, pool.tick_spacing);
+    let address = tick_array(pool, tick);
+    if svm.get_account(&address).is_none() {
+        let instruction = oc::InitializeTickArray {
+            whirlpool: pool.address,
+            funder: payer.pubkey(),
+            tick_array: address,
+            system_program: SYSTEM_PROGRAM_ID,
+        }
+        .instruction(oc::InitializeTickArrayInstructionArgs {
+            start_tick_index: start,
+        });
+        tx::send(svm, payer, &[], &[instruction], &[])
+            .unwrap_or_else(|failure| panic!("initialize_tick_array failed: {failure:?}"));
+    }
+    address
+}
+
+/// The widest range a position in `pool` can take.
+pub fn full_range(pool: &Pool) -> (i32, i32) {
+    let range = oq::get_full_range_tick_indexes(pool.tick_spacing);
+    (range.tick_lower_index, range.tick_upper_index)
+}
+
 /// Initializable ticks `from` and `to` ticks from the current one, rounded outward.
 pub fn range(svm: &LiteSVM, pool: &Pool, from: i32, to: i32) -> (i32, i32) {
     let tick = whirlpool(svm, &pool.address).tick_current_index;
@@ -412,8 +445,29 @@ pub fn fees_owed_now(svm: &LiteSVM, pool: &Pool, position: &Position) -> (u64, u
     (quote.fee_owed_a, quote.fee_owed_b)
 }
 
-/// How many times `program` was invoked one level down: in a run, the template's CPIs to it.
-pub fn cpis_to(logs: &[String], program: &Address) -> usize {
-    let invoked = format!("Program {program} invoke [2]");
-    logs.iter().filter(|line| **line == invoked).count()
+/// The name `update_fees_and_rewards` logs on entry.
+pub const UPDATE_FEES: &str = "UpdateFeesAndRewards";
+/// The name `collect_fees` logs on entry.
+pub const COLLECT_FEES: &str = "CollectFees";
+/// How [`whirlpool_calls`] shows a call that logs no instruction name, as
+/// `increase_liquidity_by_token_amounts_v2` does: it logs only its event.
+pub const UNNAMED: &str = "(no name logged)";
+
+/// The Whirlpool instructions a run invoked, in order, each by the name it logs on entry:
+/// [`UPDATE_FEES`], [`COLLECT_FEES`], or [`UNNAMED`].
+///
+/// A run's calls follow its steps and rows in order, so the sequence says which calls each row
+/// made; a count cannot. A collect of nothing moves nothing and leaves no trace in any account, so
+/// this is the only place an idle row's collect would show.
+pub fn whirlpool_calls(logs: &[String]) -> Vec<&str> {
+    let invoked = format!("Program {WHIRLPOOL} invoke [2]");
+    logs.iter()
+        .enumerate()
+        .filter(|(_, line)| **line == invoked)
+        .map(|(at, _)| {
+            logs.get(at + 1)
+                .and_then(|line| line.strip_prefix("Program log: Instruction: "))
+                .unwrap_or(UNNAMED)
+        })
+        .collect()
 }

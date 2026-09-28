@@ -10,7 +10,7 @@ use pinocchio::{
 };
 use solana_address::Address;
 
-use super::{introspect, math};
+use super::{introspect, math, registry};
 use crate::error::{vm_error, BallistaError};
 use crate::utils::pda;
 
@@ -238,12 +238,19 @@ pub fn split_group_prefix<'data>(
         .ok_or(RunError::VmAt(BallistaError::InvalidRunInputs, 0))
 }
 
+/// Runs `program` against `accounts`, the instruction's whole account list: the template's account
+/// first, then the runtime accounts the template names. Taking the list whole keeps the arguments
+/// to five words, all passed in registers. The template's address as a sixth argument went on the
+/// stack, and handing it on cost every run 2 compute units; this costs none, and the runs without
+/// a CPI came out 1 unit cheaper.
 pub fn run<'data>(
     program: &ProgramView<'data>,
     input_bytes: &'data [u8],
-    runtime_accounts: &'data [AccountView],
-    template_address: &Address,
+    accounts: &'data [AccountView],
 ) -> ProgramResult {
+    let [template, runtime_accounts @ ..] = accounts else {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    };
     let (group_lengths, input_bytes) =
         split_group_prefix(program, input_bytes).map_err(RunError::before_execution)?;
     let layout = validate_runtime_accounts(program, runtime_accounts, group_lengths)
@@ -264,6 +271,7 @@ pub fn run<'data>(
         layout.iterations,
         &mut registers,
         &mut scratch,
+        Some(template),
     )?;
     crate::profile::mark(crate::profile::TAG_EXECUTED);
     if program.header.flags() & PROGRAM_FLAG_EMIT_EVENT != 0 {
@@ -271,7 +279,7 @@ pub fn run<'data>(
             layout.iterations,
             scratch.expanded,
             scratch.executed,
-            template_address,
+            template.address(),
         ));
     }
     Ok(())
@@ -587,6 +595,10 @@ struct Machine<'run, 'data> {
     scratch: &'run mut Scratch<'data>,
     /// Batch rows supplied to this run.
     iterations: usize,
+    /// The running template's account, which registry entries are keyed by. `None` when a test or
+    /// a specification runs one instruction on its own through `execute_instruction`; an open then
+    /// fails.
+    template: Option<&'data AccountView>,
 }
 
 fn execute_root<'data>(
@@ -596,6 +608,7 @@ fn execute_root<'data>(
     iterations: usize,
     registers: &mut [RuntimeValue<'data>],
     scratch: &mut Scratch<'data>,
+    template: Option<&'data AccountView>,
 ) -> ProgramResult {
     let mut machine = Machine {
         program,
@@ -604,6 +617,7 @@ fn execute_root<'data>(
         registers,
         scratch,
         iterations,
+        template,
     };
     dispatch(&mut machine)
 }
@@ -844,6 +858,7 @@ pub fn execute_instruction<'data>(
         registers,
         scratch,
         iterations: 0,
+        template: None,
     };
     step(&mut machine, instruction, loop_context)
 }
@@ -1123,6 +1138,11 @@ fn extended_instruction<'data>(
             let length = introspect::bytes_len(operand(registers, instruction.a)?)?;
             set(registers, dst, RuntimeValue::U64(length))
         }
+        // A registry opcode names its entry by account, and all its work runs in one cold helper
+        // that takes the machine and the instruction, two words in registers.
+        OP_OPEN_REGISTRY | OP_READ_REGISTRY | OP_WRITE_REGISTRY => {
+            registry_instruction(machine, instruction)
+        }
         _ => write_output(machine, instruction),
     }
 }
@@ -1175,6 +1195,64 @@ fn write_output(machine: &mut Machine<'_, '_>, instruction: &InstructionRecord) 
         pinocchio::cpi::set_return_data(bytes);
     }
     Ok(())
+}
+
+/// `OPEN_REGISTRY`, `READ_REGISTRY` and `WRITE_REGISTRY`, reached through `extended_instruction`.
+/// Cold and out of line, as `write_output` is: measured on `65c9b45`, the arm and this helper
+/// cost no fixed case and no cookbook example anything.
+///
+/// An open checks or creates its entry and marks it open (see `registry::open`). A read or a write
+/// requires that mark, which only an open in this run sets, then touches only its field. The
+/// verifier guarantees the open before it, the field's range and the value's type; the checks
+/// here keep memory safe regardless.
+#[cold]
+#[inline(never)]
+fn registry_instruction(
+    machine: &mut Machine<'_, '_>,
+    instruction: &InstructionRecord,
+) -> RunResult<()> {
+    let immediate = instruction.immediate();
+    if instruction.opcode == OP_OPEN_REGISTRY {
+        let template = machine
+            .template
+            .ok_or(BallistaError::InvalidTemplateProgram)?;
+        let open = RegistryOpen::decode(immediate).ok_or(BallistaError::InvalidTemplateProgram)?;
+        let entry = resolve(machine.program, machine.accounts, instruction.a, None)?;
+        let payer = resolve(machine.program, machine.accounts, instruction.c, None)?;
+        let key = if instruction.b == NO_INDEX {
+            [0; 32]
+        } else {
+            match get(machine.registers, instruction.b)? {
+                RuntimeValue::Pubkey(key) => key,
+                _ => return Err(BallistaError::TypeMismatch.into()),
+            }
+        };
+        let id = registry::EntryId {
+            template: template.address(),
+            index: open.index,
+            key,
+        };
+        return registry::open(entry, payer, &id, usize::from(open.size));
+    }
+    let account = if instruction.opcode == OP_READ_REGISTRY {
+        instruction.a
+    } else {
+        instruction.b
+    };
+    let entry = resolve(machine.program, machine.accounts, account, None)?;
+    if !entry.is_borrowed_mut() {
+        return Err(BallistaError::InvalidTemplateProgram.into());
+    }
+    let offset = REGISTRY_ENTRY_HEADER_LEN + usize::from(immediate as u16);
+    let selector = (immediate >> 16) as u8;
+    if instruction.opcode == OP_READ_REGISTRY {
+        // SAFETY: no reference into the entry's data outlives the opcode that took it.
+        let data = unsafe { entry.borrow_unchecked() };
+        let value = read_value(selector, data, offset)?;
+        return set(machine.registers, instruction.dst as usize, value);
+    }
+    let value = operand(machine.registers, instruction.a)?;
+    registry::write_field(entry, offset, selector, value)
 }
 
 /// `MUL_DIV` and `MUL_DIV_CEIL`, out of line from `extended_instruction`. Inside it, their three
@@ -1554,9 +1632,29 @@ fn invoke_cpi<'data>(
     crate::profile::cpi_begin();
     let invoked = bounded_invoke(&instruction, scratch.views.as_slice());
     crate::profile::cpi_end();
-    invoked?;
+    invoked.map_err(|error| reentry_or(error, scratch.views.as_slice()))?;
     scratch.last_invoked = Some(program_account.address());
     Ok(())
+}
+
+/// What a CPI that `bounded_invoke` refused reports. It refuses a writable account whose data is
+/// borrowed, and during a run only a registry open marks an account's data exclusively borrowed,
+/// so a refusal of a CPI that passes such an account is one that could let a nested run write an
+/// open entry: `RegistryReentry`. Anything else passes through. (A CPI that passes an open entry
+/// read-only and some other borrowed account writable, which only the template's own account can
+/// be, reports `RegistryReentry` too; both fail the run.)
+///
+/// This is the whole reentry check. It runs only when an invocation fails, so a CPI that succeeds
+/// pays nothing for it; a check of the invoked program before every CPI measured 3 compute units a
+/// CPI, 89 on `run, payroll 30 rows`. It takes the views alone: given the whole `Scratch`, to
+/// look at the metas' writable flags as well, the invocation path cost 14 units more per CPI.
+#[cold]
+#[inline(never)]
+fn reentry_or(error: ProgramError, views: &[&AccountView]) -> RunError {
+    if error == ProgramError::AccountBorrowFailed && views.iter().any(|view| view.is_borrowed_mut()) {
+        return BallistaError::RegistryReentry.into();
+    }
+    error.into()
 }
 
 /// The descriptor a loop body invokes, when every invoke in it names the same one. A body with
@@ -2699,6 +2797,19 @@ mod tests {
                 );
             }
         }
+        // An open run on its own has no template to key its entry by.
+        assert_eq!(
+            execute_instruction(
+                &program,
+                &[],
+                &[],
+                &mut registers,
+                &mut scratch,
+                &record(OP_OPEN_REGISTRY, NO_INDEX, 0, NO_INDEX, 0, 0, 1 << 8),
+                None,
+            ),
+            Err(err(BallistaError::InvalidTemplateProgram))
+        );
         assert_eq!(registers[0], U64(7));
         assert!(
             scratch.output.is_none(),
@@ -2864,7 +2975,7 @@ mod tests {
             let inputs = [rounds];
             let mut registers = vec![Unset; program.header.register_count()];
             let mut scratch = Scratch::new(&program);
-            let result = execute_root(&program, &inputs, &[], 0, &mut registers, &mut scratch);
+            let result = execute_root(&program, &inputs, &[], 0, &mut registers, &mut scratch, None);
             (result, registers[total as usize])
         };
         // 0 + 1 + … + (rounds − 1), and no pass at all for zero rounds.
@@ -2909,7 +3020,7 @@ mod tests {
             let mut registers = vec![Unset; program.header.register_count()];
             let mut scratch = Scratch::new(&program);
             assert_eq!(
-                execute_root(&program, &[], &[], 0, &mut registers, &mut scratch),
+                execute_root(&program, &[], &[], 0, &mut registers, &mut scratch, None),
                 Ok(())
             );
             assert_eq!(registers[passes as usize], U64(3), "raise {raise}");
@@ -2950,7 +3061,7 @@ mod tests {
         let inputs = [U64(10), U64(20), U64(30)];
         let mut registers = vec![Unset; program.header.register_count()];
         let mut scratch = Scratch::new(&program);
-        execute_root(&program, &inputs, &[], 3, &mut registers, &mut scratch).unwrap();
+        execute_root(&program, &inputs, &[], 3, &mut registers, &mut scratch, None).unwrap();
         assert_eq!(registers[first as usize], U64(60));
         assert_eq!(registers[passes as usize], U64(3));
         // 10 × 0 + 20 × 1 + 30 × 2: the second FOREACH read every row again, with its index.
@@ -2981,6 +3092,7 @@ mod tests {
             registers: &mut registers,
             scratch: &mut scratch,
             iterations: 0,
+            template: None,
         };
         let mut slot = None;
         let body = enter_loop(&mut machine, first, &program.instructions[first], &mut slot);
@@ -3009,7 +3121,7 @@ mod tests {
         let mut registers = vec![Unset; program.header.register_count()];
         let mut scratch = Scratch::new(&program);
         assert_eq!(
-            execute_root(&program, &[], &[], 0, &mut registers, &mut scratch),
+            execute_root(&program, &[], &[], 0, &mut registers, &mut scratch, None),
             Err(ProgramError::Custom(encode_error(
                 BallistaError::InvalidTemplateProgram.code(),
                 inner as u16

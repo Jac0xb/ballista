@@ -12,6 +12,19 @@ export const ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES = Uint8Array.of(
   140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16,
   132, 4, 142, 123, 216, 219, 233, 248, 89,
 );
+/**
+ * `Sysvar1nstructions1111111111111111111111111`. Declare an account pinned to this address to read
+ * the transaction's instructions; every introspection expression names that account.
+ */
+export const INSTRUCTIONS_SYSVAR_ADDRESS_BYTES = Uint8Array.of(
+  6, 167, 213, 23, 24, 123, 209, 102, 53, 218, 212, 4, 85, 253, 194, 192, 193, 36, 198, 143, 33, 86, 117,
+  165, 219, 186, 203, 95, 8, 0, 0, 0,
+);
+/** `Ed25519SigVerify111111111111111111111111111`, the Ed25519 signature-verification precompile. */
+export const ED25519_PROGRAM_ADDRESS_BYTES = Uint8Array.of(
+  3, 125, 70, 214, 124, 147, 251, 190, 18, 249, 66, 143, 131, 141, 64, 255, 5, 112, 116, 73, 39, 244, 138,
+  100, 252, 202, 112, 68, 128, 0, 0, 0,
+);
 
 export function assertPda(input: {
   account: AccountReference;

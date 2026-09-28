@@ -3,6 +3,8 @@ import { ZodError } from 'zod';
 
 import {
   ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES,
+  ED25519_PROGRAM_ADDRESS_BYTES,
+  INSTRUCTIONS_SYSVAR_ADDRESS_BYTES,
   SYSTEM_PROGRAM_ADDRESS_BYTES,
   TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
@@ -1425,5 +1427,159 @@ describe('carried variables', () => {
     const all = records(compiled);
     expect(all[1]![0]).toBe(opcode.forEach);
     expect(readU64(all[1]!, 6)).toBe(1n << 0n);
+  });
+});
+
+describe('introspection expressions', () => {
+  const sysvar = account.fixed('instructions');
+  const compileWith = (steps: Step[], accounts: TemplateInput['accounts'] = {}) =>
+    compileTemplate(
+      defineTemplate({
+        inputs: { index: { type: 'u64' }, offset: { type: 'u64' } },
+        accounts: { instructions: { address: INSTRUCTIONS_SYSVAR_ADDRESS_BYTES }, ...accounts },
+        steps,
+      }),
+    );
+  /** The a, b, c and immediate of every record with `wanted`'s opcode. */
+  const operandsOf = (compiled: CompiledTemplate, wanted: number) =>
+    records(compiled)
+      .filter((record) => record[0] === wanted)
+      .map((record) => [record[2], record[3], record[4], readU64(record, 6)]);
+
+  test('each expression lowers to its opcode, with the sysvar in a and u64 registers in b and c', () => {
+    const index = expression.input('index');
+    const offset = expression.input('offset');
+    const compiled = compileWith([
+      step.let('count', expression.instructionCount(sysvar)),
+      step.let('current', expression.currentInstructionIndex(sysvar)),
+      step.let('program', expression.instructionProgram(sysvar, index)),
+      step.let('accounts', expression.instructionAccountCount(sysvar, index)),
+      step.let('key', expression.instructionAccount(sysvar, index, offset)),
+      step.let('flags', expression.instructionAccountFlags(sysvar, index, offset)),
+      step.let('length', expression.instructionDataLength(sysvar, index)),
+      step.let('word', expression.instructionData(sysvar, index, offset, 'i32')),
+      step.let('bytes', expression.instructionDataBytes(sysvar, index, offset, 12)),
+      step.require(expression.equal(expression.bytesLength(expression.variable('bytes')), expression.u64(12))),
+    ]);
+    // Inputs load first: `index` into r0, `offset` into r1. Account 0 is the sysvar.
+    const none = 0xff;
+    expect(operandsOf(compiled, opcode.instructionCount)).toEqual([[0, none, none, 0n]]);
+    expect(operandsOf(compiled, opcode.instructionIndex)).toEqual([[0, none, none, 0n]]);
+    expect(operandsOf(compiled, opcode.instructionProgram)).toEqual([[0, 0, none, 0n]]);
+    expect(operandsOf(compiled, opcode.instructionAccountCount)).toEqual([[0, 0, none, 0n]]);
+    expect(operandsOf(compiled, opcode.instructionAccount)).toEqual([[0, 0, 1, 0n]]);
+    expect(operandsOf(compiled, opcode.instructionAccountFlags)).toEqual([[0, 0, 1, 0n]]);
+    expect(operandsOf(compiled, opcode.instructionDataLength)).toEqual([[0, 0, none, 0n]]);
+    expect(operandsOf(compiled, opcode.readInstructionData)).toEqual([[0, 0, 1, BigInt(opcode.readI32)]]);
+    expect(operandsOf(compiled, opcode.readInstructionBytes)).toEqual([[0, 0, 1, 12n]]);
+    expect(operandsOf(compiled, opcode.bytesLength)).toHaveLength(1);
+  });
+
+  test('a number for an index, position or offset becomes a shared u64 constant', () => {
+    const compiled = compileWith([
+      step.require(
+        expression.equal(
+          expression.instructionData(sysvar, 2, 0, 'u8'),
+          expression.instructionData(sysvar, 2, 1, 'u8'),
+        ),
+      ),
+    ]);
+    expect(records(compiled).filter((record) => record[0] === opcode.constU64)).toHaveLength(3);
+  });
+
+  test('results are typed: keys are pubkeys, an i32 read is an i64, byte reads are that long', () => {
+    expect(() =>
+      compileWith([
+        step.require(
+          expression.equal(expression.instructionProgram(sysvar, 0), expression.pubkey(ED25519_PROGRAM_ADDRESS_BYTES)),
+        ),
+        step.require(expression.lessThan(expression.instructionData(sysvar, 0, 0, 'i32'), expression.i64(0))),
+      ]),
+    ).not.toThrow();
+    expect(() =>
+      compileWith([step.require(expression.equal(expression.instructionAccount(sysvar, 0, 0), expression.u64(0)))]),
+    ).toThrow(/matching types/);
+    // A byte read forwarded to a CPI declares exactly its length.
+    const compiled = compileWith(
+      [
+        step.invoke({
+          program: account.fixed('program'),
+          accounts: [],
+          data: [data.encode('bytes', expression.instructionDataBytes(sysvar, 0, 0, 40))],
+        }),
+      ],
+      { program: { executable: true, address: address(9) } },
+    );
+    expect(compiled.stats.maxCpiDataLength).toBe(40);
+  });
+
+  test('the sysvar must be a fixed account pinned to its address', () => {
+    for (const accounts of [{ other: {} }, { other: { address: address(3) } }]) {
+      expect(() =>
+        compileTemplate(
+          defineTemplate({
+            accounts,
+            steps: [step.require(expression.equal(expression.instructionCount(account.fixed('other')), expression.u64(1)))],
+          }),
+        ),
+      ).toThrow(/Instructions sysvar/);
+    }
+    expect(() =>
+      compileTemplate(
+        defineTemplate({
+          accounts: {},
+          batch: { maxIterations: 1, row: { rowSysvar: { address: INSTRUCTIONS_SYSVAR_ADDRESS_BYTES } } },
+          steps: [
+            step.forEach([
+              step.require(
+                expression.equal(expression.instructionCount(account.iteration('rowSysvar')), expression.u64(1)),
+              ),
+            ]),
+          ],
+        }),
+      ),
+    ).toThrow(/Instructions sysvar/);
+    expect(() =>
+      compileWith([
+        step.require(expression.equal(expression.instructionDataLength(sysvar, expression.i64(0)), expression.u64(1))),
+      ]),
+    ).toThrow(/instruction index requires u64/);
+  });
+
+  test('accountDataBytes reads a pinned, read-only account', () => {
+    const read = (constraint: TemplateInput['accounts'][string]) =>
+      compileTemplate(
+        defineTemplate({
+          accounts: { mint: constraint },
+          steps: [
+            step.require(
+              expression.equal(expression.accountDataBytes(account.fixed('mint'), 44, 1), expression.bytes(Uint8Array.of(6))),
+            ),
+          ],
+        }),
+      );
+    const compiled = read({ owner: TOKEN_PROGRAM_ADDRESS_BYTES });
+    expect(operandsOf(compiled, opcode.readAccountBytes)).toEqual([[0, 0, 0xff, 1n]]);
+    expect(() => read({})).toThrow(/pins neither owner nor address/);
+    expect(() => read({ owner: TOKEN_PROGRAM_ADDRESS_BYTES, writable: true })).toThrow(/declared writable/);
+  });
+
+  test('bytesLength takes bytes; byte reads take 1 to 1024 bytes', () => {
+    expect(() => compileWith([step.let('n', expression.bytesLength(expression.input('index')))])).toThrow(
+      /bytesLength requires bytes/,
+    );
+    for (const length of [0, 1025, 1.5]) {
+      expect(() => compileWith([step.let('b', expression.instructionDataBytes(sysvar, 0, 0, length))])).toThrow();
+    }
+  });
+
+  test('isSigner and isWritable test one flag bit', () => {
+    const compiled = compileWith([
+      step.require(expression.instructionAccountIsSigner(sysvar, 0, 1)),
+      step.require(expression.not(expression.instructionAccountIsWritable(sysvar, 0, 1))),
+    ]);
+    // Each flag is its own read, masked by its own bit.
+    expect(operandsOf(compiled, opcode.instructionAccountFlags)).toHaveLength(2);
+    expect(records(compiled).filter((record) => record[0] === opcode.bitAnd)).toHaveLength(2);
   });
 });

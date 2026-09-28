@@ -1,7 +1,9 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 
+import { INSTRUCTIONS_SYSVAR_ADDRESS_BYTES } from './helpers.js';
 import {
   TemplateSchema,
+  readWidth,
   type AccountConstraint,
   type AccountReference,
   type DataPart,
@@ -209,18 +211,6 @@ const readOpcode: Record<ReadType, number> = {
   i64: opcode.readI64,
   u128: opcode.readU128,
   pubkey: opcode.readPubkey,
-};
-
-const readWidth: Record<ReadType, number> = {
-  bool: 1,
-  u8: 1,
-  u16: 2,
-  u32: 4,
-  i32: 4,
-  u64: 8,
-  i64: 8,
-  u128: 16,
-  pubkey: 32,
 };
 
 const readResultType: Record<ReadType, ValueType> = {
@@ -909,6 +899,80 @@ class Compiler {
       const operation = { u64: opcode.castU64, i64: opcode.castI64, u128: opcode.castU128 }[current.to];
       return this.emit(operation, current.to, 0, value.register);
     }
+    if (current.kind === 'instructionCount' || current.kind === 'currentInstructionIndex') {
+      const sysvar = this.encodeSysvar(current.sysvar);
+      const operation = current.kind === 'instructionCount' ? opcode.instructionCount : opcode.instructionIndex;
+      return this.emit(operation, 'u64', 0, sysvar);
+    }
+    if (current.kind === 'instruction') {
+      const sysvar = this.encodeSysvar(current.sysvar);
+      const index = this.compileExpression(current.index, loop, bindings);
+      requireType(index, 'u64', 'instruction index');
+      const fields = {
+        program: [opcode.instructionProgram, 'pubkey'],
+        accountCount: [opcode.instructionAccountCount, 'u64'],
+        dataLength: [opcode.instructionDataLength, 'u64'],
+      } as const;
+      const [operation, type] = fields[current.field];
+      return this.emit(operation, type, 0, sysvar, index.register);
+    }
+    if (current.kind === 'instructionAccount') {
+      const sysvar = this.encodeSysvar(current.sysvar);
+      const index = this.compileExpression(current.index, loop, bindings);
+      const position = this.compileExpression(current.position, loop, bindings);
+      requireType(index, 'u64', 'instruction index');
+      requireType(position, 'u64', 'instruction account position');
+      return current.field === 'key'
+        ? this.emit(opcode.instructionAccount, 'pubkey', 0, sysvar, index.register, position.register)
+        : this.emit(opcode.instructionAccountFlags, 'u64', 0, sysvar, index.register, position.register);
+    }
+    if (current.kind === 'instructionData' || current.kind === 'instructionDataBytes') {
+      const sysvar = this.encodeSysvar(current.sysvar);
+      const index = this.compileExpression(current.index, loop, bindings);
+      const offset = this.compileExpression(current.offset, loop, bindings);
+      requireType(index, 'u64', 'instruction index');
+      requireType(offset, 'u64', `${current.kind} offset`);
+      if (current.kind === 'instructionData') {
+        const type = readResultType[current.type];
+        const selector = BigInt(readOpcode[current.type]);
+        return this.emit(opcode.readInstructionData, type, 0, sysvar, index.register, offset.register, selector);
+      }
+      return this.emit(
+        opcode.readInstructionBytes,
+        'bytes',
+        current.length,
+        sysvar,
+        index.register,
+        offset.register,
+        BigInt(current.length),
+      );
+    }
+    if (current.kind === 'accountDataBytes') {
+      const accountReference = this.encodeAccountReference(current.account, loop);
+      const constraint = this.constraintFor(current.account, loop);
+      this.requirePinnedForRead(current.account, constraint);
+      if (constraint.writable) {
+        throw new TypeError(
+          `accountDataBytes reads only accounts the transaction cannot write; ${current.account.name} is declared writable`,
+        );
+      }
+      const offset = this.compileExpression(current.offset, loop, bindings);
+      requireType(offset, 'u64', 'accountDataBytes offset');
+      return this.emit(
+        opcode.readAccountBytes,
+        'bytes',
+        current.length,
+        accountReference,
+        offset.register,
+        NO_INDEX,
+        BigInt(current.length),
+      );
+    }
+    if (current.kind === 'bytesLength') {
+      const value = this.compileExpression(current.value, loop, bindings);
+      requireType(value, 'bytes', 'bytesLength');
+      return this.emit(opcode.bytesLength, 'u64', 0, value.register);
+    }
     if (current.kind === 'select') {
       const condition = this.compileExpression(current.condition, loop, bindings);
       const ifTrue = this.compileExpression(current.ifTrue, loop, bindings);
@@ -976,6 +1040,17 @@ class Compiler {
         `${role} account ${reference.name} must pin an address; set unsafeUnpinned: true to accept any program`,
       );
     }
+  }
+
+  /** Introspection reads the Instructions sysvar through a fixed account pinned to its address. */
+  encodeSysvar(reference: AccountReference): number {
+    const constraint = reference.kind === 'account' ? this.constraintFor(reference, undefined) : undefined;
+    if (!constraint?.address || !equalBytes(constraint.address, INSTRUCTIONS_SYSVAR_ADDRESS_BYTES)) {
+      throw new TypeError(
+        `Account ${reference.name} must be a fixed account pinned to the Instructions sysvar (INSTRUCTIONS_SYSVAR_ADDRESS_BYTES)`,
+      );
+    }
+    return this.encodeAccountReference(reference, undefined);
   }
 
   /** Data reads only mean something when the account's layout is known, which needs a pin. */

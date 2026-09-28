@@ -6,6 +6,8 @@ const bytes32 = z.instanceof(Uint8Array).refine((value) => value.length === 32, 
   error: 'Expected 32 bytes',
 });
 const label = z.string().min(1).max(64).optional();
+/** A byte read's length: 1 to 1,024, the limit on every `bytes` value. */
+const byteReadLength = z.number().int().min(1).max(1_024);
 const bigintLike = z
   .union([z.bigint(), z.number().int().safe()])
   .transform((value) => BigInt(value));
@@ -17,9 +19,22 @@ const rangedBigint = (minimum: bigint, maximum: bigint) =>
 export const ValueTypeSchema = z.enum(['bool', 'u64', 'i64', 'u128', 'pubkey', 'bytes']);
 export type ValueType = z.infer<typeof ValueTypeSchema>;
 
-/** Widths a template can read from account data or return data. */
+/** Widths a template can read from account data, return data, or instruction data. */
 export const ReadTypeSchema = z.enum(['bool', 'u8', 'u16', 'u32', 'i32', 'u64', 'i64', 'u128', 'pubkey']);
 export type ReadType = z.infer<typeof ReadTypeSchema>;
+
+/** Bytes each read type occupies. */
+export const readWidth: Record<ReadType, number> = {
+  bool: 1,
+  u8: 1,
+  u16: 2,
+  u32: 4,
+  i32: 4,
+  u64: 8,
+  i64: 8,
+  u128: 16,
+  pubkey: 32,
+};
 
 export const InputSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('bool') }).strict(),
@@ -142,7 +157,50 @@ export type Expression =
   | { kind: 'powerOfTen'; exponent: Expression }
   | { kind: 'not'; value: Expression }
   | { kind: 'select'; condition: Expression; ifTrue: Expression; ifFalse: Expression }
-  | { kind: 'cast'; to: 'u64' | 'i64' | 'u128'; value: Expression };
+  | { kind: 'cast'; to: 'u64' | 'i64' | 'u128'; value: Expression }
+  /** How many instructions the transaction holds, from the Instructions sysvar `sysvar` names. */
+  | { kind: 'instructionCount'; sysvar: AccountReference }
+  /** The index of the instruction running this template. */
+  | { kind: 'currentInstructionIndex'; sysvar: AccountReference }
+  | {
+      /** A field of the transaction's instruction at `index`. */
+      kind: 'instruction';
+      sysvar: AccountReference;
+      index: Expression;
+      field: 'program' | 'accountCount' | 'dataLength';
+    }
+  | {
+      /** Account `position` of instruction `index`: its key, or its flags (bit 0 signer, bit 1 writable). */
+      kind: 'instructionAccount';
+      sysvar: AccountReference;
+      index: Expression;
+      position: Expression;
+      field: 'key' | 'flags';
+    }
+  | {
+      /** A typed read from instruction `index`'s data at a `u64` offset. */
+      kind: 'instructionData';
+      sysvar: AccountReference;
+      index: Expression;
+      offset: Expression;
+      type: ReadType;
+    }
+  | {
+      /** Exactly `length` bytes of instruction `index`'s data from a `u64` offset. */
+      kind: 'instructionDataBytes';
+      sysvar: AccountReference;
+      index: Expression;
+      offset: Expression;
+      length: number;
+    }
+  | {
+      /** Exactly `length` bytes of a read-only account's data from a `u64` offset. */
+      kind: 'accountDataBytes';
+      account: AccountReference;
+      offset: Expression;
+      length: number;
+    }
+  | { kind: 'bytesLength'; value: Expression };
 
 export const ExpressionSchema: z.ZodType<Expression> = z.lazy(() =>
   z.discriminatedUnion('kind', [
@@ -237,6 +295,52 @@ export const ExpressionSchema: z.ZodType<Expression> = z.lazy(() =>
         value: ExpressionSchema,
       })
       .strict(),
+    z.object({ kind: z.literal('instructionCount'), sysvar: AccountReferenceSchema }).strict(),
+    z.object({ kind: z.literal('currentInstructionIndex'), sysvar: AccountReferenceSchema }).strict(),
+    z
+      .object({
+        kind: z.literal('instruction'),
+        sysvar: AccountReferenceSchema,
+        index: ExpressionSchema,
+        field: z.enum(['program', 'accountCount', 'dataLength']),
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('instructionAccount'),
+        sysvar: AccountReferenceSchema,
+        index: ExpressionSchema,
+        position: ExpressionSchema,
+        field: z.enum(['key', 'flags']),
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('instructionData'),
+        sysvar: AccountReferenceSchema,
+        index: ExpressionSchema,
+        offset: ExpressionSchema,
+        type: ReadTypeSchema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('instructionDataBytes'),
+        sysvar: AccountReferenceSchema,
+        index: ExpressionSchema,
+        offset: ExpressionSchema,
+        length: byteReadLength,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('accountDataBytes'),
+        account: AccountReferenceSchema,
+        offset: ExpressionSchema,
+        length: byteReadLength,
+      })
+      .strict(),
+    z.object({ kind: z.literal('bytesLength'), value: ExpressionSchema }).strict(),
   ]),
 );
 
@@ -482,6 +586,35 @@ export const account = {
 const literal = (value: Literal): Expression => ({ kind: 'literal', value: LiteralSchema.parse(value) });
 const binary = (op: Extract<Expression, { kind: 'binary' }>['op']) =>
   (left: Expression, right: Expression): Expression => ({ kind: 'binary', op, left, right });
+/** An index, position or offset: a number becomes a `u64` constant. */
+const u64Operand = (value: number | Expression): Expression =>
+  typeof value === 'number' ? literal({ type: 'u64', value: BigInt(value) }) : value;
+const instructionField = (field: Extract<Expression, { kind: 'instruction' }>['field']) =>
+  (sysvar: AccountReference, index: number | Expression): Expression => ({
+    kind: 'instruction',
+    sysvar,
+    index: u64Operand(index),
+    field,
+  });
+/** Whether a flag bit of account `position` of instruction `index` is set. */
+const instructionAccountFlag = (bit: bigint) =>
+  (sysvar: AccountReference, index: number | Expression, position: number | Expression): Expression => ({
+    kind: 'binary',
+    op: 'notEqual',
+    left: {
+      kind: 'binary',
+      op: 'bitAnd',
+      left: {
+        kind: 'instructionAccount',
+        sysvar,
+        index: u64Operand(index),
+        position: u64Operand(position),
+        field: 'flags',
+      },
+      right: literal({ type: 'u64', value: bit }),
+    },
+    right: literal({ type: 'u64', value: 0n }),
+  });
 
 export const expression = {
   input: (name: string): Expression => ({ kind: 'input', name }),
@@ -544,6 +677,61 @@ export const expression = {
     ifFalse,
   }),
   cast: (to: 'u64' | 'i64' | 'u128', value: Expression): Expression => ({ kind: 'cast', to, value }),
+  instructionCount: (sysvar: AccountReference): Expression => ({ kind: 'instructionCount', sysvar }),
+  currentInstructionIndex: (sysvar: AccountReference): Expression => ({ kind: 'currentInstructionIndex', sysvar }),
+  instructionProgram: instructionField('program'),
+  instructionAccountCount: instructionField('accountCount'),
+  instructionDataLength: instructionField('dataLength'),
+  instructionAccount: (
+    sysvar: AccountReference,
+    index: number | Expression,
+    position: number | Expression,
+  ): Expression => ({
+    kind: 'instructionAccount',
+    sysvar,
+    index: u64Operand(index),
+    position: u64Operand(position),
+    field: 'key',
+  }),
+  /** Bit 0 is set when the account signs the instruction, bit 1 when it is writable. */
+  instructionAccountFlags: (
+    sysvar: AccountReference,
+    index: number | Expression,
+    position: number | Expression,
+  ): Expression => ({
+    kind: 'instructionAccount',
+    sysvar,
+    index: u64Operand(index),
+    position: u64Operand(position),
+    field: 'flags',
+  }),
+  instructionAccountIsSigner: instructionAccountFlag(1n),
+  instructionAccountIsWritable: instructionAccountFlag(2n),
+  instructionData: (
+    sysvar: AccountReference,
+    index: number | Expression,
+    offset: number | Expression,
+    type: ReadType,
+  ): Expression => ({ kind: 'instructionData', sysvar, index: u64Operand(index), offset: u64Operand(offset), type }),
+  instructionDataBytes: (
+    sysvar: AccountReference,
+    index: number | Expression,
+    offset: number | Expression,
+    length: number,
+  ): Expression => ({
+    kind: 'instructionDataBytes',
+    sysvar,
+    index: u64Operand(index),
+    offset: u64Operand(offset),
+    length,
+  }),
+  accountDataBytes: (accountReference: AccountReference, offset: number | Expression, length: number): Expression => ({
+    kind: 'accountDataBytes',
+    account: accountReference,
+    offset: u64Operand(offset),
+    length,
+  }),
+  bytesLength: (value: Expression): Expression => ({ kind: 'bytesLength', value }),
 };
 
 export const data = {

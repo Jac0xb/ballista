@@ -362,13 +362,15 @@ function isTemplateConstant(value: unknown): boolean {
  * - `cap`, `refillPerSecond` and `amount` are `u64` expressions. `cap` and `refillPerSecond` must
  *   be a template constant, written inline: a literal, such as `expression.u64(1_000_000)`, or
  *   arithmetic or logic over literals, such as `expression.multiply(expression.u64(1_000),
- *   expression.u64(1_000_000))`. A registry field is the one exception, since a registry entry's
- *   address is verified at runtime: an author-only branch can write a cap or rate there for
- *   `rateLimit` to read back. Everything else is refused — an input or row input, a variable (its
- *   origin cannot be traced), a read of the caller-built transaction, or of an account's data or
- *   fields (a caller can substitute any account not pinned by address) — because `cap` and
- *   `refillPerSecond` each appear once in the generated steps, so writing them inline costs
- *   nothing.
+ *   expression.u64(1_000_000))`. A registry field is the one exception, so that an author can set a
+ *   cap or rate later: the helper accepts it but cannot tell who wrote it. The entry's address is
+ *   verified at run time, but its fields hold whatever this template's runs wrote, so the template
+ *   must write that field only in an author-only branch (one that requires a pinned author
+ *   signer). A field any caller's run can write gives the caller the cap. Everything else is
+ *   refused: an input or row input, a variable (its origin cannot be traced), a read of the
+ *   caller-built transaction, or of an account's data or fields (a caller can substitute any
+ *   account not pinned by address). `cap` and `refillPerSecond` each appear once in the generated
+ *   steps, so writing them inline costs nothing.
  * - The registry account's `key` (passed to `account.registry`) must not come from the caller
  *   either: a key taken from an input lets a caller open a fresh entry on every run and spend past
  *   the cap forever. Key the entry by a signer's address, such as

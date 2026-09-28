@@ -17,7 +17,7 @@ shows each one. Plan:
   - `orca_setup.rs`: the Orca behaviors the fixes rest on, called without Ballista.
   - `orca_cpis.rs`: every Whirlpool call against Orca's own client.
   - `orca_compound_fees.rs`: 14 tests, four of them with a real `dustFloor`.
-  - `orca_harvest_many_positions.rs`: 9 tests, one with a real `dustFloor`.
+  - `orca_harvest_many_positions.rs`: 10 tests, one with a real `dustFloor`.
   - Each run's Whirlpool calls are asserted in order (`orca::whirlpool_calls`), not counted, so a
     call by the wrong row fails. A collect of nothing moves nothing, so no account would show it.
 - **Setup is real:** positions, deposits, withdrawals, swaps and updates go through Orca's
@@ -203,9 +203,10 @@ shows each one. Plan:
 
 Both templates named `tokenOwnerAccountA`/`tokenOwnerAccountB` as the fee destinations without
 pinning who holds them. Whirlpools' `collect_fees` checks only their mint against its vaults, never
-their owner (confirmed by reading the accounts Orca's own client builds for it, in
-`orca_cpis.rs`'s `orca_accounts`: neither `CollectFees` nor `UpdateFeesAndRewards` names an owner
-constraint on them, only which mint the transfer moves), so a run assembled by an untrusted builder
+their owner: `orca_setup.rs`'s pins show what Orca does check on the position side β€”
+`positionTokenAccount`'s mint, and that it holds exactly one β€” and nothing there touches who the fee
+accounts belong to (`orca_cpis.rs`'s `orca_accounts` shows only the client's own account list, not
+the program's checks), so a run assembled by an untrusted builder
 β€” a frontend, a bot, anything the real holder merely signs β€” could point them at the builder's own
 accounts and collect the position's real fees there.
 
@@ -219,24 +220,6 @@ landed and paid every fee owed to the stranger:
   micro-USDC).
 - harvest (one earning row, a stranger in both fee slots): landed, 25,131 CU; the stranger received
   (47,454,547, 4,745,455).
-
-**The first fix bound the wrong thing.** It required `tokenOwnerAccountA`/`B`'s owner to equal
-`positionAuthority`'s own key β€” the signer, not the position's holder. Whirlpools lets
-`positionAuthority` be a delegate approved on `positionTokenAccount` rather than the NFT's owner
-(that is what `MissingOrInvalidDelegate`, 6019, guards), so binding to the signer would have
-refused a legitimate delegate keeper managing someone else's position, or, bound to itself as
-signer, paid the keeper instead of the real holder it was compounding for.
-
-**Every path paid out, not only collect-only.** The first writeup said the reinvestment path
-"fails closed" because the deposit needs authority over the fee accounts that `positionAuthority`
-does not have by default when they are a stranger's. That default is the attacker's own choice, not
-a protocol guarantee: nothing stops an attacker from approving `positionAuthority` as a delegate on
-their own accounts before running the attack, which gives the reinvest step exactly the authority
-it needs. Reproduced pre-fix: compound's reinvest path, with the stranger's fee accounts delegated
-to the real owner's key beforehand (Token's own `approve`, a real signed transaction), still
-landed, at 43,406 CU, and the stranger kept the 327,114-micro-USDC remainder the deposit did not
-spend β€” the same remainder `two_sided_fees_are_collected_and_compounded` shows staying with the
-real holder on a legitimate run.
 
 **Fixed, and bound to the right thing.** Both templates require `tokenOwnerAccountA`/`B`'s owner
 field (SPL Token account offset 32) to equal `positionTokenAccount`'s own owner field β€” the
@@ -258,7 +241,7 @@ trustworthy without one. Both fee accounts still pin `owner: TOKEN_PROGRAM_ADDRE
   `tokenOwnerAccountB`, the real holder's own account in A. The first version of both regression
   tests put the stranger in both slots, so token A's comparison always failed first and the B
   comparison was never exercised β€” deleting it, or comparing it against the wrong account, would
-  still have passed both tests. This is what would have caught it: compound fails at pc 11.
+  still have passed both tests. This is what would have caught it: compound fails at pc 10.
 - `a_delegates_signature_still_pays_the_position_holder`: a keeper approved as a delegate on the
   position's NFT (`orca::approve_delegate`, Token's own `approve` sent as a real signed
   transaction β€” not a direct write beyond write rule 1's wallet balances) signs as
@@ -275,12 +258,12 @@ trustworthy without one. Both fee accounts still pin `owner: TOKEN_PROGRAM_ADDRE
 fix (the eight-row figure is the reviewer's probe; the rest are this file's own pre-M7 numbers).
 The run's own account list and inputs are unchanged either way, so wire size does not move:
 - compound: +576 CU on every path (11,882 β†’ 12,458 CU with no fees; every other row in the
-  Measurements table moved the same 576). 706 bytes, unchanged. Payload 440 β†’ 826 bytes.
+  Measurements table moved the same 576). 706 bytes, unchanged. Payload 714 β†’ 826 bytes.
 - harvest: no longer a flat per-transaction cost, since the holder check now runs once per row
   instead of once per transaction. Four rows 59,610 β†’ 61,200 CU; ten rows 237,622 β†’ 241,120 CU;
   eight rows, unbudgeted, 190,275 β†’ 193,145 CU (headroom under the default 200,000 tightens from
   about 5% to about 3.4%; see the harvest section's "Limits, measured"). 747/1,195/1,019 bytes,
-  unchanged. Payload 298 β†’ 590 bytes.
+  unchanged. Payload 478 β†’ 590 bytes.
 
 ## CI
 

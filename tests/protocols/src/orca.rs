@@ -51,6 +51,10 @@ pub const TICKS_PER_ARRAY: i32 = 88;
 /// [`WHIRLPOOL`]-specific one. Whirlpools raises it when an account's `has_one` target does not
 /// match, such as a position passed against a whirlpool it does not belong to.
 pub const ANCHOR_CONSTRAINT_HAS_ONE: u32 = 2001;
+/// Anchor's own `ConstraintRaw`, from the same framework-wide range. Whirlpools raises it when a
+/// plain `constraint = ...` check on an account fails, such as `position_token_account` not being
+/// the position's own NFT account.
+pub const ANCHOR_CONSTRAINT_RAW: u32 = 2003;
 
 /// The NFT metadata authority `open_position_with_token_extensions` names.
 const METADATA_UPDATE_AUTHORITY: Address =
@@ -476,6 +480,15 @@ pub fn position_state(svm: &LiteSVM, position: &Position) -> PositionState {
         fee_owed_a: decoded.fee_owed_a,
         fee_owed_b: decoded.fee_owed_b,
     }
+}
+
+/// `position`'s own NFT mint, from the position account's `position_mint` field.
+///
+/// # Panics
+///
+/// If `position` does not exist in the SVM, or is not a Whirlpool position.
+pub fn position_mint(svm: &LiteSVM, position: &Position) -> Address {
+    decode_position(svm, position).position_mint
 }
 
 /// The fees `update_fees_and_rewards` would record for `position` now, from Orca's

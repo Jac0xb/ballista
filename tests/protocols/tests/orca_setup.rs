@@ -6,7 +6,7 @@ use {
     ballista_protocol_tests::{
         orca::{self, Nft, Pool, Position, TokenWallet, SOL_USDC, USDC},
         tx,
-        wallet::{keypair, token_balance, SOL},
+        wallet::{keypair, token_account, token_balance, SOL},
     },
     ballista_sdk::TOKEN_PROGRAM_ID,
     litesvm::LiteSVM,
@@ -141,4 +141,52 @@ fn in_range_liquidity_needs_both_tokens() {
     });
     let failure = tx::send(&mut svm, &owner.keypair, &[], &[by_amounts], &[]).unwrap_err();
     orca::assert_whirlpool_error(&failure, oc::WhirlpoolError::LiquidityZero);
+}
+
+/// The root of M7's trust in the templates' unpinned read: both read `positionTokenAccount`'s
+/// owner field without pinning its own mint or amount, on the strength of Orca's own `collect_fees`
+/// refusing one that is not genuinely the position's NFT account. An empty account for the right
+/// mint and an account for the wrong mint both fail the same way: Anchor's generic
+/// `constraint = ...` failure, `ConstraintRaw`, not a named check.
+///
+/// Whirlpools also refuses one held by another program outright (`AccountOwnedByWrongProgram`,
+/// 3007) even when its mint, owner and amount are exactly right, but building that account needs a
+/// direct write to fake its owning program, which this suite forbids (see `findings/orca.md`); only
+/// the two legitimately-built cases above are pinned here.
+#[test]
+fn collect_fees_refuses_a_position_token_account_that_does_not_hold_the_nft() {
+    let (mut svm, pool, owner, _, position) = funded_position("setup fake token account");
+    let attacker = orca::token_wallet(
+        &mut svm,
+        &orca::seed("setup fake token account attacker"),
+        0,
+        0,
+    );
+    // A real ATA the attacker holds, for the position's own mint, but empty.
+    let mint = orca::position_mint(&svm, &position);
+    let empty_ata = token_account(&mut svm, &attacker.keypair.pubkey(), &mint, 0);
+
+    for (label, fake) in [
+        ("an empty ATA for the position's own mint", empty_ata),
+        ("the attacker's own USDC account", attacker.token_b),
+    ] {
+        let collect = oc::CollectFees {
+            whirlpool: pool.address,
+            position_authority: owner.keypair.pubkey(),
+            position: position.address,
+            position_token_account: fake,
+            token_owner_account_a: owner.token_a,
+            token_vault_a: pool.vault_a,
+            token_owner_account_b: owner.token_b,
+            token_vault_b: pool.vault_b,
+            token_program: TOKEN_PROGRAM_ID,
+        }
+        .instruction();
+        let failure = tx::send(&mut svm, &owner.keypair, &[], &[collect], &[]).unwrap_err();
+        assert_eq!(
+            (failure.program, failure.code),
+            (orca::WHIRLPOOL, Some(orca::ANCHOR_CONSTRAINT_RAW)),
+            "{label}: {failure:?}"
+        );
+    }
 }

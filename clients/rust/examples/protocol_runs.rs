@@ -123,6 +123,10 @@ pub struct HarvestRow {
 
 /// Shape three: batch rows. The iteration count comes from how many rows are passed, so there is
 /// no count in the instruction data to get wrong.
+///
+/// Every row must belong to the same holder: `owner_accounts` are fixed for the whole batch, and
+/// the fees a row earns reach them only when that row's own position NFT is held by the same
+/// owner.
 pub fn run_orca_harvest(
     template: Pubkey,
     authority: Pubkey,

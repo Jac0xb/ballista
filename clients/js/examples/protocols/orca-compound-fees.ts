@@ -45,6 +45,14 @@
  * mint, never who owns them, so nothing else stops a run built by someone else from pointing them
  * anywhere; the template requires it itself (`feesGoToThePositionHolder`).
  *
+ * A delegate keeper that reinvests, not merely collects, must also be approved on
+ * `tokenOwnerAccountA` and `tokenOwnerAccountB` themselves, not only on the position's NFT:
+ * `increase_liquidity_by_token_amounts_v2` debits them under `positionAuthority`'s signature, which
+ * the NFT approval does not cover. With only the NFT approved, a run whose `dustFloor` is 0 still
+ * reaches the deposit and fails with Token's `OwnerMismatch` (error 4); the collect before it
+ * reverts too. Approve the keeper for a bounded amount there, not `u64::MAX`: an unlimited approval
+ * lets it spend the account outside this template as well.
+ *
  * Offsets come from `Position`, declared as `whirlpool, position_mint, liquidity,
  * tick_lower_index, tick_upper_index, fee_growth_checkpoint_a, fee_owed_a,
  * fee_growth_checkpoint_b, fee_owed_b, reward_infos` with `LEN = 8 + 136 + 72`.

@@ -468,6 +468,57 @@ fn fees_must_go_to_the_position_holder_in_token_b_alone() {
     assert_fees_must_go_to_the_position_holder((false, true));
 }
 
+/// Security: a batch's rows can hold positions from different holders, and each row's own holder
+/// is checked against the fixed fee accounts, not just the first row's. Row 2 here belongs to a
+/// second holder while the fee accounts are row 1's own, so the batch fails
+/// `positionBelongsToTheFeeOwner` on row 2, after row 1's own check passed and its update and
+/// collect already ran inside the same instruction; the whole batch, row 1's collect included,
+/// reverts with it.
+#[test]
+fn a_row_from_another_holder_reverts_the_whole_harvest_too() {
+    let examples = examples();
+    let example = &examples[EXAMPLE];
+    let mut setup = setup(example);
+    let Rows { both, .. } = four_rows(&mut setup);
+    let earned = orca::fees_owed_now(&setup.svm, &setup.pool, &both);
+    assert!(earned.0 > 0 && earned.1 > 0, "{earned:?}");
+
+    // A second holder's own position, on `both`'s exact tick bounds so its tick arrays are the
+    // ones already initialized; it needs no liquidity, since the holder check runs before either
+    // invoke.
+    let other_holder =
+        orca::token_wallet(&mut setup.svm, &orca::seed("harvest second holder"), 0, 0);
+    let foreign = orca::open_position(
+        &mut setup.svm,
+        &setup.pool,
+        &other_holder,
+        &keypair(&orca::seed("harvest second holder position")),
+        (both.lower, both.upper),
+        Nft::Token,
+    );
+    let before = setup.balances();
+
+    let pool = setup.pool;
+    let owner = setup.owner.keypair.insecure_clone();
+    let run = harvest(
+        &setup,
+        example,
+        &owner,
+        &[(&both, &pool), (&foreign, &pool)],
+        0,
+    );
+    let failure = send(&mut setup, &owner, &[run]).unwrap_err();
+
+    tx::assert_requirement_failed(&failure, example, "positionBelongsToTheFeeOwner");
+    // Row 1 belonged to the fee owner, so its own check passed and its calls already ran before
+    // row 2's failed the batch.
+    assert_eq!(
+        orca::whirlpool_calls(&failure.logs),
+        [UPDATE_FEES, COLLECT_FEES]
+    );
+    assert_eq!(setup.balances(), before, "row 1's collect reverted too");
+}
+
 /// A delegate keeper can sign as `positionAuthority` for a row's position it does not hold β€”
 /// Whirlpools accepts a delegate approved on that row's `positionTokenAccount` in the holder's
 /// place, refusing one that is neither with `MissingOrInvalidDelegate` (6019) β€” and the run still

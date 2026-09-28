@@ -20,10 +20,12 @@ solana-account = "4"
 solana-address = { version = "2", features = ["copy", "curve25519", "decode"] }  # Copy, PDAs, base58
 solana-clock = "3"
 solana-compute-budget-interface = "3"
+solana-ed25519-program = "3"  # Solana's own Ed25519 instruction builder, to check the ported one
 solana-epoch-schedule = { version = "3", features = ["sysvar", "wincode"] }  # mainnet's, without warmup
 solana-instruction = "3"
 solana-keypair = "3"
 solana-message = "4"
+solana-precompile-error = "3"  # names the Ed25519 precompile's failures
 solana-sdk-ids = "3"          # bpf_loader_upgradeable, address_lookup_table, sysvar ids
 solana-signer = "3"
 solana-transaction = { version = "4", features = ["wincode"] }  # wire-size assertion

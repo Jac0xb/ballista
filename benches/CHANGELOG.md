@@ -59,6 +59,9 @@ the same commit and says why here.
 - **Checked:** the executor's unit tests, and the Mollusk suite with its ceilings. Later commits on
   the branch run the path on chain: a fixture that logs between two sends of a cached transfer
   payload, and generated programs that log and return data.
+  - Two earlier commits fail the ceiling test: at `9ec10fc` and `683689f`, `create template,
+    payroll 30 rows` measures 4,481 against its 4,470 ceiling, which `d6faac0` raises. Expect that
+    when bisecting across them.
 - **Watch:** `sol_log_data` charges 100 CU per call, 100 per field and 1 per byte, so a 1,024-byte
   `EMIT` costs 1,224 CU in the syscall alone.
 
@@ -292,6 +295,14 @@ combined numbers; the entries after it keep what each branch measured alone.
   - In the verifier, both opcodes in one out-of-line helper. Reached from a shared arm, `create
     template` rose 7 rather than 11, but each cookbook example's create moved between −14 and +13
     against the two arms. Reached from the fallback arm, it rose 13.
+  - Routing the outputs from `dispatch`'s failure branch, where loops are entered, so that a loop
+    entry no longer passes through `write_output`:
+    - Calling `write_output` there and then setting `rest = tail` cost +4,462 CU over the 44
+      ceiling cases, from register pressure in `dispatch`.
+    - Rebuilding `rest` and `loop_context` from `current` after the call was −142 net, but single
+      cases moved between −99 and +110, and the output case cost 96 more.
+    - The outputs stay behind `extended_instruction`'s fallback arm, and each loop entry keeps its
+      +8.
 
 ## Landed
 

@@ -23,6 +23,7 @@ import {
   compileTemplate,
   data,
   defineTemplate,
+  inspectTemplate,
   ensureAssociatedTokenAccount,
   expression,
   step,
@@ -624,6 +625,8 @@ describe('shared compiler fixtures', () => {
   for (const [name, define] of Object.entries(fixtures)) {
     test(name, () => {
       const compiled = compileTemplate(define());
+      // Read back out of the bytes, as a client inspects a template it did not compile.
+      expect(inspectTemplate(compiled.bytes)).toEqual(compiled.stats);
       const entry = { hash: hex(compiled.hash), stats: compiled.stats, sourceMap: compiled.sourceMap };
       const hexPath = `${FIXTURE_DIR}${name}.hex`;
       if (UPDATE) {

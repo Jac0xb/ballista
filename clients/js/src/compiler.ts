@@ -40,7 +40,7 @@ export const MAX_REGISTRY_SIZE = 512;
 /** An entry's header before its fields: magic, version, registry index, template and key. */
 export const REGISTRY_ENTRY_HEADER_LENGTH = 72;
 /** The CPIs an open makes at most: a transfer, an allocate and an assign for a pre-funded entry. */
-const REGISTRY_OPEN_CPIS = 3;
+export const REGISTRY_OPEN_CPIS = 3;
 
 /** Program header flag: emit a `BEV1` data log after every successful run. */
 export const PROGRAM_FLAG_EMIT_EVENT = 1;

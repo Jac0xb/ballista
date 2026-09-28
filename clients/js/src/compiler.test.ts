@@ -1805,6 +1805,8 @@ describe('registries: compiler', () => {
     const pcs = records(compiled).map((record) => record[0]);
     expect(pcs.lastIndexOf(opcode.openRegistry)).toBeLessThan(pcs.indexOf(opcode.readRegistry));
     expect(compiled.stats.maxExpandedCpis).toBe(9);
+    // Read back out of the bytes, each open counts three CPIs as well.
+    expect(inspectTemplate(compiled.bytes)).toEqual(compiled.stats);
   });
 
   test('reads and writes fields at their packed offsets and types', () => {

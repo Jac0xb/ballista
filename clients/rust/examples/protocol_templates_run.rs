@@ -801,7 +801,8 @@ pub fn run_marginfi_to_kamino(
 pub struct Quote {
     /// Quote-token base units per 1,000,000 base-token base units.
     pub price: u64,
-    /// The most base-token base units the maker delivers.
+    /// The most base-token base units the maker delivers in one settlement. The quote can settle
+    /// again until it expires, so this bounds each settlement, not the total.
     pub max_amount: u64,
     /// The last Unix timestamp at which the quote can settle.
     pub expiry: i64,

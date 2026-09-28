@@ -169,3 +169,17 @@ fn deposits_into_kamino_exactly_what_marginfi_released() {
     kamino::assert_deposit_took_all_but_rounding(released, taken, left, minted);
     assert_eq!(marginfi::active_banks(&svm, &scene.marginfi_account), []);
 }
+
+#[test]
+fn a_floor_above_the_position_refuses_at_worth_rebalancing() {
+    let (mut svm, scene) = scene();
+    let run = run(&svm, &scene, DEPOSIT + 1);
+    let failure = send_run(&mut svm, &scene, run).unwrap_err();
+    tx::assert_requirement_failed(&failure, &template::examples()[NAME], "worthRebalancing");
+    assert_eq!(
+        marginfi::active_banks(&svm, &scene.marginfi_account),
+        [USDC_BANK]
+    );
+    assert_eq!(wallet::token_balance(&svm, &scene.wallet_ata), 0);
+    assert_eq!(kamino::deposited(&svm, &scene.obligation, &USDC_RESERVE), 0);
+}

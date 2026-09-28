@@ -204,6 +204,26 @@ fn repays_exactly_what_the_swap_produced() {
     );
 }
 
+#[test]
+fn a_floor_above_the_swap_refuses_at_swap_worth_repaying() {
+    let (mut svm, scene) = scene();
+    let produced = lending::swap_output(&svm, &scene.leg);
+    let debt_before = kamino::borrowed_sf(&svm, &scene.obligation, &USDC_RESERVE);
+
+    let run = run(&svm, &scene, produced + 1);
+    let failure = send_run(&mut svm, &scene, run).unwrap_err();
+    tx::assert_requirement_failed(&failure, &template::examples()[NAME], "swapWorthRepaying");
+    assert_eq!(
+        kamino::borrowed_sf(&svm, &scene.obligation, &USDC_RESERVE),
+        debt_before
+    );
+    assert_eq!(
+        wallet::token_balance(&svm, &scene.leg.source_token_account),
+        scene.leg.in_amount,
+        "the swap reverted with the run"
+    );
+}
+
 /// klend's repayment takes any USDC account the borrower can spend from, including one whose owner
 /// approved the borrower as its delegate. So a builder can have the route pay an attacker's account
 /// approved that way. klend repays only the debt, here half what the swap produced, and the rest

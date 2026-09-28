@@ -1317,16 +1317,16 @@
     ]
   },
   "rate-limited-transfer": {
-    "hash": "b33f5c3ee401b5ecbe29cb67b06486a00832a389093ff85b60fcb4a5547c17cc",
+    "hash": "4cc863d3898a95a6f40ccd9db263ef1c02305942cec69e0b94c00d0b5446e50c",
     "stats": {
-      "payloadBytes": 544,
+      "payloadBytes": 528,
       "fixedAccounts": 4,
       "batchStride": 0,
       "batchMaxIterations": 0,
       "batchMinIterations": 0,
       "inputs": 1,
-      "registers": 21,
-      "instructions": 26,
+      "registers": 20,
+      "instructions": 25,
       "cpis": 1,
       "maxExpandedCpis": 4,
       "maxCpiDataLength": 12,
@@ -1349,7 +1349,7 @@
       },
       {
         "pc": 3,
-        "path": "constants[2]"
+        "path": "accounts.limits"
       },
       {
         "pc": 4,
@@ -1357,11 +1357,11 @@
       },
       {
         "pc": 5,
-        "path": "accounts.limits"
+        "path": "steps[0]"
       },
       {
         "pc": 6,
-        "path": "steps[0]"
+        "path": "steps[1]"
       },
       {
         "pc": 7,
@@ -1369,7 +1369,7 @@
       },
       {
         "pc": 8,
-        "path": "steps[1]"
+        "path": "steps[2]"
       },
       {
         "pc": 9,
@@ -1377,70 +1377,66 @@
       },
       {
         "pc": 10,
-        "path": "steps[2]"
+        "path": "steps[3]"
       },
       {
         "pc": 11,
-        "path": "steps[2]"
+        "path": "steps[3]"
       },
       {
         "pc": 12,
-        "path": "steps[2]"
+        "path": "steps[3]"
       },
       {
         "pc": 13,
-        "path": "steps[2]"
+        "path": "steps[3]"
       },
       {
         "pc": 14,
-        "path": "steps[2]"
+        "path": "steps[4]"
       },
       {
         "pc": 15,
-        "path": "steps[3]"
+        "path": "steps[4]"
       },
       {
         "pc": 16,
-        "path": "steps[3]"
+        "path": "steps[4]"
       },
       {
         "pc": 17,
-        "path": "steps[3]"
+        "path": "steps[4]"
       },
       {
         "pc": 18,
-        "path": "steps[3]"
+        "path": "steps[5]",
+        "label": "withinRateLimit"
       },
       {
         "pc": 19,
-        "path": "steps[4]",
+        "path": "steps[5]",
         "label": "withinRateLimit"
       },
       {
         "pc": 20,
-        "path": "steps[4]",
+        "path": "steps[5]",
         "label": "withinRateLimit"
       },
       {
         "pc": 21,
-        "path": "steps[4]",
-        "label": "withinRateLimit"
-      },
-      {
-        "pc": 22,
-        "path": "steps[5]"
-      },
-      {
-        "pc": 23,
-        "path": "steps[5]"
-      },
-      {
-        "pc": 24,
         "path": "steps[6]"
       },
       {
-        "pc": 25,
-        "path": "steps[7]",
+        "pc": 22,
+        "path": "steps[6]"
+      },
+      {
+        "pc": 23,
+        "path": "steps[7]"
+      },
+      {
+        "pc": 24,
+        "path": "steps[8]",
         "label": "pay"
       }
     ]

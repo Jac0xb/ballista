@@ -576,7 +576,7 @@ export const fixtures: Record<string, () => Template> = {
   },
   /**
    * A transfer of `amount` lamports from the caller, capped per caller at 1,000,000 lamports that
-   * refill at 10 a second. The Mollusk suite runs it across a clock change.
+   * refill at 10 a second. The Mollusk suite runs it as the clock moves on and steps back.
    */
   'rate-limited-transfer': () =>
     defineTemplate({

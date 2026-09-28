@@ -1913,6 +1913,7 @@ describe('rateLimit', () => {
   test('refills in u128, requires withinRateLimit, and writes both fields back', () => {
     const steps = limited().steps;
     expect(steps.map((item) => (item.kind === 'let' ? `let ${item.name}` : item.kind))).toEqual([
+      'let rateLimitLast',
       'let rateLimitNow',
       'let rateLimitSpent',
       'let rateLimitRefill',
@@ -1921,6 +1922,20 @@ describe('rateLimit', () => {
       'setRegistry',
       'setRegistry',
     ]);
+    // The run's time is the clock, but never earlier than the last spend, and it is what the run
+    // writes back: after a clock that steps back, `lastSpend` stays put, so no later run refills
+    // the same seconds twice, and the elapsed time is never below zero.
+    const last = expression.variable('rateLimitLast');
+    const now = expression.variable('rateLimitNow');
+    expect(steps[0]).toMatchObject({ value: expression.registry('limits', 'lastSpend') });
+    expect(steps[1]).toMatchObject({ value: expression.max(expression.clockUnixTimestamp(), last) });
+    expect(steps[3]).toMatchObject({
+      value: expression.multiply(
+        expression.cast('u128', expression.subtract(now, last)),
+        expression.cast('u128', expression.input('refillPerSecond')),
+      ),
+    });
+    expect(steps.at(-1)).toMatchObject({ kind: 'setRegistry', field: 'lastSpend', value: now });
     const compiled = compileTemplate(limited());
     expect(compiled.sourceMap.some((entry) => entry.label === 'withinRateLimit')).toBe(true);
     const kinds = records(compiled).map((record) => record[0]);
@@ -1941,7 +1956,8 @@ describe('rateLimit', () => {
       lastSpend: 'at',
       name: 'daily',
     });
-    expect(steps[0]).toMatchObject({ kind: 'let', name: 'dailyNow' });
+    expect(steps[0]).toMatchObject({ kind: 'let', name: 'dailyLast', value: expression.registry('limits', 'at') });
+    expect(steps[1]).toMatchObject({ kind: 'let', name: 'dailyNow' });
     expect(steps.find((item) => item.kind === 'require')).toMatchObject({ label: 'withinDaily' });
     expect(steps.filter((item) => item.kind === 'setRegistry').map((item) => (item as { field: string }).field)).toEqual([
       'used',

@@ -132,9 +132,11 @@ defineTemplate({
   example a sender's and a receiver's) stay distinct. `expression.accountKey` and
   `account.systemProgram()` are new helpers the example needs.
 - `rateLimit(...)` is an SDK helper, like `ed25519Signature`. It reads `spent` and `lastSpend`,
-  refills `spent` by `(now − lastSpend) × refillPerSecond` without going below zero (in `u128`, so
-  a long gap cannot overflow; a fresh entry's `lastSpend` of 0 refills fully), adds `amount`,
-  requires the total to be at most `cap` (`withinRateLimit`), and writes both fields back.
+  takes `now` as the clock or `lastSpend` if the clock reads earlier, refills `spent` by
+  `(now − lastSpend) × refillPerSecond` without going below zero (in `u128`, so a long gap cannot
+  overflow; a fresh entry's `lastSpend` of 0 refills fully), adds `amount`, requires the total to
+  be at most `cap` (`withinRateLimit`), and writes `spent` and `now` back. The clock can step back
+  between slots; `lastSpend` never does, so no run refills the same seconds twice.
 - The Rust `ProgramBuilder` gains `open_registry`, `read_registry` and `write_registry`.
 - A client derives an entry's address and bump with `findRegistryEntryAddress(template,
   registryIndex, key)` from `@jac0xb/ballista/kit`, or `find_registry_entry_address` in the Rust

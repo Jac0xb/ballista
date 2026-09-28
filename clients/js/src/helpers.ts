@@ -310,19 +310,23 @@ export function ed25519Signature(input: {
  * fixed account `registry` (declared with `account.registry`).
  *
  * The entry's `spent` field (a `u64`) is what has been spent and not yet refilled, and its
- * `lastSpend` field (an `i64`) the Unix time of the last spend. Each run refills `spent` by
- * `(now − lastSpend) × refillPerSecond`, never below zero, adds `amount`, requires the total to be
- * at most `cap`, and writes both fields back.
+ * `lastSpend` field (an `i64`) the Unix time of the last spend. Each run takes `now` as the clock,
+ * or `lastSpend` if the clock reads earlier, refills `spent` by `(now − lastSpend) ×
+ * refillPerSecond`, never below zero, adds `amount`, requires the total to be at most `cap`, and
+ * writes `spent` and `now` back.
  *
  * - The refill is computed in `u128`: the elapsed seconds are below 2^63 and the rate below 2^64,
  *   so no gap between runs can overflow it. A fresh entry's `lastSpend` of 0 refills fully.
- * - A clock that reads earlier than `lastSpend` refills nothing rather than failing the run.
+ * - The clock can step back between slots. A run then refills nothing, rather than failing, and
+ *   leaves `lastSpend` where it was: it never moves back, so no later run refills the same seconds
+ *   twice.
  * - `cap`, `refillPerSecond` and `amount` are `u64` expressions. `cap` and `refillPerSecond` are
  *   the template's to choose, not the caller's: pass constants, or inputs only when whoever builds
  *   the transaction may set their own limit.
  *
- * `name` prefixes the variables the steps bind, `<name>Now`, `<name>Spent`, `<name>Refill` and
- * `<name>Total`, and names the requirement `within<Name>`: `withinRateLimit` by default.
+ * `name` prefixes the variables the steps bind, `<name>Last`, `<name>Now`, `<name>Spent`,
+ * `<name>Refill` and `<name>Total`, and names the requirement `within<Name>`: `withinRateLimit` by
+ * default.
  */
 export function rateLimit(input: {
   registry: string;
@@ -339,18 +343,18 @@ export function rateLimit(input: {
   const spentField = input.spent ?? 'spent';
   const lastSpendField = input.lastSpend ?? 'lastSpend';
   const u128 = (value: Expression) => expression.cast('u128', value);
+  const last = expression.variable(`${name}Last`);
   const now = expression.variable(`${name}Now`);
   const spent = expression.variable(`${name}Spent`);
   const refill = expression.variable(`${name}Refill`);
   const total = expression.variable(`${name}Total`);
-  const elapsed = expression.max(
-    expression.subtract(now, expression.registry(input.registry, lastSpendField)),
-    expression.i64(0),
-  );
   return [
-    step.let(`${name}Now`, expression.clockUnixTimestamp()),
+    step.let(`${name}Last`, expression.registry(input.registry, lastSpendField)),
+    // `now` never reads earlier than `lastSpend`, so `now − lastSpend` is never negative, and the
+    // `lastSpend` written back never moves back.
+    step.let(`${name}Now`, expression.max(expression.clockUnixTimestamp(), last)),
     step.let(`${name}Spent`, u128(expression.registry(input.registry, spentField))),
-    step.let(`${name}Refill`, expression.multiply(u128(elapsed), u128(input.refillPerSecond))),
+    step.let(`${name}Refill`, expression.multiply(u128(expression.subtract(now, last)), u128(input.refillPerSecond))),
     step.let(
       `${name}Total`,
       expression.add(expression.subtract(spent, expression.min(spent, refill)), u128(input.amount)),

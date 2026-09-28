@@ -3951,6 +3951,16 @@ mod tests {
             context.mollusk.sysvars.clock.unix_timestamp -= 5;
             let result = pay(&context, 1);
             assert_eq!(labeled(&result, "rate-limited-transfer"), (REQUIREMENT_FAILED, "withinRateLimit".into()));
+            // A run that lands while the clock is behind leaves the last spend where it was, so
+            // once the clock catches up the seconds already refilled are not refilled again: ten
+            // seconds after the last spend refill 100 lamports, not the 150 that fifteen seconds
+            // after the stepped-back clock would.
+            assert!(pay(&context, 0).program_result.is_ok());
+            assert_eq!(account(&context, entry).data[80..88], 1_800_000_010i64.to_le_bytes());
+            context.mollusk.sysvars.clock.unix_timestamp += 15;
+            let result = pay(&context, 101);
+            assert_eq!(labeled(&result, "rate-limited-transfer"), (REQUIREMENT_FAILED, "withinRateLimit".into()));
+            assert!(pay(&context, 100).program_result.is_ok());
 
             // A long gap refills more than was spent: the refill stops at nothing spent, so the
             // whole cap lands again and one lamport more does not.

@@ -346,7 +346,8 @@ fn a_swap_past_the_cap_waits_for_the_refill() {
     assert_requirement_failed(&failure, example, "withinRateLimit");
     assert!(!cap.jupiter_ran(&failure), "{failure:?}");
     println!(
-        "refused at withinRateLimit after {} CU in Ballista's run",
+        "refused at withinRateLimit (pc {}) after {} CU in Ballista's run",
+        ballista_error(&failure).unwrap().1,
         units_of(&failure.logs, &ballista_sdk::ID).unwrap()
     );
 
@@ -413,9 +414,11 @@ fn a_second_caller_has_its_own_limit() {
     );
     assert_eq!(cap.svm.get_account(&second.leg.source_token_account), None);
     println!(
-        "second caller, creating its entry: {} CU in the transaction, {} in Ballista's run; {} bytes",
+        "second caller, creating its entry: {} CU in the transaction, {} in Ballista's run, {} of \
+         them Jupiter's; {} bytes",
         outcome.compute_units,
         outcome.compute_units_of(&ballista_sdk::ID).unwrap(),
+        outcome.compute_units_of(&cap.jupiter).unwrap(),
         outcome.size,
     );
 }

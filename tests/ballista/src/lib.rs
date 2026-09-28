@@ -3812,22 +3812,24 @@ mod tests {
             assert_eq!(account(&context, entry).data[72..], inputs[..]);
         }
 
-        /// A registry template that, after its open, invokes Ballista to run `inner` with the
-        /// accounts `pass` names; `pass_entry` also passes its entry, writable.
-        fn nested(pass_entry: bool) -> Vec<u8> {
+        /// A registry template that, after its open, invokes Ballista to run `inner`, forwarding
+        /// its one account group. A run can put its entry in the group, writable, and no check at
+        /// finalize can see that; `pass_entry` passes the entry itself instead, which one can.
+        fn nested(pass_entry: bool) -> (Vec<u8>, usize) {
             let mut builder = ProgramBuilder::new();
+            builder.account_groups(1);
             let accounts = declare(&mut builder);
             let ballista = builder.account(ACCOUNT_EXECUTABLE, Some(ID.to_bytes()), None, 0);
             let inner = builder.account(0, None, None, 0);
-            builder.open_registry(accounts.entry, None, accounts.payer, 0, 8, accounts.system);
+            let open = builder.open_registry(accounts.entry, None, accounts.payer, 0, 8, accounts.system);
             let mut cpi_accounts = vec![(inner, 0)];
             if pass_entry {
                 cpi_accounts.push((accounts.entry, ACCOUNT_WRITABLE));
             }
             let data = builder.blob(&[IX_RUN]);
-            let cpi = builder.cpi(ballista, &cpi_accounts, &[Segment::Literal(data)]);
+            let cpi = builder.cpi_with_group(ballista, &cpi_accounts, &[Segment::Literal(data)], 0);
             builder.invoke(cpi, None);
-            builder.build().unwrap()
+            (builder.build().unwrap(), open)
         }
 
         #[test]
@@ -3837,35 +3839,41 @@ mod tests {
             let yes = inner.const_bool(true);
             inner.require(yes);
             let inner = inner.build().unwrap();
-            for (pass_entry, id) in [(true, 7u16), (false, 8)] {
-                let payer = Pubkey::new_unique();
-                let (context, template) = setup(&nested(pass_entry), id, &[payer]);
-                let creator = Pubkey::new_unique();
-                context.account_store.borrow_mut().insert(creator, Account::new(10_000_000_000, 0, &system_program::id()));
-                assert!(context.process_instruction(&create_template_instruction(creator, 1, &inner)).program_result.is_ok());
-                let inner_template = find_template_pda(&creator, 1).0;
-                let entry = entry_address(&template, 0, &Pubkey::default());
-                let metas = vec![
-                    AccountMeta::new_readonly(system_program::id(), false),
-                    AccountMeta::new(payer, true),
-                    AccountMeta::new(entry, false),
-                    AccountMeta::new_readonly(ID, false),
-                    AccountMeta::new_readonly(inner_template, false),
-                ];
-                let result = context.process_instruction(&run_instruction(template, metas.clone(), &[]));
-                if pass_entry {
-                    // The invoke is the second instruction, after the open, which created the entry.
-                    assert_eq!(failure(&result), (REGISTRY_REENTRY, 1));
-                    // Once the entry exists, the open checks it instead of creating it, and marks
-                    // it all the same.
-                    let seeded = seeded_entry(&context, &template, 0, &Pubkey::default(), 72 + 8);
-                    context.account_store.borrow_mut().insert(entry, seeded);
-                    let result = context.process_instruction(&run_instruction(template, metas, &[]));
-                    assert_eq!(failure(&result), (REGISTRY_REENTRY, 1), "an existing entry");
-                } else {
-                    assert!(result.program_result.is_ok(), "a CPI to Ballista that leaves the entry out runs: {result:#?}");
-                }
-            }
+            let payer = Pubkey::new_unique();
+            let (context, template) = setup(&nested(false).0, 7, &[payer]);
+            let creator = Pubkey::new_unique();
+            context.account_store.borrow_mut().insert(creator, Account::new(10_000_000_000, 0, &system_program::id()));
+            assert!(context.process_instruction(&create_template_instruction(creator, 1, &inner)).program_result.is_ok());
+            let inner_template = find_template_pda(&creator, 1).0;
+            let entry = entry_address(&template, 0, &Pubkey::default());
+            let metas = vec![
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new(entry, false),
+                AccountMeta::new_readonly(ID, false),
+                AccountMeta::new_readonly(inner_template, false),
+            ];
+            // The group's one member is the entry, writable. The invoke is the second instruction,
+            // after the open, which created the entry.
+            let mut with_entry = metas.clone();
+            with_entry.push(AccountMeta::new(entry, false));
+            let result = context.process_instruction(&run_instruction(template, with_entry.clone(), &[1]));
+            assert_eq!(failure(&result), (REGISTRY_REENTRY, 1));
+            // Once the entry exists, the open checks it instead of creating it, and marks it all
+            // the same.
+            let seeded = seeded_entry(&context, &template, 0, &Pubkey::default(), 72 + 8);
+            context.account_store.borrow_mut().insert(entry, seeded);
+            let result = context.process_instruction(&run_instruction(template, with_entry, &[1]));
+            assert_eq!(failure(&result), (REGISTRY_REENTRY, 1), "an existing entry");
+            // An empty group: a CPI to Ballista that leaves the entry out runs.
+            let result = context.process_instruction(&run_instruction(template, metas, &[0]));
+            assert!(result.program_result.is_ok(), "a CPI to Ballista that leaves the entry out runs: {result:#?}");
+
+            // Passing the entry account itself writable could never run: the upload refuses it, at
+            // the open.
+            let (payload, open) = nested(true);
+            let result = context.process_instruction(&create_template_instruction(creator, 2, &payload));
+            assert_eq!(failure(&result), (INVALID_REGISTRY, open as u32));
         }
 
         /// The lost update a generic data read would allow, built by hand: read the entry's data

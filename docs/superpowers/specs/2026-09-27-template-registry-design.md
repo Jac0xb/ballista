@@ -87,9 +87,13 @@ Verifier rules, `InvalidRegistry` unless noted:
   8 open entries;
   registry index below 8; field size 1 to 512 bytes, not counting the header; every open of one
   registry index declares the same size.
-- The entry account is a fixed account, declared writable and not pinned. The payer is a fixed
-  account declared signer and writable. The System program account is a fixed account pinned to
-  the System program.
+- The entry account is a fixed account declared writable and nothing else: not a signer or
+  executable, pinned to no address or owner, and with no data-length floor. Each of those would
+  fail every run's account checks, or the creation. The payer is a fixed account declared signer
+  and writable. The System program account is a fixed account pinned to the System program.
+- No CPI lists an entry account writable, before its open or after it: after, the CPI would
+  always fail with `RegistryReentry`. A row account or a group member that turns out to be the
+  entry is left to that run-time check.
 - The key register is a set `pubkey` register.
 - `READ_REGISTRY` and `WRITE_REGISTRY` name an entry account opened at a lower pc, and a field
   range inside its registry's size.

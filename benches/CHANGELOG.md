@@ -49,6 +49,13 @@ the same commit and says why here.
   - Uploading the 32 cookbook examples, not ratcheted: 144,999 → 145,299 (+300), from the two
     rules. The entry check scans the program only for a read of a writable account; scanning for
     every read cost +555.
+- **Review fixes:** an open refuses an entry declared as anything but writable, and any CPI that
+  lists its entry writable. Creating a template that opens an entry costs 6 to 22 CU more:
+  3,845 → 3,851 for the Mollusk counter, 3,064 → 3,081 for a template that nests a run,
+  6,481 → 6,503 for the rate-limited transfer fixture, with a fixed creator and id. The open scans
+  the CPI account records; finding the invokes by a pass over every instruction cost +82 to +455.
+  Templates without an open are not affected: every ceiling case and example is unchanged, and
+  the upload total stays 145,299.
 - **Measured on the prototype, and not built:** a slot table in `Scratch` cost every run 2 CU,
   in `Machine` 426 on a 30-pass count loop; the literal reentry check (the invoked program is
   Ballista and an entry is open) cost 3 CU a CPI, 89 on `run, payroll 30 rows`.

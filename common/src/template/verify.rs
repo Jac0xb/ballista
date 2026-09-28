@@ -745,15 +745,17 @@ impl ProgramView<'_> {
 
     /// `OPEN_REGISTRY`, every rule `InvalidRegistry`: at the root; a valid [`RegistryOpen`] with a
     /// registry index below [`MAX_REGISTRIES`] and 1 to [`MAX_REGISTRY_SIZE`] field bytes; no
-    /// destination; the entry a fixed account declared writable and not pinned; the payer a fixed
-    /// account declared signer and writable; the System program account fixed and pinned to the
-    /// System program; the key [`NO_INDEX`] or a set `pubkey` register. Against the opens before
-    /// it: its entry account not opened already, the same size as any open of the same registry
-    /// index, at most [`MAX_REGISTRY_OPENS`] in all, and no `SET_RETURN_DATA` before it, since
-    /// creating an entry calls the System program and a CPI clears return data.
+    /// destination; the entry a fixed account declared writable and nothing else; the payer a
+    /// fixed account declared signer and writable; the System program account fixed and pinned to
+    /// the System program; the key [`NO_INDEX`] or a set `pubkey` register. Against the opens
+    /// before it: its entry account not opened already, the same size as any open of the same
+    /// registry index, at most [`MAX_REGISTRY_OPENS`] in all, and no `SET_RETURN_DATA` before it,
+    /// since creating an entry calls the System program and a CPI clears return data. Against the
+    /// whole program: no CPI lists the entry account writable.
     ///
-    /// The opens before it are found by scanning, as `SET_RETURN_DATA` scans the records after it:
-    /// the per-instruction signature Certora verifies against has no room for a slot table.
+    /// The other records are found by scanning, as `SET_RETURN_DATA` scans the records after it:
+    /// the per-instruction signature Certora verifies against has no room for a slot table. A
+    /// template that opens no entry never scans its CPIs.
     fn verify_open_registry(
         &self,
         instruction: &InstructionRecord,
@@ -770,9 +772,16 @@ impl ProgramView<'_> {
         {
             return Err(invalid);
         }
-        // `in_row_loop` is false, so a row account never matches.
+        // `in_row_loop` is false, so a row account never matches. An entry is an account Ballista
+        // owns at an address the key picks, never a signer or a program, owned by the System
+        // program and empty until its open creates it: a signer or executable flag, an address or
+        // owner pin, or a data-length floor would fail the run's account checks or the creation.
         let entry = self.account_constraint(instruction.a, false).ok_or(invalid)?;
-        if entry.flags & ACCOUNT_WRITABLE == 0 || entry.address_index != NO_INDEX {
+        if entry.flags != ACCOUNT_WRITABLE
+            || entry.address_index != NO_INDEX
+            || entry.owner_index != NO_INDEX
+            || entry.min_data_len() != 0
+        {
             return Err(invalid);
         }
         let payer = self.account_constraint(instruction.c, false).ok_or(invalid)?;
@@ -813,6 +822,20 @@ impl ProgramView<'_> {
             }
         }
         if opens >= MAX_REGISTRY_OPENS {
+            return Err(invalid);
+        }
+        // No CPI lists the entry writable, wherever its invoke sits. After the open, the entry's
+        // borrow mark fails every such CPI with `RegistryReentry`. Before it, no template needs
+        // one: only Ballista writes an entry, through its fields once it is open, and an entry
+        // holds its rent and nothing else. The CPI account records are scanned directly, a few
+        // bytes against a pass over every instruction to find the invokes, so a CPI that nothing
+        // invokes is refused as well. A row account or a group member that turns out to be the
+        // entry is left to the run's check.
+        if self
+            .cpi_accounts
+            .iter()
+            .any(|meta| meta.account == instruction.a && meta.flags & ACCOUNT_WRITABLE != 0)
+        {
             return Err(invalid);
         }
         Ok(())
@@ -4035,7 +4058,8 @@ mod tests {
         let base = (ACCOUNT_WRITABLE, false, ACCOUNT_SIGNER | ACCOUNT_WRITABLE, SYSTEM_PROGRAM_ADDRESS, Some(VALUE_PUBKEY), 0u8, 16u16);
         let cases = [
             ("entry read-only", (0, false, base.2, base.3, base.4, 0, 16)),
-            ("entry signer and writable is fine", (ACCOUNT_SIGNER | ACCOUNT_WRITABLE, false, base.2, base.3, base.4, 0, 16)),
+            ("entry signer and writable", (ACCOUNT_SIGNER | ACCOUNT_WRITABLE, false, base.2, base.3, base.4, 0, 16)),
+            ("entry executable and writable", (ACCOUNT_EXECUTABLE | ACCOUNT_WRITABLE, false, base.2, base.3, base.4, 0, 16)),
             ("entry pinned", (ACCOUNT_WRITABLE, true, base.2, base.3, base.4, 0, 16)),
             ("payer not a signer", (base.0, false, ACCOUNT_WRITABLE, base.3, base.4, 0, 16)),
             ("payer read-only", (base.0, false, ACCOUNT_SIGNER, base.3, base.4, 0, 16)),
@@ -4056,6 +4080,24 @@ mod tests {
             let pc = builder.open_registry(entry, Some(key), payer, index, size, system);
             let expected = if name.ends_with("is fine") { Ok(()) } else { Err(invalid(pc)) };
             assert_eq!(verify_builder(&builder).map(|_| ()), expected, "{name}");
+        }
+
+        // An entry's owner is the System program until its open creates it and Ballista after,
+        // and it has no data until then: an owner pin fails every run on one side of creation, and
+        // a data-length floor fails creation itself.
+        let cases = [
+            ("owner pinned to Ballista", Some([7; 32]), 0),
+            ("owner pinned to the System program", Some(SYSTEM_PROGRAM_ADDRESS), 0),
+            ("a data-length floor", None, 72 + 16),
+            ("a one-byte data-length floor", None, 1),
+        ];
+        for (name, owner, min_data_len) in cases {
+            let mut builder = ProgramBuilder::new();
+            let system = builder.account(0, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
+            let entry = builder.account(ACCOUNT_WRITABLE, None, owner, min_data_len);
+            let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+            let pc = builder.open_registry(entry, None, payer, 0, 16, system);
+            assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)), "{name}");
         }
 
         // The accounts must be fixed ones: a row account, or one past the declared accounts.
@@ -4249,6 +4291,62 @@ mod tests {
         builder.account_is_empty(entry);
         let offset = builder.const_u64(0);
         builder.read_dynamic(OP_READ_U64, payer, offset);
+        assert!(verify_builder(&builder).is_ok());
+    }
+
+    /// No CPI lists a fixed account an open names writable, wherever its invoke sits: after the
+    /// open, the entry's borrow mark fails that CPI with `RegistryReentry` every time. The open
+    /// reports it. Passing the entry read-only is fine, and so is a writable row account or group
+    /// member, which only the run can tell apart from the entry.
+    #[test]
+    fn no_cpi_passes_an_entry_account_writable() {
+        let invalid = TemplateError::InvalidRegistry;
+        // A CPI to an executable account, passing `accounts`, forwarding `group`.
+        let cpi = |builder: &mut ProgramBuilder, accounts: &[(u8, u8)], group: u8| {
+            let program = builder.account(ACCOUNT_EXECUTABLE, Some([9; 32]), None, 0);
+            let data = builder.blob(&[1]);
+            builder.cpi_with_group(program, accounts, &[Segment::Literal(data)], group)
+        };
+
+        // After the open, at the root and in a loop body.
+        let (mut builder, _, entry, _, open) = registry_program();
+        let passes = cpi(&mut builder, &[(entry, ACCOUNT_WRITABLE)], NO_INDEX);
+        builder.invoke(passes, None);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(open)), "after the open");
+        let (mut builder, _, entry, payer, open) = registry_program();
+        let passes = cpi(&mut builder, &[(payer, ACCOUNT_WRITABLE), (entry, ACCOUNT_WRITABLE)], NO_INDEX);
+        let count = builder.const_u64(1);
+        builder.repeat(count, 1, 0, |body| body.invoke(passes, None));
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(open)), "in a loop body");
+
+        // Before the open.
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(0, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
+        let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let passes = cpi(&mut builder, &[(entry, ACCOUNT_WRITABLE)], NO_INDEX);
+        builder.invoke(passes, None);
+        let open = builder.open_registry(entry, None, payer, 0, 8, system);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(open)), "before the open");
+
+        // A CPI that nothing invokes is refused as well: the open scans the CPI account records.
+        let (mut builder, _, entry, _, open) = registry_program();
+        cpi(&mut builder, &[(entry, ACCOUNT_WRITABLE)], NO_INDEX);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(open)), "never invoked");
+
+        // Read-only, and another fixed account writable.
+        let (mut builder, _, entry, payer, _) = registry_program();
+        let read_only = cpi(&mut builder, &[(entry, 0), (payer, ACCOUNT_SIGNER | ACCOUNT_WRITABLE)], NO_INDEX);
+        builder.invoke(read_only, None);
+        assert!(verify_builder(&builder).is_ok());
+
+        // A writable row account, and a forwarded group, may turn out to be the entry at run time.
+        let (mut builder, _, _, _, _) = registry_program();
+        builder.account_groups(1);
+        let row = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
+        builder.batch(2, 0);
+        let rows = cpi(&mut builder, &[(row, ACCOUNT_WRITABLE)], 0);
+        builder.for_each(0, |body| body.invoke(rows, None));
         assert!(verify_builder(&builder).is_ok());
     }
 }

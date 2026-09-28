@@ -10,8 +10,10 @@
  * the route plan and before the quote. So the caller hands over the route plan and the quote's
  * own numbers separately, and the template writes the instruction itself: the balance it reads
  * becomes `in_amount`, and the quoted output is rescaled to match. The plan splits its input by
- * percentage, so the same plan sells more or less; how far the balance may drift from the quote
- * is bounded by the pools and tick arrays the route's accounts cover.
+ * percentage, so the same plan sells more or less. How far the balance may drift above the quote
+ * is bounded twice: the rescaling is linear, so the price impact of the extra size has to fit
+ * within `slippageBps`, and the swap has to stay within the pools and tick arrays the route's
+ * accounts cover.
  *
  * Both token accounts are pinned to the legacy SPL Token program, so a Token-2022 account fails
  * the owner check instead of being read with the wrong layout.

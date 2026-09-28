@@ -3982,6 +3982,21 @@ mod tests {
             examples += 1;
         }
         assert_eq!(examples, 13, "every protocol example is verified");
+        // The test-only runtime scenarios in `clients/js/examples/scenarios`, recorded the same way
+        // in their own file. The LiteSVM suite uploads them, but it needs the snapshot; this does
+        // not.
+        let scenarios = include_str!("../../../fixtures/protocol-scenarios.json");
+        let mut verified = 0usize;
+        for entry in payload_values(scenarios) {
+            let bytes = decode_hex(entry);
+            let program = ProgramView::parse(&bytes)
+                .unwrap_or_else(|error| panic!("runtime scenario {verified}: {error}"));
+            program
+                .verify()
+                .unwrap_or_else(|error| panic!("runtime scenario {verified}: {error}"));
+            verified += 1;
+        }
+        assert_eq!(verified, 5, "every runtime scenario is verified");
         let carry = decode_hex(include_str!("../../../fixtures/carry-sum.hex"));
         let program = ProgramView::parse(&carry).unwrap();
         assert_eq!(program.header.batch_min_iterations(), 1);

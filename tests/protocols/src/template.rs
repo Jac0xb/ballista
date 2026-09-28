@@ -1,5 +1,6 @@
 //! Upload templates with Ballista's own instructions, and build runs by the account and input
-//! names the TypeScript compiler recorded in `fixtures/protocol-examples.json`.
+//! names the TypeScript compiler recorded in `fixtures/protocol-examples.json`, or for the
+//! test-only runtime scenarios in `fixtures/protocol-scenarios.json`.
 //!
 //! Binding by name is the point: hand-copied positions are how a runner once came to pass an
 //! extra account.
@@ -29,6 +30,13 @@ use {
 pub const EXAMPLES_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../fixtures/protocol-examples.json"
+);
+
+/// The test-only runtime scenarios, in the same format: `clients/js/examples/scenarios`, written
+/// by the same test. They are not examples, so they have a file of their own.
+pub const SCENARIOS_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../fixtures/protocol-scenarios.json"
 );
 
 /// Payload bytes per `write_template_chunk`. Its transaction is 209 bytes plus the chunk: one
@@ -65,11 +73,19 @@ pub struct Examples(BTreeMap<String, Example>);
 
 /// Reads `fixtures/protocol-examples.json`.
 pub fn examples() -> Examples {
-    let text = fs::read(EXAMPLES_PATH)
-        .unwrap_or_else(|error| panic!("reading {EXAMPLES_PATH} failed: {error}"));
+    load(EXAMPLES_PATH)
+}
+
+/// Reads `fixtures/protocol-scenarios.json`: `&scenarios()["splitSellPayout"]`.
+pub fn scenarios() -> Examples {
+    load(SCENARIOS_PATH)
+}
+
+fn load(path: &str) -> Examples {
+    let text = fs::read(path).unwrap_or_else(|error| panic!("reading {path} failed: {error}"));
     Examples(
         serde_json::from_slice(&text)
-            .unwrap_or_else(|error| panic!("parsing {EXAMPLES_PATH} failed: {error}")),
+            .unwrap_or_else(|error| panic!("parsing {path} failed: {error}")),
     )
 }
 
@@ -550,9 +566,10 @@ mod tests {
 
     #[test]
     fn every_example_lines_up_with_its_payload() {
-        let examples = examples();
+        let (examples, scenarios) = (examples(), scenarios());
         assert_eq!(examples.iter().count(), 13);
-        for (name, example) in examples.iter() {
+        assert_eq!(scenarios.iter().count(), 5);
+        for (name, example) in examples.iter().chain(scenarios.iter()) {
             // `Run::new` checks the header's counts against the name lists.
             let view = Run::new(key(1), example).view;
             assert!(!example.labels.is_empty(), "{name} labels no step");

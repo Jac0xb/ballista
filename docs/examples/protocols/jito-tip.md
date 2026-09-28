@@ -1,6 +1,12 @@
 # Pay a Jito tip only from profit
 
-This template runs a Jupiter trade and pays a Jito tip only if the trade's profit covers it.
+<p class="protocol-line">Jito · Jupiter</p>
+
+**Status:** Compiles and passes the verifier; not yet run against Jupiter or Jito.
+
+## What it does
+
+Runs a Jupiter trade and pays a Jito tip only if the trade's profit covers it.
 
 Jito recommends putting the tip in the same transaction as the trade, so that a failed trade pays
 no tip. That covers failure, but not the more common case: a trade that succeeds but earns less
@@ -11,23 +17,17 @@ The searcher is the account that runs the trade and pays the tip. The template r
 in lamports (the smallest unit of SOL), runs the trade, and requires the profit to cover the tip
 plus `minimumEdge`. If the profit falls short, the run reverts before the tip is paid.
 
-The trade is Jupiter's `route` instruction, which starts its account list with the token program
-and the signer. The template passes those two itself; the rest of the route's accounts, including
-its token accounts, arrive as an [account group](/guide/account-groups). `strategyData` is
-Jupiter's instruction data without its eight-byte discriminator; the template adds the `route`
-discriminator itself.
-
-::: tip Requesting the route
-Ask Jupiter's Swap API for `useSharedAccounts: false`. The template always sends Jupiter's `route`
-instruction. The API's default, `shared_accounts_route`, is a different instruction whose accounts
-are in a different order.
-:::
+## Template
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/jito-profit-guarded-tip.ts [Template · TypeScript]
+<<< ../../../clients/js/examples/protocols/jito-profit-guarded-tip.ts [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_runs.rs#plain [Run · Rust]
+<<< ../../../clients/rust/examples/protocol_templates.rs#jito-tip [Rust · Template]
+
+<<< ../../../clients/js/examples/protocols/run/jito-tip.ts [TypeScript · Run]
+
+<<< ../../../clients/rust/examples/protocol_templates_run.rs#jito-tip [Rust · Run]
 
 :::
 
@@ -41,11 +41,30 @@ is closed source, and public write-ups disagree on whether it ranks a tip comput
 by its simulated value or by an amount read from the instruction. A tip that is paid but ranked as
 zero is worse than no tip, so this template bids a fixed amount and only decides whether to pay it.
 
-The Rust tab builds the run for [act only on a fresh price](/examples/protocols/pyth-gate). This
-template's run has the same form, with the route's accounts from the third one on passed as an
-account group, but uses its own accounts and inputs in the order the template declares them.
+## Run it
 
-Not yet run against Jupiter: the template compiles and passes Ballista's verifier, and a test
-checks that it calls `route` with its accounts in `route`'s order, but no test calls Jupiter.
+The trade is Jupiter's `route` instruction, which starts its account list with the token program
+and the signer. The template passes those two itself; the rest of the route's accounts, including
+its token accounts, arrive as the `strategyAccounts` [account group](/guide/account-groups).
+`strategyData` is Jupiter's instruction data without its eight-byte discriminator; the template
+adds the `route` discriminator itself.
+
+The Run tabs pass the five declared accounts in order, then the inputs `strategyData`,
+`tipLamports` and `minimumEdge`, then the group. `jitoTip` is one of Jito's eight tip accounts.
+
+::: tip Requesting the route
+Ask Jupiter's Swap API for `useSharedAccounts: false`. The template always sends Jupiter's `route`
+instruction. The API's default, `shared_accounts_route`, is a different instruction whose accounts
+are in a different order.
+:::
+
+## What has been tested
+
+- The template compiles and passes Ballista's verifier.
+- A test checks that it calls `route` with its accounts in `route`'s order
+  (`clients/js/src/protocol-semantics.test.ts`).
+- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
+  and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
+- No test calls Jupiter or Jito.
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

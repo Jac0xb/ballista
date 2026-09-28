@@ -1,33 +1,104 @@
 # Errors and events
 
-This page explains how to read the error code of a failed run, how to find the step that failed,
-and how to make a template log an event that records what each run did.
+How to read a failed run's error code, find the step that failed, and make a template log an event
+for each run.
 
 ## Error code layout
 
-Ballista reports failures as custom program errors, Solana's `Custom(u32)` error. The low 16 bits
-hold the error kind. The high 16 bits hold a context number that locates the failure.
+Ballista reports failures as Solana custom program errors (`Custom(u32)`). The low 16 bits hold
+the error kind; the high 16 bits hold a context number that locates the failure.
 
-| Kind range | Source | Context |
-| --- | --- | --- |
-| 6000 to 6021 | Runtime: the program, while uploading or running a template | During a run, the program counter (the index of the failing instruction in the compiled template), except as noted below |
-| 6100 to 6128 | Verifier: the checks that run when a template is created or finalized | The index of the offending instruction, account, input, register, or CPI (call to another program), where the error has one |
+```text
+code = kind | (context << 16)
+```
+
+- **6000 to 6021** (`0x1770` to `0x1785`) are runtime errors, raised while uploading or running.
+  The context is usually the program counter: the index of the failing compiled instruction.
+- **6100 to 6128** (`0x17D4` to `0x17F0`) are verifier errors, raised when a template is created
+  or finalized. The context is the index of the offending instruction, account, input, register or
+  CPI, where there is one.
+- In hex, the last four digits are the kind. `0x7177F` is `0x177F` (6015, `RequirementFailed`)
+  at program counter 7.
 
 Four runtime kinds carry a different context:
 
 | Kind | Name | Context |
 | ---: | --- | --- |
-| 6008 | `InvalidRunInputs` | Index of the value that could not be decoded, counting fixed values first and then row values. For leftover bytes after the last value, the number of values. For missing account-group length bytes, `0` |
+| 6008 | `InvalidRunInputs` | Index of the value that could not be decoded, fixed values first. For leftover bytes, the number of values. For missing group-length bytes, `0` |
 | 6010 | `InvalidAccountRange` | The number of accounts, or of rows, that was out of range |
-| 6020 | `AccountConstraintFailed` | Index of the account that did not meet its declaration, where `0` is the first account after the template account |
-| 6021 | `CpiAccountLimitExceeded` | The CPI's total account count (declared accounts plus account-group members), which exceeded 64 |
+| 6020 | `AccountConstraintFailed` | Index of the account, where `0` is the first account after the template account |
+| 6021 | `CpiAccountLimitExceeded` | The CPI's total account count, which exceeded 64 |
 
 A declared signer that did not sign fails with Solana's standard `MissingRequiredSignature` error,
 not a Ballista code.
 
-The full lists of names are in `fixtures/runtime-error-names.txt` and
-`fixtures/verifier-error-names.txt` in the repository. The program, the Rust SDK, and the TypeScript
-SDK are all tested against them.
+## Error codes
+
+### Runtime codes
+
+| Code | Hex | Name | Meaning |
+| ---: | --- | --- | --- |
+| 6000 | `0x1770` | `InvalidInstructionData` | The instruction data could not be parsed |
+| 6001 | `0x1771` | `InvalidTemplateAccount` | The template account has the wrong address, owner or layout |
+| 6002 | `0x1772` | `InvalidTemplateProgram` | The template size is invalid, or the stored template does not match what the run expects |
+| 6003 | `0x1773` | `TemplateNotUploading` | Write, finalize or cancel on a template that is already finalized |
+| 6004 | `0x1774` | `TemplateNotFinalized` | Run on a template that is still uploading |
+| 6005 | `0x1775` | `InvalidCreator` | The signer is not the template's creator |
+| 6006 | `0x1776` | `InvalidChunkOffset` | A chunk does not start where the last one ended, or bytes are missing at finalize |
+| 6007 | `0x1777` | `HashMismatch` | The uploaded bytes do not match the hash recorded at the start |
+| 6008 | `0x1778` | `InvalidRunInputs` | The run data could not be decoded |
+| 6009 | `0x1779` | `InvalidRuntimeAccount` | An account failed a check while the template ran |
+| 6010 | `0x177A` | `InvalidAccountRange` | Too many or too few accounts or rows |
+| 6011 | `0x177B` | `InvalidRegister` | A step read a value that was never set |
+| 6012 | `0x177C` | `TypeMismatch` | A value had the wrong type |
+| 6013 | `0x177D` | `ArithmeticOverflow` | Arithmetic or a cast overflowed |
+| 6014 | `0x177E` | `DivisionByZero` | Division by zero |
+| 6015 | `0x177F` | `RequirementFailed` | A `require` step was false |
+| 6016 | `0x1780` | `CpiDataTooLarge` | A CPI built more data than its declared maximum |
+| 6017 | `0x1781` | `InvalidPdaDerivation` | A PDA could not be derived, or the bump was invalid |
+| 6018 | `0x1782` | `MissingReturnData` | The CPI returned no data, or too little for the read |
+| 6019 | `0x1783` | `ReturnDataMismatch` | The return data came from a different program |
+| 6020 | `0x1784` | `AccountConstraintFailed` | An account does not match its declaration |
+| 6021 | `0x1785` | `CpiAccountLimitExceeded` | A CPI's accounts plus its account group exceed 64 |
+
+### Verifier codes
+
+Raised by `CreateTemplate` or `FinalizeTemplate` when the template fails its checks.
+
+| Code | Hex | Name | Meaning |
+| ---: | --- | --- | --- |
+| 6100 | `0x17D4` | `Truncated` | The template is shorter than its header says |
+| 6101 | `0x17D5` | `PayloadTooLarge` | The template is over 10,240 bytes |
+| 6102 | `0x17D6` | `InvalidMagic` | The template does not start with `BVM1` |
+| 6103 | `0x17D7` | `UnsupportedVersion` | Unknown bytecode version |
+| 6104 | `0x17D8` | `InvalidReservedBytes` | A reserved byte or flag is set |
+| 6105 | `0x17D9` | `SectionLengthMismatch` | The sections do not add up to the template's length |
+| 6106 | `0x17DA` | `CountOverflow` | A section count overflows |
+| 6107 | `0x17DB` | `TooManyAccounts` | Too many accounts at the maximum rows |
+| 6108 | `0x17DC` | `TooManyInputs` | Too many inputs or input values |
+| 6109 | `0x17DD` | `TooManyRegisters` | More than 64 registers |
+| 6110 | `0x17DE` | `TooManyInstructions` | No instructions, or more than 128 |
+| 6111 | `0x17DF` | `InvalidBatch` | The batch or its loop is malformed |
+| 6112 | `0x17E0` | `InvalidAccountConstraint` | An account declaration is invalid |
+| 6113 | `0x17E1` | `InvalidInput` | An input declaration is invalid |
+| 6114 | `0x17E2` | `InvalidInstruction` | An instruction is invalid |
+| 6115 | `0x17E3` | `InvalidCpi` | A CPI is invalid, or asks for more privilege than the account allows |
+| 6116 | `0x17E4` | `InvalidDataSegment` | A data part or PDA seed is invalid |
+| 6117 | `0x17E5` | `InvalidRegister` | A register index is out of range |
+| 6118 | `0x17E6` | `RegisterNotInitialized` | A register is read before it is set |
+| 6119 | `0x17E7` | `TypeMismatch` | An instruction receives the wrong type |
+| 6120 | `0x17E8` | `InvalidBlobRange` | A literal points outside the stored bytes |
+| 6121 | `0x17E9` | `ExcessiveCpiExpansion` | More than 64 CPIs in the worst case, counting every loop row |
+| 6122 | `0x17EA` | `InvalidFlags` | An instruction sets flags its opcode does not accept |
+| 6123 | `0x17EB` | `InvalidCarry` | A carried value is unset before the loop or changes type in it |
+| 6124 | `0x17EC` | `ReadOutOfBounds` | A fixed-offset read runs past the account's minimum length |
+| 6125 | `0x17ED` | `TooManyCpiAccounts` | A CPI lists more than 64 accounts |
+| 6126 | `0x17EE` | `InvalidReturnData` | A return-data read is not directly after an unguarded invoke |
+| 6127 | `0x17EF` | `InvalidMinIterations` | The minimum rows exceed the maximum, or are set without a batch |
+| 6128 | `0x17F0` | `TooManyAccountGroups` | More than 8 account groups |
+
+The same names are in `fixtures/runtime-error-names.txt` and `fixtures/verifier-error-names.txt`.
+The program, the Rust SDK and the TypeScript SDK are all tested against them.
 
 ## Decoding
 
@@ -62,8 +133,10 @@ step a label when its position alone would not make a failure clear:
 step.require(expression.lessThanOrEqual(total, budget), 'withinBudget');
 ```
 
-Codes outside both ranges come from a program the template called, passed through unchanged. Both
-decoders return nothing for them: `undefined` in TypeScript, `None` in Rust.
+A called program's error passes through unchanged. Codes outside both ranges are always from a
+called program, and both decoders return nothing for them (`undefined` in TypeScript, `None` in
+Rust). A called program can also return a number inside Ballista's ranges; the transaction logs
+show which program failed.
 
 ## The failure log line
 

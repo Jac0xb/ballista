@@ -1,7 +1,7 @@
 # Wire format
 
-This page specifies the bytes of a compiled template and of the data a caller sends to run it. It
-describes bytecode version 1, the only version the program accepts. The Rust definitions in
+The bytes of a compiled template, and of the data a caller sends to run it. This is bytecode
+version 1, the only version the program accepts. The Rust definitions in
 `common/src/template/wire.rs` are the source of truth.
 
 Terms used on this page:
@@ -24,6 +24,34 @@ Terms used on this page:
   are passed once. A batch row is a set of accounts repeated for each loop iteration. An account
   group is a list of accounts, sized by the caller, that a CPI forwards without the template
   reading them.
+
+## Template account {#template-account}
+
+A template lives in its own account, at a PDA of the Ballista program derived from
+`['template', creator, templateId]`. The account holds an 80-byte header, then the payload.
+
+```text
+┌─────────────── template account (PDA) ───────────────┐
+│ account header │ payload: header │ tables … │ blob   │
+└───────────────────────────────────────────────────────┘
+```
+
+| Offset | Bytes | Field |
+| ---: | ---: | --- |
+| 0 | 1 | Discriminator, `1` |
+| 1 | 1 | Account version, `2` |
+| 2 | 1 | State: `0` uploading, `1` finalized |
+| 3 | 1 | PDA bump |
+| 4 | 32 | Creator |
+| 36 | 2 | Template ID |
+| 38 | 2 | Reserved, zero |
+| 40 | 4 | Payload length |
+| 44 | 4 | Bytes written so far |
+| 48 | 32 | SHA-256 hash of the payload |
+
+A run reads the payload in place, without copying it, and only once the state is finalized.
+
+## Payload {#payload}
 
 The payload is a header followed by eight sections:
 
@@ -274,15 +302,9 @@ between the batch's minimum and maximum.
 
 ## Error codes
 
-A custom error code packs a 16-bit kind and a 16-bit context:
-
-```text
-code = kind | (context << 16)
-```
-
-Runtime kinds start at 6000 and verifier kinds at 6100. The name tables live in
-`fixtures/runtime-error-names.txt` and `fixtures/verifier-error-names.txt`. See
-[Errors and events](/guide/errors-and-events) for what each context means.
+A custom error code is `kind | (context << 16)`. Runtime kinds start at 6000 (`0x1770`) and verifier
+kinds at 6100 (`0x17D4`). The full table, with hex forms, is in
+[Errors and events](/guide/errors-and-events#error-codes).
 
 ## Run event
 

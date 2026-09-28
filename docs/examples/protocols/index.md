@@ -28,6 +28,8 @@ protocols. [What has been tested](#what-has-been-tested) lists what has been che
 - **Compiling and verifying.** CI compiles every template
   (`clients/js/src/protocol-examples.test.ts`) and checks the result with the same verifier the
   Ballista program runs before it stores a template (`common/src/template/verify.rs`).
+- **Rust.** Each Rust template is byte-identical to the TypeScript one, and each Rust run passes
+  the accounts, flags and inputs its template declares (`clients/rust/tests/protocol_templates.rs`).
 - **Running against the protocols.** No test runs any of these templates against the real
   protocols. Their account lists and instruction arguments have not been checked against the
   deployed programs.
@@ -97,30 +99,12 @@ as public.
 You upload a template once. After that, each use is a single run instruction, which a bot or
 service can build in TypeScript or Rust. Building a run doesn't need the template's bytecode, only
 three things from its author: the order of the declared accounts, the order of the inputs, and,
-for a template that loops over a batch, the accounts in each batch entry (a row).
+for a template that takes one, the accounts in each [account group](/guide/account-groups) or batch
+row.
 
-The twelve templates need only three kinds of run, all in `clients/rust/examples/protocol_runs.rs`:
+Each page shows the template and a run of it, in TypeScript and in Rust.
 
-- `run_price_gate`, for [act only on a fresh price](/examples/protocols/pyth-gate): declared
-  accounts and inputs in order, plus one account group.
-- `run_jupiter_deposit`, for [deposit exactly what a swap produced](/examples/protocols/jupiter-deposit):
-  an [account group](/guide/account-groups), a list of any length, for a call such as a Jupiter
-  route whose accounts vary.
-- `run_orca_harvest`, for [harvest only the positions that earned](/examples/protocols/orca-harvest):
-  batch rows, one per position.
-
-Each page's Rust tab shows the closest of the three. On the other nine pages, adapt it with that
-template's own accounts and inputs.
-
-## What they cost
-
-No test runs these protocols' programs, so these templates have no measured costs. Each one
-combines patterns that are measured elsewhere on this site: read a value, then call
-([repay exactly what is owed](/guide/runtime-values#repay-exactly-what-is-owed)); record a balance,
-then check it ([exact token debit](/examples/token-accounts#exact-token-debit)); and call only if a
-condition holds ([liquidate only when unhealthy](/guide/conditional#liquidate-only-when-unhealthy)).
-
-For a rough budget in compute units (Solana's measure of execution cost), allow about 1,000 for the
-run itself, about 1,700 for each call to another program plus about 140 for each account passed to
-it, and 100 to 200 for each field read. The protocol's own work comes on top. The
-[compute profile](/cu-profile) has the breakdown.
+- TypeScript runs are in `clients/js/examples/protocols/run/`. They bind accounts by name, and
+  `buildKitRunInstruction` puts them in the template's order.
+- Rust templates are in `clients/rust/examples/protocol_templates.rs`, built with
+  `ProgramBuilder`. Rust runs are in `clients/rust/examples/protocol_templates_run.rs`.

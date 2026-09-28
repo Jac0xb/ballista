@@ -1,7 +1,12 @@
+---
+next:
+  text: TypeScript SDK
+  link: /reference/typescript
+---
+
 # Devnet workflow
 
-This page covers where the Ballista program is deployed, how to run and upload the example
-template on devnet, and how to inspect a template or read a failed run.
+Where the Ballista program is deployed, and how to run and upload the example template on devnet.
 
 ## Deployment policy
 
@@ -77,26 +82,8 @@ template address.
 
 ## Inspect a template
 
-Both SDKs decode a template account and report its creator, template ID, state (uploading or
-finalized), and statistics about the stored template. The Rust version also runs the same checks
-the program runs when it finalizes a template.
-
-::: code-group
-
-```ts [TypeScript]
-const account = decodeTemplateAccount(accountBytes);
-const stats = inspectTemplate(account.payload);
-console.log(account.creator, account.templateId, account.state, stats);
-```
-
-```rust [Rust]
-let account = ballista_common::template::TemplateAccount::parse(&account_data)?;
-let program = account.finalized_program()?;
-let stats = program.verify()?;
-println!("{stats:?}");
-```
-
-:::
+`decodeTemplateAccount` and `inspectTemplate` in TypeScript, or `TemplateAccount::parse` in Rust,
+read a stored template. See [Inspecting a template](/guide/inspecting-templates).
 
 ## Read a failure
 

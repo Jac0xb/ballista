@@ -43,64 +43,17 @@ only those. Each swap has its own route data and its own group, so one finalized
 any route over any tokens. When a balance already meets its target, the template skips that swap,
 and the caller passes an empty group and empty route data for it.
 
-```ts
-const rebalance = defineTemplate({
-  accounts: {
-    jupiter: { executable: true, address: JUPITER_V6 },
-    tokenProgram: { executable: true, address: TOKEN_PROGRAM },
-    user: { signer: true, writable: true },
-    // No fixed mint: the caller decides which tokens are involved, and the checks decide
-    // whether the result is acceptable. `owner` lets the template read their data.
-    sourceA: { writable: true, owner: TOKEN_PROGRAM },
-    destinationA: { writable: true, owner: TOKEN_PROGRAM },
-    sourceB: { writable: true, owner: TOKEN_PROGRAM },
-    destinationB: { writable: true, owner: TOKEN_PROGRAM },
-    sourceC: { writable: true, owner: TOKEN_PROGRAM },
-    destinationC: { writable: true, owner: TOKEN_PROGRAM },
-  },
-  inputs: {
-    routeA: { type: 'bytes', maxLength: 512 },
-    routeB: { type: 'bytes', maxLength: 512 },
-    routeC: { type: 'bytes', maxLength: 512 },
-    targetA: { type: 'u64' }, targetB: { type: 'u64' }, targetC: { type: 'u64' },
-    minOutA: { type: 'u64' }, minOutB: { type: 'u64' }, minOutC: { type: 'u64' },
-  },
-  accountGroups: ['ammA', 'ammB', 'ammC'],
-  steps: [
-    // SPL token amount is the u64 at offset 64; owner is the pubkey at offset 32.
-    step.snapshot('balanceA', expression.accountData(account.fixed('destinationA'), 64, 'u64')),
-    step.let('needA', expression.lessThan(expression.snapshot('balanceA'), expression.input('targetA'))),
-    step.require(expression.equal(
-      expression.accountData(account.fixed('destinationA'), 32, 'pubkey'),
-      expression.accountField(account.fixed('user'), 'key'),
-    )),
-    step.invoke({
-      program: account.fixed('jupiter'),
-      accounts: [
-        // Jupiter's fixed accounts, in its order (abbreviated).
-        { account: account.fixed('tokenProgram') },
-        { account: account.fixed('user'), signer: true },
-        { account: account.fixed('sourceA'), writable: true },
-        { account: account.fixed('destinationA'), writable: true },
-      ],
-      accountGroup: 'ammA',
-      data: [data.encode('bytes', expression.input('routeA'))],
-      when: expression.variable('needA'),
-    }),
-    step.require(expression.or(
-      expression.not(expression.variable('needA')),
-      expression.greaterThanOrEqual(
-        expression.subtract(
-          expression.accountData(account.fixed('destinationA'), 64, 'u64'),
-          expression.snapshot('balanceA'),
-        ),
-        expression.input('minOutA'),
-      ),
-    )),
-    // ...the same four steps for B with ammB, and for C with ammC
-  ],
-});
-```
+::: code-group
+
+<<< @/../clients/js/examples/docs/rebalance-three-swaps.ts#template [TypeScript · Template]
+
+<<< @/../clients/js/examples/docs/rebalance-three-swaps.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#rebalance-three-swaps [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#rebalance-three-swaps [Rust · Run]
+
+:::
 
 For each swap, the template:
 
@@ -110,24 +63,12 @@ For each swap, the template:
 4. runs the swap only if it is needed and, if it ran, requires that the balance rose by at least
    the minimum.
 
-Running it with swaps A and C quoted and B skipped:
+The TypeScript writes these steps once, in `swapLeg`, and repeats them for A, B and C; the Rust
+loops over the three legs.
 
-```ts
-const run = buildKitRunInstruction({
-  compiled,
-  templateAddress,
-  accounts: { jupiter, tokenProgram, user, sourceA, destinationA, sourceB, destinationB, sourceC, destinationC },
-  inputs: {
-    routeA: quoteA.data, routeB: new Uint8Array(), routeC: quoteC.data,
-    targetA, targetB, targetC, minOutA, minOutB, minOutC,
-  },
-  accountGroups: {
-    ammA: quoteA.remainingAccounts.map((meta) => ({ address: meta.address, writable: meta.isWritable })),
-    ammB: [],
-    ammC: quoteC.remainingAccounts.map((meta) => ({ address: meta.address, writable: meta.isWritable })),
-  },
-});
-```
+To skip a swap, the caller passes an empty group and empty route data for it. In the run data, the
+three group lengths come first, one byte each, then the inputs in declaration order. In the
+accounts, each group's members follow the declared accounts, group A's first.
 
 The routes come from off-chain quotes; a template cannot find a route on chain. What it can do is
 fail the transaction unless the result passes the checks its author wrote.
@@ -139,30 +80,5 @@ Ballista's limit of 120 accounts per run (not counting the template account). Tr
 the tighter limit. A [version 1 transaction](/guide/transaction-v1) allows 4,096 bytes but at most
 64 account addresses and no address lookup tables, so it cannot carry this many accounts. A version
 0 transaction supports lookup tables but is limited to 1,232 bytes, so three swaps in one run need
-an address lookup table and single-hop or short routes.
-
-## Rust
-
-The same pattern with the Rust builder, for a single group:
-
-```rust
-let mut builder = ProgramBuilder::new();
-builder.account_groups(1);
-let jupiter = builder.account(ACCOUNT_EXECUTABLE, Some(JUPITER_V6), None, 0);
-let user = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
-let route_input = builder.input(VALUE_BYTES, 512);
-let route = builder.load_input(route_input);
-let swap = builder.cpi_with_group(
-    jupiter,
-    &[(user, ACCOUNT_SIGNER | ACCOUNT_WRITABLE)],
-    &[Segment::Register(DATA_REG_BYTES, route)],
-    0,
-);
-builder.invoke(swap, None);
-
-// Run data: one length byte per group, then the fixed inputs.
-let inputs = RunInputs::new().groups(&[amm_accounts.len() as u8]).bytes(&quote.data).finish();
-let mut accounts = vec![AccountMeta::new_readonly(JUPITER_V6, false), AccountMeta::new(user, true)];
-accounts.extend(amm_accounts);
-let run = ballista_sdk::run_instruction(template, accounts, &inputs);
-```
+an address lookup table and single-hop or short routes. The run data has its own limit of 1,024
+bytes, which is why this template caps each route at 256 bytes.

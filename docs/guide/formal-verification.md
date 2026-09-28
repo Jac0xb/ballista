@@ -1,8 +1,7 @@
 # Formal verification
 
-This page explains what Ballista's formal verification covers today: which rules the prover is set
-up to prove, which rules are written but blocked, what is out of scope, and how to run the prover
-yourself.
+What Ballista's formal verification covers today: the rules the prover is set up to prove, the
+rules that are written but blocked, what is out of scope, and how to run the prover yourself.
 
 A test checks a program on the inputs someone chose. A formal verifier checks a stated property,
 called a rule, against every possible input, and either proves it or finds a counterexample.

@@ -8,7 +8,9 @@ against the TypeScript-compiled `fixtures/system-transfer.hex`.
 
 ```toml
 [dependencies]
-ballista-sdk = { path = "clients/rust" }
+ballista-sdk = "1"
+# The SDK's instructions and addresses are solana-program 4.1.0 types; use the same version.
+solana-program = "=4.1.0"
 ```
 
 Two runnable examples cover the basics: one authors templates, the other builds a run and decodes
@@ -19,8 +21,9 @@ cargo run -p ballista-sdk --example author_template
 cargo run -p ballista-sdk --example run_template
 ```
 
-A third example, `protocol_runs`, builds run instructions for the protocol templates in the
-[examples](/examples/protocols/).
+Three more cover the protocol templates in the [examples](/examples/protocols/):
+`protocol_templates` builds all twelve with `ProgramBuilder`, byte-identical to the TypeScript
+fixtures, and `protocol_templates_run` and `protocol_runs` build run instructions for them.
 
 ## Authoring with the builder
 
@@ -148,9 +151,10 @@ template account.
 ## Inputs and the run instruction
 
 ```rust
-use ballista_sdk::{run_instruction, RunInputs};
+use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
 use solana_program::instruction::AccountMeta;
 
+// template, treasury and recipients are addresses you supply; amount and budget are u64 values.
 let inputs = RunInputs::new().u64(amount).u64(budget).finish();
 let mut accounts = vec![
     AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
@@ -174,18 +178,25 @@ group by group.
 ```rust
 use ballista_sdk::{decode_ballista_error, ErrorSource};
 
+// `code` is the custom error code (u32) from a failed transaction.
 if let Some(error) = decode_ballista_error(code) {
-    match error.source {
-        ErrorSource::Runtime => println!("{} at instruction {}", error.name, error.context),
-        ErrorSource::Verifier => println!("{} (context {})", error.name, error.context),
-    }
+    let context = match (error.source, error.name) {
+        (ErrorSource::Verifier, _) => "verifier context",
+        (_, "AccountConstraintFailed") => "runtime account index",
+        (_, "InvalidRunInputs") => "input index",
+        (_, "InvalidAccountRange") => "accounts or rows supplied",
+        (_, "CpiAccountLimitExceeded") => "accounts in the call",
+        _ => "program counter",
+    };
+    println!("{} ({context} {})", error.name, error.context);
 }
 ```
 
-`None` means the code is outside Ballista's ranges and came from an invoked program. For most
-runtime errors the context is the index of the failing bytecode instruction.
-[Errors and events](/guide/errors-and-events) lists the kinds whose context is an account or
-input index instead.
+`None` means the code is outside Ballista's ranges and came from an invoked program. The low 16
+bits of a code name the error, and the high 16 bits, `context`, say where it happened: for most
+runtime errors the program counter (the index of the failing bytecode instruction), but an account
+index, an input index, or a count for the kinds matched above. The `run_template` example does the
+same. [Errors and events](/guide/errors-and-events) lists the context of every kind.
 
 ## Decoding a template account {#borrowed-decoding}
 

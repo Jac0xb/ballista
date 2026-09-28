@@ -11,61 +11,32 @@ on with the next step.
 
 This page shows four examples: claim rewards only when some are pending, liquidate a position only
 when it is unhealthy, top up a balance only when it is low, and create an account only if it does
-not exist yet. In the code, `step.invoke` makes a CPI (a cross-program invocation: one program
-calling another), and `systemTransfer` is a shortcut for a CPI to the System program. Both accept
-`when`.
-
-::: info How to read the cost tables
-Each example ends with measured costs. Compute units measure on-chain work. The Ballista column
-is one run of the template. The plain column is the same call sent as an ordinary instruction. It
-does not do the same job: it cannot check the condition during execution, so it always makes the
-call. The "upload once" and rent rows are one-time costs of storing the template on chain. Where
-an example calls another protocol, the measurement calls a SOL transfer in its place, so neither
-column includes that protocol's own work. The figures come from Mollusk, a harness that runs
-Solana programs without a validator. The [benchmarks page](/benchmarks) describes the method.
-:::
+not exist yet. In the code, `step.invoke` makes a [CPI](/reference/glossary#cpi), and
+`systemTransfer` is a shortcut for a CPI to the System program. Both accept `when`. The examples
+that call another protocol use marked stand-ins (the System program and its Transfer data) so they
+compile and run as written; replace them with the protocol's own.
 
 ## Claim only when there is something
 
 Call a protocol's claim instruction only when its rewards account shows a pending amount above
-zero. `PENDING_OFFSET` stands for the byte offset of that amount in the rewards account. A keeper
-(a bot that sends routine transactions for a protocol) can send this on a schedule without
-checking first.
+zero. `PENDING_OFFSET` is the byte offset of that amount in the rewards account. A keeper (a bot
+that sends routine transactions for a protocol) can send this on a schedule without checking
+first.
 
 ::: code-group
 
-```ts [TypeScript · template]
-step.invoke({
-  program: account.fixed('protocolProgram'),
-  accounts: claimAccounts,
-  data: [data.literal(CLAIM_DISCRIMINATOR)],
-  when: expression.greaterThan(
-    expression.accountData(account.fixed('rewards'), PENDING_OFFSET, 'u64'),
-    expression.u64(0),
-  ),
-})
-```
+<<< @/../clients/js/examples/docs/claim-only-when-there-is-something.ts#template [TypeScript · Template]
 
-```rust [Rust · run]
-// Safe to run on a schedule: an empty epoch is a no-op, not a failure.
-let run = ballista_sdk::run_instruction(template, claim_metas, &[]);
-```
+<<< @/../clients/js/examples/docs/claim-only-when-there-is-something.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#claim-only-when-there-is-something [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#claim-only-when-there-is-something [Rust · Run]
 
 :::
 
-<!-- benchmark:claim-only-when-there-is-something -->
-
-| Cost | Ballista | Closest plain instructions | Difference |
-| --- | ---: | ---: | ---: |
-| Compute units, every run | 3,336 | 150 | +3,186 |
-| Transaction bytes, every run | 308 | 220 | +88 |
-| Compute units, upload once | 10,526 | none | — |
-| Transaction bytes, upload once | 480 in 1 transaction | none | — |
-| Rent locked in the template account | 0.00209 SOL for 284 bytes | none | — |
-
-One Ballista instruction, compared with 1 plain instruction. A SOL transfer stands in for the protocol call, so neither column includes the protocol's own work. Claiming nothing is an error in most protocols, and an error reverts the transaction. A caller that guesses wrong pays the fee and gets nothing done, including the other work in the same transaction.
-
-<!-- /benchmark -->
+Most protocols treat a claim of nothing as an error, and an error reverts the whole transaction.
+With `when`, an empty epoch is a no-op instead of a failure.
 
 ## Liquidate only when unhealthy
 
@@ -74,21 +45,13 @@ The template reads the health value from the position account at `HEALTH_OFFSET`
 
 ::: code-group
 
-```ts [TypeScript · template]
-step.invoke({
-  program: account.fixed('protocolProgram'),
-  accounts: liquidateAccounts,
-  data: liquidateData,
-  when: expression.lessThan(
-    expression.accountData(account.fixed('position'), HEALTH_OFFSET, 'u64'),
-    expression.input('threshold'),
-  ),
-})
-```
+<<< @/../clients/js/examples/docs/liquidate-only-when-unhealthy.ts#template [TypeScript · Template]
 
-```rust [Rust · run]
-let run = ballista_sdk::run_instruction(template, position_metas, &threshold.to_le_bytes());
-```
+<<< @/../clients/js/examples/docs/liquidate-only-when-unhealthy.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#liquidate-only-when-unhealthy [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#liquidate-only-when-unhealthy [Rust · Run]
 
 :::
 
@@ -97,61 +60,25 @@ the first can succeed. The others execute after the position has already changed
 liquidation instruction, each of those transactions fails. With `when`, they succeed and skip the
 call, so any other work in them still takes effect.
 
-<!-- benchmark:liquidate-only-when-unhealthy -->
-
-| Cost | Ballista | Closest plain instructions | Difference |
-| --- | ---: | ---: | ---: |
-| Compute units, every run | 3,435 | 150 | +3,285 |
-| Transaction bytes, every run | 316 | 220 | +96 |
-| Compute units, upload once | 10,571 | none | — |
-| Transaction bytes, upload once | 484 in 1 transaction | none | — |
-| Rent locked in the template account | 0.00211 SOL for 288 bytes | none | — |
-
-One Ballista instruction, compared with 1 plain instruction. A SOL transfer stands in for the protocol call, so neither column includes the protocol's own work. Health is read from the position at execution. A liquidation sent on a stale read reverts when someone else got there first, and again for every other liquidator trying the same position.
-
-<!-- /benchmark -->
-
 ## Top up only when low
 
-Send `topUp` lamports (the smallest unit of SOL) from a funder to a bot's account, but only when
-the bot's balance is below `floor`.
+Send `topUp` [lamports](/reference/glossary#lamports) from a funder to a bot's account, but only
+when the bot's balance is below `floor`.
 
 ::: code-group
 
-```ts [TypeScript · template]
-systemTransfer({
-  systemProgram: account.fixed('systemProgram'),
-  from: account.fixed('funder'),
-  to: account.fixed('bot'),
-  lamports: expression.input('topUp'),
-  when: expression.lessThan(
-    expression.accountField(account.fixed('bot'), 'lamports'),
-    expression.input('floor'),
-  ),
-})
-```
+<<< @/../clients/js/examples/docs/top-up-only-when-low.ts#template [TypeScript · Template]
 
-```rust [Rust · inputs]
-let mut inputs = floor.to_le_bytes().to_vec();
-inputs.extend_from_slice(&top_up.to_le_bytes());
-let run = ballista_sdk::run_instruction(template, top_up_metas, &inputs);
-```
+<<< @/../clients/js/examples/docs/top-up-only-when-low.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#top-up-only-when-low [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#top-up-only-when-low [Rust · Run]
 
 :::
 
-<!-- benchmark:top-up-only-when-low -->
-
-| Cost | Ballista | Closest plain instructions | Difference |
-| --- | ---: | ---: | ---: |
-| Compute units, every run | 3,376 | 150 | +3,226 |
-| Transaction bytes, every run | 291 | 220 | +71 |
-| Compute units, upload once | 7,558 | none | — |
-| Transaction bytes, upload once | 480 in 1 transaction | none | — |
-| Rent locked in the template account | 0.00209 SOL for 284 bytes | none | — |
-
-One Ballista instruction, compared with 1 plain instruction. A scheduled job that always tops up drains the funder; one that checks first has read a balance that may have changed by the time the transfer lands.
-
-<!-- /benchmark -->
+A scheduled job that always tops up drains the funder. One that checks first has read a balance
+that may have changed by the time the transfer lands.
 
 ## Initialize only if missing
 
@@ -159,19 +86,13 @@ Create an account only if it does not exist yet.
 
 ::: code-group
 
-```ts [TypeScript · template]
-step.invoke({
-  program: account.fixed('protocolProgram'),
-  accounts: initializeAccounts,
-  data: initializeData,
-  when: expression.accountField(account.fixed('position'), 'isEmpty'),
-})
-```
+<<< @/../clients/js/examples/docs/initialize-only-if-missing.ts#template [TypeScript · Template]
 
-```rust [Rust · run]
-// The same instruction whether or not the position exists yet.
-let run = ballista_sdk::run_instruction(template, position_metas, &[]);
-```
+<<< @/../clients/js/examples/docs/initialize-only-if-missing.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#initialize-only-if-missing [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#initialize-only-if-missing [Rust · Run]
 
 :::
 
@@ -179,17 +100,3 @@ let run = ballista_sdk::run_instruction(template, position_metas, &[]);
 offer an idempotent `Create`, one that succeeds even when the account already exists. For the
 others, the caller must know whether the account exists, and still be right when the transaction
 executes.
-
-<!-- benchmark:initialize-only-if-missing -->
-
-| Cost | Ballista | Closest plain instructions | Difference |
-| --- | ---: | ---: | ---: |
-| Compute units, every run | 2,956 | 150 | +2,806 |
-| Transaction bytes, every run | 275 | 220 | +55 |
-| Compute units, upload once | 8,747 | none | — |
-| Transaction bytes, upload once | 440 in 1 transaction | none | — |
-| Rent locked in the template account | 0.00189 SOL for 244 bytes | none | — |
-
-One Ballista instruction, compared with 1 plain instruction. A SOL transfer stands in for the protocol call, so neither column includes the protocol's own work. Only a few programs have an instruction that creates an account only if it is missing. For the rest the caller must know whether the account exists, and be right about it at execution, or the whole transaction fails.
-
-<!-- /benchmark -->

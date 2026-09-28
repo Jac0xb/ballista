@@ -13,6 +13,8 @@ interface Variant {
   css?: string;
   text?: { selector: string; text: string }[];
   html?: { selector: string; html: string }[];
+  /** New content placed next to an element: before or after it, or at the start or end inside it. */
+  insert?: { selector: string; where: 'before' | 'after' | 'prepend' | 'append'; html: string }[];
 }
 interface VariationSet {
   id: string;
@@ -80,6 +82,8 @@ interface Applied {
   signature: string;
   style?: HTMLStyleElement;
   restores: (() => void)[];
+  /** Elements a variant added, so the outline can include them. */
+  added: Element[];
 }
 const applied = new Map<string, Applied>();
 
@@ -100,7 +104,7 @@ function apply(set: VariationSet, index: number) {
   if (applied.get(set.id)?.signature === signature) return;
   unapply(set.id);
   document.documentElement.setAttribute(`data-rv-${set.id}`, String(index));
-  const next: Applied = { signature, restores: [] };
+  const next: Applied = { signature, restores: [], added: [] };
   applied.set(set.id, next);
   if (!variant) return;
   if (variant.css) {
@@ -124,6 +128,21 @@ function apply(set: VariationSet, index: number) {
   };
   for (const patch of variant.text ?? []) replace(patch.selector, (element) => (element.textContent = patch.text));
   for (const patch of variant.html ?? []) replace(patch.selector, (element) => (element.innerHTML = patch.html));
+  for (const patch of variant.insert ?? []) {
+    let target: Element | null = null;
+    try {
+      target = document.querySelector(patch.selector);
+    } catch {
+      target = null;
+    }
+    if (!target) continue;
+    const template = document.createElement('template');
+    template.innerHTML = patch.html;
+    const nodes = Array.from(template.content.childNodes);
+    target[patch.where](...nodes);
+    next.added.push(...nodes.filter((node): node is Element => node instanceof Element));
+    next.restores.push(() => nodes.forEach((node) => node.parentNode?.removeChild(node)));
+  }
 }
 
 /** Swaps the page with a short crossfade where the browser supports it, so nothing jumps. */
@@ -231,6 +250,7 @@ function regionOf(set: VariationSet): DOMRect | null {
   for (const variant of set.variants) {
     for (const patch of [...(variant.text ?? []), ...(variant.html ?? [])]) selectors.push(patch.selector);
   }
+  for (const variant of set.variants) for (const patch of variant.insert ?? []) selectors.push(patch.selector);
   let box: { left: number; top: number; right: number; bottom: number } | null = null;
   for (const selector of selectors) {
     let elements: Element[] = [];
@@ -239,6 +259,7 @@ function regionOf(set: VariationSet): DOMRect | null {
     } catch {
       continue;
     }
+    if (selector === selectors[0]) elements.push(...(applied.get(set.id)?.added ?? []));
     for (const element of elements) {
       const r = element.getBoundingClientRect();
       if (!r.width && !r.height) continue;

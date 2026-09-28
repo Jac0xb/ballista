@@ -17,7 +17,9 @@
   --tok-string: #032f62;
   --tok-call: #6f42c1;
   --tok-constant: #005cc5;
-  --tok-comment: #6a737d;
+  /* Comments and line numbers clear 4.5:1 and 3:1 on the code surfaces. */
+  --tok-comment: #5f666f;
+  --line-number: #818276;
   --vp-c-bg: var(--paper);
   --vp-c-bg-alt: #efeee8;
   --vp-c-bg-soft: var(--surface);
@@ -76,6 +78,7 @@
   --tok-call: #d2a8ff;
   --tok-constant: #79c0ff;
   --tok-comment: #8b949e;
+  --line-number: #6f7068;
   --vp-c-bg-alt: #181915;
   --vp-c-bg-elv: #1e1f1b;
   --vp-c-text-3: #7c7d73;
@@ -162,7 +165,8 @@ a, button, input { -webkit-tap-highlight-color: transparent; }
   text-rendering: optimizeLegibility;
   margin: 0 0 0 -.05em;
   /* The first line is drawn in outline; the second is solid. */
-  color: transparent;
+  /* Filled with the paper, so the circuit behind the page does not show through the letters. */
+  color: var(--paper);
   -webkit-text-stroke: 1.4px var(--ink);
 }
 /* Outlined text disappears inside a selection, so selected letters turn solid. */
@@ -253,7 +257,7 @@ a, button, input { -webkit-tap-highlight-color: transparent; }
 .gallery-code.has-more::after { opacity: 1; }
 .gallery-code pre { margin: 0; padding: 18px 16px 18px 0; font-family: var(--vp-font-family-mono); font-size: 11px; line-height: 1.8; color: var(--ink); counter-reset: line; }
 .code-line { display: block; padding-left: 44px; text-indent: -44px; white-space: pre-wrap; overflow-wrap: break-word; }
-.code-line::before { counter-increment: line; content: counter(line); display: inline-block; width: 30px; margin-right: 14px; text-align: right; color: var(--faint); }
+.code-line::before { counter-increment: line; content: counter(line); display: inline-block; width: 30px; margin-right: 14px; text-align: right; color: var(--line-number); }
 .tok-keyword { color: var(--tok-keyword); }
 .tok-string { color: var(--tok-string); }
 .tok-call { color: var(--tok-call); }
@@ -263,7 +267,7 @@ a, button, input { -webkit-tap-highlight-color: transparent; }
 .gallery-diagram .flow-drawing { flex: 1; }
 .flow-drawing .value-label { fill: var(--signal); }
 .gallery-caption { justify-content: flex-end; flex-wrap: wrap; gap: 6px 20px; }
-.gallery-caption a { color: var(--signal); text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+.gallery-caption a { display: inline-flex; align-items: center; min-height: 24px; color: var(--signal); text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
 .gallery-caption a:hover { color: var(--ink); }
 
 .operating-principle { border-top: 1px solid var(--ink); display: grid; grid-template-columns: 160px 1fr; padding: 23px 0; gap: 32px; }
@@ -285,6 +289,8 @@ a, button, input { -webkit-tap-highlight-color: transparent; }
 .VPDoc { padding-top: 48px !important; }
 .VPDoc .content-container { max-width: 736px !important; }
 .vp-doc h1 { font-family: var(--display-font); font-size: 48px; line-height: 1.07; font-weight: 400; letter-spacing: -.05em; margin-bottom: 28px; }
+/* The protocols a page uses, set under its title like a drawing's reference line. */
+.vp-doc p.protocol-line { margin: -14px 0 28px; font-family: var(--vp-font-family-mono); font-size: 11px; line-height: 1.6; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .vp-doc h2 { font-family: var(--display-font); font-size: 31px; line-height: 1.2; font-weight: 400; letter-spacing: -.025em; border-top-color: var(--ink); padding-top: 29px; margin-top: 48px; }
 .vp-doc h3 { font-family: var(--display-font); font-size: 24px; font-weight: 400; letter-spacing: -.02em; }
 .vp-doc p, .vp-doc li { font-size: 15px; line-height: 1.85; }
@@ -294,6 +300,27 @@ a, button, input { -webkit-tap-highlight-color: transparent; }
 .vp-doc :not(pre) > code { border-radius: 0; font-size: .82em; color: var(--ink); padding: 2px 4px; }
 .vp-doc .custom-block { border: 0; border-left: 2px solid var(--signal); border-radius: 0; padding: 16px 20px; }
 .vp-doc .custom-block-title { font-family: var(--vp-font-family-mono); font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+/* Links in callouts read like every other link, not in the callout's accent. */
+.vp-doc .custom-block a,
+.vp-doc .custom-block.tip a, .vp-doc .custom-block.info a, .vp-doc .custom-block.note a,
+.vp-doc .custom-block.warning a, .vp-doc .custom-block.danger a, .vp-doc .custom-block.caution a, .vp-doc .custom-block.important a {
+  color: var(--ink); font-weight: inherit; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px;
+}
+.vp-doc .custom-block a:hover,
+.vp-doc .custom-block.tip a:hover, .vp-doc .custom-block.info a:hover, .vp-doc .custom-block.note a:hover,
+.vp-doc .custom-block.warning a:hover, .vp-doc .custom-block.danger a:hover, .vp-doc .custom-block.caution a:hover, .vp-doc .custom-block.important a:hover { color: var(--signal); }
+.vp-doc .custom-block.warning code, .vp-doc .custom-block.danger code, .vp-doc .custom-block.caution code { color: var(--ink); }
+/* A warning is hatched, like a cut section in a drawing; danger is a solid bar on a tinted sheet. */
+.vp-doc .custom-block.warning, .vp-doc .custom-block.caution {
+  border-left: 0;
+  padding-left: 26px;
+  background: repeating-linear-gradient(-45deg, var(--signal) 0 2px, transparent 2px 5px) left top / 7px 100% no-repeat, var(--surface);
+}
+.vp-doc .custom-block.danger { border-left-width: 5px; padding-left: 23px; background: var(--signal-wash); }
+.vp-doc .custom-block.warning .custom-block-title::before,
+.vp-doc .custom-block.caution .custom-block-title::before,
+.vp-doc .custom-block.danger .custom-block-title::before { content: '▲ '; color: var(--signal); }
+.vp-doc .custom-block.danger .custom-block-title { color: var(--signal); }
 .vp-doc table { display: table; width: 100%; border-collapse: collapse; font-size: 13px; }
 .vp-doc th, .vp-doc td { border: 0; border-bottom: 1px solid var(--rule); padding: 12px 14px 12px 0; }
 .vp-doc th { background: transparent; border-top: 1px solid var(--ink); border-bottom-color: var(--ink); font-family: var(--vp-font-family-mono); text-transform: uppercase; font-size: 10px; font-weight: 400; letter-spacing: .035em; }
@@ -365,9 +392,11 @@ a, button, input { -webkit-tap-highlight-color: transparent; }
   padding-top: 20px;
   border-right: 1px solid var(--rule);
   background: var(--surface);
-  color: var(--faint);
+  color: var(--line-number);
   font-family: var(--vp-font-family-mono);
 }
+/* Shiki's github themes draw comments in #6A737D, too faint on these surfaces in both themes. */
+html .vp-doc .vp-code span[style*='--shiki-light:#6A737D' i] { color: var(--tok-comment); }
 .vp-doc div[class*='language-'] pre { scrollbar-width: thin; scrollbar-color: var(--faint) transparent; }
 .vp-doc div[class*='language-'] code { font-variant-ligatures: none; }
 .vp-doc div[class*='language-'] code .highlighted { background: var(--vp-code-line-highlight-color); box-shadow: inset 2px 0 0 var(--signal); }
@@ -380,11 +409,65 @@ a, button, input { -webkit-tap-highlight-color: transparent; }
 .vp-code-group .tabs label { padding: 0 14px; line-height: 40px; }
 .vp-code-group .tabs input:checked + label { color: var(--ink); }
 
+/* Code groups with part tabs and a language picker (codeLang.ts). VitePress's own tab row is kept,
+   hidden, so its radios still track the visible block. */
+.vp-code-group .tabs.cg-hidden { display: none; }
+.cg-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 6px 0 8px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+}
+.cg-parts { display: flex; align-self: stretch; margin-right: auto; }
+.cg-part {
+  position: relative;
+  padding: 0 14px;
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  line-height: 40px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color .15s;
+}
+.cg-part:hover { color: var(--ink); }
+.cg-part[aria-selected='true'] { color: var(--ink); }
+.cg-part[aria-selected='true']::after { content: ''; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px; background: var(--signal); }
+.cg-part:focus-visible { outline-offset: -4px; }
+.cg-note { font-family: var(--vp-font-family-mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+.cg-lang { display: flex; align-items: center; }
+.cg-lang select {
+  appearance: none;
+  min-height: 28px;
+  padding: 3px 26px 3px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%) calc(100% - 14px) 50% / 5px 5px no-repeat,
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%) calc(100% - 9px) 50% / 5px 5px no-repeat,
+    var(--paper);
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.cg-lang select:hover { border-color: var(--ink); }
+.cg-lang select:focus-visible { outline-offset: 2px; }
+.cg-lang select option { background: var(--paper); color: var(--ink); }
+/* The chosen language has no block for this part, so the other one is shown: the picker says so. */
+.vp-code-group[data-lang-fallback] .cg-lang select { border-style: dashed; color: var(--muted); }
+.cg-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
 /* Pages sit on a faint circuit (CircuitBackground.vue); drawings that need a clean sheet keep one. */
 .execution-plate { background: var(--paper); }
 
-/* The theme switch. */
+/* The theme switch, 24px tall so it is an easy tap. */
 .VPSwitchAppearance { border-color: var(--ink) !important; background: var(--surface) !important; }
+button.VPSwitch.VPSwitchAppearance { width: 44px; height: 24px; border-radius: 12px; }
+.VPSwitch.VPSwitchAppearance .check { top: 2px; left: 2px; }
+html.dark .VPSwitch.VPSwitchAppearance .check { transform: translateX(20px); }
 .VPSwitchAppearance .check { background: var(--ink) !important; }
 .VPSwitchAppearance .icon svg { fill: var(--paper) !important; }
 /* The new theme is revealed by a growing circle (themeBurst.ts), not the default crossfade. */
@@ -409,14 +492,28 @@ html.theme-burst::view-transition-new(root) { z-index: 2; }
   .cover h1 { font-size: clamp(66px, 13vw, 86px); }
   .cover-description { max-width: 420px; font-size: 16px; }
   .cover-links { margin-top: 24px; gap: 22px; }
+  .cover h1 { -webkit-text-stroke-width: 2px; }
   .gallery-body { grid-template-columns: minmax(0, 1fr); }
-  .gallery-tab { flex: 0 0 172px; padding: 12px 14px; }
-  .gallery-tab:last-child { border-right: 1px solid var(--rule); }
+  /* The plate runs edge to edge, which gives the drawing room to set its labels at a readable size. */
+  .gallery-plate { margin: 0 -24px; border-left: 0; border-right: 0; }
+  .plate-title { flex-wrap: wrap; gap: 4px 12px; }
+  /* Every example stays in view: two columns of tabs, the odd one out spanning both. */
+  .gallery-list { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; overflow: visible; background: var(--rule); }
+  .gallery-tab { padding: 11px 14px; border-right: 0; background: var(--paper); }
+  .gallery-tab:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .tab-name { font-size: 13px; }
+  .flow-drawing text { font-size: 12.8px; }
+  .flow-drawing .small-label { font-size: 12.3px; letter-spacing: .02em; }
+  /* Nothing under 11px on a phone. */
+  .plate-title, .plate-control > span, .state-switch button, .plate-readout, .plate-caption, .tab-number,
+  .section-label, .VPFooter .message, .VPFooter .copyright, .vp-doc th, .VPDocFooter .desc,
+  .VPSidebarItem.level-0 > .item > .text, .VPDocAsideOutline .outline-title,
+  .vp-doc div[class*='language-'] > span.lang { font-size: 11px !important; }
   .gallery-diagram { order: 1; }
   .gallery-code { order: 2; min-height: 0; border-right: 0; border-top: 1px solid var(--rule); }
   .gallery-code-scroll { position: static; max-height: 420px; }
   .gallery-caption { justify-content: flex-start; }
-  .plate-title { font-size: 8px; padding: 12px; }
+  .plate-title { padding: 12px 16px; }
   .plate-control { padding-top: 12px; }
   .state-switch button { padding: 7px 10px; }
   .operating-principle { grid-template-columns: 1fr; gap: 23px; }

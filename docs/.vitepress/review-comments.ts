@@ -68,6 +68,8 @@ export interface Variant {
   css?: string;
   text?: { selector: string; text: string }[];
   html?: { selector: string; html: string }[];
+  /** New content placed next to an element: before or after it, or at the start or end inside it. */
+  insert?: { selector: string; where: 'before' | 'after' | 'prepend' | 'append'; html: string }[];
 }
 
 export interface VariationSet {

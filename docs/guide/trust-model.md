@@ -13,11 +13,13 @@ caller supplies, so its checks protect you only if you know which parts the call
 | Called programs | Their own instruction behavior and errors | What each call does with the accounts it receives |
 | Ballista | Checks at finalization, execution at run time, passing on signatures and write access | Nothing else: it never signs for a PDA (program-derived address), holds no funds, and keeps no state between runs |
 
-Ballista never signs. A CPI (a call from the template to another program) can pass an account as a
-signer (an account that signed the transaction) or as writable (allowed to change) only if the
-account's declaration requires that privilege and the outer transaction actually granted it. A
-template has no authority of its own: every call it makes, the caller could have made directly with
-the same signatures. What the template adds is that its steps and checks run together, in one
+Ballista never signs. A CPI (a call from the template to another program) can pass a declared
+account as a signer (an account that signed the transaction) or as writable (allowed to change)
+only if the account's declaration requires that privilege and the outer transaction actually
+granted it. Members of an [account group](/guide/account-groups) are the exception: they have no
+declaration, so a call passes each one as writable whenever the transaction marked it writable, and
+never as a signer. A template has no authority of its own: every call it makes, the caller could
+have made directly with the same signatures. What the template adds is that its steps and checks run together, in one
 transaction, exactly as written.
 
 ## Pins
@@ -25,30 +27,41 @@ transaction, exactly as written.
 To pin a fact about an account is to fix it in the template, so that a run fails if the caller
 passes an account that does not match. An account declaration can pin two facts:
 
-- **`address`** fixes the account to one exact address. Every program a template calls, or derives
-  a PDA with, must be pinned this way. Otherwise the caller could substitute any program, and the
+- **`address`** fixes the account to one exact address. Pin every program a template calls, or
+  derives a PDA with, this way. Otherwise the caller could substitute any program, and the
   template's calls would mean nothing.
 - **`owner`** fixes the program that owns the account, so the template knows the layout of its
   data. A `u64` at byte offset 64 is a token balance only if the Token Program owns the account.
 
-The TypeScript compiler enforces both unless you opt out, as described below. It refuses a template
-that calls a program without a pinned address, or that reads the data of an account that pins
-neither its owner nor its address. Helpers such as `systemTransfer` also declare which program they
-target, so pinning the wrong address fails when you compile, not when someone runs the template.
+Only the TypeScript compiler enforces these two rules, unless you opt out as described below. It
+refuses a template that calls a program without a pinned address, or that reads the data of an
+account that pins neither its owner nor its address. Helpers such as `systemTransfer` also declare
+which program they target, so pinning the wrong address fails when you compile. The Ballista
+program does not check pins: at finalization it checks only that a called program is declared
+`executable`. A template built with the Rust `ProgramBuilder`, or by hand, can leave a program
+unpinned and still be finalized, so check the pins of any template you did not compile yourself.
 
-A read at a fixed offset also raises the account's minimum data length automatically, and
-finalization rejects any fixed-offset read that extends past the declared minimum. So a read that
-could run off the end of an account fails when you build the template instead of during a run.
+| Rule | Ballista program, on chain | TypeScript compiler |
+| --- | --- | --- |
+| A called program, or one used to derive a PDA, is declared `executable` | At finalization | Yes |
+| That program pins its `address` | No | Yes, unless `unsafeUnpinned` |
+| An account whose data is read pins its `owner` or `address` | No | Yes, unless `unsafeUnpinned` |
+| A call passes signer or writable only if the declaration requires it (group members aside) | At finalization | Yes |
+| A fixed-offset read stays within the account's minimum data length | At finalization | Raises `minDataLength` to fit |
+| Each account passed matches its declaration: signer, writable, executable, address, owner, length | On every run | The run builder checks pinned addresses |
+
+[Security posture](/guide/security) lists everything the program checks.
 
 ## Opting out
 
-`unsafeUnpinned: true` on an account declaration turns off both requirements for that account, and
-the template then accepts whatever the caller passes. That is reasonable when the caller is the only
-party affected, such as a wallet's own maintenance template. It is not reasonable when someone else
-relies on the template as a safeguard, because the caller can then point a call at any program they
-choose.
+`unsafeUnpinned: true` on an account declaration turns off both compiler requirements for that
+account, and the template then accepts whatever the caller passes. That is reasonable when the
+caller is the only party affected, such as a wallet's own maintenance template. It is not
+reasonable when someone else relies on the template as a safeguard, because the caller can then
+point a call at any program they choose.
 
-The flag's name is long on purpose, so that it stands out in code review.
+The flag's name is long on purpose, so that it stands out in code review. It exists only in the
+TypeScript template document and is not stored on chain.
 
 ## Error attribution
 

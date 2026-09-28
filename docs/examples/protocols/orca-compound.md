@@ -1,7 +1,13 @@
 # Compound the fees you collected
 
-This template collects the fees an Orca Whirlpool position has earned and adds them back to the
-position as liquidity.
+<p class="protocol-line">Orca</p>
+
+**Status:** Compiles and passes the verifier; not yet run against Orca.
+
+## What it does
+
+Collects the fees an Orca Whirlpool position has earned and adds them back to the position as
+liquidity.
 
 Orca's `increase_liquidity` takes limits, `token_max_a` and `token_max_b`, not amounts. Set them
 too low and the call fails. Set them too high and it takes the extra from your wallet. The right
@@ -11,11 +17,17 @@ The template reads `fee_owed_a` and `fee_owed_b` from the position account befor
 because collecting resets them to zero, and uses them as the limits. You choose
 `liquidityAmount`, the liquidity to add, when you build the run; the limits cap what it can cost.
 
+## Template
+
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/orca-compound-fees.ts [Template · TypeScript]
+<<< ../../../clients/js/examples/protocols/orca-compound-fees.ts [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_runs.rs#plain [Run · Rust]
+<<< ../../../clients/rust/examples/protocol_templates.rs#orca-compound [Rust · Template]
+
+<<< ../../../clients/js/examples/protocols/run/orca-compound.ts [TypeScript · Run]
+
+<<< ../../../clients/rust/examples/protocol_templates_run.rs#orca-compound [Rust · Run]
 
 :::
 
@@ -26,12 +38,17 @@ compound then finishes cleanly instead of failing. The condition looks only at t
 The fee offsets come from Orca's `Position` account; see
 [reading offsets](/examples/protocols/#reading-offsets-from-an-account).
 
-The Rust tab builds the run for [act only on a fresh price](/examples/protocols/pyth-gate). Build
-this template's run the same way, with its own accounts and inputs in the order the template
-declares them. This template has no account group, so leave out the `.groups(...)` call and the
-extra accounts at the end.
+## Run it
 
-Not yet run against Orca: the template compiles and passes Ballista's verifier, and an opt-in test
-checks its offsets against devnet accounts, but no test calls Orca.
+The Run tabs pass the template's 12 accounts in the order it declares them, and two inputs:
+`liquidityAmount` (a `u128`) and `dustFloor`. There is no account group.
+
+## What has been tested
+
+- The template compiles and passes Ballista's verifier.
+- An opt-in test checks the Orca offsets against devnet accounts.
+- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
+  and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
+- No test calls Orca.
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

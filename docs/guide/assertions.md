@@ -33,56 +33,29 @@ values, called bindings, follow a few rules:
 
 ## Exact lamport delta
 
-This template records the sender's balance in lamports (the smallest unit of SOL), transfers an
-amount, then requires that the balance fell by exactly that amount.
+This template records the sender's balance in [lamports](/reference/glossary#lamports), transfers
+an amount, then requires that the balance fell by exactly that amount.
 
 ::: code-group
 
-```ts [TypeScript · template]
-steps: [
-  step.snapshot(
-    'before',
-    expression.accountField(account.fixed('sender'), 'lamports'),
-  ),
-  systemTransfer({
-    systemProgram: account.fixed('systemProgram'),
-    from: account.fixed('sender'),
-    to: account.fixed('recipient'),
-    lamports: expression.input('amount'),
-  }),
-  step.require(
-    expression.equal(
-      expression.accountField(account.fixed('sender'), 'lamports'),
-      expression.subtract(
-        expression.snapshot('before'),
-        expression.input('amount'),
-      ),
-    ),
-  ),
-]
-```
+<<< @/../clients/js/examples/docs/exact-lamport-delta.ts#template [TypeScript · Template]
 
-```rust [Rust · run]
-let amount = 50_000_000u64;
-let run = ballista_sdk::run_instruction(
-    delta_checked_template,
-    vec![
-        AccountMeta::new_readonly(system_program, false),
-        AccountMeta::new(sender, true),
-        AccountMeta::new(recipient, false),
-    ],
-    &amount.to_le_bytes(),
-);
-// If the balance did not fall by exactly `amount`, the run fails with RequirementFailed
-// and the transfer is rolled back.
-```
+<<< @/../clients/js/examples/docs/exact-lamport-delta.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#exact-lamport-delta [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#exact-lamport-delta [Rust · Run]
 
 :::
+
+In Rust there are no names: the snapshot is simply the register that holds the first balance read,
+and the check after the transfer reads the balance into a new register.
 
 ## Token amount delta
 
 The same check works for tokens. An SPL token account stores its balance as a `u64` at byte offset
-64.
+64. [Exact token debit](/examples/token-accounts#exact-token-debit) is the complete template, in
+TypeScript and Rust.
 
 ```ts
 step.snapshot(

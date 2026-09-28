@@ -9,26 +9,23 @@ see what a template can do that an ordinary transaction can't, read the guide pa
 [amounts read at run time](/guide/runtime-values), [conditional calls](/guide/conditional),
 [loops](/guide/loops) and [guardrails](/guide/guardrails).
 
-Every example outside the protocol section has a measured cost table. It shows the compute units
-(Solana's measure of execution cost) and transaction bytes one run uses, next to the plain
-instructions that do the same work. The **Plain transaction?** column below says whether you can
-get the same result without Ballista:
+Every example outside the protocol section shows its template and the code that runs it in both
+TypeScript and Rust. The **Plain transaction?** column below says whether you can get the same
+result without Ballista:
 
-- **Yes**: ordinary instructions in one transaction do the same thing, for less compute. What the
-  template adds is a single instruction and a sequence of calls that is stored on chain and was
-  checked when it was uploaded.
+- **Yes**: ordinary instructions in one transaction do the same thing. What the template adds is a
+  single instruction and a sequence of calls that is stored on chain and was checked when it was
+  uploaded.
 - **Yes, weaker**: you can send the same instructions, but a check the template makes on chain is
   left to whoever builds the transaction.
 - **No**: no sequence of instructions can do it, because a decision depends on account data read
   while the transaction runs.
 
-The full numbers are in [What a run costs](/benchmarks#example-cost-tables).
-
 ## Protocol templates {#live-protocols}
 
 Templates that work with Jupiter, Kamino, marginfi, Drift, Orca, Pyth and Jito. They use the real
-program addresses and instruction names, but none has been run against the protocols themselves,
-and none has a measured cost. See [what has been tested](/examples/protocols/#what-has-been-tested).
+program addresses and instruction names, but none has been run against the protocols themselves.
+See [what has been tested](/examples/protocols/#what-has-been-tested).
 
 | Recipe | Protocol | Decided during the run |
 | --- | --- | --- |

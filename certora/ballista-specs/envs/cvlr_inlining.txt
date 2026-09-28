@@ -170,9 +170,11 @@
 ;; typing rules, which call verify_single_instruction with a heap-resident table.
 #[inline(never)] ^ballista_common::template::verify::<impl ballista_common::template::wire::ProgramView>::verify$
 
-;; Both byte sinks copy a register's bytes with a length the prover cannot fix statically: PDA
-;; seeds into a stack buffer, CPI data into a vector. The program keeps both `push_bytes` out of
-;; line in spec builds (cfg_attr on the spec-api feature) so they can stay external here. What they
-;; would have written only feeds the PDA search and the CPI, both of which are opaque anyway.
+;; The three byte sinks copy a register's bytes with a length the prover cannot fix statically:
+;; PDA seeds into a stack buffer, CPI data into a vector, and EMIT and SET_RETURN_DATA output into
+;; a vector of its own. The program keeps every `push_bytes` out of line in spec builds (cfg_attr on
+;; the spec-api feature) so they can stay external here. What they would have written only feeds
+;; the PDA search, the CPI and the output syscalls, none of which any rule inspects.
 #[inline(never)] ^<ballista::processor::execute::FixedSink as ballista::processor::execute::ByteSink>::push_bytes$
 #[inline(never)] ^<alloc::vec::Vec<u8> as ballista::processor::execute::ByteSink>::push_bytes$
+#[inline(never)] ^<ballista::processor::execute::OutputSink as ballista::processor::execute::ByteSink>::push_bytes$

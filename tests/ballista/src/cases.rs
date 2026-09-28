@@ -49,6 +49,7 @@ pub fn cases() -> Vec<(&'static str, Case)> {
         ("run, oracle band, no cpi", oracle_band(creator, 6)),
         ("run, pda derivation, bump search", pda_case(creator, 7, false)),
         ("run, pda derivation, bump supplied", pda_case(creator, 8, true)),
+        ("run, log and return 16 bytes", output_case(creator, 12)),
         ("create template, payroll 30 rows", upload(9)),
         ("run, math opcodes, no cpi", math_ops(creator, 10)),
         ("run, count loop 30 passes, no cpi", count_loop(creator, 11, 30)),
@@ -293,6 +294,34 @@ fn pda_case(creator: Pubkey, template_id: u16, supply_bump: bool) -> Case {
             system_program_account(),
         )],
         Vec::new(),
+    )
+}
+
+/// A read and an input, logged with a tag and then returned: the two output opcodes and their
+/// syscalls, `sol_log_data` and `sol_set_return_data`.
+fn output_case(creator: Pubkey, template_id: u16) -> Case {
+    let mut builder = ProgramBuilder::new();
+    let oracle = builder.account(0, None, None, 128);
+    let price = builder.read(OP_READ_U64, oracle, 64);
+    let amount_input = builder.input(VALUE_U64, 0);
+    let amount = builder.load_input(amount_input);
+    let tag = builder.blob(b"BOUT");
+    builder.emit_data(&[
+        Segment::Literal(tag),
+        Segment::Register(DATA_REG_U64, price),
+        Segment::Register(DATA_REG_U64, amount),
+    ]);
+    builder.set_return_data(&[
+        Segment::Register(DATA_REG_U64, price),
+        Segment::Register(DATA_REG_U64, amount),
+    ]);
+    let (account_key, account) = with_data(template_id * 100 + 1);
+    run_case(
+        creator,
+        template_id,
+        builder.build().expect("builds"),
+        vec![(AccountMeta::new_readonly(account_key, false), account)],
+        1_000u64.to_le_bytes().to_vec(),
     )
 }
 

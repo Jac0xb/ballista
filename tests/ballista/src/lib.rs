@@ -1957,6 +1957,7 @@ mod tests {
 
         let exact = run(1_000_003, 7, 3, 0xabcd, 18);
         assert!(exact.program_result.is_ok(), "{exact:#?}");
+        eprintln!("math fixture compute units: {}", exact.compute_units_consumed);
 
         // A wrong power of ten fails its requirement, not the arithmetic.
         let wrong = run(1_000_003, 7, 3, 0xabcd, 17);

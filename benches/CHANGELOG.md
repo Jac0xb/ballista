@@ -12,7 +12,7 @@ machine. Build the program first with `pnpm build:program`.
 | What | Command | Output |
 | --- | --- | --- |
 | Cost of each feature | `cargo test --manifest-path tests/ballista/Cargo.toml profile_compute_units -- --nocapture` | printed table |
-| Eleven fixed cases | `pnpm cu:bench` | `benches/compute_units.md` |
+| Twelve fixed cases | `pnpm cu:bench` | `benches/compute_units.md` |
 | Every cookbook example | `cargo test --manifest-path tests/ballista/Cargo.toml measure_every_example -- --nocapture` | one line per example |
 | Where one run's compute goes | `pnpm cu:phases` | `fixtures/cu-phases.json` |
 | Lock in a win | `pnpm cu:ceilings`, `pnpm benchmarks` | lowers `fixtures/cu-ceilings.json`, `fixtures/example-ceilings.json` |
@@ -33,6 +33,32 @@ the same commit and says why here.
 ---
 
 ## Pending: runtime extensions, not merged
+
+### 2026-09-27 · An output buffer for `EMIT` and `SET_RETURN_DATA` · `claude/runtime-output`
+- **Change:** `Scratch` holds the output opcodes' buffer. Every run sets it to `None`, the run's
+  first output allocates it at 1,024 bytes, and later outputs reuse it. Both opcodes reach one
+  out-of-line, `#[cold]` helper through `extended_instruction`'s fallback arm and encode through a
+  sink type of their own.
+- **Measured** against the loops tip (`2e300e4`):
+  - Every run: +1 CU, the store that sets the buffer to `None`. Five of the ten fixed run cases and
+    21 of the 32 cookbook examples rose by exactly 1.
+  - Every loop: +8 more. `FOREACH` and `REPEAT` start from the executor's fallback arm, which now
+    calls the helper before failing. The four fixed cases with a loop, and 11 examples, rose by 9.
+  - The math fixture: 4,321 → 4,309, and the math case: 2,546 → 2,534. Without `#[cold]` on the
+    helper, the fixture cost 4,358.
+  - Cookbook total: 552,195 → 552,315 (+120).
+  - `run, log and return 16 bytes`, a new case: 1,481.
+  - `create template, payroll 30 rows`: 4,470 → 4,481, from the verifier's two new arms. Creating a
+    cookbook example costs 11 to 48 more.
+  - A 20-byte `EMIT` in three parts, measured on phase 1's tip: 429 CU, of which `sol_log_data`
+    charges 220. A run's first output also allocates the buffer, about 38 CU more.
+  - A 16-byte `SET_RETURN_DATA` as a run's first output, measured on phase 1's tip: 296 CU, of which
+    `sol_set_return_data` charges 100.
+- **Checked:** the executor's unit tests, and the Mollusk suite with its ceilings. Later commits on
+  the branch run the path on chain: a fixture that logs between two sends of a cached transfer
+  payload, and generated programs that log and return data.
+- **Watch:** `sol_log_data` charges 100 CU per call, 100 per field and 1 per byte, so a 1,024-byte
+  `EMIT` costs 1,224 CU in the syscall alone.
 
 ### 2026-09-27 · Enter loops from the failure branch · `claude/runtime-loops`
 - **Change:**
@@ -250,6 +276,20 @@ combined numbers; the entries after it keep what each branch measured alone.
     −1,085, against −1,358 and −5,161 for both on the failure branch.
   - A scope parameter on every account lookup in the verifier: 56 units on `create template` in
     the prototype, against 24 for one check on each instruction in a count-loop body.
+- **Output opcodes:**
+  - Encoding outputs through the invocation data's `Vec<u8>` sink gave the encoder a second caller.
+    The compiler stopped inlining it into `invoke_cpi`, which cost about +50 CU per invocation and
+    +1,600 on `index-weighted-rewards`. Marking both encoders `#[inline(always)]` still cost about
+    +13 per invocation.
+  - An empty `Vec<u8>` for the buffer cost 3–4 CU per run, and an `Option<Vec<u8>>` cost 2.
+  - In a prototype of the `Machine`-shaped router, arms of their own in `extended_instruction` cost
+    every math opcode about 7 CU. One helper per opcode gave the encoder two callers again, and
+    each output cost about 65 CU more.
+  - The helper without `#[cold]`, on the loops tip: the math fixture +37. Keeping `instruction`
+    alive for the call cost the math arms spills.
+  - In the verifier, both opcodes in one out-of-line helper. Reached from a shared arm, `create
+    template` rose 7 rather than 11, but each cookbook example's create moved between −14 and +13
+    against the two arms. Reached from the fallback arm, it rose 13.
 
 ## Landed
 

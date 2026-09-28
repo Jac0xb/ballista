@@ -136,6 +136,16 @@ pub struct Scratch<'data> {
     metas: Vec<InstructionAccount<'data>>,
     views: Vec<&'data AccountView>,
     data: Vec<u8>,
+    /// The bytes an `EMIT` or `SET_RETURN_DATA` encodes. Never `data`: inside a batch, `data` can
+    /// hold a loop-invariant invocation payload that the next row sends again without encoding
+    /// it, and an output written there would replace it.
+    ///
+    /// `None` until the run's first output, which allocates the buffer at `MAX_RETURN_DATA_LEN`
+    /// bytes, the most any verified output encodes, for every later output to reuse. It is leaked
+    /// rather than owned: the SBF heap never frees, so that costs nothing, and a null reference is
+    /// the cheapest field to initialize. Every run pays for that store, one compute unit here
+    /// against two for an `Option<Vec<u8>>` and three or four for an empty `Vec<u8>`.
+    output: Option<&'data mut Vec<u8>>,
     /// Program invoked by the most recent executed CPI, for return-data provenance checks. A
     /// reference into the account, not a copy: an address never changes during a run.
     last_invoked: Option<&'data Address>,
@@ -188,6 +198,7 @@ impl<'data> Scratch<'data> {
             metas: Vec::with_capacity(MAX_CPI_ACCOUNTS),
             views: Vec::with_capacity(MAX_CPI_ACCOUNTS),
             data: Vec::with_capacity(max_data),
+            output: None,
             last_invoked: None,
             expanded: 0,
             executed: 0,
@@ -290,6 +301,7 @@ pub fn encode_event(
     event
 }
 
+/// Logs `event` as one `Program data:` field: the run event, and every `EMIT`.
 #[inline(always)]
 fn emit_event(event: &[u8]) {
     #[cfg(target_os = "solana")]
@@ -1073,8 +1085,57 @@ fn extended_instruction<'data>(
             instruction,
             loop_context,
         ),
-        _ => Err(BallistaError::InvalidTemplateProgram.into()),
+        _ => write_output(machine, instruction),
     }
+}
+
+/// `EMIT` and `SET_RETURN_DATA`, reached through `extended_instruction`'s fallback arm so that
+/// its match keeps its shape. Every opcode the executor does not run arrives here too, and fails
+/// before anything is read.
+///
+/// The output's parts are encoded into the run's output buffer, exactly as invocation data is,
+/// then logged as one `Program data:` field or set as the run's return data. The verifier bounds
+/// every output at `MAX_RETURN_DATA_LEN` bytes, and admits one `SET_RETURN_DATA`, outside every
+/// loop and after the last invoke, because the runtime clears return data whenever a program is
+/// invoked. A `cu-profile` build replaces it with the profile record once the run ends; see
+/// `profile::report`.
+///
+/// Cold, so the register allocator charges this call rather than the math arms beside it. Without
+/// that, keeping `instruction` alive for the call cost the math opcodes spills, and the math
+/// fixture cost 37 compute units more. A loop still passes through here on entry, as an opcode
+/// the executor does not run, which costs each loop 8 compute units.
+#[cold]
+#[inline(never)]
+fn write_output(machine: &mut Machine<'_, '_>, instruction: &InstructionRecord) -> RunResult<()> {
+    let emit = match instruction.opcode {
+        OP_EMIT => true,
+        OP_SET_RETURN_DATA => false,
+        _ => return Err(BallistaError::InvalidTemplateProgram.into()),
+    };
+    let (start, count) = instruction.blob_range();
+    let segments = start
+        .checked_add(count)
+        .and_then(|end| machine.program.data_segments.get(start..end))
+        .ok_or(BallistaError::InvalidTemplateProgram)?;
+    let buffer = machine
+        .scratch
+        .output
+        .get_or_insert_with(|| Box::leak(Box::new(Vec::with_capacity(MAX_RETURN_DATA_LEN))));
+    buffer.clear();
+    let mut sink = OutputSink(buffer);
+    for segment in segments {
+        encode_segment(machine.program, machine.registers, segment, &mut sink)?;
+    }
+    let bytes = sink.0.as_slice();
+    if bytes.len() > MAX_RETURN_DATA_LEN {
+        return Err(BallistaError::InvalidTemplateProgram.into());
+    }
+    if emit {
+        emit_event(bytes);
+    } else {
+        pinocchio::cpi::set_return_data(bytes);
+    }
+    Ok(())
 }
 
 /// `MUL_DIV` and `MUL_DIV_CEIL`, out of line from `extended_instruction`. Inside it, their three
@@ -1591,8 +1652,9 @@ fn bounded_invoke(instruction: &InstructionView, views: &[&AccountView]) -> Prog
     Ok(())
 }
 
-/// Destination for encoded segment bytes: a `Vec` for CPI data or a fixed stack buffer for PDA
-/// seeds. Spec builds keep `push_bytes` out of line so the prover can summarize the copy inside.
+/// Destination for encoded segment bytes: a `Vec` for CPI data, the output buffer for `EMIT` and
+/// `SET_RETURN_DATA`, or a fixed stack buffer for PDA seeds. Spec builds keep `push_bytes` out of
+/// line so the prover can summarize the copy inside.
 pub trait ByteSink {
     fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()>;
 }
@@ -1602,6 +1664,21 @@ impl ByteSink for Vec<u8> {
     #[cfg_attr(not(feature = "spec-api"), inline(always))]
     fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()> {
         self.extend_from_slice(bytes);
+        Ok(())
+    }
+}
+
+/// The output buffer as a byte sink. A type of its own rather than the `Vec<u8>` sink, so the
+/// output opcodes get their own copy of the segment encoder: sharing the invocation's copy made
+/// the compiler stop inlining it into `invoke_cpi`, which cost every invocation about 50 compute
+/// units.
+struct OutputSink<'buffer>(&'buffer mut Vec<u8>);
+
+impl ByteSink for OutputSink<'_> {
+    #[cfg_attr(feature = "spec-api", inline(never))]
+    #[cfg_attr(not(feature = "spec-api"), inline(always))]
+    fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()> {
+        self.0.extend_from_slice(bytes);
         Ok(())
     }
 }
@@ -2578,6 +2655,107 @@ mod tests {
             }
         }
         assert_eq!(registers[0], U64(7));
+    }
+
+    /// `EMIT` and `SET_RETURN_DATA` encode into their own buffer. `data` may hold an invocation
+    /// payload that a batch sends again without encoding it, so an output must never write there.
+    #[test]
+    fn outputs_encode_into_their_own_buffer() {
+        let mut builder = ProgramBuilder::new();
+        let amount = builder.const_u64(0x0102);
+        let key = builder.const_pubkey([7; 32]);
+        let tag = builder.blob(b"OUT");
+        let logged = builder.emit_data(&[
+            Segment::Literal(tag),
+            Segment::Register(DATA_REG_U16, amount),
+            Segment::Register(DATA_REG_PUBKEY, key),
+        ]);
+        let returned = builder.set_return_data(&[Segment::Register(DATA_REG_U64, amount)]);
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut scratch = Scratch::new(&program);
+        scratch.data.extend_from_slice(b"cached payload");
+        let mut registers = vec![U64(0x0102), Pubkey([7; 32])];
+
+        execute_instruction(
+            &program,
+            &[],
+            &[],
+            &mut registers,
+            &mut scratch,
+            &program.instructions[logged],
+            None,
+        )
+        .unwrap();
+        let mut expected = b"OUT".to_vec();
+        expected.extend_from_slice(&0x0102u16.to_le_bytes());
+        expected.extend_from_slice(&[7; 32]);
+        assert_eq!(scratch.output.as_deref(), Some(&expected));
+        assert_eq!(scratch.data, b"cached payload", "the invocation buffer is untouched");
+        // The first output allocates the most any output encodes; later ones reuse it.
+        let buffer = scratch.output.as_ref().unwrap();
+        assert_eq!(buffer.capacity(), MAX_RETURN_DATA_LEN);
+        let allocated = buffer.as_ptr();
+
+        execute_instruction(
+            &program,
+            &[],
+            &[],
+            &mut registers,
+            &mut scratch,
+            &program.instructions[returned],
+            None,
+        )
+        .unwrap();
+        assert_eq!(scratch.output.as_deref(), Some(&0x0102u64.to_le_bytes().to_vec()));
+        assert_eq!(scratch.output.as_ref().unwrap().as_ptr(), allocated, "no second allocation");
+        assert_eq!(scratch.data, b"cached payload");
+        assert_eq!(registers, vec![U64(0x0102), Pubkey([7; 32])], "outputs write no register");
+    }
+
+    /// Outputs fail like invocation data does on a bad register, and as an invalid program on a
+    /// shape the verifier rules out.
+    #[test]
+    fn outputs_reject_bad_operands_and_unverified_shapes() {
+        let mut builder = ProgramBuilder::new();
+        for _ in 0..3 {
+            builder.register();
+        }
+        // r0 is unset, r1 holds a u64 too wide for a u8, r2 holds an i64.
+        let unset = builder.emit_data(&[Segment::Register(DATA_REG_U64, 0)]);
+        let narrow = builder.emit_data(&[Segment::Register(DATA_REG_U8, 1)]);
+        let mistyped = builder.set_return_data(&[Segment::Register(DATA_REG_U64, 2)]);
+        let long = builder.blob(&[0; MAX_RETURN_DATA_LEN + 1]);
+        let too_long = builder.emit_data(&[Segment::Literal(long)]);
+        let past_the_table = builder.emit(record(
+            OP_EMIT,
+            NO_INDEX,
+            NO_INDEX,
+            NO_INDEX,
+            NO_INDEX,
+            0,
+            range_immediate(4, 1),
+        ));
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut scratch = Scratch::new(&program);
+        let mut registers = vec![Unset, U64(256), I64(-1)];
+        let mut run = |index: usize| {
+            execute_instruction(
+                &program,
+                &[],
+                &[],
+                &mut registers,
+                &mut scratch,
+                &program.instructions[index],
+                None,
+            )
+        };
+        assert_eq!(run(unset), Err(err(BallistaError::InvalidRegister)));
+        assert_eq!(run(narrow), Err(err(BallistaError::ArithmeticOverflow)));
+        assert_eq!(run(mistyped), Err(err(BallistaError::TypeMismatch)));
+        assert_eq!(run(too_long), Err(err(BallistaError::InvalidTemplateProgram)));
+        assert_eq!(run(past_the_table), Err(err(BallistaError::InvalidTemplateProgram)));
     }
 
     #[test]

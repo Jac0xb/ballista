@@ -231,7 +231,9 @@ impl Failure {
         let (program, code) = match innermost_failure(&meta.logs) {
             Some(failure) => failure,
             None => {
-                // No `failed` line: the runtime rejected the instruction before its program ran.
+                // No `failed` line: either the runtime rejected the instruction before its program
+                // ran, or the program logs nothing, as a precompile such as Ed25519 does. The
+                // instruction index then names the program.
                 let TransactionError::InstructionError(index, error) = &err else {
                     panic!(
                         "the transaction failed outside any program: {err:?}\n{}",

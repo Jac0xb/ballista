@@ -14,7 +14,7 @@
 //!   must be present, with klend's own program ID meaning "none". klend-interface does that.
 
 use {
-    crate::tx::Failure,
+    crate::{oracle, tx::Failure},
     klend_interface::{self as klend, state, LendingError},
     litesvm::LiteSVM,
     solana_address::Address,
@@ -98,6 +98,11 @@ pub fn reserve(svm: &LiteSVM, address: &Address) -> state::Reserve {
         .unwrap_or_else(|error| panic!("{address} is not a klend reserve: {error:?}"))
 }
 
+pub fn lending_market(svm: &LiteSVM, address: &Address) -> state::LendingMarket {
+    *klend::from_account_data::<state::LendingMarket>(&account_data(svm, address))
+        .unwrap_or_else(|error| panic!("{address} is not a klend lending market: {error:?}"))
+}
+
 pub fn obligation(svm: &LiteSVM, address: &Address) -> state::Obligation {
     *klend::from_account_data::<state::Obligation>(&account_data(svm, address))
         .unwrap_or_else(|error| panic!("{address} is not a klend obligation: {error:?}"))
@@ -133,6 +138,43 @@ pub fn reserve_accounts(svm: &LiteSVM, reserve: &Address) -> ReserveAccounts {
         farm_debt: named(stored.farm_debt),
         scope_prices: named(stored.config.token_info.scope_configuration.price_feed),
     }
+}
+
+/// The Scope entries `reserve` prices from: its price chain, then its TWAP chain. Each chain ends
+/// at its first index past Scope's 512 entries, where klend stops reading it
+/// (`utils/prices/scope.rs:87-89`, `get_base_price` at `:159-164`).
+pub fn scope_chains(svm: &LiteSVM, reserve: &Address) -> (Vec<usize>, Vec<usize>) {
+    let scope = self::reserve(svm, reserve)
+        .config
+        .token_info
+        .scope_configuration;
+    let entries = |chain: [u16; 4]| -> Vec<usize> {
+        chain
+            .into_iter()
+            .map(usize::from)
+            .take_while(|&index| index < oracle::SCOPE_ENTRIES)
+            .collect()
+    };
+    (entries(scope.price_chain), entries(scope.twap_chain))
+}
+
+/// The share of an obligation's debt one liquidation may repay, in percent: `market`'s close
+/// factor. klend applies it unless the obligation is past the market's insolvency LTV, and caps
+/// the repayment's value at `max_liquidatable_debt_market_value_at_once` too
+/// (`state/liquidation_operations.rs:73-90`).
+///
+/// # Panics
+///
+/// If the market's close factor is not a partial one, so the liquidation scenarios' sizes would
+/// mean something else: refreshed markets fail here rather than inside klend.
+pub fn close_factor_pct(svm: &LiteSVM, market: &Address) -> u64 {
+    let pct = lending_market(svm, market).liquidation_max_debt_close_factor_pct;
+    assert!(
+        (1..100).contains(&pct),
+        "{market}'s close factor is {pct}%; the liquidation scenarios repay a partial share of the \
+         debt, so check them against klend's rules before relying on this snapshot"
+    );
+    u64::from(pct)
 }
 
 /// The cTokens `obligation` holds from `reserve`, or zero.

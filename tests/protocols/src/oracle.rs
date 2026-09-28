@@ -112,6 +112,8 @@ pub const SCOPE: Address = Address::from_str_const("HFn8GnPADiny6XqUoWE8uRPPxb29
 /// the discriminator, then casts the rest with `bytemuck::from_bytes`, so the length must never
 /// change (`Kamino-Finance/klend@a08760976f`, `programs/klend/src/utils/prices/scope.rs:55-73`).
 pub const SCOPE_PRICES_LEN: usize = 28_712;
+/// How many `DatedPrice` entries an `OraclePrices` account holds.
+pub const SCOPE_ENTRIES: usize = 512;
 /// `sha256("account:OraclePrices")[..8]`, which `crate::tests` derives.
 pub(crate) const SCOPE_DISCRIMINATOR: [u8; 8] = [0x59, 0x80, 0x76, 0xdd, 0x06, 0x48, 0xb4, 0x92];
 const SCOPE_FIRST_ENTRY: usize = 40;
@@ -122,6 +124,7 @@ const SCOPE_VALUE: usize = 0;
 const SCOPE_EXP: usize = 8;
 const SCOPE_SLOT: usize = 16;
 const SCOPE_TIMESTAMP: usize = 24;
+const _: () = assert!(SCOPE_FIRST_ENTRY + SCOPE_ENTRIES * SCOPE_ENTRY_LEN == SCOPE_PRICES_LEN);
 
 /// One Scope entry: the price is `value / 10^exp` dollars.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

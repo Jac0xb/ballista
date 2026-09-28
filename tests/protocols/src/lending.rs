@@ -63,8 +63,30 @@ pub fn snapshot() -> &'static Snapshot {
 /// A LiteSVM at the snapshot. The Scope entries the reserves read are stamped with the snapshot's
 /// clock (write rule 2; prices unchanged). Each is then fresh, however long before the snapshot
 /// Scope last updated it: Kamino's SOL window is 120 seconds.
+///
+/// # Panics
+///
+/// If the reserves no longer price from the entries named above, as a snapshot refresh could
+/// leave them.
 pub fn svm() -> LiteSVM {
     let mut svm = snapshot().svm();
+    for (reserve, spot, twap, names) in [
+        (SOL_RESERVE, SOL_SPOT, SOL_TWAP, "SOL_SPOT and SOL_TWAP"),
+        (
+            USDC_RESERVE,
+            USDC_SPOT,
+            USDC_TWAP,
+            "USDC_SPOT and USDC_TWAP",
+        ),
+    ] {
+        let chains = kamino::scope_chains(&svm, &reserve);
+        assert_eq!(
+            chains,
+            (vec![spot], vec![twap]),
+            "reserve {reserve} now prices from Scope entries {chains:?} (price chain, TWAP \
+             chain); set {names} in src/lending.rs to match, one entry each"
+        );
+    }
     let clock = svm.get_sysvar::<Clock>();
     let now = u64::try_from(clock.unix_timestamp).expect("the clock is after 1970");
     for index in [SOL_SPOT, SOL_TWAP, USDC_SPOT, USDC_TWAP] {
@@ -232,6 +254,9 @@ pub struct Unhealthy {
     pub obligation: Address,
     /// USDC base units borrowed.
     pub debt: u64,
+    /// What one liquidation may repay of it, and what the scenarios repay: the market's close
+    /// factor of `debt` (`kamino::close_factor_pct`).
+    pub liquidatable: u64,
     /// The prices it was left at: Scope values with exponent 8.
     pub sol_price: u64,
     pub usdc_price: u64,
@@ -262,6 +287,7 @@ pub fn unhealthy_obligation(svm: &mut LiteSVM) -> Unhealthy {
     Unhealthy {
         obligation,
         debt,
+        liquidatable: debt * kamino::close_factor_pct(svm, &MARKET) / 100,
         sol_price: fallen,
         usdc_price: usdc.value,
     }

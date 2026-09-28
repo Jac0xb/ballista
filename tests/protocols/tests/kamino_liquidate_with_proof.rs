@@ -181,6 +181,7 @@ fn the_liquidator_nets_at_least_the_bounty() {
     let Unhealthy {
         obligation,
         debt,
+        liquidatable: liquidity_amount,
         sol_price,
         usdc_price,
     } = scene.unhealthy;
@@ -191,8 +192,6 @@ fn the_liquidator_nets_at_least_the_bounty() {
     lending::setup(&mut refreshed, &scene.liquidator, &[], refreshes);
     assert!(kamino::is_liquidatable(&refreshed, &obligation));
 
-    // The market's close factor: a tenth of the debt at a time.
-    let liquidity_amount = debt / 10;
     // At least what was repaid, valued at the oracle price.
     let minimum_bounty = lending::break_even(liquidity_amount, usdc_price, sol_price);
     let run = run(&svm, &scene, liquidity_amount, minimum_bounty);
@@ -219,7 +218,7 @@ fn the_liquidator_nets_at_least_the_bounty() {
 #[test]
 fn a_bounty_above_the_payout_refuses_at_liquidation_paid_the_bounty() {
     let (mut svm, scene) = scene();
-    let liquidity_amount = scene.unhealthy.debt / 10;
+    let liquidity_amount = scene.unhealthy.liquidatable;
     let payout = {
         let mut probe = svm.clone();
         let run = run(&probe, &scene, liquidity_amount, 0);
@@ -250,12 +249,11 @@ fn assert_hostile_run_refused(
     label: &str,
 ) {
     let Unhealthy {
-        debt,
+        liquidatable: liquidity_amount,
         sol_price,
         usdc_price,
         ..
     } = scene.unhealthy;
-    let liquidity_amount = debt / 10;
     let minimum_bounty = lending::break_even(liquidity_amount, usdc_price, sol_price);
     let before = (holdings(&svm, scene), wallet::token_balance(&svm, &account));
     let run = run_paying(&svm, scene, accounts, liquidity_amount, minimum_bounty);

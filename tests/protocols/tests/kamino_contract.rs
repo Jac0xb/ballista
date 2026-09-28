@@ -283,7 +283,7 @@ fn a_liquidation_pays_liquidity_and_keeps_no_ctokens() {
     let (liquidator, accounts) = lending::liquidator(&mut svm, unhealthy.debt);
     lending::next_slot(&mut svm);
 
-    let repay = unhealthy.debt / 10;
+    let repay = unhealthy.liquidatable;
     let mut instructions = vec![lending::compute_limit()];
     instructions.extend(kamino::refreshes(&svm, &unhealthy.obligation, &[]));
     instructions.push(kamino::liquidate(

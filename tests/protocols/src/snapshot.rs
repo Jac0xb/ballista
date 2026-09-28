@@ -388,6 +388,9 @@ impl LegInstructions {
 /// program, the wallet, and the two token accounts it measures. The rest arrive as the run's
 /// `routeAccounts` group.
 pub const ROUTE_HEAD: usize = 4;
+/// Of a route's own accounts, the platform fee account: Jupiter's own address when the route takes
+/// no fee. Fixed by Jupiter's `route` instruction, so it sits here regardless of the venue.
+pub const PLATFORM_FEE_ACCOUNT: usize = 6;
 
 /// Where a route sells from and pays to.
 pub struct Routing {
@@ -433,6 +436,19 @@ impl Routing {
         }
         routing
     }
+
+    /// The route with `account` in place of its platform fee account, [`PLATFORM_FEE_ACCOUNT`]:
+    /// the run's builder's choice, which nothing ties to the wallet.
+    pub fn platform_fee_to(leg: &Leg, account: Address) -> Routing {
+        let mut routing = Routing::of(leg);
+        routing.steps[PLATFORM_FEE_ACCOUNT - ROUTE_HEAD] = AccountMeta::new(account, false);
+        routing
+    }
+}
+
+/// A platform fee at `bps`, taken out of `amount` the way Jupiter's own does.
+pub fn fee_at(amount: u64, bps: u64) -> u64 {
+    amount * bps / 10_000
 }
 
 /// Whether `jupiter` was invoked at all in a failed run: a requirement that fires before the route

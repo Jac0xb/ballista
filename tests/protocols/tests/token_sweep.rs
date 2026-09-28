@@ -10,7 +10,7 @@
 
 use {
     ballista_protocol_tests::{
-        snapshot::{jupiter_ran, Leg, Routing, Snapshot, ROUTE_HEAD, SNAPSHOT_DIR},
+        snapshot::{fee_at, jupiter_ran, Leg, Routing, Snapshot, ROUTE_HEAD, SNAPSHOT_DIR},
         template::{examples, upload, Example, Run},
         tx::{self, Failure, Outcome},
         wallet::{
@@ -34,6 +34,17 @@ const DUST_FLOOR: u64 = 10_000;
 /// Raydium CLMM's `NotEnoughTickArrayAccount`: the swap would cross into a tick array it was not
 /// given.
 const NOT_ENOUGH_TICK_ARRAY_ACCOUNT: u32 = 6023;
+/// 1%: a platform fee that still clears `saleMetTheQuote` at `HOSTILE_SLIPPAGE_BPS`; see
+/// `a_hostile_platform_fee_fits_inside_the_slippage_it_also_sets`.
+const HOSTILE_FEE_BPS: u8 = 100;
+/// 2.5%: close to the 2.55% a `u8` fee allows, and still clears `saleMetTheQuote` at
+/// `LARGE_HOSTILE_SLIPPAGE_BPS`.
+const LARGE_HOSTILE_FEE_BPS: u8 = 250;
+/// 2%: `slippageBps` loose enough that `HOSTILE_FEE_BPS` does not trip Jupiter's own slippage
+/// check.
+const HOSTILE_SLIPPAGE_BPS: u16 = 200;
+/// 3%: `slippageBps` loose enough for `LARGE_HOSTILE_FEE_BPS`.
+const LARGE_HOSTILE_SLIPPAGE_BPS: u16 = 300;
 
 /// A fresh SVM from the snapshot, with the template uploaded and the seller funded with SOL for
 /// the fee and the wrapped SOL account's rent.
@@ -124,14 +135,22 @@ impl<'a> Sweep<'a> {
         slippage_bps: u16,
         dust_floor: u64,
     ) -> Result<Outcome, Failure> {
-        self.sell_routed(balance, slippage_bps, dust_floor, Routing::of(self.leg))
+        self.sell_routed(
+            balance,
+            slippage_bps,
+            u64::from(self.leg.route.platform_fee_bps),
+            dust_floor,
+            Routing::of(self.leg),
+        )
     }
 
-    /// [`Sweep::sell_with`] with `routing`'s accounts in place of the route's own.
+    /// [`Sweep::sell_with`] with `platform_fee_bps` in place of the quote's own, and `routing`'s
+    /// accounts in place of the route's own.
     fn sell_routed(
         &mut self,
         balance: u64,
         slippage_bps: u16,
+        platform_fee_bps: u64,
         dust_floor: u64,
         routing: Routing,
     ) -> Result<Outcome, Failure> {
@@ -148,7 +167,7 @@ impl<'a> Sweep<'a> {
             .input_u64("quotedInAmount", leg.route.in_amount)
             .input_u64("quotedOutAmount", leg.route.quoted_out_amount)
             .input_u64("slippageBps", u64::from(slippage_bps))
-            .input_u64("platformFeeBps", u64::from(leg.route.platform_fee_bps))
+            .input_u64("platformFeeBps", platform_fee_bps)
             .input_u64("dustFloor", dust_floor)
             .group("routeAccounts", routing.steps)
             .build();
@@ -307,6 +326,7 @@ fn an_attackers_destination_fails_at_proceeds_go_to_the_seller() {
     let sale = sweep.sell_routed(
         balance,
         leg.route.slippage_bps,
+        u64::from(leg.route.platform_fee_bps),
         DUST_FLOOR,
         Routing {
             destination: attacker_wsol,
@@ -339,12 +359,70 @@ fn an_attackers_destination_fails_at_proceeds_go_to_the_seller() {
     let sale = sweep.sell_routed(
         balance,
         leg.route.slippage_bps,
+        u64::from(leg.route.platform_fee_bps),
         DUST_FLOOR,
         Routing::paying(leg, attacker_wsol),
     );
     let failure = sale.unwrap_err();
     tx::assert_requirement_failed(&failure, example, "saleMetTheQuote");
     assert_eq!(token_balance(&sweep.svm, &attacker_wsol), 0);
+}
+
+/// `route`'s platform fee account is the run's builder's choice, and so is `slippageBps`: nothing
+/// ties either to the seller. `saleMetTheQuote` moves with `slippageBps`, so a builder who raises
+/// it to fit a fee past Jupiter's own check also raises what it may take from the seller. Selling
+/// the quoted 150 USDC with an attacker's wrapped SOL account as the platform fee account:
+/// `HOSTILE_FEE_BPS` lands at `HOSTILE_SLIPPAGE_BPS`, and `LARGE_HOSTILE_FEE_BPS`, close to the
+/// 2.55% a `u8` fee allows, lands at `LARGE_HOSTILE_SLIPPAGE_BPS`. `findings/token-sweep.md`,
+/// "Open: the quote and the fee are the builder's".
+#[test]
+fn a_hostile_platform_fee_fits_inside_the_slippage_it_also_sets() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+    let balance = snapshot.route(ROUTE).legs[0].route.in_amount;
+
+    // No fee, at the quote's own slippage: the on-chain fill a fee is taken out of.
+    let mut baseline = Sweep::new(&snapshot, example);
+    let before_baseline = baseline.lamports();
+    let baseline_outcome = baseline
+        .sell(balance)
+        .unwrap_or_else(|failure| panic!("no fee: {failure:?}"));
+    let gross = baseline.lamports() + baseline_outcome.fee - before_baseline;
+
+    for (platform_fee_bps, slippage_bps) in [
+        (HOSTILE_FEE_BPS, HOSTILE_SLIPPAGE_BPS),
+        (LARGE_HOSTILE_FEE_BPS, LARGE_HOSTILE_SLIPPAGE_BPS),
+    ] {
+        let mut sweep = Sweep::new(&snapshot, example);
+        let leg = sweep.leg;
+        let attacker = keypair(b"ballista-protocol-tests-attacker").pubkey();
+        let attacker_wsol = token_account(&mut sweep.svm, &attacker, &WSOL_MINT, 0);
+        let before = sweep.lamports();
+        let outcome = sweep
+            .sell_routed(
+                balance,
+                slippage_bps,
+                u64::from(platform_fee_bps),
+                DUST_FLOOR,
+                Routing::platform_fee_to(leg, attacker_wsol),
+            )
+            .unwrap_or_else(|failure| {
+                panic!("{platform_fee_bps} bps at {slippage_bps} bps slippage: {failure:?}")
+            });
+        let fee = token_balance(&sweep.svm, &attacker_wsol);
+        assert_eq!(
+            fee,
+            fee_at(gross, u64::from(platform_fee_bps)),
+            "{platform_fee_bps} bps"
+        );
+        let proceeds = sweep.lamports() + outcome.fee - before;
+        assert_eq!(proceeds, gross - fee, "{platform_fee_bps} bps");
+        println!(
+            "{platform_fee_bps} bps fee at {slippage_bps} bps slippage: the attacker took {fee}, \
+             the seller {proceeds}"
+        );
+    }
 }
 
 /// Another wallet's USDC account (write rule 1) at `sourceAta`, while the route's step still sells
@@ -366,6 +444,7 @@ fn another_wallets_source_fails_at_sweeps_the_sellers_own_balance() {
         .sell_routed(
             balance,
             leg.route.slippage_bps,
+            u64::from(leg.route.platform_fee_bps),
             DUST_FLOOR,
             Routing {
                 source: theirs,

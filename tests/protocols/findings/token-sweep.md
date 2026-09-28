@@ -213,13 +213,13 @@ only on the source would close it. It is a design question, left open.
 
 The sweep has no price of its own: `saleMetTheQuote` holds the proceeds to `quotedOutAmount` and
 `slippageBps`, which the run's builder supplies with the route. `route`'s `platform_fee_account`
-(position 6) is in the group, and nothing checks who owns it. One-off probe runs of the fixed
-template sold the quoted 150 USDC with an attacker's wrapped SOL account as the platform fee
-account:
-- **A 100 bps fee at the quote's 50 bps of slippage:** Jupiter refused it (6001).
-- **100 bps with `slippageBps` 200:** it **landed**. The attacker took 12,181,533 lamports, 1% of
-  the fill, and the seller 1,205,971,852.
-- **250 bps with `slippageBps` 300:** it **landed**. The attacker took 30,453,834 lamports.
+(position 6) is in the group, and nothing checks who owns it. Jupiter refuses a 100 bps fee at the
+quote's own 50 bps of slippage, with 6001 (a one-off probe); loosening `slippageBps` lets one
+through. `a_hostile_platform_fee_fits_inside_the_slippage_it_also_sets` sells the quoted 150 USDC
+with an attacker's wrapped SOL account as the platform fee account:
+- **100 bps at `slippageBps` 200:** lands. The attacker takes 12,181,533 lamports, 1% of the fill,
+  and the seller 1,205,971,852.
+- **250 bps at `slippageBps` 300:** lands. The attacker takes 30,453,834 lamports.
 
 So `slippageBps` is also what a hostile builder may take, up to the 2.55% a `u8` fee allows. And a
 builder who writes the quote can lower it. The floor is a rate: `quotedOutAmount` per

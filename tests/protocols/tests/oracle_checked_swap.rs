@@ -14,7 +14,10 @@ use {
             copy_pyth_feed, pyth_price, set_pyth_price, PythPrice, SOL_USD_FEED_ID,
             USDC_USD_FEED_ID,
         },
-        snapshot::{jupiter_ran, Leg, Routing, Snapshot, ROUTE_HEAD, SNAPSHOT_DIR},
+        snapshot::{
+            fee_at, jupiter_ran, Leg, Routing, Snapshot, PLATFORM_FEE_ACCOUNT, ROUTE_HEAD,
+            SNAPSHOT_DIR,
+        },
         template::{examples, upload, Example, Run},
         tx::{self, assert_requirement_failed, Failure, Outcome},
         wallet::{
@@ -41,11 +44,23 @@ const MINT_DECIMALS: usize = 44;
 /// token account, the destination mint, the platform fee account, the event authority and the
 /// program.
 const ROUTE_FIXED_ACCOUNTS: usize = 9;
-/// Of those, the platform fee account: Jupiter's own address when the route takes no fee.
-const PLATFORM_FEE_ACCOUNT: usize = 6;
 /// 1%: the platform fee `jupiter_takes_exactly_in_amount_through_a_split_or_a_platform_fee` sends
 /// `route` with directly.
 const PLATFORM_FEE_BPS: u8 = 100;
+/// 1.5%: a platform fee that still fits `HOSTILE_SLIPPAGE_BPS` but not `TOLERANCE_BPS`; see
+/// `a_hostile_platform_fee_fits_inside_the_tolerance_it_also_sets`.
+const EXCESSIVE_FEE_BPS: u8 = 150;
+/// 2%: `slippageBps` loose enough that neither `PLATFORM_FEE_BPS` nor `EXCESSIVE_FEE_BPS` trips
+/// Jupiter's own slippage check, only Ballista's tolerance.
+const HOSTILE_SLIPPAGE_BPS: u16 = 200;
+
+/// A run's `toleranceBps`, and `route`'s own `slippageBps` and `platformFeeBps`: bundled so
+/// [`Swap::run_priced`] takes one argument for the three instead of three.
+struct Fees {
+    tolerance_bps: u64,
+    slippage_bps: u64,
+    platform_fee_bps: u64,
+}
 
 /// A fresh SVM with the template uploaded and the trader holding SOL, which Jupiter's setup wraps.
 struct Swap {
@@ -117,6 +132,29 @@ impl Swap {
         tolerance_bps: u64,
         routing: Routing,
     ) -> Instruction {
+        self.run_priced(
+            example,
+            price_update,
+            feed_id,
+            Fees {
+                tolerance_bps,
+                slippage_bps: u64::from(self.leg.route.slippage_bps),
+                platform_fee_bps: u64::from(self.leg.route.platform_fee_bps),
+            },
+            routing,
+        )
+    }
+
+    /// [`Swap::run_routed`] with `fees` in place of `tolerance_bps` and the quote's own
+    /// `slippageBps` and `platformFeeBps`.
+    fn run_priced(
+        &self,
+        example: &Example,
+        price_update: Address,
+        feed_id: Address,
+        fees: Fees,
+        routing: Routing,
+    ) -> Instruction {
         let leg = &self.leg;
         Run::new(self.template, example)
             .account("jupiter", self.jupiter, false, false)
@@ -131,9 +169,9 @@ impl Swap {
             .input_bytes("routePlan", &leg.route.route_plan)
             .input_u64("inAmount", leg.route.in_amount)
             .input_u64("quotedOutAmount", leg.route.quoted_out_amount)
-            .input_u64("slippageBps", u64::from(leg.route.slippage_bps))
-            .input_u64("platformFeeBps", u64::from(leg.route.platform_fee_bps))
-            .input_u64("toleranceBps", tolerance_bps)
+            .input_u64("slippageBps", fees.slippage_bps)
+            .input_u64("platformFeeBps", fees.platform_fee_bps)
+            .input_u64("toleranceBps", fees.tolerance_bps)
             .group("routeAccounts", routing.steps)
             .build()
     }
@@ -150,6 +188,28 @@ impl Swap {
             self.sol_usd,
             SOL_USD_FEED_ID,
             TOLERANCE_BPS,
+            routing,
+        )
+    }
+
+    /// [`Swap::sol_usd_run_routed`] with `slippage_bps` and `platform_fee_bps` in place of the
+    /// quote's own.
+    fn sol_usd_run_priced(
+        &self,
+        example: &Example,
+        slippage_bps: u64,
+        platform_fee_bps: u64,
+        routing: Routing,
+    ) -> Instruction {
+        self.run_priced(
+            example,
+            self.sol_usd,
+            SOL_USD_FEED_ID,
+            Fees {
+                tolerance_bps: TOLERANCE_BPS,
+                slippage_bps,
+                platform_fee_bps,
+            },
             routing,
         )
     }
@@ -586,7 +646,6 @@ fn jupiter_takes_exactly_in_amount_through_a_split_or_a_platform_fee() {
     );
 
     // A platform fee, into the platform's account of either mint.
-    let fee_of = |amount: u64| amount * u64::from(PLATFORM_FEE_BPS) / 10_000;
     let (svm, result) = route_alone(&snapshot, plan, SOL, 0, |_, _| {});
     result.unwrap_or_else(|failure| panic!("no fee: {failure:?}"));
     let unfeed = bought(&svm);
@@ -602,10 +661,10 @@ fn jupiter_takes_exactly_in_amount_through_a_split_or_a_platform_fee() {
         let fee = token_balance(&svm, &fee_account);
         if mint == leg.input_mint {
             // Out of `in_amount`: the pool swaps the rest.
-            assert_eq!(fee, fee_of(SOL));
+            assert_eq!(fee, fee_at(SOL, u64::from(PLATFORM_FEE_BPS)));
         } else {
             // Out of the fill.
-            assert_eq!(fee, fee_of(unfeed));
+            assert_eq!(fee, fee_at(unfeed, u64::from(PLATFORM_FEE_BPS)));
             assert_eq!(bought(&svm) + fee, unfeed);
         }
         println!(
@@ -614,6 +673,76 @@ fn jupiter_takes_exactly_in_amount_through_a_split_or_a_platform_fee() {
             bought(&svm)
         );
     }
+}
+
+/// A fresh run at the market, `platform_fee_bps` and `HOSTILE_SLIPPAGE_BPS` in place of the
+/// quote's own, its platform fee paid to a fresh attacker's USDC account: nothing ties `route`'s
+/// platform fee account to the trader. Returns the swap, the attacker's account, and the result.
+fn hostile_fee_run(
+    snapshot: &Snapshot,
+    example: &Example,
+    platform_fee_bps: u64,
+) -> (Swap, Address, Result<Outcome, Failure>) {
+    let mut swap = Swap::new(snapshot, example);
+    let leg = swap.leg.clone();
+    let attacker = keypair(b"ballista-protocol-tests-attacker").pubkey();
+    let attacker_usdc = token_account(&mut swap.svm, &attacker, &leg.output_mint, 0);
+    let run = swap.sol_usd_run_priced(
+        example,
+        u64::from(HOSTILE_SLIPPAGE_BPS),
+        platform_fee_bps,
+        Routing::platform_fee_to(&leg, attacker_usdc),
+    );
+    let result = swap.send(run);
+    (swap, attacker_usdc, result)
+}
+
+/// The tolerance is a budget a hostile route can spend, not only the market moving: a platform fee
+/// the trader never agreed to, paid to an attacker's account, still clears `fillBeatTheOracle` at
+/// `PLATFORM_FEE_BPS` once `slippageBps` is relaxed to `HOSTILE_SLIPPAGE_BPS`, wide enough that
+/// Jupiter's own check never refuses it either. `findings/oracle-swap.md`, "Open: the tolerance is
+/// a budget a hostile route can spend".
+#[test]
+fn a_hostile_platform_fee_inside_the_tolerance_lands() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+
+    // No fee, at the market: the on-chain fill a fee comes out of.
+    let mut baseline = Swap::new(&snapshot, example);
+    let run = baseline.sol_usd_run(example);
+    baseline
+        .send(run)
+        .unwrap_or_else(|failure| panic!("no fee: {failure:?}"));
+    let unfeed = baseline.usdc();
+
+    let (swap, attacker_usdc, result) =
+        hostile_fee_run(&snapshot, example, u64::from(PLATFORM_FEE_BPS));
+    result.unwrap_or_else(|failure| panic!("{failure:?}"));
+    let fee = token_balance(&swap.svm, &attacker_usdc);
+    assert_eq!(fee, fee_at(unfeed, u64::from(PLATFORM_FEE_BPS)));
+    assert_eq!(swap.usdc(), unfeed - fee);
+    println!(
+        "{PLATFORM_FEE_BPS} bps fee at {HOSTILE_SLIPPAGE_BPS} bps slippage: the attacker took \
+         {fee}, the trader {}",
+        swap.usdc()
+    );
+}
+
+/// [`a_hostile_platform_fee_inside_the_tolerance_lands`], larger: `EXCESSIVE_FEE_BPS` still fits
+/// under `HOSTILE_SLIPPAGE_BPS`, wide enough that Jupiter's own check does not catch it, but not
+/// under `TOLERANCE_BPS`, and fails at `fillBeatTheOracle`.
+#[test]
+fn a_larger_hostile_platform_fee_fails_at_fill_beat_the_oracle() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+
+    let (swap, attacker_usdc, result) =
+        hostile_fee_run(&snapshot, example, u64::from(EXCESSIVE_FEE_BPS));
+    let failure = result.expect_err("a fee this large should fail the fill check");
+    assert_requirement_failed(&failure, example, "fillBeatTheOracle");
+    assert_eq!(token_balance(&swap.svm, &attacker_usdc), 0);
 }
 
 /// Another wallet's wrapped SOL, holding `in_amount` (write rule 1), at `sourceAta`, while the

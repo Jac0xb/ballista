@@ -14,7 +14,8 @@ import {
   type Instruction,
 } from '@solana/kit';
 
-import { MAX_REGISTRIES, type CompiledTemplate } from './compiler.js';
+import { type CompiledTemplate } from './compiler.js';
+import { MAX_REGISTRIES } from './schema.js';
 import {
   BALLISTA_PROGRAM_ADDRESS,
   buildRunInstruction,

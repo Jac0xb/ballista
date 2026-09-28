@@ -306,6 +306,19 @@ export function ed25519Signature(input: {
 }
 
 /**
+ * Whether `value` is, or anywhere in its tree contains, an `input` or row input expression. Walks
+ * plain objects and arrays generically rather than switching on `Expression`'s variants, so it
+ * keeps working as the expression tree grows new kinds of nodes.
+ */
+function containsCallerInput(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsCallerInput);
+  if (value === null || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  if (record.kind === 'input' || record.kind === 'rowInput') return true;
+  return Object.values(record).some(containsCallerInput);
+}
+
+/**
  * Steps that spend `amount` from a limit that refills over time, kept in the registry entry in
  * fixed account `registry` (declared with `account.registry`).
  *
@@ -323,7 +336,16 @@ export function ed25519Signature(input: {
  * - `cap`, `refillPerSecond` and `amount` are `u64` expressions. `cap` and `refillPerSecond` must
  *   not come from the caller: whoever builds the transaction sets every input, so a cap taken from
  *   an input is a limit the caller picks. Pass literals, such as `expression.u64(1_000_000)`, or
- *   values the author controls, such as a registry field only an author-only branch writes.
+ *   values the author controls, such as a registry field only an author-only branch writes. This
+ *   helper throws if `cap` or `refillPerSecond` contains an `input` or row input anywhere in its
+ *   expression tree.
+ * - The registry account's `key` (passed to `account.registry`) must not come from the caller
+ *   either: a key taken from an input lets a caller open a fresh entry on every run and spend past
+ *   the cap forever. Key the entry by a signer's address, such as
+ *   `expression.accountKey('caller')`, for a per-signer limit, or leave `key` absent for the one
+ *   zero-keyed, template-wide entry. This helper only ever sees `registry` as an account name and
+ *   cannot see the account's declared key, so it cannot check this for you: it is the caller's to
+ *   get right.
  *
  * `name` prefixes the variables the steps bind, `<name>Last`, `<name>Now`, `<name>Spent`,
  * `<name>Refill` and `<name>Total`, and names the requirement `within<Name>`: `withinRateLimit` by
@@ -340,6 +362,13 @@ export function rateLimit(input: {
   lastSpend?: string;
   name?: string;
 }): Step[] {
+  for (const field of ['cap', 'refillPerSecond'] as const) {
+    if (containsCallerInput(input[field])) {
+      throw new TypeError(
+        `${field} must be a template constant or an author-controlled value, not a caller input`,
+      );
+    }
+  }
   const name = input.name ?? 'rateLimit';
   const spentField = input.spent ?? 'spent';
   const lastSpendField = input.lastSpend ?? 'lastSpend';

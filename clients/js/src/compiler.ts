@@ -34,9 +34,12 @@ export const MAX_CPI_ACCOUNTS = 64;
 export const MAX_PDA_SEEDS = 15;
 export const MAX_PDA_SEED_LENGTH = 32;
 export const MAX_RETURN_DATA_LENGTH = 1_024;
-export const MAX_REGISTRIES = 8;
+/**
+ * Entries one template can open. Mirrors `MAX_REGISTRY_OPENS` in `common/src/template/wire.rs`;
+ * `opcodes.test.ts` checks the two agree. `MAX_REGISTRIES` and `MAX_REGISTRY_SIZE`, the other two
+ * registry limits, live in `schema.js`: the schema's own validators need them.
+ */
 export const MAX_REGISTRY_OPENS = 8;
-export const MAX_REGISTRY_SIZE = 512;
 /** An entry's header before its fields: magic, version, registry index, template and key. */
 export const REGISTRY_ENTRY_HEADER_LENGTH = 72;
 /** The CPIs an open makes at most: a transfer, an allocate and an assign for a pre-funded entry. */

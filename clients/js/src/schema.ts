@@ -40,16 +40,27 @@ export const readWidth: Readonly<Record<ReadType, number>> = Object.freeze({
 export const RegistryFieldTypeSchema = z.enum(['bool', 'u64', 'i64', 'u128', 'pubkey']);
 export type RegistryFieldType = z.infer<typeof RegistryFieldTypeSchema>;
 
+/**
+ * The most field bytes one registry holds, after its header. Mirrors `MAX_REGISTRY_SIZE` in
+ * `common/src/template/wire.rs`; `opcodes.test.ts` checks the two agree.
+ */
+export const MAX_REGISTRY_SIZE = 512;
+/**
+ * Registries a template can declare: an entry's registry index is below this. Mirrors
+ * `MAX_REGISTRIES` in `common/src/template/wire.rs`; `opcodes.test.ts` checks the two agree.
+ */
+export const MAX_REGISTRIES = 8;
+
 /** The bytes a registry's fields take, packed in declaration order with no padding. */
 export function registrySize(fields: Record<string, RegistryFieldType>): number {
   return Object.values(fields).reduce((size, type) => size + readWidth[type], 0);
 }
 
-/** A registry's fields, in declaration order: 1 to 512 bytes. */
+/** A registry's fields, in declaration order: 1 to `MAX_REGISTRY_SIZE` bytes. */
 const RegistryLayoutSchema = z
   .record(identifier, RegistryFieldTypeSchema)
-  .refine((fields) => registrySize(fields) >= 1 && registrySize(fields) <= 512, {
-    error: 'A registry holds 1 to 512 bytes of fields',
+  .refine((fields) => registrySize(fields) >= 1 && registrySize(fields) <= MAX_REGISTRY_SIZE, {
+    error: `A registry holds 1 to ${MAX_REGISTRY_SIZE} bytes of fields`,
   });
 
 export const InputSchema = z.discriminatedUnion('type', [
@@ -539,8 +550,8 @@ export const TemplateSchema = z
     registries: z
       .record(identifier, RegistryLayoutSchema)
       .default({})
-      .refine((registries) => Object.keys(registries).length <= 8, {
-        error: 'A template declares at most 8 registries',
+      .refine((registries) => Object.keys(registries).length <= MAX_REGISTRIES, {
+        error: `A template declares at most ${MAX_REGISTRIES} registries`,
       }),
     accounts: namedAccounts,
     batch: z

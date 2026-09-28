@@ -9,7 +9,14 @@ import { fileURLToPath } from 'node:url';
 
 import { expect, test } from 'vitest';
 
-import { MIN_EMIT_TAG_LENGTH, opcode, RUN_EVENT_TAG_FAMILY } from './compiler.js';
+import {
+  MAX_REGISTRY_OPENS,
+  MIN_EMIT_TAG_LENGTH,
+  opcode,
+  REGISTRY_ENTRY_HEADER_LENGTH,
+  RUN_EVENT_TAG_FAMILY,
+} from './compiler.js';
+import { MAX_REGISTRIES, MAX_REGISTRY_SIZE } from './schema.js';
 
 const wire = readFileSync(
   fileURLToPath(new URL('../../../common/src/template/wire.rs', import.meta.url)),
@@ -115,4 +122,16 @@ test("an emit's tag rule is the same in Rust and TypeScript", () => {
   expect(minimum, 'MIN_EMIT_TAG_LEN in wire.rs').toBeDefined();
   expect(new TextEncoder().encode(family)).toEqual(RUN_EVENT_TAG_FAMILY);
   expect(Number(minimum)).toBe(MIN_EMIT_TAG_LENGTH);
+});
+
+test('the registry limits are the same in Rust and TypeScript', () => {
+  const of = (name: string) => {
+    const value = new RegExp(`pub const ${name}: usize = (\\d+);`).exec(wire)?.[1];
+    expect(value, `${name} in wire.rs`).toBeDefined();
+    return Number(value);
+  };
+  expect(MAX_REGISTRIES, 'MAX_REGISTRIES').toBe(of('MAX_REGISTRIES'));
+  expect(MAX_REGISTRY_SIZE, 'MAX_REGISTRY_SIZE').toBe(of('MAX_REGISTRY_SIZE'));
+  expect(MAX_REGISTRY_OPENS, 'MAX_REGISTRY_OPENS').toBe(of('MAX_REGISTRY_OPENS'));
+  expect(REGISTRY_ENTRY_HEADER_LENGTH, 'REGISTRY_ENTRY_HEADER_LEN').toBe(of('REGISTRY_ENTRY_HEADER_LEN'));
 });

@@ -1751,8 +1751,8 @@ describe('registries: schema', () => {
         steps: [step.require(expression.bool(true))],
       });
     expect(withRegistries({ empty: {} })).toThrow(/1 to 512 bytes/);
-    expect(withRegistries({ narrow: { count: 'u8' } })).toThrow();
-    expect(withRegistries({ bytes: { blob: 'bytes' } })).toThrow();
+    expect(withRegistries({ narrow: { count: 'u8' } })).toThrow(/"count"[\s\S]*Invalid option: expected one of/);
+    expect(withRegistries({ bytes: { blob: 'bytes' } })).toThrow(/"blob"[\s\S]*Invalid option: expected one of/);
     const sixteenKeys = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`k${i}`, 'pubkey']));
     expect(withRegistries({ full: sixteenKeys })).not.toThrow();
     expect(withRegistries({ over: { ...sixteenKeys, flag: 'bool' } })).toThrow(/1 to 512 bytes/);
@@ -1853,6 +1853,46 @@ describe('registries: compiler', () => {
       {
         ...base(read('mine', 'spent')),
         accounts: { ...base([]).accounts!, mine: { ...account.registry('limits', { payer: 'caller' }), signer: true } },
+      },
+      /mine must be declared only writable/,
+    );
+    fails(
+      {
+        ...base(read('mine', 'spent')),
+        accounts: {
+          ...base([]).accounts!,
+          mine: { ...account.registry('limits', { payer: 'caller' }), executable: true },
+        },
+      },
+      /mine must be declared only writable/,
+    );
+    fails(
+      {
+        ...base(read('mine', 'spent')),
+        accounts: {
+          ...base([]).accounts!,
+          mine: { ...account.registry('limits', { payer: 'caller' }), address: SYSTEM },
+        },
+      },
+      /mine must be declared only writable/,
+    );
+    fails(
+      {
+        ...base(read('mine', 'spent')),
+        accounts: {
+          ...base([]).accounts!,
+          mine: { ...account.registry('limits', { payer: 'caller' }), owner: SYSTEM },
+        },
+      },
+      /mine must be declared only writable/,
+    );
+    fails(
+      {
+        ...base(read('mine', 'spent')),
+        accounts: {
+          ...base([]).accounts!,
+          mine: { ...account.registry('limits', { payer: 'caller' }), minDataLength: 1 },
+        },
       },
       /mine must be declared only writable/,
     );
@@ -1995,5 +2035,27 @@ describe('rateLimit', () => {
       'used',
       'at',
     ]);
+  });
+
+  test('refuses a cap built from an input, even nested inside an expression', () => {
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.multiply(expression.u64(2), expression.input('cap')),
+        refillPerSecond: expression.u64(11_574),
+        amount: expression.input('amount'),
+      }),
+    ).toThrow('cap must be a template constant or an author-controlled value, not a caller input');
+  });
+
+  test('refuses a refillPerSecond built from a row input', () => {
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.u64(1_000_000_000),
+        refillPerSecond: expression.rowInput('rate'),
+        amount: expression.input('amount'),
+      }),
+    ).toThrow('refillPerSecond must be a template constant or an author-controlled value, not a caller input');
   });
 });

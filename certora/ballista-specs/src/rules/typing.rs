@@ -21,6 +21,11 @@ use super::util::{
 };
 
 /// Errors an accepted instruction may raise because of the values it sees, not its shape.
+///
+/// `READ_ACCOUNT_BYTES` reaches the executor in the account rule, whose one account is
+/// unconstrained: the account may be writable, and the offset register may point past its data.
+/// The introspection opcodes never do, since neither spec program pins the Instructions sysvar,
+/// but an index past the transaction is value-dependent too.
 fn value_dependent(kind: BallistaError) -> bool {
     matches!(
         kind,
@@ -28,6 +33,8 @@ fn value_dependent(kind: BallistaError) -> bool {
             | BallistaError::DivisionByZero
             | BallistaError::RequirementFailed
             | BallistaError::InvalidPdaDerivation
+            | BallistaError::InstructionOutOfRange
+            | BallistaError::WritableAccountBytesRead
     )
 }
 

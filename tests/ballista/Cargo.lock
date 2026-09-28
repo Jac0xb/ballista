@@ -413,7 +413,6 @@ dependencies = [
  "serde_json",
  "solana-account",
  "solana-address 2.6.1",
- "solana-ed25519-program",
  "solana-fee-calculator",
  "solana-hash",
  "solana-instruction",

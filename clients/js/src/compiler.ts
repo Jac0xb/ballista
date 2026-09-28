@@ -953,7 +953,7 @@ class Compiler {
       this.requirePinnedForRead(current.account, constraint);
       if (constraint.writable) {
         throw new TypeError(
-          `accountDataBytes reads only accounts the transaction cannot write; ${current.account.name} is declared writable`,
+          `accountDataBytes reads only accounts this instruction cannot write; ${current.account.name} is declared writable`,
         );
       }
       const offset = this.compileExpression(current.offset, loop, bindings);

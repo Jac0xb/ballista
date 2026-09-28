@@ -212,7 +212,10 @@ pub const OP_READ_INSTRUCTION_DATA: u8 = 71;
 /// from the sysvar rather than copied.
 pub const OP_READ_INSTRUCTION_BYTES: u8 = 72;
 /// Exactly `immediate` bytes of account `a`'s data from the `u64` offset in register `b`. The
-/// account must be read-only in the transaction, so the bytes can be borrowed for the whole run.
+/// account must be read-only in this instruction, which is enough to borrow the bytes for the
+/// whole run even when the transaction can write the account: programs Ballista calls cannot gain
+/// a privilege it lacks, the program that called Ballista is paused and cannot be re-entered, and
+/// after a CPI the runtime copies data back only into accounts that were writable in that CPI.
 pub const OP_READ_ACCOUNT_BYTES: u8 = 73;
 /// The length of the `bytes` value in register `a`, as a `u64`.
 pub const OP_BYTES_LEN: u8 = 74;

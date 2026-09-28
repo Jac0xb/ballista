@@ -278,7 +278,7 @@ impl ProgramBuilder {
     }
 
     /// Exactly `len` bytes of `account`'s data from the `u64` offset in `offset`. The run fails
-    /// unless the account is read-only in the transaction.
+    /// unless the account is read-only in this instruction.
     pub fn read_account_bytes(&mut self, account: u8, offset: u8, len: u16) -> u8 {
         self.op(OP_READ_ACCOUNT_BYTES, account, offset, NO_INDEX, len as u64)
     }

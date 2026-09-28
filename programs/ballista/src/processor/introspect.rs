@@ -45,7 +45,10 @@ pub fn read_instruction<'data>(
     registers: &mut [RuntimeValue<'data>],
     instruction: &InstructionRecord,
 ) -> RunResult<()> {
-    let value = introspect(sysvar_data(sysvar)?, registers, instruction)?;
+    let data = sysvar_data(sysvar)?;
+    // SAFETY: `sysvar_data` checked the account's address, and the runtime writes that account's
+    // data in exactly the layout `introspect` parses.
+    let value = unsafe { introspect(data, registers, instruction) }?;
     set(registers, instruction.dst as usize, value)
 }
 
@@ -66,15 +69,23 @@ pub fn read_account_bytes<'data>(
     )
 }
 
-/// The value one sysvar opcode reads from `sysvar`, the Instructions sysvar's data. Public for
-/// the host tests and formal specifications, which have no account to hand it.
-pub fn introspect<'data>(
+/// The value one sysvar opcode reads from `sysvar`, the Instructions sysvar's data. Takes the data
+/// rather than the account so the host tests and formal specifications, which have no account to
+/// hand it, can call it.
+///
+/// # Safety
+///
+/// `sysvar` must be the Instructions sysvar's data, in exactly the layout the runtime writes; on
+/// chain, the slice `sysvar_data` returns once it has checked the account's address. pinocchio's
+/// parser trusts the instruction count, the offset table and every length it finds, and reads
+/// through them without bounds checks, so any other bytes can send it outside the slice.
+pub unsafe fn introspect<'data>(
     sysvar: &'data [u8],
     registers: &[RuntimeValue<'data>],
     instruction: &InstructionRecord,
 ) -> RunResult<RuntimeValue<'data>> {
-    // SAFETY: `sysvar` is the Instructions sysvar's data, which the runtime writes in exactly the
-    // layout `Instructions` parses: `sysvar_data` checked the account's address.
+    // SAFETY: the caller guarantees `sysvar` is the Instructions sysvar's data, in the layout
+    // `Instructions` parses.
     let instructions = unsafe { Instructions::new_unchecked(sysvar) };
     match instruction.opcode {
         OP_INSTRUCTION_COUNT => {
@@ -152,16 +163,21 @@ fn sysvar_data(account: &AccountView) -> RunResult<&[u8]> {
     Ok(unsafe { account.borrow_unchecked() })
 }
 
-/// The data of an account the transaction cannot write, borrowed for the rest of the run.
+/// The data of an account this instruction cannot write, borrowed for the rest of the run.
 fn read_only_data(account: &AccountView) -> RunResult<&[u8]> {
     if account.is_writable() {
         return Err(BallistaError::WritableAccountBytesRead.into());
     }
-    // SAFETY: the account is read-only in this transaction. No program, this one included, can
-    // write its data or change its length, and after a CPI the runtime copies nothing back into a
-    // read-only account, so the bytes stay as they are for the rest of the run. `borrow_unchecked`
-    // leaves the borrow flag alone, so a later CPI that passes this account still passes its
-    // borrow check.
+    // SAFETY: the account is read-only in this instruction, which is what `is_writable` reports.
+    // When another program called Ballista through a CPI, the transaction may still be able to
+    // write it, but nothing writes it or changes its length while this instruction runs:
+    // - Ballista cannot, and a program Ballista calls cannot gain a privilege Ballista lacks, so
+    //   the account is read-only in every CPI made from here.
+    // - The program that called Ballista is paused until Ballista returns, and cannot be
+    //   re-entered from any CPI Ballista makes.
+    // - After a CPI, the runtime copies data back only into accounts that were writable in it.
+    // So the bytes stay as they are for the rest of the run. `borrow_unchecked` leaves the borrow
+    // flag alone, so a later CPI that passes this account still passes its borrow check.
     Ok(unsafe { account.borrow_unchecked() })
 }
 
@@ -249,7 +265,9 @@ mod tests {
         opcode: u8,
         immediate: u64,
     ) -> RunResult<RuntimeValue<'a>> {
-        introspect(sysvar, registers, &record(opcode, 3, 0, 0, 1, 0, immediate))
+        // SAFETY: every caller passes `three_instructions()`, which `sysvar` lays out as the
+        // runtime does.
+        unsafe { introspect(sysvar, registers, &record(opcode, 3, 0, 0, 1, 0, immediate)) }
     }
 
     #[test]

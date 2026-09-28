@@ -60,8 +60,12 @@ pub enum BallistaError {
     /// data, is outside what exists. The context is the program counter.
     #[error("instruction, account position or byte range out of range")]
     InstructionOutOfRange,
-    /// `READ_ACCOUNT_BYTES` named an account the transaction can write. Its bytes could change
-    /// under a CPI, so they are not lent to a register. The context is the program counter.
+    /// `READ_ACCOUNT_BYTES` named an account writable in this instruction. Its bytes could change
+    /// under a CPI, so they are not lent to a register. An account read-only here is lent even
+    /// when the transaction can write it: programs Ballista calls cannot gain a privilege it
+    /// lacks, the program that called Ballista is paused and cannot be re-entered, and after a
+    /// CPI the runtime copies data back only into accounts writable in that CPI. The context is
+    /// the program counter.
     #[error("bytes were read from a writable account")]
     WritableAccountBytesRead,
 }

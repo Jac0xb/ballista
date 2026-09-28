@@ -137,13 +137,10 @@ The template payload grew from 424 to 628 bytes. The run passes 46 runtime accou
 - **The docs page is stale.** `docs/examples/protocols/jito-tip.md` still describes lamport
   profit and says the template has not run against Jupiter. `docs/` was out of bounds for this
   task.
-- **Another template (inference, not run here).** `jupiterOracleCheckedSwap` says "the accounts
-  Jupiter moves are the ones this template measures". Item 4 shows that is not so. A route whose
-  steps move other token accounts than `sourceAta` and `destinationAta` would measure 0 sold and
-  0 received, and pass `fillBeatTheOracle` without checking anything. That matters for the threat
-  its header names, a route built by someone other than the signer. `tokenSweepIntoSwap` fails
-  safe in the same case: `saleMetTheQuote` and `nothingMeaningfulLeftBehind` both need the
-  measured accounts to move.
+- **Another template, since fixed.** Item 4 meant `jupiterOracleCheckedSwap` could measure 0
+  sold and pass `fillBeatTheOracle` vacuously. It now requires `sold == inAmount`
+  (`soldTheRouteInput`) and that the trader owns both measured accounts; see
+  `findings/oracle-swap.md`.
 - **Only single-step legs can be joined.** The test's `round_trip` needs each leg to be one step.
   A step ends in its two index bytes, but Jupiter's `Swap` enum before them has variants of
   different lengths, so a longer plan cannot be renumbered without decoding it. The SDK has no

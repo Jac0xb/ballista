@@ -16,8 +16,8 @@ shows each one. Plan:
   - `orca_snapshot.rs`: the pools and their tick arrays are in the snapshot.
   - `orca_setup.rs`: the Orca behaviors the fixes rest on, called without Ballista.
   - `orca_cpis.rs`: every Whirlpool call against Orca's own client.
-  - `orca_compound_fees.rs`: 12 tests, four of them with a real `dustFloor`.
-  - `orca_harvest_many_positions.rs`: 7 tests, one with a real `dustFloor`.
+  - `orca_compound_fees.rs`: 14 tests, four of them with a real `dustFloor`.
+  - `orca_harvest_many_positions.rs`: 9 tests, one with a real `dustFloor`.
   - Each run's Whirlpool calls are asserted in order (`orca::whirlpool_calls`), not counted, so a
     call by the wrong row fails. A collect of nothing moves nothing, so no account would show it.
 - **Setup is real:** positions, deposits, withdrawals, swaps and updates go through Orca's
@@ -34,7 +34,7 @@ shows each one. Plan:
 | M4 | `increase_liquidity` with a liquidity fixed at signing fails once the price moves or the fees are one-sided | compound | real runs | yes |
 | M5 | The harvest's `when` was said to prevent reverts; it only saves compute | harvest | a setup test of Orca alone (`orca_setup.rs`) and real refusals | header rewritten |
 | M6 | Whirlpool's error codes collide with Ballista's | both | real refusals, and the runner's unit tests | tests and runner read the logs |
-| M7 | `tokenOwnerAccountA`/`B` were not pinned to the signer; `collect_fees` checks only their mint | both | real runs (`fees_must_go_to_the_owner_not_a_strangers_accounts`) | yes |
+| M7 | `tokenOwnerAccountA`/`B` were bound to the signer, not the position's real holder; `collect_fees` checks only their mint | both | real runs (`fees_must_go_to_the_position_holder_*`, `a_delegates_signature_still_pays_the_position_holder`) | yes |
 
 ## `orcaCompoundFees`
 
@@ -62,7 +62,8 @@ shows each one. Plan:
   - `minSqrtPrice` and `maxSqrtPrice` bound the pool price the deposit accepts. Outside them it
     fails with `PriceSlippageOutOfBounds` (6069), and the whole run reverts.
 - `collect_fees` takes the whirlpool read-only (M1).
-- `tokenOwnerAccountA`/`B` must belong to `positionAuthority` (M7).
+- `tokenOwnerAccountA`/`B` must belong to the position's real holder, not to `positionAuthority`,
+  which Whirlpools lets be a delegate instead (M7).
 
 **Decided while planning, beyond M1–M6: an emptied position is collected, not refilled.**
 - A position its owner emptied with `decrease_liquidity` still has fees owed. The old template
@@ -82,9 +83,9 @@ shows each one. Plan:
   - whirlpool (writable), position (writable), positionTokenAccount, tokenMintA, tokenMintB;
   - tokenOwnerAccountA, tokenOwnerAccountB, tokenVaultA, tokenVaultB, tickArrayLower,
     tickArrayUpper (all writable).
-- Step labels: `feesGoToTheOwner`, `readLiquidity`, `updateFees`, `readFeesOwedA`, `readFeesOwedB`,
-  `collectFees`, `compoundFees`.
-- The payload grew from 440 bytes to 714 (M1–M4) and then 842 (M7 added 128 bytes).
+- Step labels: `readPositionHolder`, `feesGoToThePositionHolder`, `readLiquidity`, `updateFees`,
+  `readFeesOwedA`, `readFeesOwedB`, `collectFees`, `compoundFees`.
+- The payload grew from 440 to 826 bytes (M1–M4, M7).
 - `shared.ts` loses `ORCA_INCREASE_LIQUIDITY`. It gains `MEMO_PROGRAM`,
   `ORCA_UPDATE_FEES_AND_REWARDS`, `ORCA_INCREASE_LIQUIDITY_BY_TOKEN_AMOUNTS_V2`,
   `ORCA_BY_TOKEN_AMOUNTS`, `TOKEN_ACCOUNT_LENGTH` and `TOKEN_ACCOUNT_OWNER_OFFSET`.
@@ -135,14 +136,16 @@ shows each one. Plan:
 - `collect_fees` takes the whirlpool read-only (M1). The schema keeps `whirlpool` writable because
   each row's update writes it, so M1 changes no locks. A run cannot observe it, so its test reads
   the compiled templates (`orca_cpis.rs`).
-- `tokenOwnerAccountA`/`B` must belong to `positionAuthority`, checked once for the whole batch
-  rather than once per row, since both accounts are fixed (M7).
-- The payload grew from 298 bytes to 478 (M1–M3) and then 606 (M7 added 128 bytes).
-- Step labels: `feesGoToTheOwner`, `updateIfLiquid`, `collectIfWorthIt`, `everyPosition`.
+- `tokenOwnerAccountA`/`B` must belong to each row's real holder, not to `positionAuthority`. The
+  fee accounts are fixed, so their owner is read once for the whole batch; each row still checks
+  its own holder against that one reading (M7).
+- The payload grew from 298 to 590 bytes (M1–M3, M7).
+- Step labels: `readFeeOwnerA`, `readFeeOwnerB`, `readPositionHolder`,
+  `positionBelongsToTheFeeOwner`, `updateIfLiquid`, `collectIfWorthIt`, `everyPosition`.
 
 **M5, for the docs: what the guard is for.**
 - The guard saves compute, about 13,300 CU per skipped collect β€” `orca_compound_fees.rs`'s
-  one-sided runs minus its no-fees run, 25,814 or 25,821 minus 12,494 β€” and leaves dust alone.
+  one-sided runs minus its no-fees run, 25,778 or 25,785 minus 12,458 β€” and leaves dust alone.
 - It never prevented a revert: `collect_fees` with nothing owed succeeds and moves nothing
   (`orca_setup.rs`).
 - What reverts the whole harvest is a row Whirlpools refuses:
@@ -169,10 +172,13 @@ shows each one. Plan:
   - A stride of 4 row accounts (limit 8).
   - 8 fixed accounts plus 4 Γ— 12 rows = 56 runtime accounts (limit 120).
   - 2 calls Γ— 12 rows = 24 CPIs (limit 64).
-- **Compute:** about 23,600 CU per earning row.
+- **Compute:** about 24,100 CU per earning row, M7's per-row check included.
   - `eight_rows_fit_the_default_compute_limit`: eight land under the default 200,000 with no
-    compute-budget instruction, 190,931 CU; a ninth exhausts it, failing mid-CPI with no custom
-    code (`InstructionError::ProgramFailedToComplete`, not a Whirlpools or Ballista error number).
+    compute-budget instruction, 193,145 CU (headroom about 3.4%, down from about 5% before M7,
+    since its holder check now costs per row, not once per transaction); a ninth exhausts it,
+    failing mid-CPI with no custom code
+    (`InstructionError::ProgramFailedToComplete`, which also covers other VM faults, so the test
+    also asserts the log's own "exceeded CUs meter" line).
 - **Size:** 68 bytes per earning row when rows share tick arrays. Each extra distinct tick array
   costs 32 bytes more.
   - `ten_rows_fit_one_legacy_transaction`: ten fit a legacy transaction with a compute-budget
@@ -193,47 +199,88 @@ shows each one. Plan:
   confused with Ballista's". Runtime phase 1 (1efbd24) has since rewritten it to say a code alone
   does not name its program. Nothing is left to do there.
 
-## M7: fees must go to the owner
+## M7: fees must go to the position's holder
 
 Both templates named `tokenOwnerAccountA`/`tokenOwnerAccountB` as the fee destinations without
 pinning who holds them. Whirlpools' `collect_fees` checks only their mint against its vaults, never
 their owner (confirmed by reading the accounts Orca's own client builds for it, in
-`orca_cpis.rs`'s `orca_accounts`), so a run assembled by an untrusted builder β€” a frontend, a bot,
-anything the true owner merely signs β€” could point them at the builder's own accounts and collect
-the position's real fees there. The owner's signature over `positionAuthority` authorizes the
-collect; it said nothing about where the proceeds went.
+`orca_cpis.rs`'s `orca_accounts`: neither `CollectFees` nor `UpdateFeesAndRewards` names an owner
+constraint on them, only which mint the transfer moves), so a run assembled by an untrusted builder
+β€” a frontend, a bot, anything the real holder merely signs β€” could point them at the builder's own
+accounts and collect the position's real fees there.
 
-- **compound** was exposed on its collect-only path: a `dustFloor` between the two fees collects
-  both without reinvesting. When it does reinvest, the deposit draws from the same accounts with
-  the owner's authority and fails closed against a stranger's, so only the collect-only path paid
-  out.
-- **harvest** was exposed on any earning row, since every row shares the same fixed
-  `tokenOwnerAccountA`/`B`.
+**Pre-fix evidence**, reproduced this session with the reviewer's probe
+(`review-orca-quality/probe/tests/probe.rs` in the session's scratch directory) against the pre-fix
+payloads β€” commit 27d60d4's `fixtures/protocol-examples.json`, checked byte-identical to the
+probe's saved copy β€” replayed on this file's own pinned snapshot (slot 451,137,027). Both scenarios
+landed and paid every fee owed to the stranger:
+- compound (`a_floor_between_the_fees_collects_both_and_reinvests_neither`'s setup, a stranger in
+  both fee slots): landed, 25,390 CU; the stranger received (13,919,999 lamports, 2,087,999
+  micro-USDC).
+- harvest (one earning row, a stranger in both fee slots): landed, 25,131 CU; the stranger received
+  (47,454,547, 4,745,455).
 
-**Fixed.** Both templates require `tokenOwnerAccountA`/`B`'s owner field (SPL Token account offset
-32) to equal `positionAuthority`'s key, labelled `feesGoToTheOwner`. Harvest checks it once before
-the batch, not once per row. Both accounts now also pin `owner: TOKEN_PROGRAM_ADDRESS_BYTES` and a
-165-byte `minDataLength`, so the read is of a real token account, not an `unsafeUnpinned` guess.
+**The first fix bound the wrong thing.** It required `tokenOwnerAccountA`/`B`'s owner to equal
+`positionAuthority`'s own key β€” the signer, not the position's holder. Whirlpools lets
+`positionAuthority` be a delegate approved on `positionTokenAccount` rather than the NFT's owner
+(that is what `MissingOrInvalidDelegate`, 6019, guards), so binding to the signer would have
+refused a legitimate delegate keeper managing someone else's position, or, bound to itself as
+signer, paid the keeper instead of the real holder it was compounding for.
 
-`fees_must_go_to_the_owner_not_a_strangers_accounts` (both test files) is the regression test: an
-attacker's own token accounts of the right mints stand in for the fee destinations, on a run that
-otherwise lands (a floor between the fees for compound, one earning row for harvest), and it
-asserts `RequirementFailed` at `feesGoToTheOwner`. Before this fix, neither template's schema
-constrained these accounts at all beyond `writable: true`, and nothing else in either template
-read them β€” so the same run would have landed and paid the stranger. That was not re-confirmed by
-reverting the fix and rerunning, since doing so means running the vulnerable templates again to
-prove a point already settled by inspection: Orca's own account list for `collect_fees`
-(`orca_cpis.rs`'s `orca_accounts`) constrains neither account's owner either.
+**Every path paid out, not only collect-only.** The first writeup said the reinvestment path
+"fails closed" because the deposit needs authority over the fee accounts that `positionAuthority`
+does not have by default when they are a stranger's. That default is the attacker's own choice, not
+a protocol guarantee: nothing stops an attacker from approving `positionAuthority` as a delegate on
+their own accounts before running the attack, which gives the reinvest step exactly the authority
+it needs. Reproduced pre-fix: compound's reinvest path, with the stranger's fee accounts delegated
+to the real owner's key beforehand (Token's own `approve`, a real signed transaction), still
+landed, at 43,406 CU, and the stranger kept the 327,114-micro-USDC remainder the deposit did not
+spend β€” the same remainder `two_sided_fees_are_collected_and_compounded` shows staying with the
+real holder on a legitimate run.
 
-**Cost, measured at this snapshot.** Two account reads and two comparisons, paid once per
-transaction regardless of row count, and the run's own account list and inputs are unchanged, so
-its wire size does not move:
-- compound: +612 CU on every path (11,882 β†’ 12,494 CU with no fees; every other case in the
-  Measurements table moved the same 612). 706 bytes, unchanged.
-- harvest: +648 CU (59,610 β†’ 60,258 CU on the four-row test; 237,622 β†’ 238,270 on the ten-row
-  test). 747 and 1,195 bytes, unchanged.
-- Both templates' uploaded payload grew 128 bytes (compound 714 β†’ 842, harvest 478 β†’ 606); that
-  is a one-time upload cost, not a per-run one.
+**Fixed, and bound to the right thing.** Both templates require `tokenOwnerAccountA`/`B`'s owner
+field (SPL Token account offset 32) to equal `positionTokenAccount`'s own owner field β€” the
+position's real holder, invariant to who is allowed to sign for it. Labelled
+`feesGoToThePositionHolder` (compound) and `positionBelongsToTheFeeOwner` (harvest, checked per
+row, since a batch's rows can hold positions with different holders; the fee accounts are fixed and
+shared, so their owner is read once for the whole batch, not once per row).
+`positionTokenAccount` is read `unsafeUnpinned`: a position's NFT can be held by either Token or
+Token-2022 (harvest's `only_b` row already holds one on Token-2022), so its owning program cannot
+be pinned to one address, and Whirlpools' own mint and amount checks on that account make the read
+trustworthy without one. Both fee accounts still pin `owner: TOKEN_PROGRAM_ADDRESS_BYTES` and a
+165-byte `minDataLength`.
+
+**Tests, in both `orca_compound_fees.rs` and `orca_harvest_many_positions.rs` unless noted.**
+- `fees_must_go_to_the_position_holder_not_a_strangers_accounts`: a stranger's own accounts in
+  both fee slots, on a run that would otherwise land (a floor between the fees for compound, one
+  earning row for harvest), asserts `RequirementFailed` at the label above.
+- `fees_must_go_to_the_position_holder_in_token_b_alone`: the stranger only in
+  `tokenOwnerAccountB`, the real holder's own account in A. The first version of both regression
+  tests put the stranger in both slots, so token A's comparison always failed first and the B
+  comparison was never exercised β€” deleting it, or comparing it against the wrong account, would
+  still have passed both tests. This is what would have caught it: compound fails at pc 11.
+- `a_delegates_signature_still_pays_the_position_holder`: a keeper approved as a delegate on the
+  position's NFT (`orca::approve_delegate`, Token's own `approve` sent as a real signed
+  transaction β€” not a direct write beyond write rule 1's wallet balances) signs as
+  `positionAuthority` for a position it does not hold. The run lands (compound 44,051 CU, harvest
+  25,807 CU) and the fees reach the real holder's own accounts, not the delegate's. Compound's
+  version also delegates the holder's wSOL/USDC accounts, since its reinvest step debits them
+  under the delegate's signature too; harvest never debits the fee accounts, so no further
+  delegation is needed there.
+- `a_stranger_cannot_collect_and_whirlpools_says_so` (harvest) now signs with the fees still going
+  to the real holder's own accounts, so `positionBelongsToTheFeeOwner` passes and it is Whirlpools'
+  own delegate check that is on trial, as the test's name says.
+
+**Cost, measured at this snapshot.** Deltas below are against the M1–M6 baseline, before any M7
+fix (the eight-row figure is the reviewer's probe; the rest are this file's own pre-M7 numbers).
+The run's own account list and inputs are unchanged either way, so wire size does not move:
+- compound: +576 CU on every path (11,882 β†’ 12,458 CU with no fees; every other row in the
+  Measurements table moved the same 576). 706 bytes, unchanged. Payload 440 β†’ 826 bytes.
+- harvest: no longer a flat per-transaction cost, since the holder check now runs once per row
+  instead of once per transaction. Four rows 59,610 β†’ 61,200 CU; ten rows 237,622 β†’ 241,120 CU;
+  eight rows, unbudgeted, 190,275 β†’ 193,145 CU (headroom under the default 200,000 tightens from
+  about 5% to about 3.4%; see the harvest section's "Limits, measured"). 747/1,195/1,019 bytes,
+  unchanged. Payload 298 β†’ 590 bytes.
 
 ## CI
 
@@ -253,14 +300,16 @@ signed transaction on the wire.
 
 | Run | Compute units | Bytes | Whirlpool calls |
 | --- | --- | --- | --- |
-| compound, fees in both tokens | 43,994 | 706 | 3 |
-| compound, fees in one token | 25,814–25,821 | 706 | 2 |
-| compound, no fees | 12,494 | 706 | 1 |
-| compound, no liquidity | 3,158 | 706 | 0 |
-| compound, emptied position | 16,267 | 706 | 1 |
-| harvest, the four rows | 60,258 | 747 | 5 |
-| harvest, eight earning rows, no budget instruction | 190,931 | 1,019 | 16 |
-| harvest, ten earning rows | 238,270 | 1,195 (budget instruction included) | 20 |
+| compound, fees in both tokens | 43,958 | 706 | 3 |
+| compound, fees in one token | 25,778–25,785 | 706 | 2 |
+| compound, no fees | 12,458 | 706 | 1 |
+| compound, no liquidity | 3,122 | 706 | 0 |
+| compound, emptied position | 16,231 | 706 | 1 |
+| compound, a delegate signs for the holder | 44,051 | 706 | 3 |
+| harvest, the four rows | 61,200 | 747 | 5 |
+| harvest, eight earning rows, no budget instruction | 193,145 | 1,019 | 16 |
+| harvest, ten earning rows | 241,120 | 1,195 (budget instruction included) | 20 |
+| harvest, a delegate signs for the holder | 25,807 | 543 | 2 |
 | Orca: `update_fees_and_rewards` | 7,687–8,184 | | |
 | Orca: `collect_fees`, fees owed | 11,346–11,390 | | |
 | Orca: `collect_fees`, nothing owed | 11,375 | | |
@@ -280,8 +329,8 @@ does not touch them.
 ## Evidence
 
 One line per finding: the test written before its fix, failing as run at this snapshot. M5 has no
-row, since its fix is the header; M7's is in its own section above, since nothing captured its
-pre-fix run.
+row, since its fix is the header; M7's pre-fix evidence is in its own section above, since it is a
+reproduced attack run, not a single failing assertion this table's shape would fit.
 
 | Finding | Test | Failed as |
 | --- | --- | --- |
@@ -332,9 +381,9 @@ source directly, so each new header appears there without a docs edit.
 - `docs/examples/protocols/orca-harvest.md:25` β€” "each position is one row of two accounts, the
   position and its position token account." A row is four accounts now.
 
-Neither page yet says that `tokenOwnerAccountA`/`B` must belong to the signer (M7) or that
-`dustFloor` is unsafe at 0 (the compound template's "Remaining limits" above): both pages are
-silent on this rather than actively wrong, so they are not listed as false, but a docs pass should
-add both.
+Neither page yet says that `tokenOwnerAccountA`/`B` must belong to the position's real holder (M7)
+or that `dustFloor` is unsafe at 0 (the compound template's "Remaining limits" above): both pages
+are silent on this rather than actively wrong, so they are not listed as false, but a docs pass
+should add both.
 
 This revision of the file is the next commit.

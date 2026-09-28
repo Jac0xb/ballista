@@ -22,11 +22,16 @@
  * limit of 200,000 and more need a compute budget. Rows share keys when they share tick arrays: then
  * about ten fit a legacy transaction, and twelve, the template's limit, need a lookup table.
  *
- * `tokenOwnerAccountA` and `tokenOwnerAccountB` must belong to `positionAuthority`. Whirlpools'
- * `collect_fees` checks only their mint, never who owns them, so an untrusted run builder could
- * otherwise send every row's fees to its own accounts while the owner just signs; the template
- * requires it itself (`feesGoToTheOwner`), once for the batch rather than once per row, since both
- * accounts are fixed and every row shares them.
+ * `tokenOwnerAccountA` and `tokenOwnerAccountB` must belong to whoever holds each row's position
+ * NFT, read from that row's `positionTokenAccount` β€” not to `positionAuthority`, which only has to
+ * sign for the position. Whirlpools lets `positionAuthority` be a delegate approved on
+ * `positionTokenAccount` rather than the NFT's real owner (`MissingOrInvalidDelegate`, 6019, is
+ * what guards that), so binding the fee destination to the signer would pay a delegate keeper
+ * instead of each position's real owner. Whirlpools' `collect_fees` checks only the fee accounts'
+ * mint, never who owns them, so nothing else stops a run built by someone else from pointing them
+ * anywhere. The fee accounts are fixed and shared by every row, so their owner is read once for
+ * the whole batch; each row still checks its own position against that one holder
+ * (`positionBelongsToTheFeeOwner`).
  *
  * Offsets come from `Position`, `LEN = 8 + 136 + 72`: `liquidity` at 72, `fee_owed_a` at 112 and
  * `fee_owed_b` at 136.
@@ -68,7 +73,7 @@ export const orcaHarvestManyPositions = defineTemplate({
     positionAuthority: { signer: true },
     /** Written by each row's `update_fees_and_rewards`. */
     whirlpool: { writable: true },
-    /** Must belong to `positionAuthority`: see the header (`feesGoToTheOwner`). */
+    /** Must belong to each row's position holder: see the header (`positionBelongsToTheFeeOwner`). */
     tokenOwnerAccountA: {
       writable: true,
       owner: TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -91,7 +96,13 @@ export const orcaHarvestManyPositions = defineTemplate({
         owner: addressBytes(ORCA_WHIRLPOOL),
         minDataLength: ORCA_POSITION.length,
       },
-      positionTokenAccount: {},
+      /**
+       * Read for its owner field, the row's real holder (`positionBelongsToTheFeeOwner`). A row's
+       * NFT can be held by either Token or Token-2022, so its owning program is not pinned;
+       * Whirlpools' own mint and amount checks on this account make that read trustworthy without
+       * one.
+       */
+      positionTokenAccount: { unsafeUnpinned: true, minDataLength: TOKEN_ACCOUNT_LENGTH },
       /** The tick array holding the position's lower tick; `update_fees_and_rewards` reads it. */
       tickArrayLower: {},
       /** The tick array holding the position's upper tick. */
@@ -99,22 +110,35 @@ export const orcaHarvestManyPositions = defineTemplate({
     },
   },
   steps: [
-    // Fixed accounts, shared by every row: checked once for the whole batch, not once per row.
-    step.require(
-      expression.and(
-        expression.equal(
-          expression.accountData(account.fixed('tokenOwnerAccountA'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
-          expression.accountField(account.fixed('positionAuthority'), 'key'),
-        ),
-        expression.equal(
-          expression.accountData(account.fixed('tokenOwnerAccountB'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
-          expression.accountField(account.fixed('positionAuthority'), 'key'),
-        ),
-      ),
-      'feesGoToTheOwner',
+    // Fixed accounts, shared by every row: read once for the whole batch, not once per row.
+    step.let(
+      'feeOwnerA',
+      expression.accountData(account.fixed('tokenOwnerAccountA'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+      'readFeeOwnerA',
+    ),
+    step.let(
+      'feeOwnerB',
+      expression.accountData(account.fixed('tokenOwnerAccountB'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+      'readFeeOwnerB',
     ),
     step.forEach(
       [
+        step.let(
+          'positionHolder',
+          expression.accountData(
+            account.iteration('positionTokenAccount'),
+            TOKEN_ACCOUNT_OWNER_OFFSET,
+            'pubkey',
+          ),
+          'readPositionHolder',
+        ),
+        step.require(
+          expression.and(
+            expression.equal(expression.variable('positionHolder'), expression.variable('feeOwnerA')),
+            expression.equal(expression.variable('positionHolder'), expression.variable('feeOwnerB')),
+          ),
+          'positionBelongsToTheFeeOwner',
+        ),
         step.invoke({
           program: account.fixed('whirlpoolProgram'),
           accounts: [

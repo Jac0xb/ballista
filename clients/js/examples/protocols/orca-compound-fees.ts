@@ -36,10 +36,14 @@
  * a SOL/USDC position; a pool whose token A is worth less per base unit needs more, so a few
  * thousand base units is a safer default.
  *
- * `tokenOwnerAccountA` and `tokenOwnerAccountB` must belong to `positionAuthority`. Whirlpools'
- * `collect_fees` checks only their mint, never who owns them, so an untrusted run builder could
- * otherwise send real fees to its own accounts while the owner just signs; the template requires
- * it itself (`feesGoToTheOwner`).
+ * `tokenOwnerAccountA` and `tokenOwnerAccountB` must belong to whoever holds the position's NFT,
+ * read from `positionTokenAccount`'s own owner field β€” not to `positionAuthority`, which only has
+ * to sign for the position. Whirlpools lets `positionAuthority` be a delegate approved on
+ * `positionTokenAccount` rather than the NFT's real owner (`MissingOrInvalidDelegate`, 6019, is
+ * what guards that), so binding the fee destination to the signer would pay a delegate keeper
+ * instead of the position's real owner. Whirlpools' `collect_fees` checks only the fee accounts'
+ * mint, never who owns them, so nothing else stops a run built by someone else from pointing them
+ * anywhere; the template requires it itself (`feesGoToThePositionHolder`).
  *
  * Offsets come from `Position`, declared as `whirlpool, position_mint, liquidity,
  * tick_lower_index, tick_upper_index, fee_growth_checkpoint_a, fee_owed_a,
@@ -94,10 +98,15 @@ export const orcaCompoundFees = defineTemplate({
       owner: addressBytes(ORCA_WHIRLPOOL),
       minDataLength: ORCA_POSITION.length,
     },
-    positionTokenAccount: {},
+    /**
+     * Read for its owner field, the position's real holder (`feesGoToThePositionHolder`). Could be
+     * Token- or Token-2022-owned, so its owning program is not pinned; Whirlpools' own mint and
+     * amount checks on this account make that read trustworthy without one.
+     */
+    positionTokenAccount: { unsafeUnpinned: true, minDataLength: TOKEN_ACCOUNT_LENGTH },
     tokenMintA: {},
     tokenMintB: {},
-    /** Must belong to `positionAuthority`: see the header (`feesGoToTheOwner`). */
+    /** Must belong to the position's holder: see the header (`feesGoToThePositionHolder`). */
     tokenOwnerAccountA: {
       writable: true,
       owner: TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -115,19 +124,25 @@ export const orcaCompoundFees = defineTemplate({
   },
   steps: [
     // Whirlpools' collect_fees checks only the mint of these accounts; nothing stops a run built
-    // by someone other than the owner from pointing them elsewhere.
+    // by someone other than the position's holder from pointing them elsewhere. The holder is
+    // positionTokenAccount's owner, not positionAuthority, which may only be its delegate.
+    step.let(
+      'positionHolder',
+      expression.accountData(account.fixed('positionTokenAccount'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+      'readPositionHolder',
+    ),
     step.require(
       expression.and(
         expression.equal(
           expression.accountData(account.fixed('tokenOwnerAccountA'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
-          expression.accountField(account.fixed('positionAuthority'), 'key'),
+          expression.variable('positionHolder'),
         ),
         expression.equal(
           expression.accountData(account.fixed('tokenOwnerAccountB'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
-          expression.accountField(account.fixed('positionAuthority'), 'key'),
+          expression.variable('positionHolder'),
         ),
       ),
-      'feesGoToTheOwner',
+      'feesGoToThePositionHolder',
     ),
     step.let(
       'hasLiquidity',

@@ -372,19 +372,39 @@ describe('the Jupiter deposit runner', () => {
   });
 });
 
-describe('Orca fee destinations belong to the position authority', () => {
+describe('Orca fee destinations belong to the position holder', () => {
   // Whirlpools' collect_fees checks only these accounts' mint, never who owns them, so nothing
-  // else stops a run an untrusted builder assembled from paying a stranger instead of the owner.
-  test.each([
-    ['orcaCompoundFees', orcaCompoundFees],
-    ['orcaHarvestManyPositions', orcaHarvestManyPositions],
-  ] as const)('%s pins tokenOwnerAccountA/B to positionAuthority', (_, template) => {
-    const bindings = bindingsOf(template);
-    const check = requireLabeled(template, 'feesGoToTheOwner');
-    for (const account of ['tokenOwnerAccountA', 'tokenOwnerAccountB'] as const) {
-      expect(dependsOn(check.condition, bindings, reads(account, TOKEN_ACCOUNT_OWNER_OFFSET))).toBe(true);
+  // else stops a run an untrusted builder assembled from paying a stranger instead of the holder.
+  // The holder is positionTokenAccount's own owner, not positionAuthority, which may be only a
+  // delegate Whirlpools accepts in the holder's place.
+  const readsRow = (name: string, offset: number) => (candidate: Expression) =>
+    candidate.kind === 'accountData' &&
+    candidate.account.kind === 'iterationAccount' &&
+    candidate.account.name === name &&
+    candidate.offset === offset;
+
+  test('orcaCompoundFees pins tokenOwnerAccountA/B to positionTokenAccount', () => {
+    const bindings = bindingsOf(orcaCompoundFees);
+    const check = requireLabeled(orcaCompoundFees, 'feesGoToThePositionHolder');
+    for (const acc of ['tokenOwnerAccountA', 'tokenOwnerAccountB'] as const) {
+      expect(dependsOn(check.condition, bindings, reads(acc, TOKEN_ACCOUNT_OWNER_OFFSET))).toBe(true);
     }
-    expect(dependsOn(check.condition, bindings, accountKey('positionAuthority'))).toBe(true);
+    expect(
+      dependsOn(check.condition, bindings, reads('positionTokenAccount', TOKEN_ACCOUNT_OWNER_OFFSET)),
+    ).toBe(true);
+    expect(dependsOn(check.condition, bindings, accountKey('positionAuthority'))).toBe(false);
+  });
+
+  test('orcaHarvestManyPositions checks each row against the fixed fee accounts', () => {
+    const bindings = bindingsOf(orcaHarvestManyPositions);
+    const check = requireLabeled(orcaHarvestManyPositions, 'positionBelongsToTheFeeOwner');
+    expect(
+      dependsOn(check.condition, bindings, readsRow('positionTokenAccount', TOKEN_ACCOUNT_OWNER_OFFSET)),
+    ).toBe(true);
+    for (const acc of ['tokenOwnerAccountA', 'tokenOwnerAccountB'] as const) {
+      expect(dependsOn(check.condition, bindings, reads(acc, TOKEN_ACCOUNT_OWNER_OFFSET))).toBe(true);
+    }
+    expect(dependsOn(check.condition, bindings, accountKey('positionAuthority'))).toBe(false);
   });
 });
 

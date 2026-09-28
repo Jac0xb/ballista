@@ -506,13 +506,12 @@ fn dust_that_buys_no_liquidity_fails_the_run_unless_the_floor_skips_it() {
     println!("dust: fees ({owed_a}, {owed_b}) after {lots} lots of 0.001 SOL");
 }
 
-/// Security: `tokenOwnerAccountA`/`B` must belong to `positionAuthority`. Whirlpools' `collect_fees`
-/// checks only their mint, never who owns them, so nothing else stops a run an untrusted builder
-/// assembled from paying a stranger while the true owner just signs. A floor between the fees
-/// collects both without reinvesting (`a_floor_between_the_fees_collects_both_and_reinvests_neither`),
-/// the simplest path that would otherwise pay out.
-#[test]
-fn fees_must_go_to_the_owner_not_a_strangers_accounts() {
+/// Runs the floor-between-the-fees scenario with a stranger's own accounts in the slots
+/// `stranger_in` marks (A, B), and asserts the run fails at `feesGoToThePositionHolder`. A floor
+/// between the fees collects both without reinvesting
+/// (`a_floor_between_the_fees_collects_both_and_reinvests_neither`), the simplest path that would
+/// otherwise pay out.
+fn assert_fees_must_go_to_the_position_holder(stranger_in: (bool, bool)) {
     let examples = examples();
     let example = &examples[EXAMPLE];
     let mut setup = setup(example, true);
@@ -522,15 +521,128 @@ fn fees_must_go_to_the_owner_not_a_strangers_accounts() {
     let floor = owed.0.min(owed.1);
     let stranger = orca::token_wallet(&mut setup.svm, &orca::seed("compound stranger"), 0, 0);
     let bounds = slippage_bounds(&setup, 100);
+    let (stranger_in_a, stranger_in_b) = stranger_in;
+    let fee_accounts = (
+        if stranger_in_a {
+            stranger.token_a
+        } else {
+            setup.owner.token_a
+        },
+        if stranger_in_b {
+            stranger.token_b
+        } else {
+            setup.owner.token_b
+        },
+    );
 
-    let failure = compound_paying(
-        &mut setup,
-        example,
-        floor,
-        bounds,
-        (stranger.token_a, stranger.token_b),
-    )
-    .unwrap_err();
+    let failure = compound_paying(&mut setup, example, floor, bounds, fee_accounts).unwrap_err();
 
-    tx::assert_requirement_failed(&failure, example, "feesGoToTheOwner");
+    tx::assert_requirement_failed(&failure, example, "feesGoToThePositionHolder");
+}
+
+/// Security: `tokenOwnerAccountA`/`B` must belong to the position's real holder (its NFT's owner),
+/// not to `positionAuthority`, which Whirlpools lets be a delegate instead. Whirlpools'
+/// `collect_fees` checks only the fee accounts' mint, never who owns them, so nothing else stops a
+/// run an untrusted builder assembled from paying a stranger while the true holder just signs.
+#[test]
+fn fees_must_go_to_the_position_holder_not_a_strangers_accounts() {
+    assert_fees_must_go_to_the_position_holder((true, true));
+}
+
+/// The same check on token B alone: with the stranger only in `tokenOwnerAccountB`, token A's own
+/// comparison passes and it is the B comparison that must still fail the run. Deleting the B check
+/// (or comparing it against the wrong account) would otherwise let this land.
+#[test]
+fn fees_must_go_to_the_position_holder_in_token_b_alone() {
+    assert_fees_must_go_to_the_position_holder((false, true));
+}
+
+/// A delegate keeper can sign as `positionAuthority` for a position it does not hold β€” Whirlpools
+/// accepts a delegate approved on `positionTokenAccount` in the holder's place, refusing one that
+/// is neither with `MissingOrInvalidDelegate` (6019) β€” and the run still lands with the fees going
+/// to the real holder's own accounts, not the delegate's: proof that `feesGoToThePositionHolder`
+/// binds to the holder, not to whoever signs. The approval is Token's own `approve`, sent as a real
+/// signed transaction; nothing here is a direct write beyond write rule 1's wallet balances.
+#[test]
+fn a_delegates_signature_still_pays_the_position_holder() {
+    let examples = examples();
+    let example = &examples[EXAMPLE];
+    let mut setup = setup(example, true);
+    earn_both_fees(&mut setup);
+    let owed = orca::fees_owed_now(&setup.svm, &setup.pool, &setup.position);
+    assert!(owed.0 > 0 && owed.1 > 0, "{owed:?}");
+    let bounds = slippage_bounds(&setup, 100);
+
+    let delegate = keypair(&orca::seed("compound delegate"));
+    fund(&mut setup.svm, &delegate.pubkey(), SOL);
+    // Delegated on the NFT (exactly 1, or Whirlpools reads it as no approval at all) so the
+    // delegate can sign for the position, and on the holder's own token accounts so the reinvest
+    // step can debit them under the delegate's signature too.
+    orca::approve_delegate(
+        &mut setup.svm,
+        setup.position.token_account,
+        delegate.pubkey(),
+        1,
+        &setup.owner.keypair,
+    );
+    for account in [setup.owner.token_a, setup.owner.token_b] {
+        orca::approve_delegate(
+            &mut setup.svm,
+            account,
+            delegate.pubkey(),
+            u64::MAX,
+            &setup.owner.keypair,
+        );
+    }
+    let before = state(&setup);
+
+    let pool = setup.pool;
+    let position = setup.position;
+    let run = Run::new(setup.template, example)
+        .account("whirlpoolProgram", WHIRLPOOL, false, false)
+        .account("tokenProgram", TOKEN_PROGRAM_ID, false, false)
+        .account("memoProgram", orca::MEMO_PROGRAM, false, false)
+        .account("positionAuthority", delegate.pubkey(), false, true)
+        .account("whirlpool", pool.address, true, false)
+        .account("position", position.address, true, false)
+        .account("positionTokenAccount", position.token_account, false, false)
+        .account("tokenMintA", pool.mint_a, false, false)
+        .account("tokenMintB", pool.mint_b, false, false)
+        .account("tokenOwnerAccountA", setup.owner.token_a, true, false)
+        .account("tokenOwnerAccountB", setup.owner.token_b, true, false)
+        .account("tokenVaultA", pool.vault_a, true, false)
+        .account("tokenVaultB", pool.vault_b, true, false)
+        .account(
+            "tickArrayLower",
+            orca::tick_array(&pool, position.lower),
+            true,
+            false,
+        )
+        .account(
+            "tickArrayUpper",
+            orca::tick_array(&pool, position.upper),
+            true,
+            false,
+        )
+        .input_u64("dustFloor", 0)
+        .input_u128("minSqrtPrice", bounds.0)
+        .input_u128("maxSqrtPrice", bounds.1)
+        .build();
+    let outcome = tx::send(&mut setup.svm, &delegate, &[], &[run], &[])
+        .unwrap_or_else(|failure| panic!("{failure:?}"));
+
+    let after = state(&setup);
+    assert_eq!(
+        (after.fee_owed_a, after.fee_owed_b),
+        (0, 0),
+        "the fees were collected"
+    );
+    assert!(
+        after.liquidity > before.liquidity,
+        "the holder's own fees were reinvested"
+    );
+    println!(
+        "delegate-signed compound: {} CU, {} bytes",
+        outcome.compute_units, outcome.size
+    );
 }

@@ -292,19 +292,15 @@ fn a_stranger_cannot_collect_and_whirlpools_says_so() {
     let example = &examples[EXAMPLE];
     let mut setup = setup(example);
     let Rows { both, .. } = four_rows(&mut setup);
-    // Its own accounts, so `feesGoToTheOwner` passes and Whirlpools' own check is what's on trial.
-    let stranger = orca::token_wallet(&mut setup.svm, &orca::seed("harvest stranger"), 0, 0);
+    let stranger = keypair(&orca::seed("harvest stranger"));
+    fund(&mut setup.svm, &stranger.pubkey(), SOL);
 
     let pool = setup.pool;
-    let run = harvest_paying(
-        &setup,
-        example,
-        &stranger.keypair,
-        &[(&both, &pool)],
-        0,
-        (stranger.token_a, stranger.token_b),
-    );
-    let failure = send(&mut setup, &stranger.keypair, &[run]).unwrap_err();
+    // The fees still go to the real holder's own accounts: `positionBelongsToTheFeeOwner` passes
+    // (the position belongs to its holder, not to whoever signs), so Whirlpools' own delegate
+    // check on `positionAuthority` is what's on trial.
+    let run = harvest(&setup, example, &stranger, &[(&both, &pool)], 0);
+    let failure = send(&mut setup, &stranger, &[run]).unwrap_err();
 
     orca::assert_whirlpool_error(&failure, oc::WhirlpoolError::MissingOrInvalidDelegate);
     assert_eq!(ballista_error(&failure), None);
@@ -419,12 +415,9 @@ fn ten_rows_fit_one_legacy_transaction() {
     );
 }
 
-/// Security: the fixed `tokenOwnerAccountA`/`B` must belong to `positionAuthority`, checked once
-/// for the whole batch, not per row. Whirlpools' `collect_fees` checks only their mint, never who
-/// owns them, so nothing else stops a run an untrusted builder assembled from paying a stranger
-/// every row's fees while the true owner just signs.
-#[test]
-fn fees_must_go_to_the_owner_not_a_strangers_accounts() {
+/// Harvests `both`'s one row with a stranger's own accounts in the slots `stranger_in` marks (A,
+/// B), signed by the real owner, and asserts the run fails at `positionBelongsToTheFeeOwner`.
+fn assert_fees_must_go_to_the_position_holder(stranger_in: (bool, bool)) {
     let examples = examples();
     let example = &examples[EXAMPLE];
     let mut setup = setup(example);
@@ -435,20 +428,90 @@ fn fees_must_go_to_the_owner_not_a_strangers_accounts() {
         0,
         0,
     );
+    let (stranger_in_a, stranger_in_b) = stranger_in;
+    let fee_accounts = (
+        if stranger_in_a {
+            stranger.token_a
+        } else {
+            setup.owner.token_a
+        },
+        if stranger_in_b {
+            stranger.token_b
+        } else {
+            setup.owner.token_b
+        },
+    );
 
     let pool = setup.pool;
     let owner = setup.owner.keypair.insecure_clone();
-    let run = harvest_paying(
-        &setup,
-        example,
-        &owner,
-        &[(&both, &pool)],
-        0,
-        (stranger.token_a, stranger.token_b),
-    );
+    let run = harvest_paying(&setup, example, &owner, &[(&both, &pool)], 0, fee_accounts);
     let failure = send(&mut setup, &owner, &[run]).unwrap_err();
 
-    tx::assert_requirement_failed(&failure, example, "feesGoToTheOwner");
+    tx::assert_requirement_failed(&failure, example, "positionBelongsToTheFeeOwner");
+}
+
+/// Security: the fixed `tokenOwnerAccountA`/`B` must belong to each row's real holder (its
+/// position NFT's owner), not to `positionAuthority`, which Whirlpools lets be a delegate instead.
+/// Whirlpools' `collect_fees` checks only the fee accounts' mint, never who owns them, so nothing
+/// else stops a run an untrusted builder assembled from paying a stranger every row's fees while
+/// the true holder just signs.
+#[test]
+fn fees_must_go_to_the_position_holder_not_a_strangers_accounts() {
+    assert_fees_must_go_to_the_position_holder((true, true));
+}
+
+/// The same check on token B alone: with the stranger only in `tokenOwnerAccountB`, token A's own
+/// comparison passes and it is the B comparison that must still fail the run. Deleting the B check
+/// (or comparing it against the wrong account) would otherwise let this land.
+#[test]
+fn fees_must_go_to_the_position_holder_in_token_b_alone() {
+    assert_fees_must_go_to_the_position_holder((false, true));
+}
+
+/// A delegate keeper can sign as `positionAuthority` for a row's position it does not hold β€”
+/// Whirlpools accepts a delegate approved on that row's `positionTokenAccount` in the holder's
+/// place, refusing one that is neither with `MissingOrInvalidDelegate` (6019) β€” and the run still
+/// lands with the fees going to the real holder's own accounts, not the delegate's: proof that
+/// `positionBelongsToTheFeeOwner` binds to the holder, not to whoever signs. Harvest never debits
+/// the fee accounts (only `collect_fees`' destinations, which need no authority from their own
+/// owner), so unlike compound's version of this test, no further delegation is needed for the run
+/// to land. The approval is Token's own `approve`, sent as a real signed transaction; nothing here
+/// is a direct write beyond write rule 1's wallet balances.
+#[test]
+fn a_delegates_signature_still_pays_the_position_holder() {
+    let examples = examples();
+    let example = &examples[EXAMPLE];
+    let mut setup = setup(example);
+    let Rows { both, .. } = four_rows(&mut setup);
+    let earned = orca::fees_owed_now(&setup.svm, &setup.pool, &both);
+    assert!(earned.0 > 0 && earned.1 > 0, "{earned:?}");
+    let before = setup.balances();
+
+    let delegate = keypair(&orca::seed("harvest delegate"));
+    fund(&mut setup.svm, &delegate.pubkey(), SOL);
+    orca::approve_delegate(
+        &mut setup.svm,
+        both.token_account,
+        delegate.pubkey(),
+        1,
+        &setup.owner.keypair,
+    );
+
+    let pool = setup.pool;
+    let run = harvest(&setup, example, &delegate, &[(&both, &pool)], 0);
+    let outcome =
+        send(&mut setup, &delegate, &[run]).unwrap_or_else(|failure| panic!("{failure:?}"));
+
+    let after = setup.balances();
+    assert_eq!(
+        (after.0 - before.0, after.1 - before.1),
+        earned,
+        "the holder's own accounts grew"
+    );
+    println!(
+        "delegate-signed harvest: {} CU, {} bytes",
+        outcome.compute_units, outcome.size
+    );
 }
 
 /// Eight earning rows land under the default 200,000-CU limit with no compute-budget instruction;
@@ -497,6 +560,15 @@ fn eight_rows_fit_the_default_compute_limit() {
         failure.err,
         TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
         "expected the ninth row to exhaust the default compute limit: {failure:?}"
+    );
+    // `ProgramFailedToComplete` also covers other VM faults (a panic, an illegal instruction); the
+    // log line is what actually says the compute meter, not something else, is what stopped it.
+    assert!(
+        failure
+            .logs
+            .iter()
+            .any(|line| line.contains("exceeded CUs meter")),
+        "expected the log to blame the compute meter: {failure:?}"
     );
 
     let eight = harvest(&setup, example, &owner, &rows[..8], 0);

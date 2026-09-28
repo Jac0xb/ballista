@@ -18,6 +18,7 @@ use {
     orca_whirlpools_client as oc, orca_whirlpools_core as oq,
     sha2::{Digest, Sha256},
     solana_address::Address,
+    solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_signer::Signer,
     std::sync::OnceLock,
@@ -197,6 +198,34 @@ pub fn owner_and_trader(svm: &mut LiteSVM, label: &str) -> (TokenWallet, TokenWa
         20_000_000 * USDC,
     );
     (owner, trader)
+}
+
+/// Approves `delegate` for `amount` of whatever `token_account` holds, with Token's own
+/// `approve`, signed by `owner`. For a position's NFT token account, `amount` must be exactly 1 β€”
+/// Whirlpools reads a different `delegated_amount` as no approval at all (`InvalidPositionTokenAmount`,
+/// 6020) β€” and this is what then lets a keeper sign as `positionAuthority` without holding the NFT
+/// itself; Whirlpools refuses one that is neither the owner nor such a delegate with
+/// `MissingOrInvalidDelegate` (6019).
+pub fn approve_delegate(
+    svm: &mut LiteSVM,
+    token_account: Address,
+    delegate: Address,
+    amount: u64,
+    owner: &Keypair,
+) {
+    let mut data = vec![4u8]; // SPL Token's `Approve` instruction.
+    data.extend_from_slice(&amount.to_le_bytes());
+    let instruction = Instruction {
+        program_id: TOKEN_PROGRAM_ID,
+        accounts: vec![
+            AccountMeta::new(token_account, false),
+            AccountMeta::new_readonly(delegate, false),
+            AccountMeta::new_readonly(owner.pubkey(), true),
+        ],
+        data,
+    };
+    tx::send(svm, owner, &[], &[instruction], &[])
+        .unwrap_or_else(|failure| panic!("approve failed: {failure:?}"));
 }
 
 /// The token program that holds a position's NFT.

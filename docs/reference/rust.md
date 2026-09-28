@@ -22,7 +22,7 @@ cargo run -p ballista-sdk --example run_template
 ```
 
 Three more cover the protocol templates in the [examples](/examples/protocols/):
-`protocol_templates` builds all twelve with `ProgramBuilder`, byte-identical to the TypeScript
+`protocol_templates` builds all thirteen with `ProgramBuilder`, byte-identical to the TypeScript
 fixtures, and `protocol_templates_run` and `protocol_runs` build run instructions for them.
 
 ## Authoring with the builder

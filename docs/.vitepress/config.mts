@@ -72,6 +72,7 @@ const examplesSidebar = [
       { text: 'Jupiter · Deposit what a swap made', link: '/examples/protocols/jupiter-deposit' },
       { text: 'Jupiter · Oracle-checked swap', link: '/examples/protocols/jupiter-oracle-swap' },
       { text: 'Jupiter · Sell a whole balance', link: '/examples/protocols/token-sweep' },
+      { text: 'Jupiter · Daily cap per caller', link: '/examples/protocols/daily-cap' },
       { text: 'Kamino · Repay what a swap made', link: '/examples/protocols/kamino-repay' },
       { text: 'Kamino · Liquidate, minimum payout', link: '/examples/protocols/kamino-liquidate' },
       { text: 'marginfi · Withdraw everything', link: '/examples/protocols/marginfi-withdraw' },

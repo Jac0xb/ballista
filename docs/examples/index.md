@@ -33,6 +33,7 @@ the protocols' own programs, copied from mainnet. See
 | [Deposit swap output](/examples/protocols/jupiter-deposit) | Jupiter → Kamino | How much the swap produced |
 | [Oracle-checked swap](/examples/protocols/jupiter-oracle-swap) | Jupiter + Pyth | Whether the swap paid at least the oracle price, less a tolerance |
 | [Sell whole balance](/examples/protocols/token-sweep) | SPL Token → Jupiter | How much there is to sell |
+| [Daily cap](/examples/protocols/daily-cap) | Jupiter + registry | How much wrapped SOL this caller can still sell today |
 | [Repay from swap](/examples/protocols/kamino-repay) | Jupiter → Kamino | How much the swap produced |
 | [Liquidate](/examples/protocols/kamino-liquidate) | Kamino | How much collateral the liquidator received |
 | [Withdraw](/examples/protocols/marginfi-withdraw) | marginfi | How much the withdrawal returned |

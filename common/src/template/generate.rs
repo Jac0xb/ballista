@@ -170,18 +170,25 @@ impl GeneratedProgram {
         let seed = builder.const_u64(choices.next() as u64);
         registers.push(seed, VALUE_U64);
 
+        // A run may set its return data once, after its last invoke. Generated programs invoke
+        // nothing, so the end of the root is always a legal place. Decided this early because the
+        // loops read many choices, and a stream that runs out reads zero: drawn at the end, it
+        // gave return data to only one program in five.
+        let returns_data = choices.below(2) == 1;
+
         let root_ops = 1 + choices.below(10);
         for _ in 0..root_ops {
             emit_operation(&mut choices, &mut builder, &mut registers, &accounts, &inputs, false);
         }
 
-        // Loops run one after another and never nest. A batched program starts with a FOREACH,
-        // and every later loop is a FOREACH or a REPEAT at random; an unbatched program has only
-        // REPEATs, possibly none.
+        // Loops run one after another and never nest. A batched program has a FOREACH at a
+        // random place among its loops, so a REPEAT can come first, and every other loop is a
+        // FOREACH or a REPEAT at random; an unbatched program has only REPEATs, possibly none.
         let row = batched.then(|| builder.row_account(0, None, None, 0));
         let loops = if batched { 1 + choices.below(3) } else { choices.below(3) };
+        let forced = if batched { choices.below(loops) } else { 0 };
         for index in 0..loops {
-            let foreach_row = row.filter(|_| index == 0 || choices.below(2) == 0);
+            let foreach_row = row.filter(|_| index == forced || choices.below(2) == 0);
             emit_loop(
                 &mut choices,
                 &mut builder,
@@ -199,9 +206,7 @@ impl GeneratedProgram {
             }
         }
 
-        // A run may set its return data once, after its last invoke. Generated programs invoke
-        // nothing, so the end of the root is always a legal place.
-        if choices.below(2) == 1 {
+        if returns_data {
             let part = output_part(&mut choices, &registers);
             builder.set_return_data(&[part]);
         }
@@ -296,7 +301,8 @@ fn emit_operation(
 ) {
     // Loop bodies take registers the root never sees again, so the builder's own count is the
     // one that must stay under the 64-register limit, with room for each loop's fixed extras.
-    if registers.len() >= 56 || builder.register_count() >= 48 {
+    // Every tracked register is one the builder allocated, so it bounds `registers` too.
+    if builder.register_count() >= 48 {
         return;
     }
     match choices.below(17) {

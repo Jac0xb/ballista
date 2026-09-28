@@ -125,6 +125,9 @@ export const opcode = {
   readInstructionBytes: 72,
   readAccountBytes: 73,
   bytesLength: 74,
+  openRegistry: 75,
+  readRegistry: 76,
+  writeRegistry: 77,
 } as const;
 
 /** The conjuncts of a requirement: `and(and(a, b), c)` is three separate assertions. */

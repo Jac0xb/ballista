@@ -2679,10 +2679,10 @@ mod tests {
         let program = ProgramView::parse(&bytes).unwrap();
         let mut scratch = Scratch::new(&program);
         let mut registers = vec![U64(7)];
-        // 39 is unassigned, and so is every number after `OP_BYTES_LEN`, 74, the last opcode the
-        // runtime extensions take. FOREACH and REPEAT fail here too: at the root, the dispatch
-        // loop starts a loop from that failure, and inside a body the failure stands.
-        for opcode in [0, 39, OP_FOREACH, OP_REPEAT, OP_BYTES_LEN + 1, 0xfe, u8::MAX] {
+        // 39 is unassigned, and so is every number after `OP_WRITE_REGISTRY`, 77, the last opcode
+        // the registry takes. FOREACH and REPEAT fail here too: at the root, the dispatch loop
+        // starts a loop from that failure, and inside a body the failure stands.
+        for opcode in [0, 39, OP_FOREACH, OP_REPEAT, OP_WRITE_REGISTRY + 1, 0xfe, u8::MAX] {
             for dst in [0, 9] {
                 assert_eq!(
                     execute_instruction(

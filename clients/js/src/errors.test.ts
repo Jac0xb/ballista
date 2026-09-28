@@ -55,10 +55,13 @@ describe('error decoding', () => {
     expect(decodeBallistaError((4 << 16) | 6023)).toMatchObject({ name: 'InstructionOutOfRange', context: 4 });
     expect(decodeBallistaError(6024)).toMatchObject({ name: 'WritableAccountBytesRead', source: 'runtime' });
     expect(decodeBallistaError(6131)).toMatchObject({ name: 'InvalidIntrospection', source: 'verifier' });
-    expect(decodeBallistaError(6025)).toBeUndefined();
+    expect(decodeBallistaError((3 << 16) | 6025)).toMatchObject({ name: 'InvalidRegistryEntry', context: 3, source: 'runtime' });
+    expect(decodeBallistaError(6026)).toMatchObject({ name: 'RegistryReentry', source: 'runtime' });
+    expect(decodeBallistaError(6132)).toMatchObject({ name: 'InvalidRegistry', source: 'verifier' });
+    expect(decodeBallistaError(6027)).toBeUndefined();
     expect(decodeBallistaError(6099)).toBeUndefined();
     expect(decodeBallistaError((5 << 16) | 6130)).toMatchObject({ name: 'InvalidOutput', context: 5, source: 'verifier' });
-    expect(decodeBallistaError(6132)).toBeUndefined();
+    expect(decodeBallistaError(6133)).toBeUndefined();
     expect(decodeBallistaError(-1)).toBeUndefined();
   });
 

@@ -68,6 +68,16 @@ pub enum BallistaError {
     /// the program counter.
     #[error("bytes were read from a writable account")]
     WritableAccountBytesRead,
+    /// An open found an account that is not the entry the template named: the wrong owner, size or
+    /// header, not writable, or, when it creates the entry, not the derived address. The context
+    /// is the program counter.
+    #[error("invalid registry entry")]
+    InvalidRegistryEntry,
+    /// A CPI passed an entry this run has open as writable. Only a nested Ballista run could use
+    /// that, to write the entry between this run's read and its write. The context is the program
+    /// counter.
+    #[error("a CPI passed an open registry entry writable")]
+    RegistryReentry,
 }
 
 pub use ballista_common::template::RUNTIME_ERROR_NAMES;
@@ -129,6 +139,8 @@ mod tests {
             BallistaError::LoopCountExceeded,
             BallistaError::InstructionOutOfRange,
             BallistaError::WritableAccountBytesRead,
+            BallistaError::InvalidRegistryEntry,
+            BallistaError::RegistryReentry,
         ];
         for (index, variant) in variants.iter().enumerate() {
             assert_eq!(variant.code(), 6000 + index as u32, "{variant:?}");

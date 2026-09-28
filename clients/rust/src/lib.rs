@@ -336,7 +336,13 @@ mod tests {
             "WritableAccountBytesRead"
         );
         assert_eq!(decode_ballista_error(6131).unwrap().name, "InvalidIntrospection");
-        assert!(decode_ballista_error(6025).is_none());
-        assert!(decode_ballista_error(6132).is_none());
+        assert_eq!(
+            decode_ballista_error((3 << 16) | 6025).unwrap().name,
+            "InvalidRegistryEntry"
+        );
+        assert_eq!(decode_ballista_error(6026).unwrap().name, "RegistryReentry");
+        assert_eq!(decode_ballista_error(6132).unwrap().name, "InvalidRegistry");
+        assert!(decode_ballista_error(6027).is_none());
+        assert!(decode_ballista_error(6133).is_none());
     }
 }

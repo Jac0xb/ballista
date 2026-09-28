@@ -1337,7 +1337,7 @@ mod tests {
             (OP_BYTES_LEN, Some(VALUE_U64), None, Err(TemplateError::TypeMismatch)),
             (OP_BYTES_LEN, Some(VALUE_PUBKEY), None, Err(TemplateError::TypeMismatch)),
             (OP_BYTES_LEN, None, None, Err(TemplateError::RegisterNotInitialized(0))),
-            (OP_BYTES_LEN + 1, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
+            (OP_WRITE_REGISTRY + 1, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
             (39, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
             (0xfe, Some(VALUE_U64), Some(VALUE_U64), Err(TemplateError::InvalidInstruction(2))),
         ];

@@ -96,6 +96,9 @@ const rustName: Record<keyof typeof opcode, string> = {
   readInstructionBytes: 'OP_READ_INSTRUCTION_BYTES',
   readAccountBytes: 'OP_READ_ACCOUNT_BYTES',
   bytesLength: 'OP_BYTES_LEN',
+  openRegistry: 'OP_OPEN_REGISTRY',
+  readRegistry: 'OP_READ_REGISTRY',
+  writeRegistry: 'OP_WRITE_REGISTRY',
 };
 
 test('every opcode has the same number in Rust and TypeScript', () => {

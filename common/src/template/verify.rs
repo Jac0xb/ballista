@@ -520,9 +520,7 @@ impl ProgramView<'_> {
                 self.write_register(registers, instruction.dst, RegisterInfo::bytes(len))?;
             }
             OP_BYTES_LEN => {
-                if self.read_register(registers, instruction.a)?.value_type != VALUE_BYTES {
-                    return Err(TemplateError::TypeMismatch);
-                }
+                self.require_type(registers, instruction.a, VALUE_BYTES)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
             }
             OP_EQ | OP_NE => {

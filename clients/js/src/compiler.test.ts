@@ -14,6 +14,7 @@ import {
   data,
   decodeTemplateAccount,
   defineTemplate,
+  ed25519Signature,
   encodeRun,
   ensureAssociatedTokenAccount,
   expression,
@@ -868,6 +869,11 @@ function records(compiled: CompiledTemplate): Uint8Array[] {
   });
 }
 
+/** The blob's length, a little-endian u16 at byte 18 of the header; the blob ends the payload. */
+function blobLength(compiled: CompiledTemplate): number {
+  return compiled.bytes[18]! | (compiled.bytes[19]! << 8);
+}
+
 /** The minimum data length recorded for fixed account `index`: a u32 at byte 4 of its record. */
 function minDataLength(compiled: CompiledTemplate, index: number): number {
   const view = new DataView(compiled.bytes.buffer, compiled.bytes.byteOffset);
@@ -1581,5 +1587,73 @@ describe('introspection expressions', () => {
     // Each flag is its own read, masked by its own bit.
     expect(operandsOf(compiled, opcode.instructionAccountFlags)).toHaveLength(2);
     expect(records(compiled).filter((record) => record[0] === opcode.bitAnd)).toHaveLength(2);
+  });
+});
+
+describe('ed25519Signature', () => {
+  const sysvar = account.fixed('instructions');
+  const quote = ed25519Signature({
+    sysvar,
+    index: expression.subtract(expression.currentInstructionIndex(sysvar), expression.u64(1)),
+    signer: expression.accountField(account.fixed('maker'), 'key'),
+    messageLength: 40,
+    name: 'quote',
+  });
+  const compileQuote = (steps: Step[]) =>
+    compileTemplate(
+      defineTemplate({
+        accounts: { instructions: { address: INSTRUCTIONS_SYSVAR_ADDRESS_BYTES }, maker: {} },
+        steps,
+      }),
+    );
+
+  test('its steps check the program, the header, and the key, and bind the index and the message', () => {
+    const compiled = compileQuote([
+      ...quote.steps,
+      step.require(expression.greaterThan(quote.field(0, 'u64'), expression.u64(0)), 'pricePositive'),
+    ]);
+    const labels = new Set(compiled.sourceMap.map((entry) => entry.label));
+    for (const label of ['quoteIsEd25519', 'quoteIsOneSelfContainedSignature', 'quoteIsBySigner']) {
+      expect(labels.has(label), label).toBe(true);
+    }
+    // The index is computed once, and every read of the Ed25519 instruction reuses it.
+    expect(records(compiled).filter((record) => record[0] === opcode.instructionIndex)).toHaveLength(1);
+    // The header, the key offset and the key, the message offset, and the field.
+    const reads = records(compiled).filter((record) => record[0] === opcode.readInstructionData);
+    expect(reads.map((record) => readU64(record, 6))).toEqual(
+      [opcode.readU128, opcode.readU16, opcode.readPubkey, opcode.readU16, opcode.readU64].map(BigInt),
+    );
+  });
+
+  test('the header check masks the count, the three instruction indexes and the message size', () => {
+    const compiled = compileQuote(quote.steps);
+    // The mask and the expected value are the two u128 constants, loaded from the blob.
+    const blob = compiled.bytes.slice(compiled.bytes.length - blobLength(compiled));
+    const constants = records(compiled)
+      .filter((record) => record[0] === opcode.constU128)
+      .map((record) => {
+        const offset = Number(readU64(record, 6) & 0xffff_ffffn);
+        return blob.slice(offset, offset + 16).reduceRight((value, byte) => (value << 8n) | BigInt(byte), 0n);
+      });
+    const field = (offset: number, width: number, value: bigint) =>
+      [((1n << BigInt(width * 8)) - 1n) << BigInt(offset * 8), value << BigInt(offset * 8)] as const;
+    const parts = [field(0, 1, 1n), field(4, 2, 0xffffn), field(8, 2, 0xffffn), field(12, 2, 40n), field(14, 2, 0xffffn)];
+    expect(constants).toEqual([
+      parts.reduce((mask, [part]) => mask | part, 0n),
+      parts.reduce((expected, [, part]) => expected | part, 0n),
+    ]);
+  });
+
+  test('fields must lie inside the signed message', () => {
+    expect(() => quote.field(32, 'u64')).not.toThrow();
+    expect(() => quote.field(33, 'u64')).toThrow(/inside the 40-byte signed message/);
+    expect(() => quote.field(9, 'pubkey')).toThrow(/inside/);
+    expect(() => quote.field(-1, 'u8')).toThrow(/inside/);
+  });
+
+  test('a field read without the steps does not compile', () => {
+    expect(() => compileQuote([step.require(expression.greaterThan(quote.field(0, 'u64'), expression.u64(0)))])).toThrow(
+      /Unknown variable: quote/,
+    );
   });
 });

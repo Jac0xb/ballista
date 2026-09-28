@@ -1,4 +1,13 @@
-import { data, expression, step, type AccountReference, type Expression, type Step } from './schema.js';
+import {
+  data,
+  expression,
+  readWidth,
+  step,
+  type AccountReference,
+  type Expression,
+  type ReadType,
+  type Step,
+} from './schema.js';
 
 /** `11111111111111111111111111111111` */
 export const SYSTEM_PROGRAM_ADDRESS_BYTES = new Uint8Array(32);
@@ -160,4 +169,125 @@ export function ensureAssociatedTokenAccount(input: {
   const isMissing = expression.accountField(input.associatedTokenAccount, 'isEmpty');
   const when = input.when ? expression.and(isMissing, input.when) : isMissing;
   return createAssociatedTokenAccount({ ...input, when });
+}
+
+/**
+ * The first 16 bytes of an Ed25519 precompile instruction with one signature, from agave
+ * `precompiles/src/ed25519.rs`: a `u8` signature count and a padding byte, then the signature's
+ * seven little-endian `u16` offsets. Byte offsets.
+ */
+const ED25519_HEADER = {
+  signatureCount: 0,
+  signatureInstructionIndex: 4,
+  publicKeyOffset: 6,
+  publicKeyInstructionIndex: 8,
+  messageDataOffset: 10,
+  messageDataSize: 12,
+  messageInstructionIndex: 14,
+} as const;
+
+/** An instruction-index field of `u16::MAX`: the Ed25519 instruction's own data. */
+const ED25519_THIS_INSTRUCTION = 0xffffn;
+
+/**
+ * A mask and the value the masked header must equal, from `[byte offset, width, value]` fields of
+ * a little-endian header.
+ */
+function headerMask(fields: readonly (readonly [offset: number, width: number, value: bigint])[]) {
+  let mask = 0n;
+  let expected = 0n;
+  for (const [offset, width, value] of fields) {
+    const shift = BigInt(offset * 8);
+    mask |= ((1n << BigInt(width * 8)) - 1n) << shift;
+    expected |= value << shift;
+  }
+  return { mask, expected };
+}
+
+export interface Ed25519Signature {
+  /**
+   * Requirements that bind the precompile's verified signature to `signer` and to a message of
+   * `messageLength` bytes, and the bindings `field` reads through. Put them before any step that
+   * uses `field`: without them `field` would read unverified bytes, so it does not compile.
+   */
+  steps: Step[];
+  /** The value at `offset` in the signed message. The whole read must lie inside the message. */
+  field(offset: number, type: ReadType): Expression;
+}
+
+/**
+ * Binds an Ed25519 signature that the transaction's precompile instruction verified to this
+ * template's inputs.
+ *
+ * The Ed25519 program verifies its signatures as part of the transaction, so a transaction whose
+ * signature is invalid fails and nothing the template did survives. What the precompile does not
+ * say is whose signature it checked, or over which bytes. The steps returned here require that
+ * instruction `index` is the Ed25519 program, holds exactly one signature, takes the signature,
+ * the key and the message from its own data, was signed by `signer`, and signed exactly
+ * `messageLength` bytes. `field` then reads the signed message.
+ *
+ * The count, the three instruction indexes and the message size all sit in the instruction's
+ * first 16 bytes, so one masked `u128` comparison checks them together: five separate
+ * comparisons would take a dozen more of the template's 64 registers.
+ *
+ * `name` prefixes the step labels and the two variables the steps bind, `<name>Instruction` and
+ * `<name>Message`, so one template can check more than one signature.
+ */
+export function ed25519Signature(input: {
+  sysvar: AccountReference;
+  /** The Ed25519 instruction's index in the transaction, as a `u64`. */
+  index: Expression;
+  /** The public key the signature must be by, as a `pubkey`. */
+  signer: Expression;
+  messageLength: number;
+  name?: string;
+}): Ed25519Signature {
+  const name = input.name ?? 'signature';
+  if (!Number.isInteger(input.messageLength) || input.messageLength < 1 || input.messageLength > 0xffff) {
+    throw new RangeError('messageLength must be from 1 to 65535 bytes');
+  }
+  const instruction = expression.variable(`${name}Instruction`);
+  const message = expression.variable(`${name}Message`);
+  const offsetField = (offset: number) => expression.instructionData(input.sysvar, instruction, offset, 'u16');
+  const header = headerMask([
+    [ED25519_HEADER.signatureCount, 1, 1n],
+    [ED25519_HEADER.signatureInstructionIndex, 2, ED25519_THIS_INSTRUCTION],
+    [ED25519_HEADER.publicKeyInstructionIndex, 2, ED25519_THIS_INSTRUCTION],
+    [ED25519_HEADER.messageDataSize, 2, BigInt(input.messageLength)],
+    [ED25519_HEADER.messageInstructionIndex, 2, ED25519_THIS_INSTRUCTION],
+  ]);
+  return {
+    steps: [
+      step.let(`${name}Instruction`, input.index),
+      step.require(
+        expression.equal(
+          expression.instructionProgram(input.sysvar, instruction),
+          expression.pubkey(ED25519_PROGRAM_ADDRESS_BYTES),
+        ),
+        `${name}IsEd25519`,
+      ),
+      step.require(
+        expression.equal(
+          expression.bitAnd(expression.instructionData(input.sysvar, instruction, 0, 'u128'), expression.u128(header.mask)),
+          expression.u128(header.expected),
+        ),
+        `${name}IsOneSelfContainedSignature`,
+      ),
+      step.require(
+        expression.equal(
+          expression.instructionData(input.sysvar, instruction, offsetField(ED25519_HEADER.publicKeyOffset), 'pubkey'),
+          input.signer,
+        ),
+        `${name}IsBySigner`,
+      ),
+      step.let(`${name}Message`, offsetField(ED25519_HEADER.messageDataOffset)),
+    ],
+    field(offset, type) {
+      if (!Number.isInteger(offset) || offset < 0 || offset + readWidth[type] > input.messageLength) {
+        throw new RangeError(`${type} at ${offset} does not lie inside the ${input.messageLength}-byte signed message`);
+      }
+      const at = offset === 0 ? message : expression.add(message, expression.u64(offset));
+      return expression.instructionData(input.sysvar, instruction, at, type);
+    },
+  };
 }

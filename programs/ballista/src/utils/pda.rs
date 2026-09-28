@@ -375,6 +375,50 @@ mod tests {
         }
     }
 
+    /// The first 64 cases of `registry_addresses_match_find_program_address`, each with the
+    /// address and bump this program derives for it, are the vectors both SDKs derive entry
+    /// addresses against: `fixtures/registry-entry-addresses.txt`, one line per case,
+    /// `template index key address bump`, the 32-byte values in hex. `UPDATE_FIXTURES=1` rewrites
+    /// the file.
+    #[test]
+    fn registry_addresses_match_the_shared_vectors() {
+        use std::fmt::Write;
+
+        let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let mut rng = SplitMix(11);
+        let mut vectors = String::from(
+            "# template index key address bump: get_registry_address over SplitMix(11), as in \
+             programs/ballista/src/utils/pda.rs\n",
+        );
+        for _ in 0..64 {
+            let template = rng.address();
+            let index = (rng.next() % 8) as u8;
+            let key = rng.address().to_bytes();
+            let (address, bump) = get_registry_address(&template, index, &key).expect("a bump");
+            writeln!(
+                vectors,
+                "{} {index} {} {} {bump}",
+                hex(template.as_ref()),
+                hex(&key),
+                hex(address.as_ref())
+            )
+            .unwrap();
+        }
+        if std::env::var("UPDATE_FIXTURES").as_deref() == Ok("1") {
+            let path = concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../fixtures/registry-entry-addresses.txt"
+            );
+            std::fs::write(path, &vectors).expect("write the vectors");
+            return;
+        }
+        assert_eq!(
+            include_str!("../../../../fixtures/registry-entry-addresses.txt"),
+            vectors,
+            "run with UPDATE_FIXTURES=1 to rewrite the vectors"
+        );
+    }
+
     #[test]
     fn seed_bounds_match_the_address_crate() {
         let program_id = Address::new_from_array([3; 32]);

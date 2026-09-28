@@ -344,6 +344,8 @@ export interface CompiledTemplate {
   batchAccountOrder: readonly string[];
   /** Account groups in declaration order; the run data prefix and metas follow it. */
   accountGroupOrder: readonly string[];
+  /** Registries in declaration order: a registry's index, part of its entries' addresses, is its position here. */
+  registryOrder: readonly string[];
   stats: CompileStats;
   sourceMap: readonly SourceMapEntry[];
 }
@@ -512,6 +514,7 @@ class Compiler {
       fixedAccountOrder: this.fixedEntries.map(([name]) => name),
       batchAccountOrder: this.batchEntries.map(([name]) => name),
       accountGroupOrder: [...this.template.accountGroups],
+      registryOrder: [...this.registries.keys()],
       stats: {
         payloadBytes: bytes.length,
         fixedAccounts: this.fixedEntries.length,
@@ -1302,6 +1305,16 @@ class Compiler {
 
 export function compileTemplate(input: TemplateInput | Template): CompiledTemplate {
   return new Compiler(TemplateSchema.parse(input)).compile();
+}
+
+/**
+ * The index of the registry named `name` in a compiled template, for `findRegistryEntryAddress`:
+ * its position among the registries the template declares.
+ */
+export function registryIndex(compiled: CompiledTemplate, name: string): number {
+  const index = compiled.registryOrder.indexOf(name);
+  if (index < 0) throw new TypeError(`Unknown registry: ${name}`);
+  return index;
 }
 
 function fixedKey(name: string): string {

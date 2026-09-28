@@ -10,14 +10,16 @@ import {
   setTransactionMessageFeePayer,
   setTransactionMessageLifetimeUsingBlockhash,
 } from '@solana/kit';
+import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
 
-import { compileTemplate } from './compiler.js';
+import { compileTemplate, registryIndex } from './compiler.js';
 import {
   buildKitRunInstruction,
   buildKitTemplateUploadPlan,
   createComputeUnitProvider,
   findFreeTemplateId,
+  findRegistryEntryAddress,
   getComputeUnitLimitWithMargin,
   getComputeUnitsConsumed,
   getLoadedAccountsDataSizeLimitWithHeadroom,
@@ -30,6 +32,7 @@ import { systemTransfer } from './helpers.js';
 
 const decoder = getAddressDecoder();
 const byteAddress = (byte: number) => decoder.decode(new Uint8Array(32).fill(byte));
+const fromHex = (hex: string) => Uint8Array.from(hex.match(/../g)!, (pair) => Number.parseInt(pair, 16));
 const systemAddress = address('11111111111111111111111111111111');
 
 describe('Solana Kit adapter', () => {
@@ -38,6 +41,61 @@ describe('Solana Kit adapter', () => {
       address('CFbBQL1sPP69VFwLutH11V4cpaCUSyvaCDfAeetHEtJW'),
       255,
     ]);
+  });
+
+  // The program derives these in its `registry_addresses_match_the_shared_vectors` test.
+  const registryVectors = readFileSync(
+    new URL('../../../fixtures/registry-entry-addresses.txt', import.meta.url),
+    'utf8',
+  )
+    .split('\n')
+    .filter((line) => line !== '' && !line.startsWith('#'))
+    .map((line) => {
+      const [template, index, key, entry, bump] = line.split(' ');
+      return {
+        template: decoder.decode(fromHex(template!)),
+        index: Number(index),
+        key: fromHex(key!),
+        entry: decoder.decode(fromHex(entry!)),
+        bump: Number(bump),
+      };
+    });
+
+  test('derives registry entry addresses as the program does', async () => {
+    expect(registryVectors).toHaveLength(64);
+    for (const [at, vector] of registryVectors.entries()) {
+      // A key is 32 bytes, or an address such as the caller's.
+      const key = at % 2 === 0 ? vector.key : decoder.decode(vector.key);
+      await expect(findRegistryEntryAddress(vector.template, vector.index, key)).resolves.toEqual([
+        vector.entry,
+        vector.bump,
+      ]);
+    }
+    const [first] = registryVectors;
+    await expect(findRegistryEntryAddress(first!.template, 8, first!.key)).rejects.toThrow(RangeError);
+    await expect(findRegistryEntryAddress(first!.template, 0.5, first!.key)).rejects.toThrow(RangeError);
+    await expect(findRegistryEntryAddress(first!.template, 0, new Uint8Array(31))).rejects.toThrow('32 bytes');
+  });
+
+  test('finds a registry entry by its registry name in a compiled template', async () => {
+    const compiled = compileTemplate(
+      defineTemplate({
+        registries: { limits: { spent: 'u64' }, allowed: { ok: 'bool' } },
+        accounts: {
+          caller: { signer: true, writable: true },
+          allowed: account.registry('allowed', { key: expression.accountKey('caller'), payer: 'caller' }),
+          systemProgram: account.systemProgram(),
+        },
+        steps: [step.require(expression.registry('allowed', 'ok'))],
+      }),
+    );
+    expect(compiled.registryOrder).toEqual(['limits', 'allowed']);
+    expect(registryIndex(compiled, 'allowed')).toBe(1);
+    expect(() => registryIndex(compiled, 'missing')).toThrow('Unknown registry: missing');
+    const vector = registryVectors.find(({ index }) => index === 1)!;
+    await expect(
+      findRegistryEntryAddress(vector.template, registryIndex(compiled, 'allowed'), vector.key),
+    ).resolves.toEqual([vector.entry, vector.bump]);
   });
 
   test('keeps a 30-recipient Ballista-only v1 message below 4096 bytes', () => {

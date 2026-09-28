@@ -15,7 +15,7 @@ use solana_program::{
 
 pub use ballista_common;
 pub use ballista_common::template::{
-    decode_ballista_error, DecodedError, ErrorSource, ProgramBuilder, Segment,
+    decode_ballista_error, DecodedError, ErrorSource, ProgramBuilder, Segment, REGISTRY_SEED,
 };
 
 pub const ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
@@ -45,6 +45,32 @@ pub fn find_template_pda_for_program(
 ) -> (Pubkey, u8) {
     Pubkey::find_program_address(
         &[TEMPLATE_SEED, creator.as_ref(), &template_id.to_le_bytes()],
+        program_id,
+    )
+}
+
+/// A registry entry's address and bump: `["registry", template, [registry index], key]` under
+/// Ballista, where the entry's open creates it. `registry_index` is the registry's position among
+/// those the template declares, below 8. `key` is the 32 bytes the template computes for the
+/// entry: an address for a per-caller or per-account entry, all zeros for one template-wide entry.
+pub fn find_registry_entry_address(
+    template: &Pubkey,
+    registry_index: u8,
+    key: &[u8; 32],
+) -> (Pubkey, u8) {
+    find_registry_entry_address_for_program(template, registry_index, key, &ID)
+}
+
+/// [`find_registry_entry_address`] under a specific deployment of the program, which owns the
+/// entries of the templates it finalized.
+pub fn find_registry_entry_address_for_program(
+    template: &Pubkey,
+    registry_index: u8,
+    key: &[u8; 32],
+    program_id: &Pubkey,
+) -> (Pubkey, u8) {
+    Pubkey::find_program_address(
+        &[REGISTRY_SEED, template.as_ref(), &[registry_index], key],
         program_id,
     )
 }
@@ -303,6 +329,32 @@ mod tests {
             include_str!("../../../fixtures/system-transfer.hex").trim(),
             "Rust authoring must stay byte-identical to the TypeScript compiler"
         );
+    }
+
+    /// The vectors in `fixtures/registry-entry-addresses.txt` are the program's own derivation,
+    /// checked by its `registry_addresses_match_the_shared_vectors` test.
+    #[test]
+    fn registry_entry_addresses_match_the_programs_vectors() {
+        let bytes = |hex: &str| -> [u8; 32] {
+            let bytes: Vec<u8> = (0..hex.len())
+                .step_by(2)
+                .map(|at| u8::from_str_radix(&hex[at..at + 2], 16).unwrap())
+                .collect();
+            bytes.try_into().unwrap()
+        };
+        let vectors: Vec<&str> = include_str!("../../../fixtures/registry-entry-addresses.txt")
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect();
+        assert_eq!(vectors.len(), 64);
+        for line in vectors {
+            let fields: Vec<&str> = line.split(' ').collect();
+            let template = Pubkey::new_from_array(bytes(fields[0]));
+            let index: u8 = fields[1].parse().unwrap();
+            let key = bytes(fields[2]);
+            let expected = (Pubkey::new_from_array(bytes(fields[3])), fields[4].parse().unwrap());
+            assert_eq!(find_registry_entry_address(&template, index, &key), expected, "{line}");
+        }
     }
 
     #[test]

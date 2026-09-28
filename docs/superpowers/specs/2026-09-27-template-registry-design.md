@@ -136,6 +136,11 @@ defineTemplate({
   a long gap cannot overflow; a fresh entry's `lastSpend` of 0 refills fully), adds `amount`,
   requires the total to be at most `cap` (`withinRateLimit`), and writes both fields back.
 - The Rust `ProgramBuilder` gains `open_registry`, `read_registry` and `write_registry`.
+- A client derives an entry's address and bump with `findRegistryEntryAddress(template,
+  registryIndex, key)` from `@jac0xb/ballista/kit`, or `find_registry_entry_address` in the Rust
+  SDK. `registryIndex(compiled, name)` gives a registry's index by name, from the compiled
+  template's `registryOrder`. Both SDKs test against vectors the program's own derivation
+  produces, in `fixtures/registry-entry-addresses.txt`.
 
 **Allowlists are steps.** A registry such as `allowed: { ok: 'u64' }` keyed by the caller; ordinary
 runs require `ok == 1`; an author-only branch (the author a pinned signer) opens the entry keyed

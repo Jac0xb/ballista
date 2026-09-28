@@ -14,7 +14,7 @@ import {
   type Instruction,
 } from '@solana/kit';
 
-import type { CompiledTemplate } from './compiler.js';
+import { MAX_REGISTRIES, type CompiledTemplate } from './compiler.js';
 import {
   BALLISTA_PROGRAM_ADDRESS,
   buildRunInstruction,
@@ -222,6 +222,36 @@ export async function getTemplateAddress(
     ],
   });
   return [templateAddress, bump];
+}
+
+/**
+ * A registry entry's address and bump: `["registry", template, [registryIndex], key]` under
+ * Ballista, where the entry's open creates it. `registryIndex` is the registry's position among
+ * those the template declares; `registryIndex(compiled, name)` finds it by name. `key` is the 32
+ * bytes the template computes for the entry: an address such as the caller's for a per-caller
+ * entry, or all zeros for one template-wide entry.
+ */
+export async function findRegistryEntryAddress(
+  template: Address,
+  registryIndex: number,
+  key: Address | Uint8Array,
+  programAddress: Address = BALLISTA_ADDRESS,
+): Promise<readonly [Address, number]> {
+  if (!Number.isInteger(registryIndex) || registryIndex < 0 || registryIndex >= MAX_REGISTRIES) {
+    throw new RangeError(`Registry index must be 0 to ${MAX_REGISTRIES - 1}`);
+  }
+  const keyBytes = typeof key === 'string' ? getAddressEncoder().encode(key) : key;
+  if (keyBytes.length !== 32) throw new RangeError('A registry key is 32 bytes');
+  const [entryAddress, bump] = await getProgramDerivedAddress({
+    programAddress,
+    seeds: [
+      new TextEncoder().encode('registry'),
+      getAddressEncoder().encode(template),
+      Uint8Array.of(registryIndex),
+      keyBytes,
+    ],
+  });
+  return [entryAddress, bump];
 }
 
 /** The subset of a Kit RPC client `findFreeTemplateId` needs. */

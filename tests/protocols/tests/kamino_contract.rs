@@ -18,6 +18,7 @@ use {
     klend_interface::LendingError,
     litesvm::LiteSVM,
     solana_address::Address,
+    solana_clock::Clock,
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_signer::Signer,
@@ -259,6 +260,9 @@ fn a_deposit_into_a_farmed_reserve_needs_the_farm_accounts() {
     kamino::refused(&failure, LendingError::FarmAccountsMissing);
 }
 
+/// A deposit needs the obligation refreshed in its slot, and a first deposit needs nothing else:
+/// klend's deposit refreshes its own reserve, without a price
+/// (`handlers/handler_deposit_reserve_liquidity_and_obligation_collateral.rs:102-107`).
 #[test]
 fn a_deposit_needs_the_obligation_refreshed_in_its_slot() {
     let mut svm = lending::svm();
@@ -272,8 +276,17 @@ fn a_deposit_needs_the_obligation_refreshed_in_its_slot() {
         &user.usdc,
         DEPOSIT,
     );
-    let failure = send(&mut svm, &user, vec![deposit]).unwrap_err();
+    let failure = send(&mut svm, &user, vec![deposit.clone()]).unwrap_err();
     kamino::refused(&failure, LendingError::ObligationStale);
+
+    let slot = svm.get_sysvar::<Clock>().slot;
+    assert!(kamino::reserve(&svm, &USDC_RESERVE).last_update.slot < slot);
+    // The obligation holds nothing yet, so this is `refresh_obligation` alone.
+    let mut instructions = kamino::refreshes(&svm, &user.obligation, &[]);
+    assert_eq!(instructions.len(), 1);
+    instructions.push(deposit);
+    send(&mut svm, &user, instructions).unwrap_or_else(|failure| panic!("{failure:?}"));
+    assert!(kamino::deposited(&svm, &user.obligation, &USDC_RESERVE) > 0);
 }
 
 #[test]

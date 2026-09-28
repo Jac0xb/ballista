@@ -121,7 +121,8 @@ fn run(svm: &LiteSVM, scene: &Scene, minimum_moved: u64) -> Instruction {
         .build()
 }
 
-/// The run in a new slot, behind the refreshes klend needs for the deposit.
+/// The run in a new slot, behind the refreshes klend needs for the deposit, and the deposit
+/// reserve's, which a first deposit does not need but is harmless.
 fn send_run(svm: &mut LiteSVM, scene: &Scene, run: Instruction) -> Result<Outcome, Failure> {
     lending::next_slot(svm);
     let mut instructions = vec![lending::compute_limit()];

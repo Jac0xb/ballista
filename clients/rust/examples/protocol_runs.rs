@@ -156,7 +156,8 @@ pub fn run_jupiter_deposit(
 ///
 /// - `held` is every reserve the obligation holds: deposits in its deposit order, then borrows in
 ///   its borrow order.
-/// - `touched` adds any reserve the run uses that the obligation does not hold yet.
+/// - `touched` adds any other reserve the run needs fresh, such as a first borrow's. A first
+///   deposit's needs none: Kamino's deposit refreshes its own reserve.
 /// - Each reserve comes with the Scope price account its config names. The main market prices by
 ///   Scope alone, so the Pyth and Switchboard slots take the Kamino program ID, which it reads as
 ///   "none".

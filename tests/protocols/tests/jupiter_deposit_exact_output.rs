@@ -109,8 +109,9 @@ fn run(svm: &LiteSVM, scene: &Scene, minimum_out: u64) -> Instruction {
         .build()
 }
 
-/// The run in a new slot, behind the refreshes klend needs in that slot. The deposit refreshes its
-/// own reserve too; refreshing it here as well is what the probe measured, and is harmless.
+/// The run in a new slot, behind the refreshes klend needs in that slot. A first deposit needs only
+/// the obligation's: klend's deposit refreshes its own reserve (`kamino_contract.rs` pins it).
+/// Refreshing the reserve here as well is what the plan's probe measured, and is harmless.
 fn send_run(svm: &mut LiteSVM, scene: &Scene, run: Instruction) -> Result<Outcome, Failure> {
     lending::next_slot(svm);
     let mut instructions = vec![lending::compute_limit()];

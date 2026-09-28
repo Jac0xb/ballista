@@ -3584,6 +3584,24 @@ mod tests {
             Pubkey::find_program_address(&[b"registry", template.as_ref(), &[index], key.as_ref()], &ID).0
         }
 
+        /// An entry seeded directly, `len` bytes in all: Ballista's, rent-exempt, with the header
+        /// for `template`, registry `index` and `key`, then zeros.
+        fn seeded_entry(
+            context: &MolluskContext<HashMap<Pubkey, Account>>,
+            template: &Pubkey,
+            index: u8,
+            key: &Pubkey,
+            len: usize,
+        ) -> Account {
+            let mut data = vec![0u8; len];
+            data[..8].copy_from_slice(&[b'B', b'R', b'E', b'G', 1, index, 0, 0]);
+            data[8..40].copy_from_slice(template.as_ref());
+            data[40..72].copy_from_slice(key.as_ref());
+            let mut account = Account::new(context.mollusk.sysvars.rent.minimum_balance(len), len, &ID);
+            account.data = data;
+            account
+        }
+
         /// A context with `creator` and `payers` funded and `payload` uploaded as template `id`.
         fn setup(payload: &[u8], id: u16, payers: &[Pubkey]) -> (MolluskContext<HashMap<Pubkey, Account>>, Pubkey) {
             let creator = Pubkey::new_unique();
@@ -3714,10 +3732,7 @@ mod tests {
             assert_eq!(failure(&result), (ACCOUNT_CONSTRAINT_FAILED, 2));
         }
 
-        /// A created entry is the header plus the size its template declares. (An existing entry of
-        /// the wrong size needs a header that matches, which only the template's own entries have,
-        /// and a template's sizes never change; the host test
-        /// `an_existing_entry_opens_only_when_everything_matches` covers that check.)
+        /// A created entry is the header plus the size its template declares.
         #[test]
         fn a_created_entry_is_the_header_plus_the_declared_size() {
             let mut builder = ProgramBuilder::new();
@@ -3735,6 +3750,26 @@ mod tests {
             let result = context.process_instruction(&run_instruction(template, metas, &[]));
             assert!(result.program_result.is_ok(), "{result:#?}");
             assert_eq!(account(&context, entry).data.len(), 72 + 24);
+        }
+
+        /// An existing entry of another size fails at the open although its header matches: seeded
+        /// with 8 bytes too many, then 8 too few. Seeded at the right size, it opens.
+        #[test]
+        fn an_existing_entry_of_another_size_fails() {
+            let payer = Pubkey::new_unique();
+            let (context, template) = setup(&counter(), 10, &[payer]);
+            let entry = entry_address(&template, 0, &payer);
+            // `counter` opens registry 0, 16 bytes, at pc 2.
+            for len in [72 + 16 + 8, 72 + 16 - 8] {
+                let seeded = seeded_entry(&context, &template, 0, &payer, len);
+                context.account_store.borrow_mut().insert(entry, seeded);
+                let result = run(&context, template, payer, AccountMeta::new(entry, false), 1);
+                assert_eq!(failure(&result), (INVALID_REGISTRY_ENTRY, 2), "{len} bytes");
+            }
+            let seeded = seeded_entry(&context, &template, 0, &payer, 72 + 16);
+            context.account_store.borrow_mut().insert(entry, seeded);
+            let result = run(&context, template, payer, AccountMeta::new(entry, false), 1);
+            assert!(result.program_result.is_ok(), "{result:#?}");
         }
 
         #[test]

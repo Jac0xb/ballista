@@ -265,13 +265,15 @@ impl Market {
         self.send(&[signed, run])
     }
 
-    /// Sends `instructions`, which must fail, and checks that no balance moved.
+    /// Sends `instructions`, which must fail, and checks that no balance moved. Prints where it
+    /// failed and Ballista's units, for the findings.
     fn refuse(&mut self, instructions: &[Instruction]) -> Failure {
         let before = self.balances();
         let failure = self
             .send(instructions)
             .expect_err("the transaction should have failed");
         assert_eq!(self.balances(), before, "a failed transaction moved tokens");
+        println!("refused: {}", summary(&failure));
         failure
     }
 
@@ -289,6 +291,23 @@ impl Market {
         let lamports = |account| self.svm.get_balance(account).expect("the account exists");
         (lamports(&self.maker_wsol), lamports(&self.taker_wsol))
     }
+}
+
+/// One line on a failure: the program, the error, Ballista's own name and program counter when it
+/// raised one, and the units Ballista's run consumed, if it ran.
+fn summary(failure: &Failure) -> String {
+    let consumed = format!("Program {} consumed ", ballista_sdk::ID);
+    let units = failure
+        .logs
+        .iter()
+        .find_map(|line| line.strip_prefix(&consumed))
+        .unwrap_or("nothing: it never ran");
+    format!(
+        "{} failed with {:?}, Ballista's {:?}; Ballista consumed {units}",
+        failure.program,
+        failure.err,
+        ballista_error(failure)
+    )
 }
 
 /// Asserts that the Ed25519 precompile, the transaction's instruction `index`, failed it with
@@ -703,6 +722,7 @@ fn a_settlement_the_maker_does_not_co_sign_fails() {
     let failure = tx::send(&mut market.svm, &market.taker, &[], &[signed, run], &[])
         .expect_err("the maker did not sign");
     assert_eq!(market.balances(), before);
+    println!("refused: {}", summary(&failure));
     assert!(
         failure.program == ballista_sdk::ID
             && failure.code.is_none()

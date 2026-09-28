@@ -578,7 +578,14 @@ class Compiler {
       this.location = { path: `accounts.${name}` };
       const layout = this.registries.get(registry.name);
       if (layout === undefined) throw new TypeError(`Unknown registry: ${registry.name}`);
-      if (constraint.signer || constraint.executable || constraint.address || constraint.owner || constraint.minDataLength !== 0) {
+      if (
+        !constraint.writable ||
+        constraint.signer ||
+        constraint.executable ||
+        constraint.address ||
+        constraint.owner ||
+        constraint.minDataLength !== 0
+      ) {
         throw new TypeError(`${name} must be declared only writable: build it with account.registry`);
       }
       const payer = this.template.accounts[registry.payer];

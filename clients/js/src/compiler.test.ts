@@ -1857,6 +1857,13 @@ describe('registries: compiler', () => {
       /mine must be declared only writable/,
     );
     fails(
+      {
+        ...base(read('mine', 'spent')),
+        accounts: { ...base([]).accounts!, mine: { registry: { name: 'limits', payer: 'caller' } } },
+      },
+      /mine must be declared only writable/,
+    );
+    fails(
       base([
         step.invoke({
           program: account.fixed('systemProgram'),
@@ -1919,8 +1926,8 @@ describe('rateLimit', () => {
     const kinds = records(compiled).map((record) => record[0]);
     expect(kinds.filter((kind) => kind === opcode.readRegistry)).toHaveLength(2);
     expect(kinds.filter((kind) => kind === opcode.writeRegistry)).toHaveLength(2);
-    // Four u128 casts: the elapsed time, the rate, the spent amount and the new amount, and the cap.
-    expect(kinds.filter((kind) => kind === opcode.castU128).length).toBeGreaterThanOrEqual(4);
+    // Five u128 casts: the spent amount, the elapsed time, the rate, the new amount and the cap.
+    expect(kinds.filter((kind) => kind === opcode.castU128)).toHaveLength(5);
     expect(compiled.stats.maxExpandedCpis).toBe(3);
   });
 

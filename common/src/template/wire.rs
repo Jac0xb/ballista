@@ -714,8 +714,10 @@ pub enum TemplateError {
     /// A `REPEAT` with an empty body, a zero maximum or a destination register, or inside another
     /// loop; a loop past `MAX_LOOPS`; or a row account or row input named inside a `REPEAT` body.
     InvalidLoop(usize),
-    /// An `EMIT` or `SET_RETURN_DATA` can encode more than `MAX_RETURN_DATA_LEN` bytes, or a
-    /// `SET_RETURN_DATA` repeats, sits in a loop, or precedes an invoke.
+    /// An `EMIT` or `SET_RETURN_DATA` can encode more than `MAX_RETURN_DATA_LEN` bytes; an `EMIT`
+    /// does not start with a literal tag of at least `MIN_EMIT_TAG_LEN` bytes outside
+    /// `RUN_EVENT_TAG_FAMILY`; or a `SET_RETURN_DATA` repeats, sits in a loop, or precedes an
+    /// invoke.
     InvalidOutput(usize),
     /// An introspection opcode's account is not a fixed account pinned to the Instructions sysvar.
     InvalidIntrospection(usize),

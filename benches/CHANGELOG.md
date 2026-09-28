@@ -47,6 +47,7 @@ the same commit and says why here.
     between −15 and +16, from the verifier's new arms.
   - `run, introspection, no cpi`: 3,105, now ratcheted.
   - Cookbook total: 552,315 → 552,304 (−11). Every other case and example: unchanged.
+- **Review polish:** `create template, payroll 30 rows` 4,476 → 4,483; every run unchanged.
 - **Checked:** every host, SDK and Mollusk test, both ceiling tests, the proptest suites and the
   Certora specs' host tests.
 - **Bisecting:** every commit from `a31b686` through `e179e58` fails both ceiling tests, by 5 CU

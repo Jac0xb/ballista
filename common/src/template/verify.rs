@@ -265,16 +265,11 @@ impl ProgramView<'_> {
         registers: &mut [Option<RegisterInfo>; MAX_REGISTERS],
     ) -> Result<(usize, usize), TemplateError> {
         self.verify_record_header(instruction, instruction_index)?;
-        if instruction.opcode == OP_FOREACH {
-            return Err(TemplateError::InvalidBatch);
-        }
-        if instruction.opcode == OP_REPEAT {
-            return Err(TemplateError::InvalidLoop(instruction_index));
-        }
         self.verify_instruction(instruction, instruction_index, scope, previous, registers)
     }
 
-    /// Verifies a loop body. Loops never nest, so a loop instruction here is rejected.
+    /// Verifies a loop body. Loops never nest: `verify_instruction` rejects a loop instruction,
+    /// since only `verify` starts one, at the root.
     fn verify_range(
         &self,
         start: usize,
@@ -288,12 +283,6 @@ impl ProgramView<'_> {
         for index in start..end {
             let instruction = &self.instructions[index];
             self.verify_record_header(instruction, index)?;
-            if instruction.opcode == OP_FOREACH {
-                return Err(TemplateError::InvalidBatch);
-            }
-            if instruction.opcode == OP_REPEAT {
-                return Err(TemplateError::InvalidLoop(index));
-            }
             let (instruction_cpis, data_len) =
                 self.verify_instruction(instruction, index, scope, previous, registers)?;
             cpis += instruction_cpis;
@@ -615,9 +604,12 @@ impl ProgramView<'_> {
                 self.verify_emit_tag(instruction, instruction_index)?;
             }
             OP_SET_RETURN_DATA => {
+                self.verify_output(instruction, instruction_index, registers)?;
                 // The runtime clears return data whenever a program is invoked, CPIs included, so
                 // what a run returns is set once, outside every loop, after its last invoke. Loops
                 // run forward, so every instruction that can run later sits at a later index.
+                // Checked after `verify_output`, as `EMIT`'s tag is, so a bad segment reports its
+                // own error first.
                 let later = self
                     .instructions
                     .get(instruction_index.saturating_add(1)..)
@@ -629,7 +621,6 @@ impl ProgramView<'_> {
                 {
                     return Err(TemplateError::InvalidOutput(instruction_index));
                 }
-                self.verify_output(instruction, instruction_index, registers)?;
             }
             OP_REQUIRE => self.require_type(registers, instruction.a, VALUE_BOOL)?,
             OP_INVOKE => {
@@ -639,6 +630,8 @@ impl ProgramView<'_> {
                 let max_data = self.verify_cpi(instruction.a as usize, in_row_loop, registers)?;
                 return Ok((1, max_data));
             }
+            // `verify` starts every loop at the root, so a loop reaching here is inside a body, or
+            // verified one instruction at a time. A FOREACH keeps the error it shipped with.
             OP_FOREACH => return Err(TemplateError::InvalidBatch),
             OP_REPEAT => return Err(TemplateError::InvalidLoop(instruction_index)),
             _ => return Err(TemplateError::InvalidInstruction(instruction_index)),
@@ -991,12 +984,23 @@ impl ProgramView<'_> {
     /// Whether `instruction` names a row account or a row input, which only a FOREACH body has.
     /// An operand this does not list still cannot name a row outside a FOREACH: the lookup
     /// rejects it, only with that operand's own error instead of `InvalidLoop`.
+    ///
+    /// One check on each instruction in a `REPEAT` body, rather than a scope on every account
+    /// lookup: in the loops prototype, threading the scope through `require_account`,
+    /// `verify_read_bounds`, `verify_pda_seeds` and `verify_cpi` cost 56 compute units on
+    /// `create template, payroll 30 rows`, and this check 24.
+    ///
+    /// The opcodes that read the Instructions sysvar are left out on purpose: their account must
+    /// be a fixed one, so a row account there is `InvalidIntrospection` in every scope, a `REPEAT`
+    /// body included.
     fn names_row(&self, instruction: &InstructionRecord) -> bool {
         let row_account = |reference: u8| reference & ITERATION_ACCOUNT_BIT != 0;
         match instruction.opcode {
             OP_LOAD_INPUT => instruction.a & ITERATION_INPUT_BIT != 0,
             OP_ACCOUNT_KEY | OP_ACCOUNT_OWNER | OP_ACCOUNT_LAMPORTS | OP_ACCOUNT_DATA_LEN
-            | OP_ACCOUNT_IS_EMPTY | OP_DERIVE_PDA | OP_CREATE_PDA => row_account(instruction.a),
+            | OP_ACCOUNT_IS_EMPTY | OP_DERIVE_PDA | OP_CREATE_PDA | OP_READ_ACCOUNT_BYTES => {
+                row_account(instruction.a)
+            }
             OP_INVOKE => self.cpis.get(instruction.a as usize).is_some_and(|descriptor| {
                 let start = descriptor.account_start();
                 row_account(descriptor.program_account)
@@ -1633,6 +1637,23 @@ mod tests {
                 Err(TemplateError::InvalidIntrospection(2)),
                 "opcode {opcode} on a row account"
             );
+            // In a REPEAT body, which has no rows, it is the same error: the verifier's row check
+            // for count loops leaves these opcodes to their own.
+            let mut builder = ProgramBuilder::new();
+            let row = builder.row_account(0, Some(INSTRUCTIONS_SYSVAR_ID), None, 0);
+            builder.batch(1, 0);
+            let zero = builder.const_u64(0);
+            builder.repeat(zero, 1, 0, |body| {
+                body.op(opcode, row, zero, zero, immediate);
+            });
+            builder.for_each(0, |body| {
+                body.loop_index();
+            });
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidIntrospection(2)),
+                "opcode {opcode} on a row account in a REPEAT"
+            );
             // The pinned fixed account works inside a loop body too.
             let mut builder = ProgramBuilder::new();
             let sysvar = builder.account(0, Some(INSTRUCTIONS_SYSVAR_ID), None, 0);
@@ -2157,17 +2178,27 @@ mod tests {
         builder.require(same);
         assert_eq!(verify_builder(&builder), Err(TemplateError::RegisterNotInitialized(inner)));
 
-        // One instruction at a time, a loop is never accepted.
+        // One instruction at a time, a loop is never accepted, in any scope, with the error a
+        // nested one gets.
         let mut builder = ProgramBuilder::new();
         builder.const_bool(true);
         let bytes = builder.build().unwrap();
         let program = ProgramView::parse(&bytes).unwrap();
         let mut registers = [None; MAX_REGISTERS];
         let repeat = record(OP_REPEAT, NO_INDEX, 1, 0, 1, 0, 0);
-        assert_eq!(
-            program.verify_single_instruction(&repeat, 3, LoopScope::Count, None, &mut registers),
-            Err(TemplateError::InvalidLoop(3))
-        );
+        let foreach = record(OP_FOREACH, NO_INDEX, 1, NO_INDEX, NO_INDEX, 0, 0);
+        for scope in [LoopScope::Root, LoopScope::Rows, LoopScope::Count] {
+            assert_eq!(
+                program.verify_single_instruction(&repeat, 3, scope, None, &mut registers),
+                Err(TemplateError::InvalidLoop(3)),
+                "{scope:?}"
+            );
+            assert_eq!(
+                program.verify_single_instruction(&foreach, 3, scope, None, &mut registers),
+                Err(TemplateError::InvalidBatch),
+                "{scope:?}"
+            );
+        }
     }
 
     /// An executable program, a writable row account with a pinned owner and eight bytes of data,
@@ -2187,7 +2218,7 @@ mod tests {
 
     #[test]
     fn count_loop_bodies_have_an_index_but_no_rows() {
-        let cases: [RowCase; 5] = [
+        let cases: [RowCase; 6] = [
             ("row input", |body, _, _, amount| {
                 body.load_input(amount);
             }),
@@ -2200,6 +2231,10 @@ mod tests {
             ("row account read at a register offset", |body, _, row, _| {
                 let offset = body.const_u64(0);
                 body.read_dynamic(OP_READ_U64, row, offset);
+            }),
+            ("row account bytes", |body, _, row, _| {
+                let offset = body.const_u64(0);
+                body.read_account_bytes(row, offset, 8);
             }),
             ("invoke passing a row account", |body, program, row, _| {
                 let cpi = body.cpi(program, &[(row, ACCOUNT_WRITABLE)], &[]);
@@ -3484,6 +3519,42 @@ mod tests {
             ])
         });
         assert_eq!(outcome, Ok(()));
+    }
+
+    /// As an `EMIT` checks its segments before its tag, a `SET_RETURN_DATA` checks them before
+    /// where it sits, so a misplaced output with a bad segment reports the segment.
+    #[test]
+    fn return_data_reports_a_bad_segment_before_its_placement() {
+        // Inside a loop, naming a register that holds no value.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let unset = builder.register();
+        builder.repeat(count, 1, 0, |body| {
+            body.set_return_data(&[Segment::Register(DATA_REG_U64, unset)]);
+        });
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::RegisterNotInitialized(unset))
+        );
+
+        // Before an invoke, with a segment of no known kind. The invocation has no data, so the
+        // output's segment is the table's first.
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(system, &[], &[]);
+        let value = builder.const_u64(7);
+        builder.set_return_data(&[Segment::Register(0xfe, value)]);
+        builder.invoke(cpi, None);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidDataSegment(0)));
+
+        // With good segments, the placement still decides.
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(system, &[], &[]);
+        let value = builder.const_u64(7);
+        let at = builder.set_return_data(&[Segment::Register(DATA_REG_U64, value)]);
+        builder.invoke(cpi, None);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidOutput(at)));
     }
 
     #[test]

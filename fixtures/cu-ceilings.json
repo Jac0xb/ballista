@@ -1,5 +1,5 @@
 {
-  "create template, payroll 30 rows": 4476,
+  "create template, payroll 30 rows": 4483,
   "run, count loop 30 passes, no cpi": 8208,
   "run, empty template": 582,
   "run, introspection, no cpi": 3105,

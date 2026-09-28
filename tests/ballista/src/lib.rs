@@ -2864,15 +2864,38 @@ mod tests {
                 let created = context.process_instruction(&create_template_instruction(creator, 1, &program.bytes));
                 prop_assert!(created.program_result.is_ok(), "finalize rejected a generated program: {created:#?}");
                 let (template, _) = find_template_pda(&creator, 1);
+                // A registry takes the last three fixed accounts: the System program, a payer
+                // that signs and can pay the rent, and the entry at its derived address.
+                let payer = Pubkey::new_unique();
+                context
+                    .account_store
+                    .borrow_mut()
+                    .insert(payer, Account::new(10_000_000_000, 0, &system_program::id()));
+                let registry_metas = program.registry.map(|registry| {
+                    let key = if registry.keyed_by_payer { payer } else { Pubkey::default() };
+                    let (entry, _) = Pubkey::find_program_address(
+                        &[b"registry", template.as_ref(), &[registry.index], key.as_ref()],
+                        &ID,
+                    );
+                    [
+                        AccountMeta::new_readonly(system_program::id(), false),
+                        AccountMeta::new(payer, true),
+                        AccountMeta::new(entry, false),
+                    ]
+                });
 
                 for iterations in [program.min_iterations, program.max_iterations] {
                     let count = program.fixed_accounts + program.row_accounts * iterations;
                     // Fixed accounts and rows first, then the group members from the end of the pool.
-                    let metas: Vec<AccountMeta> = runtime[..count]
+                    let mut metas: Vec<AccountMeta> = runtime[..count]
                         .iter()
                         .chain(runtime[total - group_total..].iter())
                         .map(|address| AccountMeta::new_readonly(*address, false))
                         .collect();
+                    if let Some(registry_metas) = &registry_metas {
+                        let base = program.fixed_accounts - registry_metas.len();
+                        metas[base..program.fixed_accounts].clone_from_slice(registry_metas);
+                    }
                     let inputs = program.run_inputs(iterations, group_lengths);
                     let result = context.process_instruction(&run_instruction(template, metas, &inputs));
                     if result.program_result.is_ok() {
@@ -2909,6 +2932,7 @@ mod tests {
             "output" => include_str!("../../../fixtures/output.hex"),
             "loops" => include_str!("../../../fixtures/loops.hex"),
             "introspection" => include_str!("../../../fixtures/introspection.hex"),
+            "rate-limited-transfer" => include_str!("../../../fixtures/rate-limited-transfer.hex"),
             "signed-quote-settlement" => {
                 include_str!("../../../fixtures/signed-quote-settlement.hex")
             }
@@ -3509,6 +3533,450 @@ mod tests {
             program_id: ID,
             accounts,
             data,
+        }
+    }
+
+    mod registry {
+        use super::*;
+        use ballista_common::template::{
+            OP_READ_BOOL, OP_READ_I64, OP_READ_PUBKEY, OP_READ_U128, OP_READ_U64,
+            SYSTEM_PROGRAM_ADDRESS, VALUE_BOOL, VALUE_I64, VALUE_PUBKEY, VALUE_U128, VALUE_U64,
+        };
+
+        const INVALID_REGISTRY_ENTRY: u32 = 6025;
+        const REGISTRY_REENTRY: u32 = 6026;
+        const ACCOUNT_CONSTRAINT_FAILED: u32 = 6020;
+        const INVALID_REGISTRY: u32 = 6132;
+
+        /// The accounts every registry template here declares, in this order.
+        struct Accounts {
+            system: u8,
+            payer: u8,
+            entry: u8,
+        }
+
+        fn declare(builder: &mut ProgramBuilder) -> Accounts {
+            Accounts {
+                system: builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ADDRESS), None, 0),
+                payer: builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0),
+                entry: builder.account(ACCOUNT_WRITABLE, None, None, 0),
+            }
+        }
+
+        /// Opens registry 0 (16 bytes) keyed by the payer, adds the `u64` input to field 0 and
+        /// writes the clock to field 8.
+        fn counter() -> Vec<u8> {
+            let mut builder = ProgramBuilder::new();
+            let accounts = declare(&mut builder);
+            let input = builder.input(VALUE_U64, 0);
+            let amount = builder.load_input(input);
+            let key = builder.account_key(accounts.payer);
+            builder.open_registry(accounts.entry, Some(key), accounts.payer, 0, 16, accounts.system);
+            let spent = builder.read_registry(accounts.entry, 0, OP_READ_U64);
+            let total = builder.binary(OP_ADD, spent, amount);
+            builder.write_registry(accounts.entry, 0, OP_READ_U64, total);
+            let now = builder.clock_timestamp();
+            builder.write_registry(accounts.entry, 8, OP_READ_I64, now);
+            builder.build().unwrap()
+        }
+
+        fn entry_address(template: &Pubkey, index: u8, key: &Pubkey) -> Pubkey {
+            Pubkey::find_program_address(&[b"registry", template.as_ref(), &[index], key.as_ref()], &ID).0
+        }
+
+        /// An entry seeded directly, `len` bytes in all: Ballista's, rent-exempt, with the header
+        /// for `template`, registry `index` and `key`, then zeros.
+        fn seeded_entry(
+            context: &MolluskContext<HashMap<Pubkey, Account>>,
+            template: &Pubkey,
+            index: u8,
+            key: &Pubkey,
+            len: usize,
+        ) -> Account {
+            let mut data = vec![0u8; len];
+            data[..8].copy_from_slice(&[b'B', b'R', b'E', b'G', 1, index, 0, 0]);
+            data[8..40].copy_from_slice(template.as_ref());
+            data[40..72].copy_from_slice(key.as_ref());
+            let mut account = Account::new(context.mollusk.sysvars.rent.minimum_balance(len), len, &ID);
+            account.data = data;
+            account
+        }
+
+        /// A context with `creator` and `payers` funded and `payload` uploaded as template `id`.
+        fn setup(payload: &[u8], id: u16, payers: &[Pubkey]) -> (MolluskContext<HashMap<Pubkey, Account>>, Pubkey) {
+            let creator = Pubkey::new_unique();
+            let mut accounts = funded_accounts([creator], 10_000_000_000);
+            for payer in payers {
+                accounts.insert(*payer, Account::new(1_000_000_000, 0, &system_program::id()));
+            }
+            let mut context = context(accounts);
+            context.mollusk.sysvars.clock.unix_timestamp = 1_800_000_000;
+            let created = context.process_instruction(&create_template_instruction(creator, id, payload));
+            assert!(created.program_result.is_ok(), "{created:#?}");
+            (context, find_template_pda(&creator, id).0)
+        }
+
+        fn run(
+            context: &MolluskContext<HashMap<Pubkey, Account>>,
+            template: Pubkey,
+            payer: Pubkey,
+            entry: AccountMeta,
+            amount: u64,
+        ) -> mollusk_svm::result::InstructionResult {
+            let metas = vec![
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(payer, true),
+                entry,
+            ];
+            context.process_instruction(&run_instruction(template, metas, &amount.to_le_bytes()))
+        }
+
+        /// The error kind and program counter of a failed run.
+        fn failure(result: &mollusk_svm::result::InstructionResult) -> (u32, u32) {
+            let code = custom_code(result).unwrap_or_else(|| panic!("no custom error: {result:#?}"));
+            (code & 0xffff, code >> 16)
+        }
+
+        fn account(context: &MolluskContext<HashMap<Pubkey, Account>>, address: Pubkey) -> Account {
+            context.account_store.borrow()[&address].clone()
+        }
+
+        #[test]
+        fn the_first_run_creates_the_entry_and_later_runs_reopen_it() {
+            let payer = Pubkey::new_unique();
+            let (context, template) = setup(&counter(), 1, &[payer]);
+            let entry = entry_address(&template, 0, &payer);
+            let rent = context.mollusk.sysvars.rent.minimum_balance(88);
+
+            let result = run(&context, template, payer, AccountMeta::new(entry, false), 5);
+            assert!(result.program_result.is_ok(), "{result:#?}");
+            let created = account(&context, entry);
+            assert_eq!(created.owner, ID);
+            assert_eq!(created.lamports, rent, "an entry holds its rent and nothing else");
+            assert_eq!(created.data.len(), 88);
+            assert_eq!(&created.data[..8], b"BREG\x01\x00\x00\x00");
+            assert_eq!(&created.data[8..40], template.as_ref());
+            assert_eq!(&created.data[40..72], payer.as_ref());
+            assert_eq!(created.data[72..80], 5u64.to_le_bytes());
+            assert_eq!(created.data[80..88], 1_800_000_000i64.to_le_bytes());
+            assert_eq!(lamports(&context, payer), 1_000_000_000 - rent, "the payer paid the rent");
+
+            let result = run(&context, template, payer, AccountMeta::new(entry, false), 7);
+            assert!(result.program_result.is_ok(), "{result:#?}");
+            assert_eq!(account(&context, entry).data[72..80], 12u64.to_le_bytes());
+            assert_eq!(lamports(&context, payer), 1_000_000_000 - rent, "no second charge");
+        }
+
+        #[test]
+        fn a_pre_funded_address_is_topped_up_allocated_and_assigned() {
+            for already in [1u64, 1_503_360, 2_000_000] {
+                let payer = Pubkey::new_unique();
+                let (context, template) = setup(&counter(), 2, &[payer]);
+                let entry = entry_address(&template, 0, &payer);
+                context
+                    .account_store
+                    .borrow_mut()
+                    .insert(entry, Account::new(already, 0, &system_program::id()));
+                let rent = context.mollusk.sysvars.rent.minimum_balance(88);
+                let result = run(&context, template, payer, AccountMeta::new(entry, false), 5);
+                assert!(result.program_result.is_ok(), "{already}: {result:#?}");
+                let created = account(&context, entry);
+                assert_eq!(created.owner, ID, "{already}");
+                assert_eq!(created.data.len(), 88, "{already}");
+                assert_eq!(created.lamports, rent.max(already), "{already}");
+                assert_eq!(
+                    lamports(&context, payer),
+                    1_000_000_000 - rent.saturating_sub(already),
+                    "{already}: the payer covers only the shortfall"
+                );
+                assert_eq!(created.data[72..80], 5u64.to_le_bytes(), "{already}");
+            }
+        }
+
+        #[test]
+        fn an_account_that_is_not_the_named_entry_fails() {
+            let payer = Pubkey::new_unique();
+            let other_payer = Pubkey::new_unique();
+            let (context, template) = setup(&counter(), 3, &[payer, other_payer]);
+            // `counter` loads its input (pc 0) and the payer's key (pc 1) before the open.
+            let open_pc = 2;
+
+            // Creation at an address that is not the entry's.
+            let stranger = Pubkey::new_unique();
+            let result = run(&context, template, payer, AccountMeta::new(stranger, false), 1);
+            assert_eq!(failure(&result), (INVALID_REGISTRY_ENTRY, open_pc));
+
+            // Create the payer's entry, then pass it for another payer: another key's entry.
+            let entry = entry_address(&template, 0, &payer);
+            assert!(run(&context, template, payer, AccountMeta::new(entry, false), 1).program_result.is_ok());
+            let result = run(&context, template, other_payer, AccountMeta::new(entry, false), 1);
+            assert_eq!(failure(&result), (INVALID_REGISTRY_ENTRY, open_pc));
+
+            // The same code published at another address: another template's entry.
+            let creator = Pubkey::new_unique();
+            context.account_store.borrow_mut().insert(creator, Account::new(10_000_000_000, 0, &system_program::id()));
+            assert!(context.process_instruction(&create_template_instruction(creator, 4, &counter())).program_result.is_ok());
+            let copy = find_template_pda(&creator, 4).0;
+            let result = run(&context, copy, payer, AccountMeta::new(entry, false), 1);
+            assert_eq!(failure(&result), (INVALID_REGISTRY_ENTRY, open_pc));
+
+            // An account another program owns.
+            let foreign = Pubkey::new_unique();
+            context.account_store.borrow_mut().insert(foreign, Account::new(1_000_000, 88, &Pubkey::new_unique()));
+            let result = run(&context, template, payer, AccountMeta::new(foreign, false), 1);
+            assert_eq!(failure(&result), (INVALID_REGISTRY_ENTRY, open_pc));
+
+            // A read-only entry never reaches the open: the account check before the first
+            // instruction refuses it, account 2, since the template declares the entry writable.
+            let result = run(&context, template, payer, AccountMeta::new_readonly(entry, false), 1);
+            assert_eq!(failure(&result), (ACCOUNT_CONSTRAINT_FAILED, 2));
+        }
+
+        /// A created entry is the header plus the size its template declares.
+        #[test]
+        fn a_created_entry_is_the_header_plus_the_declared_size() {
+            let mut builder = ProgramBuilder::new();
+            let accounts = declare(&mut builder);
+            let key = builder.account_key(accounts.payer);
+            builder.open_registry(accounts.entry, Some(key), accounts.payer, 0, 24, accounts.system);
+            let payer = Pubkey::new_unique();
+            let (context, template) = setup(&builder.build().unwrap(), 5, &[payer]);
+            let entry = entry_address(&template, 0, &payer);
+            let metas = vec![
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new(entry, false),
+            ];
+            let result = context.process_instruction(&run_instruction(template, metas, &[]));
+            assert!(result.program_result.is_ok(), "{result:#?}");
+            assert_eq!(account(&context, entry).data.len(), 72 + 24);
+        }
+
+        /// An existing entry of another size fails at the open although its header matches: seeded
+        /// with 8 bytes too many, then 8 too few. Seeded at the right size, it opens.
+        #[test]
+        fn an_existing_entry_of_another_size_fails() {
+            let payer = Pubkey::new_unique();
+            let (context, template) = setup(&counter(), 10, &[payer]);
+            let entry = entry_address(&template, 0, &payer);
+            // `counter` opens registry 0, 16 bytes, at pc 2.
+            for len in [72 + 16 + 8, 72 + 16 - 8] {
+                let seeded = seeded_entry(&context, &template, 0, &payer, len);
+                context.account_store.borrow_mut().insert(entry, seeded);
+                let result = run(&context, template, payer, AccountMeta::new(entry, false), 1);
+                assert_eq!(failure(&result), (INVALID_REGISTRY_ENTRY, 2), "{len} bytes");
+            }
+            let seeded = seeded_entry(&context, &template, 0, &payer, 72 + 16);
+            context.account_store.borrow_mut().insert(entry, seeded);
+            let result = run(&context, template, payer, AccountMeta::new(entry, false), 1);
+            assert!(result.program_result.is_ok(), "{result:#?}");
+        }
+
+        #[test]
+        fn every_writable_width_round_trips() {
+            let mut builder = ProgramBuilder::new();
+            let accounts = declare(&mut builder);
+            let key = builder.account_key(accounts.payer);
+            builder.open_registry(accounts.entry, Some(key), accounts.payer, 1, 65, accounts.system);
+            // bool at 0, u64 at 1, i64 at 9, u128 at 17, pubkey at 33.
+            let fields = [
+                (VALUE_BOOL, OP_READ_BOOL, 0),
+                (VALUE_U64, OP_READ_U64, 1),
+                (VALUE_I64, OP_READ_I64, 9),
+                (VALUE_U128, OP_READ_U128, 17),
+                (VALUE_PUBKEY, OP_READ_PUBKEY, 33),
+            ];
+            for (value_type, selector, offset) in fields {
+                let input = builder.input(value_type, 0);
+                let value = builder.load_input(input);
+                builder.write_registry(accounts.entry, offset, selector, value);
+                let read = builder.read_registry(accounts.entry, offset, selector);
+                let same = builder.binary(OP_EQ, read, value);
+                builder.require(same);
+            }
+            let payer = Pubkey::new_unique();
+            let (context, template) = setup(&builder.build().unwrap(), 6, &[payer]);
+            let entry = entry_address(&template, 1, &payer);
+            let mut inputs = vec![1u8];
+            inputs.extend_from_slice(&u64::MAX.to_le_bytes());
+            inputs.extend_from_slice(&(-3i64).to_le_bytes());
+            inputs.extend_from_slice(&(u128::MAX - 1).to_le_bytes());
+            inputs.extend_from_slice(&[4; 32]);
+            let metas = vec![
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new(entry, false),
+            ];
+            let result = context.process_instruction(&run_instruction(template, metas, &inputs));
+            assert!(result.program_result.is_ok(), "{result:#?}");
+            assert_eq!(account(&context, entry).data[72..], inputs[..]);
+        }
+
+        /// A registry template that, after its open, invokes Ballista to run `inner`, forwarding
+        /// its one account group. A run can put its entry in the group, writable, and no check at
+        /// finalize can see that; `pass_entry` passes the entry itself instead, which one can.
+        fn nested(pass_entry: bool) -> (Vec<u8>, usize) {
+            let mut builder = ProgramBuilder::new();
+            builder.account_groups(1);
+            let accounts = declare(&mut builder);
+            let ballista = builder.account(ACCOUNT_EXECUTABLE, Some(ID.to_bytes()), None, 0);
+            let inner = builder.account(0, None, None, 0);
+            let open = builder.open_registry(accounts.entry, None, accounts.payer, 0, 8, accounts.system);
+            let mut cpi_accounts = vec![(inner, 0)];
+            if pass_entry {
+                cpi_accounts.push((accounts.entry, ACCOUNT_WRITABLE));
+            }
+            let data = builder.blob(&[IX_RUN]);
+            let cpi = builder.cpi_with_group(ballista, &cpi_accounts, &[Segment::Literal(data)], 0);
+            builder.invoke(cpi, None);
+            (builder.build().unwrap(), open)
+        }
+
+        #[test]
+        fn a_cpi_that_passes_an_open_entry_writable_fails_with_registry_reentry() {
+            // The inner template asserts a constant and names no account.
+            let mut inner = ProgramBuilder::new();
+            let yes = inner.const_bool(true);
+            inner.require(yes);
+            let inner = inner.build().unwrap();
+            let payer = Pubkey::new_unique();
+            let (context, template) = setup(&nested(false).0, 7, &[payer]);
+            let creator = Pubkey::new_unique();
+            context.account_store.borrow_mut().insert(creator, Account::new(10_000_000_000, 0, &system_program::id()));
+            assert!(context.process_instruction(&create_template_instruction(creator, 1, &inner)).program_result.is_ok());
+            let inner_template = find_template_pda(&creator, 1).0;
+            let entry = entry_address(&template, 0, &Pubkey::default());
+            let metas = vec![
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new(entry, false),
+                AccountMeta::new_readonly(ID, false),
+                AccountMeta::new_readonly(inner_template, false),
+            ];
+            // The group's one member is the entry, writable. The invoke is the second instruction,
+            // after the open, which created the entry.
+            let mut with_entry = metas.clone();
+            with_entry.push(AccountMeta::new(entry, false));
+            let result = context.process_instruction(&run_instruction(template, with_entry.clone(), &[1]));
+            assert_eq!(failure(&result), (REGISTRY_REENTRY, 1));
+            // Once the entry exists, the open checks it instead of creating it, and marks it all
+            // the same.
+            let seeded = seeded_entry(&context, &template, 0, &Pubkey::default(), 72 + 8);
+            context.account_store.borrow_mut().insert(entry, seeded);
+            let result = context.process_instruction(&run_instruction(template, with_entry, &[1]));
+            assert_eq!(failure(&result), (REGISTRY_REENTRY, 1), "an existing entry");
+            // An empty group: a CPI to Ballista that leaves the entry out runs.
+            let result = context.process_instruction(&run_instruction(template, metas, &[0]));
+            assert!(result.program_result.is_ok(), "a CPI to Ballista that leaves the entry out runs: {result:#?}");
+
+            // Passing the entry account itself writable could never run: the upload refuses it, at
+            // the open.
+            let (payload, open) = nested(true);
+            let result = context.process_instruction(&create_template_instruction(creator, 2, &payload));
+            assert_eq!(failure(&result), (INVALID_REGISTRY, open as u32));
+        }
+
+        /// The lost update a generic data read would allow, built by hand: read the entry's data
+        /// before its open, let a CPI pass the still-unmarked entry writable, then open the entry
+        /// and write a value based on the read. The upload refuses it at the read.
+        #[test]
+        fn a_template_that_reads_an_entry_as_data_is_refused_at_upload() {
+            let mut builder = ProgramBuilder::new();
+            let accounts = declare(&mut builder);
+            let ballista = builder.account(ACCOUNT_EXECUTABLE, Some(ID.to_bytes()), None, 0);
+            let offset = builder.const_u64(72);
+            let read_pc = builder.instructions_mut().len();
+            let stale = builder.read_dynamic(OP_READ_U64, accounts.entry, offset);
+            let data = builder.blob(&[IX_RUN]);
+            let cpi = builder.cpi(ballista, &[(accounts.entry, ACCOUNT_WRITABLE)], &[Segment::Literal(data)]);
+            builder.invoke(cpi, None);
+            builder.open_registry(accounts.entry, None, accounts.payer, 0, 8, accounts.system);
+            let one = builder.const_u64(1);
+            let total = builder.binary(OP_ADD, stale, one);
+            builder.write_registry(accounts.entry, 0, OP_READ_U64, total);
+
+            let creator = Pubkey::new_unique();
+            let context = context(funded_accounts([creator], 10_000_000_000));
+            let result = context.process_instruction(&create_template_instruction(creator, 9, &builder.build().unwrap()));
+            assert_eq!(failure(&result), (INVALID_REGISTRY, read_pc as u32));
+        }
+
+        /// The kind and the source label of a failed run of fixture `name`.
+        fn labeled(result: &mollusk_svm::result::InstructionResult, name: &str) -> (u32, String) {
+            let (kind, pc) = failure(result);
+            let manifest: serde_json::Value =
+                serde_json::from_str(include_str!("../../../fixtures/manifest.json")).expect("manifest");
+            let label = manifest[name]["sourceMap"]
+                .as_array()
+                .and_then(|entries| entries.iter().find(|entry| entry["pc"] == pc))
+                .and_then(|entry| entry["label"].as_str())
+                .unwrap_or_default()
+                .to_owned();
+            (kind, label)
+        }
+
+        #[test]
+        fn a_rate_limited_transfer_spends_within_its_cap_and_refills_with_time() {
+            const REQUIREMENT_FAILED: u32 = 6015;
+            let caller = Pubkey::new_unique();
+            let recipient = Pubkey::new_unique();
+            let (mut context, template) = setup(&fixture("rate-limited-transfer"), 20, &[caller, recipient]);
+            let entry = entry_address(&template, 0, &caller);
+            let pay = |context: &MolluskContext<HashMap<Pubkey, Account>>, amount: u64| {
+                // The fixture's account order: caller, recipient, limits, systemProgram.
+                let metas = vec![
+                    AccountMeta::new(caller, true),
+                    AccountMeta::new(recipient, false),
+                    AccountMeta::new(entry, false),
+                    AccountMeta::new_readonly(system_program::id(), false),
+                ];
+                context.process_instruction(&run_instruction(template, metas, &amount.to_le_bytes()))
+            };
+            let rent = context.mollusk.sysvars.rent.minimum_balance(72 + 16);
+
+            // The first run creates the entry; the caller pays its rent and the transfer.
+            let result = pay(&context, 600_000);
+            assert!(result.program_result.is_ok(), "{result:#?}");
+            assert_eq!(lamports(&context, caller), 1_000_000_000 - rent - 600_000);
+            assert_eq!(account(&context, entry).owner, ID);
+            // Up to the cap exactly.
+            assert!(pay(&context, 400_000).program_result.is_ok());
+            assert_eq!(lamports(&context, recipient), 1_000_000_000 + 1_000_000);
+            // One lamport over.
+            let result = pay(&context, 1);
+            assert_eq!(labeled(&result, "rate-limited-transfer"), (REQUIREMENT_FAILED, "withinRateLimit".into()));
+
+            // Ten seconds refill 100 lamports: 101 is still over, 100 lands.
+            context.mollusk.sysvars.clock.unix_timestamp += 10;
+            let result = pay(&context, 101);
+            assert_eq!(labeled(&result, "rate-limited-transfer"), (REQUIREMENT_FAILED, "withinRateLimit".into()));
+            assert!(pay(&context, 100).program_result.is_ok());
+            let data = account(&context, entry).data;
+            assert_eq!(data[72..80], 1_000_000u64.to_le_bytes());
+            assert_eq!(data[80..88], 1_800_000_010i64.to_le_bytes());
+
+            // A clock that steps back refills nothing, and does not fail the run on its own.
+            context.mollusk.sysvars.clock.unix_timestamp -= 5;
+            let result = pay(&context, 1);
+            assert_eq!(labeled(&result, "rate-limited-transfer"), (REQUIREMENT_FAILED, "withinRateLimit".into()));
+            // A run that lands while the clock is behind leaves the last spend where it was, so
+            // once the clock catches up the seconds already refilled are not refilled again: ten
+            // seconds after the last spend refill 100 lamports, not the 150 that fifteen seconds
+            // after the stepped-back clock would.
+            assert!(pay(&context, 0).program_result.is_ok());
+            assert_eq!(account(&context, entry).data[80..88], 1_800_000_010i64.to_le_bytes());
+            context.mollusk.sysvars.clock.unix_timestamp += 15;
+            let result = pay(&context, 101);
+            assert_eq!(labeled(&result, "rate-limited-transfer"), (REQUIREMENT_FAILED, "withinRateLimit".into()));
+            assert!(pay(&context, 100).program_result.is_ok());
+
+            // A long gap refills more than was spent: the refill stops at nothing spent, so the
+            // whole cap lands again and one lamport more does not.
+            context.mollusk.sysvars.clock.unix_timestamp += 1_000_000;
+            let result = pay(&context, 1_000_000);
+            assert!(result.program_result.is_ok(), "{result:#?}");
+            let result = pay(&context, 1);
+            assert_eq!(labeled(&result, "rate-limited-transfer"), (REQUIREMENT_FAILED, "withinRateLimit".into()));
         }
     }
 }

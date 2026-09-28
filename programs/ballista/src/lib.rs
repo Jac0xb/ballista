@@ -211,7 +211,10 @@ fn cancel_template(accounts: &mut [AccountView]) -> ProgramResult {
 }
 
 fn run_template(accounts: &mut [AccountView], input_bytes: &[u8]) -> ProgramResult {
-    let [template, runtime_accounts @ ..] = accounts else {
+    // Shared from here on: the run reads the template and lends the rest to the template's
+    // instructions, and a registry open keys its entry by the template's address.
+    let accounts: &[AccountView] = accounts;
+    let [template, ..] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     if !template.owned_by(&crate::ID) || template.is_data_empty() {
@@ -229,7 +232,7 @@ fn run_template(accounts: &mut [AccountView], input_bytes: &[u8]) -> ProgramResu
             .map_err(|_| BallistaError::TemplateNotFinalized)?,
     };
     profile::mark(profile::TAG_TEMPLATE_LOADED);
-    let result = processor::run(&program, input_bytes, runtime_accounts, template.address());
+    let result = processor::run(&program, input_bytes, accounts);
     // A `cu-profile` build sets its record as return data here, over any the run set.
     profile::report();
     result

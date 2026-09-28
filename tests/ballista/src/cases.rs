@@ -10,7 +10,7 @@ use ballista_common::template::{
     OP_BIT_OR, OP_BIT_XOR, OP_CAST_U64, OP_EQ, OP_GTE, OP_INSTRUCTION_ACCOUNT,
     OP_INSTRUCTION_ACCOUNT_COUNT, OP_INSTRUCTION_ACCOUNT_FLAGS, OP_INSTRUCTION_COUNT,
     OP_INSTRUCTION_DATA_LEN, OP_INSTRUCTION_INDEX, OP_INSTRUCTION_PROGRAM, OP_LT, OP_LTE,
-    OP_READ_I32, OP_READ_U64, OP_READ_U8, OP_REM, OP_SHL, OP_SHR, VALUE_U64,
+    OP_READ_I32, OP_READ_I64, OP_READ_U64, OP_READ_U8, OP_REM, OP_SHL, OP_SHR, VALUE_U64,
 };
 use mollusk_svm::{program::loader_keys::LOADER_V3, Mollusk};
 use solana_account::Account;
@@ -57,6 +57,7 @@ pub fn cases() -> Vec<(&'static str, Case)> {
         ("run, math opcodes, no cpi", math_ops(creator, 10)),
         ("run, count loop 30 passes, no cpi", count_loop(creator, 11, 30)),
         ("run, introspection, no cpi", introspection(creator, 13)),
+        ("run, registry open and update", registry_update(creator, 14)),
     ]
 }
 
@@ -486,4 +487,49 @@ fn introspection(creator: Pubkey, template_id: u16) -> Case {
         .accounts
         .insert(1, AccountMeta::new_readonly(sysvar::instructions::id(), false));
     case
+}
+
+/// A run that opens an existing registry entry, reads two fields and writes both back: the steady
+/// state of a rate limit, after the first run has created the entry.
+fn registry_update(creator: Pubkey, template_id: u16) -> Case {
+    let mut builder = ProgramBuilder::new();
+    let system = builder.account(ACCOUNT_EXECUTABLE, Some(system_program::id().to_bytes()), None, 0);
+    let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+    let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+    let key = builder.account_key(payer);
+    builder.open_registry(entry, Some(key), payer, 0, 16, system);
+    let spent = builder.read_registry(entry, 0, OP_READ_U64);
+    builder.read_registry(entry, 8, OP_READ_I64);
+    let amount = builder.const_u64(100);
+    let total = builder.binary(OP_ADD, spent, amount);
+    builder.write_registry(entry, 0, OP_READ_U64, total);
+    let now = builder.clock_timestamp();
+    builder.write_registry(entry, 8, OP_READ_I64, now);
+
+    let (template, _) = Pubkey::find_program_address(
+        &[TEMPLATE_SEED, creator.as_ref(), &template_id.to_le_bytes()],
+        &ID,
+    );
+    let (payer_key, payer_account) = funded(template_id * 100 + 1);
+    let (address, _) = Pubkey::find_program_address(
+        &[b"registry", template.as_ref(), &[0], payer_key.as_ref()],
+        &ID,
+    );
+    let mut data = vec![0u8; 72 + 16];
+    data[..8].copy_from_slice(b"BREG\x01\x00\x00\x00");
+    data[8..40].copy_from_slice(template.as_ref());
+    data[40..72].copy_from_slice(payer_key.as_ref());
+    let mut entry_account = Account::new(1_503_360, data.len(), &ID);
+    entry_account.data = data;
+    run_case(
+        creator,
+        template_id,
+        builder.build().expect("builds"),
+        vec![
+            (AccountMeta::new_readonly(system_program::id(), false), system_program_account()),
+            (AccountMeta::new(payer_key, true), payer_account),
+            (AccountMeta::new(address, false), entry_account),
+        ],
+        Vec::new(),
+    )
 }

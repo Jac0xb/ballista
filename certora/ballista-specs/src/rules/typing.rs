@@ -26,6 +26,11 @@ use super::util::{
 /// unconstrained: the account may be writable, and the offset register may point past its data.
 /// The introspection opcodes never do, since neither spec program pins the Instructions sysvar,
 /// but an index past the transaction is value-dependent too.
+///
+/// The registry opcodes never reach the executor in either rule: neither spec program declares a
+/// fixed account pinned to the System program, so the verifier rejects every open, and a field
+/// read or write verified at pc 0 has no open before it. Their errors depend on the accounts a
+/// run passes, not on the template's shape, so they are value-dependent too.
 fn value_dependent(kind: BallistaError) -> bool {
     matches!(
         kind,
@@ -35,6 +40,8 @@ fn value_dependent(kind: BallistaError) -> bool {
             | BallistaError::InvalidPdaDerivation
             | BallistaError::InstructionOutOfRange
             | BallistaError::WritableAccountBytesRead
+            | BallistaError::InvalidRegistryEntry
+            | BallistaError::RegistryReentry
     )
 }
 

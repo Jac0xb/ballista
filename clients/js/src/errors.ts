@@ -32,6 +32,8 @@ export const RUNTIME_ERROR_NAMES = [
   'LoopCountExceeded',
   'InstructionOutOfRange',
   'WritableAccountBytesRead',
+  'InvalidRegistryEntry',
+  'RegistryReentry',
 ] as const;
 
 /** Verifier failures raised at create and finalize, in code order. */
@@ -68,6 +70,7 @@ export const VERIFIER_ERROR_NAMES = [
   'InvalidLoop',
   'InvalidOutput',
   'InvalidIntrospection',
+  'InvalidRegistry',
 ] as const;
 
 export type RuntimeErrorName = (typeof RUNTIME_ERROR_NAMES)[number];

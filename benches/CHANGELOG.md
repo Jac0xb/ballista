@@ -34,6 +34,35 @@ the same commit and says why here.
 
 ## Pending: runtime extensions, not merged
 
+### 2026-09-28 · Registry entries · `claude/runtime-registry`
+- **Change:** opcodes 75 to 77 reach one cold helper through `extended_instruction`'s fallback
+  router; the outer dispatch is untouched. `run` takes the instruction's whole account list, so
+  the template's address needs no sixth argument on the stack. An open entry is marked in its own
+  borrow flag, so the reentry check is the borrow check every CPI already makes, mapped to
+  `RegistryReentry` only when an invocation fails.
+- **Measured** against the phase-4 tip (`65c9b45`):
+  - The nine fixed cases without a CPI: 1 CU less each (`run, empty template` 582 → 581). Every
+    case and example with a CPI: unchanged. Cookbook total: 552,304, unchanged.
+  - `create template, payroll 30 rows`: 4,483 → 4,486, the verifier's three new arms and the
+    review's two rules (no data read of an entry, no byte read of a fixed writable account).
+  - `run, registry open and update`, a new case: 1,632, now ratcheted.
+  - Uploading the 32 cookbook examples, not ratcheted: 144,999 → 145,299 (+300), from the two
+    rules. The entry check scans the program only for a read of a writable account; scanning for
+    every read cost +555.
+  - Review fixes (an open refuses an entry declared as anything but writable, and any CPI that
+    lists its entry writable) add 6 to 22 CU to creating a template that opens an entry:
+    3,845 → 3,851 for the Mollusk counter, 3,064 → 3,081 nesting a run, 6,481 → 6,503 for the
+    rate-limited transfer fixture; the open scans the CPI account records instead of finding the
+    invokes by a pass over every instruction.
+- **Measured on the prototype, and not built:** a slot table in `Scratch` cost every run 2 CU,
+  in `Machine` 426 on a 30-pass count loop; the literal reentry check (the invoked program is
+  Ballista and an entry is open) cost 3 CU a CPI, 89 on `run, payroll 30 rows`.
+- **Checked:** the verifier's, executor's and registry module's unit tests; the Mollusk registry
+  tests, the rate-limited transfer end to end, the generated-program property tests; both ceiling
+  tests.
+- **Watch:** a new field in `Machine` can cost the dispatch loop hundreds of units; one in
+  `Scratch` costs every run about 2. Keep per-run registry state in the entry account itself.
+
 ### 2026-09-27 · Introspection on top of loops and output · `claude/runtime-introspection`
 - **Change:** the branch is rebased onto the output tip. `FOREACH`, `REPEAT`, `EMIT` and
   `SET_RETURN_DATA` reach `write_output` through `extended_instruction`'s fallback arm, and rustc

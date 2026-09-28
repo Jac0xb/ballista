@@ -2,6 +2,7 @@ import {
   MAX_INPUT_BYTES,
   MAX_TEMPLATE_PAYLOAD_LENGTH,
   PROGRAM_FLAG_EMIT_EVENT,
+  REGISTRY_OPEN_CPIS,
   TEMPLATE_PROGRAM_VERSION,
   opcode,
   type CompiledTemplate,
@@ -371,17 +372,20 @@ export function inspectTemplate(bytes: Uint8Array): CompileStats {
     return { opcode: bytes[offset]!, a: bytes[offset + 2]!, c: bytes[offset + 4]! };
   });
   // Every loop's body runs at most its maximum number of times: the batch's for a FOREACH, and the
-  // `c` operand for a REPEAT. Loops never nest, so each body is a flat run of records.
+  // `c` operand for a REPEAT. Loops never nest, so each body is a flat run of records. A registry
+  // open counts the three CPIs creating a pre-funded entry takes, as the verifier counts it.
+  const cpisOf = (record: { opcode: number }) =>
+    record.opcode === opcode.invoke ? 1 : record.opcode === opcode.openRegistry ? REGISTRY_OPEN_CPIS : 0;
   let maxExpandedCpis = 0;
   for (let programCounter = 0; programCounter < records.length; programCounter += 1) {
     const record = records[programCounter]!;
     if (record.opcode === opcode.forEach || record.opcode === opcode.repeat) {
       const passes = record.opcode === opcode.forEach ? batchMaxIterations : record.c;
       const body = records.slice(programCounter + 1, programCounter + 1 + record.a);
-      maxExpandedCpis += body.filter((inner) => inner.opcode === opcode.invoke).length * passes;
+      maxExpandedCpis += body.reduce((sum, inner) => sum + cpisOf(inner), 0) * passes;
       programCounter += record.a;
-    } else if (record.opcode === opcode.invoke) {
-      maxExpandedCpis += 1;
+    } else {
+      maxExpandedCpis += cpisOf(record);
     }
   }
   const cpiStart = instructionStart + instructions * 16;

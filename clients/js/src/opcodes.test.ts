@@ -1,14 +1,15 @@
 /**
- * The compiler's opcode table is a copy of the constants in `common/src/template/wire.rs`. This
- * pairs every Rust opcode with its TypeScript name and checks the numbers agree, so a change on
- * either side that the other does not follow fails here rather than as a verifier rejection.
+ * The compiler's opcode table is a copy of the constants in `common/src/template/wire.rs`, and so
+ * are the two that shape an emit's tag. This pairs every Rust opcode with its TypeScript name and
+ * checks the values agree, so a change on either side that the other does not follow fails here
+ * rather than as a verifier rejection.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { expect, test } from 'vitest';
 
-import { opcode } from './compiler.js';
+import { MIN_EMIT_TAG_LENGTH, opcode, RUN_EVENT_TAG_FAMILY } from './compiler.js';
 
 const wire = readFileSync(
   fileURLToPath(new URL('../../../common/src/template/wire.rs', import.meta.url)),
@@ -102,4 +103,13 @@ test('every opcode has the same number in Rust and TypeScript', () => {
     expect(rust.get(name), `${key} ↔ ${name}`).toBe(opcode[key]);
   }
   expect([...rust.keys()].sort()).toEqual(Object.values(rustName).sort());
+});
+
+test("an emit's tag rule is the same in Rust and TypeScript", () => {
+  const family = /pub const RUN_EVENT_TAG_FAMILY: \[u8; \d+\] = \*b"([^"]*)";/.exec(wire)?.[1];
+  const minimum = /pub const MIN_EMIT_TAG_LEN: usize = (\d+);/.exec(wire)?.[1];
+  expect(family, 'RUN_EVENT_TAG_FAMILY in wire.rs').toBeDefined();
+  expect(minimum, 'MIN_EMIT_TAG_LEN in wire.rs').toBeDefined();
+  expect(new TextEncoder().encode(family)).toEqual(RUN_EVENT_TAG_FAMILY);
+  expect(Number(minimum)).toBe(MIN_EMIT_TAG_LENGTH);
 });

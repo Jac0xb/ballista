@@ -394,7 +394,11 @@ export type Step =
       label?: string;
     }
   | {
-      /** Logs the encoded parts as one `Program data:` field. */
+      /**
+       * Logs the encoded parts as one `Program data:` field. The first part must be a literal tag
+       * of at least `MIN_EMIT_TAG_LENGTH` (4) bytes that does not start with `RUN_EVENT_TAG_FAMILY`
+       * ("BEV"), so the log cannot pass for Ballista's run event.
+       */
       kind: 'emit';
       parts: DataPart[];
       label?: string;
@@ -768,7 +772,10 @@ export const step = {
     ...(label ? { label } : {}),
   }),
   invoke: (input: Omit<Extract<Step, { kind: 'invoke' }>, 'kind'>): Step => ({ kind: 'invoke', ...input }),
-  /** Logs the parts, encoded as invocation data is, as one `Program data:` field. */
+  /**
+   * Logs the parts, encoded as invocation data is, as one `Program data:` field. The first part
+   * must be a literal tag of at least 4 bytes that does not start with "BEV", the run event's.
+   */
   emit: (parts: DataPart[], label?: string): Step => ({ kind: 'emit', parts, ...(label ? { label } : {}) }),
   /** Sets the parts, encoded as invocation data is, as the run's return data. */
   setReturnData: (parts: DataPart[], label?: string): Step => ({

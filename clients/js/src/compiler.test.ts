@@ -39,6 +39,11 @@ const HEADER_LENGTH = 24;
 const ACCOUNT_RECORD_LENGTH = 8;
 const INPUT_RECORD_LENGTH = 4;
 const INSTRUCTION_LENGTH = 16;
+const CPI_DESCRIPTOR_LENGTH = 12;
+const CPI_ACCOUNT_LENGTH = 2;
+const DATA_SEGMENT_LENGTH = 8;
+/** Data segment kinds, numbered as `wire.rs` numbers `DATA_LITERAL`, `DATA_REG_U64` and `DATA_REG_PUBKEY`. */
+const segmentKind = { literal: 0, u64: 4, pubkey: 7 } as const;
 
 /** Byte offset of instruction `pc` inside a compiled payload. */
 function instructionOffset(compiled: CompiledTemplate, pc: number): number {
@@ -48,6 +53,23 @@ function instructionOffset(compiled: CompiledTemplate, pc: number): number {
 
 function readU64(bytes: Uint8Array, offset: number): bigint {
   return new DataView(bytes.buffer, bytes.byteOffset).getBigUint64(offset, true);
+}
+
+/** A record's range immediate, the u64 at byte 6: where the range starts and its length, two little-endian u32s. */
+function rangeOf(record: Uint8Array): [start: number, length: number] {
+  const immediate = readU64(record, 6);
+  return [Number(immediate & 0xffff_ffffn), Number(immediate >> 32n)];
+}
+
+/** The issues of the schema error that `define` throws. */
+function schemaIssues(define: () => unknown) {
+  try {
+    define();
+  } catch (error) {
+    if (error instanceof ZodError) return error.issues;
+    throw error;
+  }
+  throw new Error('the template was accepted');
 }
 
 const transfer = defineTemplate({
@@ -884,15 +906,17 @@ function minDataLength(compiled: CompiledTemplate, index: number): number {
 function segmentTables(compiled: CompiledTemplate) {
   const view = new DataView(compiled.bytes.buffer, compiled.bytes.byteOffset);
   const cpiStart = instructionOffset(compiled, compiled.stats.instructions);
+  // The header counts CPI accounts in the u16 at byte 12 and data segments in the u16 at byte 14.
   const cpiAccounts = view.getUint16(12, true);
-  const segmentStart = cpiStart + compiled.stats.cpis * 12 + cpiAccounts * 2;
+  const segmentStart = cpiStart + compiled.stats.cpis * CPI_DESCRIPTOR_LENGTH + cpiAccounts * CPI_ACCOUNT_LENGTH;
   const segments = Array.from({ length: view.getUint16(14, true) }, (_, index) => ({
-    kind: compiled.bytes[segmentStart + index * 8]!,
-    register: compiled.bytes[segmentStart + index * 8 + 1]!,
+    kind: compiled.bytes[segmentStart + index * DATA_SEGMENT_LENGTH]!,
+    register: compiled.bytes[segmentStart + index * DATA_SEGMENT_LENGTH + 1]!,
   }));
+  // A descriptor's segment count is its byte 5, and its first segment the u16 at byte 6.
   const cpis = Array.from({ length: compiled.stats.cpis }, (_, index) => ({
-    start: view.getUint16(cpiStart + index * 12 + 6, true),
-    length: compiled.bytes[cpiStart + index * 12 + 5]!,
+    start: view.getUint16(cpiStart + index * CPI_DESCRIPTOR_LENGTH + 6, true),
+    length: compiled.bytes[cpiStart + index * CPI_DESCRIPTOR_LENGTH + 5]!,
   }));
   return { segments, cpis };
 }
@@ -918,7 +942,9 @@ describe('data segments', () => {
     );
     const { segments, cpis } = segmentTables(compiled);
     // Register 0 is the owner's key, the PDA's only seed; register 1 is the derived address.
-    expect(segments.slice(cpis[0]!.start, cpis[0]!.start + cpis[0]!.length)).toEqual([{ kind: 7, register: 1 }]);
+    expect(segments.slice(cpis[0]!.start, cpis[0]!.start + cpis[0]!.length)).toEqual([
+      { kind: segmentKind.pubkey, register: 1 },
+    ]);
   });
 
   test('a PDA seed that derives a PDA leaves the outer derivation its own segments', () => {
@@ -948,15 +974,14 @@ describe('data segments', () => {
       }),
     );
     const [vault, ata] = records(compiled).filter((record) => record[0] === opcode.derivePda);
-    const range = new DataView(ata!.buffer, ata!.byteOffset);
-    const [start, length] = [range.getUint32(6, true), range.getUint32(10, true)];
+    const [start, length] = rangeOf(ata!);
     // Register 0 is the token account's key and register 1 the authority's, the vault's only seed.
     // Register 2 is the vault; registers 3 and 4 are the token program's and the mint's keys.
     expect(vault![1]).toBe(2);
     expect(segmentTables(compiled).segments.slice(start, start + length)).toEqual([
-      { kind: 7, register: 2 },
-      { kind: 7, register: 3 },
-      { kind: 7, register: 4 },
+      { kind: segmentKind.pubkey, register: 2 },
+      { kind: segmentKind.pubkey, register: 3 },
+      { kind: segmentKind.pubkey, register: 4 },
     ]);
   });
 
@@ -979,12 +1004,11 @@ describe('data segments', () => {
       const [record] = records(compiled).filter(
         (candidate) => candidate[0] === opcode.emit || candidate[0] === opcode.setReturnData,
       );
-      const range = new DataView(record!.buffer, record!.byteOffset);
-      const [start, length] = [range.getUint32(6, true), range.getUint32(10, true)];
+      const [start, length] = rangeOf(record!);
       // Register 0 is the owner's key, the PDA's only seed; register 1 is the derived address.
       expect(segmentTables(compiled).segments.slice(start, start + length)).toEqual([
-        { kind: 0, register: 0xff },
-        { kind: 7, register: 1 },
+        { kind: segmentKind.literal, register: 0xff },
+        { kind: segmentKind.pubkey, register: 1 },
       ]);
     }
   });
@@ -1025,13 +1049,15 @@ describe('output steps', () => {
       [opcode.emit, 0xff, 0xff, 0xff, 0xff, 0],
       [opcode.setReturnData, 0xff, 0xff, 0xff, 0xff, 0],
     ]);
-    // The immediate is (first segment, segment count), two little-endian u32s.
-    expect([...outputs[0]!.slice(6, 14)]).toEqual([0, 0, 0, 0, 2, 0, 0, 0]);
-    expect([...outputs[1]!.slice(6, 14)]).toEqual([2, 0, 0, 0, 1, 0, 0, 0]);
+    // The immediate is (first segment, segment count).
+    expect(outputs.map(rangeOf)).toEqual([
+      [0, 2],
+      [2, 1],
+    ]);
     expect(segmentTables(compiled).segments).toEqual([
-      { kind: 0, register: 0xff },
-      { kind: 4, register: 0 },
-      { kind: 7, register: 1 },
+      { kind: segmentKind.literal, register: 0xff },
+      { kind: segmentKind.u64, register: 0 },
+      { kind: segmentKind.pubkey, register: 1 },
     ]);
     expect(compiled.sourceMap.filter((entry) => entry.label !== undefined)).toEqual([
       { pc: 1, path: 'steps[0]', label: 'log' },
@@ -1098,24 +1124,14 @@ describe('output steps', () => {
   });
 
   test('an output takes 1 to 64 parts', () => {
-    /** The issues of the schema error that compiling `steps` throws. */
-    const schemaIssues = (steps: Step[]) => {
-      try {
-        compileSteps({}, steps);
-      } catch (error) {
-        if (error instanceof ZodError) return error.issues;
-        throw error;
-      }
-      throw new Error('the template compiled');
-    };
     const parts = (count: number) =>
       Array.from({ length: count }, (_, index) => data.literal(index === 0 ? TAG : Uint8Array.of(index)));
     for (const output of [step.emit, step.setReturnData]) {
-      expect(schemaIssues([output([])])).toMatchObject([
+      expect(schemaIssues(() => compileSteps({}, [output([])]))).toMatchObject([
         { code: 'too_small', minimum: 1, path: ['steps', 0, 'parts'], message: 'Too small: expected array to have >=1 items' },
       ]);
       expect(() => compileSteps({}, [output(parts(64))])).not.toThrow();
-      expect(schemaIssues([output(parts(65))])).toMatchObject([
+      expect(schemaIssues(() => compileSteps({}, [output(parts(65))]))).toMatchObject([
         { code: 'too_big', maximum: 64, path: ['steps', 0, 'parts'], message: 'Too big: expected array to have <=64 items' },
       ]);
     }
@@ -1351,8 +1367,13 @@ describe('count loops and several loops', () => {
     expect(codes.indexOf(opcode.divide)).toBeLessThan(codes.indexOf(opcode.repeat));
     expect(() => counted(expression.input('signed'), 1)).toThrow('repeat count requires u64');
     expect(() => counted(expression.loopIndex(), 1)).toThrow('loopIndex is only valid inside a loop');
-    expect(() => counted(expression.input('rounds'), 0)).toThrow();
-    expect(() => counted(expression.input('rounds'), 256)).toThrow();
+    // The maximum is a schema rule on the step's `max`.
+    expect(schemaIssues(() => counted(expression.input('rounds'), 0))).toMatchObject([
+      { code: 'too_small', minimum: 1, path: ['steps', 0, 'max'], message: 'Too small: expected number to be >=1' },
+    ]);
+    expect(schemaIssues(() => counted(expression.input('rounds'), 256))).toMatchObject([
+      { code: 'too_big', maximum: 255, path: ['steps', 0, 'max'], message: 'Too big: expected number to be <=255' },
+    ]);
   });
 
   test('loops are top level, at most eight, and a batch needs a forEach', () => {
@@ -1651,8 +1672,8 @@ describe('ed25519Signature', () => {
     const constants = records(compiled)
       .filter((record) => record[0] === opcode.constU128)
       .map((record) => {
-        const offset = Number(readU64(record, 6) & 0xffff_ffffn);
-        return blob.slice(offset, offset + 16).reduceRight((value, byte) => (value << 8n) | BigInt(byte), 0n);
+        const [offset, length] = rangeOf(record);
+        return blob.slice(offset, offset + length).reduceRight((value, byte) => (value << 8n) | BigInt(byte), 0n);
       });
     const field = (offset: number, width: number, value: bigint) =>
       [((1n << BigInt(width * 8)) - 1n) << BigInt(offset * 8), value << BigInt(offset * 8)] as const;

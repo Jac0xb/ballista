@@ -147,6 +147,17 @@ function literalKey(value: Literal): string {
   return `${value.type}:${String(inner)}`;
 }
 
+/**
+ * The typed value of a literal expression in the plain object tree, or `undefined` for any other
+ * node. `data.literal(bytes)` is a CPI data part, not an expression, and has no typed value.
+ */
+function typedLiteral(record: Record<string, unknown>): Literal | undefined {
+  const inner = record.value as Literal | undefined;
+  return record.kind === 'literal' && inner !== undefined && typeof inner === 'object' && 'type' in inner
+    ? inner
+    : undefined;
+}
+
 /** Every literal expression in the steps, in the order they appear, deduplicated by value. */
 function collectLiterals(value: unknown, into = new Map<string, Literal>()): Map<string, Literal> {
   if (Array.isArray(value)) {
@@ -155,11 +166,10 @@ function collectLiterals(value: unknown, into = new Map<string, Literal>()): Map
   }
   if (value === null || typeof value !== 'object') return into;
   const record = value as Record<string, unknown>;
-  const inner = record.value as Literal | undefined;
-  // `data.literal(bytes)` is a CPI data part, not an expression, and has no typed value.
-  if (record.kind === 'literal' && inner !== undefined && typeof inner === 'object' && 'type' in inner) {
-    const key = literalKey(inner);
-    if (!into.has(key)) into.set(key, inner);
+  const literal = typedLiteral(record);
+  if (literal !== undefined) {
+    const key = literalKey(literal);
+    if (!into.has(key)) into.set(key, literal);
   }
   for (const item of Object.values(record)) collectLiterals(item, into);
   return into;
@@ -167,8 +177,7 @@ function collectLiterals(value: unknown, into = new Map<string, Literal>()): Map
 
 /**
  * How often each literal (keyed like `literalKey`) and each fixed input (as `input:<name>`)
- * appears in the steps. A hoisted register that one appearance alone reads can be handed to a
- * loop-carried variable; one that more read cannot.
+ * appears in the steps. `sharesRegister` reads it.
  */
 function countUses(value: unknown, into = new Map<string, number>()): Map<string, number> {
   if (Array.isArray(value)) {
@@ -177,10 +186,10 @@ function countUses(value: unknown, into = new Map<string, number>()): Map<string
   }
   if (value === null || typeof value !== 'object') return into;
   const record = value as Record<string, unknown>;
-  const inner = record.value as Literal | undefined;
+  const literal = typedLiteral(record);
   let key: string | undefined;
-  if (record.kind === 'literal' && inner !== undefined && typeof inner === 'object' && 'type' in inner) {
-    key = literalKey(inner);
+  if (literal !== undefined) {
+    key = literalKey(literal);
   } else if (record.kind === 'input' && typeof record.name === 'string') {
     key = `input:${record.name}`;
   }
@@ -683,7 +692,8 @@ class Compiler {
         );
       }
       if (RUN_EVENT_TAG_FAMILY.every((byte, index) => tag.bytes[index] === byte)) {
-        throw new TypeError(`emit tag cannot start with "BEV": that tag family is reserved for Ballista's run event`);
+        const family = String.fromCharCode(...RUN_EVENT_TAG_FAMILY);
+        throw new TypeError(`emit tag cannot start with "${family}": that tag family is reserved for Ballista's run event`);
       }
     }
     if (current.kind === 'setReturnData') {

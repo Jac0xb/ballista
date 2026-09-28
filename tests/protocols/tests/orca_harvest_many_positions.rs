@@ -82,21 +82,25 @@ impl Setup {
     }
 }
 
-/// The harvest over `rows`, each paired with the pool it belongs to, signed by `authority`.
-fn harvest(
+/// The harvest over `rows`, each paired with the pool it belongs to, signed by `authority`, paying
+/// fees to `fee_accounts` — ordinarily the owner's own token accounts ([`harvest`]), but a security
+/// test points them at a stranger's instead.
+fn harvest_paying(
     setup: &Setup,
     example: &Example,
     authority: &Keypair,
     rows: &[(&Position, &Pool)],
     dust_floor: u64,
+    fee_accounts: (Address, Address),
 ) -> Instruction {
+    let (token_owner_account_a, token_owner_account_b) = fee_accounts;
     let mut run = Run::new(setup.template, example)
         .account("whirlpoolProgram", WHIRLPOOL, false, false)
         .account("tokenProgram", TOKEN_PROGRAM_ID, false, false)
         .account("positionAuthority", authority.pubkey(), false, true)
         .account("whirlpool", setup.pool.address, true, false)
-        .account("tokenOwnerAccountA", setup.owner.token_a, true, false)
-        .account("tokenOwnerAccountB", setup.owner.token_b, true, false)
+        .account("tokenOwnerAccountA", token_owner_account_a, true, false)
+        .account("tokenOwnerAccountB", token_owner_account_b, true, false)
         .account("tokenVaultA", setup.pool.vault_a, true, false)
         .account("tokenVaultB", setup.pool.vault_b, true, false)
         .input_u64("dustFloor", dust_floor);
@@ -119,6 +123,18 @@ fn harvest(
         });
     }
     run.build()
+}
+
+/// [`harvest_paying`], paying fees to the setup's own owner.
+fn harvest(
+    setup: &Setup,
+    example: &Example,
+    authority: &Keypair,
+    rows: &[(&Position, &Pool)],
+    dust_floor: u64,
+) -> Instruction {
+    let fee_accounts = (setup.owner.token_a, setup.owner.token_b);
+    harvest_paying(setup, example, authority, rows, dust_floor, fee_accounts)
 }
 
 fn send(
@@ -285,12 +301,19 @@ fn a_stranger_cannot_collect_and_whirlpools_says_so() {
     let example = &examples[EXAMPLE];
     let mut setup = setup(example);
     let Rows { both, .. } = four_rows(&mut setup);
-    let stranger = keypair(&orca::seed("harvest stranger"));
-    fund(&mut setup.svm, &stranger.pubkey(), SOL);
+    // Its own accounts, so `feesGoToTheOwner` passes and Whirlpools' own check is what's on trial.
+    let stranger = orca::token_wallet(&mut setup.svm, &orca::seed("harvest stranger"), 0, 0);
 
     let pool = setup.pool;
-    let run = harvest(&setup, example, &stranger, &[(&both, &pool)], 0);
-    let failure = send(&mut setup, &stranger, &[run]).unwrap_err();
+    let run = harvest_paying(
+        &setup,
+        example,
+        &stranger.keypair,
+        &[(&both, &pool)],
+        0,
+        (stranger.token_a, stranger.token_b),
+    );
+    let failure = send(&mut setup, &stranger.keypair, &[run]).unwrap_err();
 
     assert_eq!(
         (failure.program, failure.code),
@@ -407,4 +430,36 @@ fn ten_rows_fit_one_legacy_transaction() {
         "ten rows: {} CU, {} bytes",
         outcome.compute_units, outcome.size
     );
+}
+
+/// Security: the fixed `tokenOwnerAccountA`/`B` must belong to `positionAuthority`, checked once
+/// for the whole batch, not per row. Whirlpools' `collect_fees` checks only their mint, never who
+/// owns them, so nothing else stops a run an untrusted builder assembled from paying a stranger
+/// every row's fees while the true owner just signs.
+#[test]
+fn fees_must_go_to_the_owner_not_a_strangers_accounts() {
+    let examples = examples();
+    let example = &examples[EXAMPLE];
+    let mut setup = setup(example);
+    let Rows { both, .. } = four_rows(&mut setup);
+    let stranger = orca::token_wallet(
+        &mut setup.svm,
+        &orca::seed("harvest stranger accounts"),
+        0,
+        0,
+    );
+
+    let pool = setup.pool;
+    let owner = setup.owner.keypair.insecure_clone();
+    let run = harvest_paying(
+        &setup,
+        example,
+        &owner,
+        &[(&both, &pool)],
+        0,
+        (stranger.token_a, stranger.token_b),
+    );
+    let failure = send(&mut setup, &owner, &[run]).unwrap_err();
+
+    tx::assert_requirement_failed(&failure, example, "feesGoToTheOwner");
 }

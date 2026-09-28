@@ -11,7 +11,7 @@
  * `dustFloor`. The update is skipped for a position without liquidity, where it fails with
  * `LiquidityZero` (6012) and has nothing to record.
  *
- * Skipping a row saves compute, about 11,000 units per collect, and leaves dust alone. It does not
+ * Skipping a row saves compute, about 13,300 units per collect, and leaves dust alone. It does not
  * prevent reverts: `collect_fees` with nothing owed succeeds and moves nothing. What reverts the
  * whole harvest is a row Whirlpools refuses, such as a position the signer does not hold
  * (`MissingOrInvalidDelegate`, 6019) or one from another pool (`ConstraintHasOne`, 2001). Those do
@@ -21,6 +21,12 @@
  * and upper ticks. A row that collects costs about 24,000 compute units, so eight fit the default
  * limit of 200,000 and more need a compute budget. Rows share keys when they share tick arrays: then
  * about ten fit a legacy transaction, and twelve, the template's limit, need a lookup table.
+ *
+ * `tokenOwnerAccountA` and `tokenOwnerAccountB` must belong to `positionAuthority`. Whirlpools'
+ * `collect_fees` checks only their mint, never who owns them, so an untrusted run builder could
+ * otherwise send every row's fees to its own accounts while the owner just signs; the template
+ * requires it itself (`feesGoToTheOwner`), once for the batch rather than once per row, since both
+ * accounts are fixed and every row shares them.
  *
  * Offsets come from `Position`, `LEN = 8 + 136 + 72`: `liquidity` at 72, `fee_owed_a` at 112 and
  * `fee_owed_b` at 136.
@@ -39,6 +45,8 @@ import {
   ORCA_POSITION,
   ORCA_UPDATE_FEES_AND_REWARDS,
   ORCA_WHIRLPOOL,
+  TOKEN_ACCOUNT_LENGTH,
+  TOKEN_ACCOUNT_OWNER_OFFSET,
   addressBytes,
 } from './shared.js';
 
@@ -60,8 +68,17 @@ export const orcaHarvestManyPositions = defineTemplate({
     positionAuthority: { signer: true },
     /** Written by each row's `update_fees_and_rewards`. */
     whirlpool: { writable: true },
-    tokenOwnerAccountA: { writable: true },
-    tokenOwnerAccountB: { writable: true },
+    /** Must belong to `positionAuthority`: see the header (`feesGoToTheOwner`). */
+    tokenOwnerAccountA: {
+      writable: true,
+      owner: TOKEN_PROGRAM_ADDRESS_BYTES,
+      minDataLength: TOKEN_ACCOUNT_LENGTH,
+    },
+    tokenOwnerAccountB: {
+      writable: true,
+      owner: TOKEN_PROGRAM_ADDRESS_BYTES,
+      minDataLength: TOKEN_ACCOUNT_LENGTH,
+    },
     tokenVaultA: { writable: true },
     tokenVaultB: { writable: true },
   },
@@ -82,6 +99,20 @@ export const orcaHarvestManyPositions = defineTemplate({
     },
   },
   steps: [
+    // Fixed accounts, shared by every row: checked once for the whole batch, not once per row.
+    step.require(
+      expression.and(
+        expression.equal(
+          expression.accountData(account.fixed('tokenOwnerAccountA'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+          expression.accountField(account.fixed('positionAuthority'), 'key'),
+        ),
+        expression.equal(
+          expression.accountData(account.fixed('tokenOwnerAccountB'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+          expression.accountField(account.fixed('positionAuthority'), 'key'),
+        ),
+      ),
+      'feesGoToTheOwner',
+    ),
     step.forEach(
       [
         step.invoke({

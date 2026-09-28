@@ -22,6 +22,8 @@ import {
   jupiterDepositExactOutput,
   jupiterOracleCheckedSwap,
   kaminoRepaySwapOutput,
+  orcaCompoundFees,
+  orcaHarvestManyPositions,
   pythFreshPriceGate,
   tokenSweepIntoSwap,
 } from '../examples/protocols/index.js';
@@ -41,6 +43,7 @@ import {
   SPL_MINT,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_MINT_OFFSET,
+  TOKEN_ACCOUNT_OWNER_OFFSET,
   addressBytes,
   anchorDiscriminator,
 } from '../examples/protocols/shared.js';
@@ -366,6 +369,22 @@ describe('the Jupiter deposit runner', () => {
         minimumOut: 1n,
       }),
     ).rejects.toThrow(/useSharedAccounts/);
+  });
+});
+
+describe('Orca fee destinations belong to the position authority', () => {
+  // Whirlpools' collect_fees checks only these accounts' mint, never who owns them, so nothing
+  // else stops a run an untrusted builder assembled from paying a stranger instead of the owner.
+  test.each([
+    ['orcaCompoundFees', orcaCompoundFees],
+    ['orcaHarvestManyPositions', orcaHarvestManyPositions],
+  ] as const)('%s pins tokenOwnerAccountA/B to positionAuthority', (_, template) => {
+    const bindings = bindingsOf(template);
+    const check = requireLabeled(template, 'feesGoToTheOwner');
+    for (const account of ['tokenOwnerAccountA', 'tokenOwnerAccountB'] as const) {
+      expect(dependsOn(check.condition, bindings, reads(account, TOKEN_ACCOUNT_OWNER_OFFSET))).toBe(true);
+    }
+    expect(dependsOn(check.condition, bindings, accountKey('positionAuthority'))).toBe(true);
   });
 });
 

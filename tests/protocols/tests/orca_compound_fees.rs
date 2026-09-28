@@ -115,12 +115,15 @@ fn slippage_bounds(setup: &Setup, bps: u16) -> (u128, u128) {
     (bounds.min_sqrt_price, bounds.max_sqrt_price)
 }
 
-/// Runs the template for the setup's position, signed by its owner.
-fn compound(
+/// Runs the template for the setup's position, signed by its owner, paying fees to
+/// `fee_accounts` — ordinarily the owner's own token accounts ([`compound`]), but a security test
+/// points them at a stranger's instead.
+fn compound_paying(
     setup: &mut Setup,
     example: &Example,
     dust_floor: u64,
     (min_sqrt_price, max_sqrt_price): (u128, u128),
+    fee_accounts: (Address, Address),
 ) -> Result<Outcome, Failure> {
     let Setup {
         pool,
@@ -128,6 +131,7 @@ fn compound(
         position,
         ..
     } = &*setup;
+    let (token_owner_account_a, token_owner_account_b) = fee_accounts;
     let run = Run::new(setup.template, example)
         .account("whirlpoolProgram", WHIRLPOOL, false, false)
         .account("tokenProgram", TOKEN_PROGRAM_ID, false, false)
@@ -138,8 +142,8 @@ fn compound(
         .account("positionTokenAccount", position.token_account, false, false)
         .account("tokenMintA", pool.mint_a, false, false)
         .account("tokenMintB", pool.mint_b, false, false)
-        .account("tokenOwnerAccountA", owner.token_a, true, false)
-        .account("tokenOwnerAccountB", owner.token_b, true, false)
+        .account("tokenOwnerAccountA", token_owner_account_a, true, false)
+        .account("tokenOwnerAccountB", token_owner_account_b, true, false)
         .account("tokenVaultA", pool.vault_a, true, false)
         .account("tokenVaultB", pool.vault_b, true, false)
         .account(
@@ -160,6 +164,17 @@ fn compound(
         .build();
     let payer = setup.owner.keypair.insecure_clone();
     tx::send(&mut setup.svm, &payer, &[], &[run], &[])
+}
+
+/// [`compound_paying`], paying fees to the setup's own owner.
+fn compound(
+    setup: &mut Setup,
+    example: &Example,
+    dust_floor: u64,
+    bounds: (u128, u128),
+) -> Result<Outcome, Failure> {
+    let fee_accounts = (setup.owner.token_a, setup.owner.token_b);
+    compound_paying(setup, example, dust_floor, bounds, fee_accounts)
 }
 
 fn balances(setup: &Setup) -> (u64, u64) {
@@ -493,4 +508,33 @@ fn dust_that_buys_no_liquidity_fails_the_run_unless_the_floor_skips_it() {
     assert_eq!(after.liquidity, before.liquidity, "nothing was reinvested");
     assert_eq!((after.fee_owed_a, after.fee_owed_b), (0, 0));
     println!("dust: fees ({owed_a}, {owed_b}) after {lots} lots of 0.001 SOL");
+}
+
+/// Security: `tokenOwnerAccountA`/`B` must belong to `positionAuthority`. Whirlpools' `collect_fees`
+/// checks only their mint, never who owns them, so nothing else stops a run an untrusted builder
+/// assembled from paying a stranger while the true owner just signs. A floor between the fees
+/// collects both without reinvesting (`a_floor_between_the_fees_collects_both_and_reinvests_neither`),
+/// the simplest path that would otherwise pay out.
+#[test]
+fn fees_must_go_to_the_owner_not_a_strangers_accounts() {
+    let examples = examples();
+    let example = &examples[EXAMPLE];
+    let mut setup = setup(example, true);
+    earn_both_fees(&mut setup);
+    let owed = orca::fees_owed_now(&setup.svm, &setup.pool, &setup.position);
+    assert_ne!(owed.0, owed.1, "a floor between the fees needs two fees");
+    let floor = owed.0.min(owed.1);
+    let stranger = orca::token_wallet(&mut setup.svm, &orca::seed("compound stranger"), 0, 0);
+    let bounds = slippage_bounds(&setup, 100);
+
+    let failure = compound_paying(
+        &mut setup,
+        example,
+        floor,
+        bounds,
+        (stranger.token_a, stranger.token_b),
+    )
+    .unwrap_err();
+
+    tx::assert_requirement_failed(&failure, example, "feesGoToTheOwner");
 }

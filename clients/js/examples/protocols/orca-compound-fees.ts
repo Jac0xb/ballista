@@ -29,6 +29,18 @@
  * With nothing above `dustFloor` in either token, the collect and the deposit are skipped and the
  * run lands: a scheduled compounder that finds nothing to do should not revert and burn the fee.
  *
+ * `dustFloor` is not safe at 0. A fee just above the floor can still be too small to buy one unit
+ * of liquidity over the position's range, and the deposit then fails with `LiquidityZero` (6012),
+ * taking the whole run down with it, collect included
+ * (`dust_that_buys_no_liquidity_fails_the_run_unless_the_floor_skips_it`). A few base units covers
+ * a SOL/USDC position; a pool whose token A is worth less per base unit needs more, so a few
+ * thousand base units is a safer default.
+ *
+ * `tokenOwnerAccountA` and `tokenOwnerAccountB` must belong to `positionAuthority`. Whirlpools'
+ * `collect_fees` checks only their mint, never who owns them, so an untrusted run builder could
+ * otherwise send real fees to its own accounts while the owner just signs; the template requires
+ * it itself (`feesGoToTheOwner`).
+ *
  * Offsets come from `Position`, declared as `whirlpool, position_mint, liquidity,
  * tick_lower_index, tick_upper_index, fee_growth_checkpoint_a, fee_owed_a,
  * fee_growth_checkpoint_b, fee_owed_b, reward_infos` with `LEN = 8 + 136 + 72`.
@@ -51,6 +63,8 @@ import {
   ORCA_POSITION,
   ORCA_UPDATE_FEES_AND_REWARDS,
   ORCA_WHIRLPOOL,
+  TOKEN_ACCOUNT_LENGTH,
+  TOKEN_ACCOUNT_OWNER_OFFSET,
   addressBytes,
 } from './shared.js';
 
@@ -58,7 +72,10 @@ const position = account.fixed('position');
 
 export const orcaCompoundFees = defineTemplate({
   inputs: {
-    /** Fees at or below this, in either token's base units, are not worth collecting. */
+    /**
+     * Fees at or below this, in either token's base units, are not worth collecting. Not safe at
+     * 0: see the header.
+     */
     dustFloor: { type: 'u64' },
     /** The lowest pool sqrt price (Q64.64) the deposit accepts. */
     minSqrtPrice: { type: 'u128' },
@@ -80,14 +97,38 @@ export const orcaCompoundFees = defineTemplate({
     positionTokenAccount: {},
     tokenMintA: {},
     tokenMintB: {},
-    tokenOwnerAccountA: { writable: true },
-    tokenOwnerAccountB: { writable: true },
+    /** Must belong to `positionAuthority`: see the header (`feesGoToTheOwner`). */
+    tokenOwnerAccountA: {
+      writable: true,
+      owner: TOKEN_PROGRAM_ADDRESS_BYTES,
+      minDataLength: TOKEN_ACCOUNT_LENGTH,
+    },
+    tokenOwnerAccountB: {
+      writable: true,
+      owner: TOKEN_PROGRAM_ADDRESS_BYTES,
+      minDataLength: TOKEN_ACCOUNT_LENGTH,
+    },
     tokenVaultA: { writable: true },
     tokenVaultB: { writable: true },
     tickArrayLower: { writable: true },
     tickArrayUpper: { writable: true },
   },
   steps: [
+    // Whirlpools' collect_fees checks only the mint of these accounts; nothing stops a run built
+    // by someone other than the owner from pointing them elsewhere.
+    step.require(
+      expression.and(
+        expression.equal(
+          expression.accountData(account.fixed('tokenOwnerAccountA'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+          expression.accountField(account.fixed('positionAuthority'), 'key'),
+        ),
+        expression.equal(
+          expression.accountData(account.fixed('tokenOwnerAccountB'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+          expression.accountField(account.fixed('positionAuthority'), 'key'),
+        ),
+      ),
+      'feesGoToTheOwner',
+    ),
     step.let(
       'hasLiquidity',
       expression.greaterThan(

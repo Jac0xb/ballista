@@ -172,8 +172,10 @@ remains open is the rest of what the trader's signature authorizes:
 ### Open: the tolerance is a budget a hostile route can spend
 
 `route`'s `platform_fee_account` (position 6) is chosen by whoever builds the run, as are
-`platformFeeBps` and `slippageBps`. Nothing checks who owns it. The fill check bounds what it can
-take, but only to `toleranceBps`.
+`platformFeeBps`, `slippageBps` and `quotedOutAmount`. Nothing checks who owns it. Jupiter's own
+6001 refusal below is no defense, since the builder also writes the quote it checks against (with
+`quotedOutAmount` set to 1, the same fee landed at 50 bps). The fill check bounds what it can take,
+but only to `toleranceBps`.
 
 A one-off probe at the snapshot's slot, not a committed test, ran the fixed template at the market
 with `toleranceBps` 100 and an attacker's USDC account as the platform fee account:

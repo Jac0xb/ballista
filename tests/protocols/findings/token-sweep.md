@@ -222,9 +222,13 @@ account:
 - **250 bps with `slippageBps` 300:** it **landed**. The attacker took 30,453,834 lamports.
 
 So `slippageBps` is also what a hostile builder may take, up to the 2.55% a `u8` fee allows. And a
-builder who writes the quote can lower it. The seller should read `quotedOutAmount` and
-`slippageBps` in what it signs as the least it accepts. The owner checks ensure only that the
-proceeds they are measured against reach the seller.
+builder who writes the quote can lower it. The floor is a rate: `quotedOutAmount` per
+`quotedInAmount`, less `slippageBps`. A seller has to check all three in what it signs; checking
+`quotedOutAmount` and `slippageBps` alone is not enough, since an inflated `quotedInAmount` shrinks
+the rate (at ten times the true input and 50 bps, a 255 bps fee to an attacker landed, in a
+reviewer's one-off probe). The template guards against the market moving after the quote, not
+against a builder who writes the quote. The owner checks ensure only that the proceeds the floor is
+measured against reach the seller.
 
 ## Notes for the docs session
 
@@ -268,5 +272,5 @@ What the pages could add:
   and 52 bytes more than Jupiter's own 64,188 CU and 648 bytes. Here Jupiter's compute budget set
   the limit to 1,400,000 CU. A client that sets a tighter limit from a simulation of Jupiter's own
   transaction needs to add the run's cost.
-- **The builder's share.** `quotedOutAmount` and `slippageBps` are the least the seller accepts,
-  whoever builds the run: see [the quote and the fee are the builder's](#open-the-quote-and-the-fee-are-the-builders).
+- **The builder's share.** `quotedInAmount`, `quotedOutAmount` and `slippageBps` together set the
+  least the seller accepts, as a rate, whoever builds the run: see [the quote and the fee are the builder's](#open-the-quote-and-the-fee-are-the-builders).

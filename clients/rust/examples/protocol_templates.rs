@@ -1,4 +1,4 @@
-//! The eleven live-protocol templates, authored in Rust with `ProgramBuilder`.
+//! The twelve live-protocol templates, authored in Rust with `ProgramBuilder`.
 //!
 //! Each function builds the same bytes the TypeScript compiler produces for the file of the same
 //! name in `clients/js/examples/protocols/`; `tests/protocol_templates.rs` checks every one
@@ -15,8 +15,8 @@
 //! one interns it before declaring its accounts.
 
 use ballista_sdk::{
-    ballista_common::template::*, template_hash, ProgramBuilder, Segment, SYSTEM_PROGRAM_ID,
-    TOKEN_PROGRAM_ID,
+    ballista_common::template::*, template_hash, ProgramBuilder, Segment, ED25519_PROGRAM_ID,
+    SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID,
 };
 use solana_program::{pubkey, pubkey::Pubkey};
 
@@ -59,6 +59,21 @@ const ORCA_POSITION_LEN: u32 = 216;
 const ORCA_LIQUIDITY: u64 = 72;
 const ORCA_FEE_OWED_A: u64 = 112;
 const ORCA_FEE_OWED_B: u64 = 136;
+// The signed quote: 128 bytes, integers little-endian, keys as their 32 raw bytes.
+const QUOTE_LEN: u16 = 128;
+const QUOTE_TAG: [u8; 8] = *b"BLSTQT01";
+const QUOTE_PRICE: u64 = 8;
+const QUOTE_MAX_AMOUNT: u64 = 16;
+const QUOTE_EXPIRY: u64 = 24;
+const QUOTE_TAKER: u64 = 32;
+const QUOTE_BASE_MINT: u64 = 64;
+const QUOTE_QUOTE_MINT: u64 = 96;
+/// Quote prices carry six decimals: 1,000,000 is one quote unit per base unit.
+const PRICE_SCALE: u64 = 1_000_000;
+// An Ed25519 precompile instruction's header: a u8 signature count and a padding byte, then the
+// signature's u16 offsets. These are byte offsets into the instruction's data.
+const ED25519_PUBLIC_KEY_OFFSET: u64 = 6;
+const ED25519_MESSAGE_DATA_OFFSET: u64 = 10;
 
 /// Jupiter `route`'s arguments after its discriminator, or its `route_plan`: at most 512 bytes.
 const ROUTE_ARGS_MAX: u16 = 512;
@@ -95,6 +110,26 @@ fn require_key_at(builder: &mut ProgramBuilder, account: u8, offset: u64, expect
 /// Requires an SPL token account to belong to `owner`.
 fn require_owner(builder: &mut ProgramBuilder, token_account: u8, owner: u8) {
     require_key_at(builder, token_account, TOKEN_OWNER, owner);
+}
+
+/// The first 16 bytes of an Ed25519 precompile instruction holding one signature whose key,
+/// signature and message are in its own data, over `message_len` bytes, as `(mask, expected)`:
+/// the signature count, the three instruction indexes (`u16::MAX` names the precompile
+/// instruction itself) and the message size, compared as one masked `u128`.
+fn ed25519_header(message_len: u16) -> (u128, u128) {
+    let fields = [
+        (0, 1, 1),                   // signature count
+        (4, 2, 0xffff),              // signature instruction index
+        (8, 2, 0xffff),              // public key instruction index
+        (12, 2, message_len.into()), // message data size
+        (14, 2, 0xffff),             // message instruction index
+    ];
+    let (mut mask, mut expected) = (0u128, 0u128);
+    for (offset, width, value) in fields {
+        mask |= ((1u128 << (8 * width)) - 1) << (8 * offset);
+        expected |= value << (8 * offset);
+    }
+    (mask, expected)
 }
 
 /// Requires an SPL token account to hold `mint`.
@@ -1033,8 +1068,125 @@ pub fn marginfi_to_kamino_rebalance() -> Vec<u8> {
 }
 // #endregion marginfi-to-kamino
 
+// #region signed-quote
+/// Settle a maker's Ed25519-signed quote: the taker pays the signed price for what it takes, and
+/// the maker delivers it, within the quote's size, before its expiry, in its mints.
+///
+/// The Ed25519 precompile instruction carrying the maker's signature goes directly before the run.
+pub fn signed_quote_settlement() -> Vec<u8> {
+    let mut b = ProgramBuilder::new();
+    // The compiler records a constant pubkey before the accounts' addresses.
+    b.pubkey(ED25519_PROGRAM_ID.to_bytes());
+    let instructions = b.account(READ, Some(SYSVAR_INSTRUCTIONS.to_bytes()), None, 0);
+    let token_program = program(&mut b, TOKEN_PROGRAM_ID);
+    let taker = b.account(SIGN, None, None, 0);
+    let maker = b.account(SIGN, None, None, 0);
+    let taker_quote_account = token_account(&mut b); // pays, in the quote mint
+    let maker_quote_account = token_account(&mut b); // is paid, in the quote mint
+    let maker_base_account = token_account(&mut b); // delivers, in the base mint
+    let taker_base_account = token_account(&mut b); // receives, in the base mint
+    let amount = b.input(VALUE_U64, 0);
+
+    let amount = b.load_input(amount);
+    let one = b.const_u64(1);
+    let ed25519 = b.const_pubkey(ED25519_PROGRAM_ID.to_bytes());
+    let zero = b.const_u64(0);
+    let (mask, expected) = ed25519_header(QUOTE_LEN);
+    let mask = b.const_u128(mask);
+    let expected = b.const_u128(expected);
+    let public_key_offset = b.const_u64(ED25519_PUBLIC_KEY_OFFSET);
+    let message_offset = b.const_u64(ED25519_MESSAGE_DATA_OFFSET);
+    let tag = b.const_u64(u64::from_le_bytes(QUOTE_TAG));
+    let expiry_at = b.const_u64(QUOTE_EXPIRY);
+    let taker_at = b.const_u64(QUOTE_TAKER);
+    let max_amount_at = b.const_u64(QUOTE_MAX_AMOUNT);
+    let quote_mint_at = b.const_u64(QUOTE_QUOTE_MINT);
+    let base_mint_at = b.const_u64(QUOTE_BASE_MINT);
+    let price_at = b.const_u64(QUOTE_PRICE);
+    let price_scale = b.const_u64(PRICE_SCALE);
+
+    // The signature is in the instruction directly before this run.
+    let current = b.introspect(OP_INSTRUCTION_INDEX, instructions, NO_INDEX, NO_INDEX);
+    let signature = b.binary(OP_SUB, current, one);
+    let verifier = b.introspect(OP_INSTRUCTION_PROGRAM, instructions, signature, NO_INDEX);
+    let is_ed25519 = b.binary(OP_EQ, verifier, ed25519);
+    b.require(is_ed25519);
+    // One signature, over a 128-byte message, with its key and message in its own data.
+    let header = b.read_instruction_data(OP_READ_U128, instructions, signature, zero);
+    let header = b.binary(OP_BIT_AND, header, mask);
+    let self_contained = b.binary(OP_EQ, header, expected);
+    b.require(self_contained);
+    // Signed by the maker, who also signs the transaction.
+    let key_at = b.read_instruction_data(OP_READ_U16, instructions, signature, public_key_offset);
+    let key = b.read_instruction_data(OP_READ_PUBKEY, instructions, signature, key_at);
+    let maker_key = b.account_key(maker);
+    let by_maker = b.binary(OP_EQ, key, maker_key);
+    b.require(by_maker);
+    // Where the signed message starts in that instruction's data.
+    let message = b.read_instruction_data(OP_READ_U16, instructions, signature, message_offset);
+
+    // The tag separates quotes from anything else the maker signs.
+    let signed_tag = b.read_instruction_data(OP_READ_U64, instructions, signature, message);
+    let tagged = b.binary(OP_EQ, signed_tag, tag);
+    b.require(tagged);
+
+    let now = b.clock_timestamp();
+    let at = b.binary(OP_ADD, message, expiry_at);
+    let expiry = b.read_instruction_data(OP_READ_I64, instructions, signature, at);
+    let not_expired = b.binary(OP_LTE, now, expiry);
+    b.require(not_expired);
+
+    let at = b.binary(OP_ADD, message, taker_at);
+    let quoted_taker = b.read_instruction_data(OP_READ_PUBKEY, instructions, signature, at);
+    let taker_key = b.account_key(taker);
+    let for_this_taker = b.binary(OP_EQ, quoted_taker, taker_key);
+    b.require(for_this_taker);
+
+    let at = b.binary(OP_ADD, message, max_amount_at);
+    let max_amount = b.read_instruction_data(OP_READ_U64, instructions, signature, at);
+    let within_size = b.binary(OP_LTE, amount, max_amount);
+    b.require(within_size);
+
+    // A token transfer moves only between accounts of one mint, so pinning one side of each leg
+    // pins both.
+    let paid_in = b.read(OP_READ_PUBKEY, taker_quote_account, TOKEN_MINT);
+    let at = b.binary(OP_ADD, message, quote_mint_at);
+    let quote_mint = b.read_instruction_data(OP_READ_PUBKEY, instructions, signature, at);
+    let in_quote_mint = b.binary(OP_EQ, paid_in, quote_mint);
+    b.require(in_quote_mint);
+    let delivered = b.read(OP_READ_PUBKEY, maker_base_account, TOKEN_MINT);
+    let at = b.binary(OP_ADD, message, base_mint_at);
+    let base_mint = b.read_instruction_data(OP_READ_PUBKEY, instructions, signature, at);
+    let in_base_mint = b.binary(OP_EQ, delivered, base_mint);
+    b.require(in_base_mint);
+    // The payment reaches an account the maker owns, not one the taker picked.
+    require_owner(&mut b, maker_quote_account, maker);
+
+    // payment = amount × price ÷ PRICE_SCALE, rounded up in the maker's favour.
+    let at = b.binary(OP_ADD, message, price_at);
+    let price = b.read_instruction_data(OP_READ_U64, instructions, signature, at);
+    let payment = b.mul_div_ceil(amount, price, price_scale);
+
+    let transfer = b.blob(&[3]); // SPL Token Transfer
+    let taker_pays = b.cpi(
+        token_program,
+        &[(taker_quote_account, WRITE), (maker_quote_account, WRITE), (taker, SIGN)],
+        &[Segment::Literal(transfer), Segment::Register(DATA_REG_U64, payment)],
+    );
+    b.invoke(taker_pays, None);
+    let transfer = b.blob(&[3]);
+    let maker_delivers = b.cpi(
+        token_program,
+        &[(maker_base_account, WRITE), (taker_base_account, WRITE), (maker, SIGN)],
+        &[Segment::Literal(transfer), Segment::Register(DATA_REG_U64, amount)],
+    );
+    b.invoke(maker_delivers, None);
+    b.build().unwrap()
+}
+// #endregion signed-quote
+
 /// Every template, under the name `fixtures/protocol-examples.json` records it by.
-pub const TEMPLATES: [(&str, fn() -> Vec<u8>); 11] = [
+pub const TEMPLATES: [(&str, fn() -> Vec<u8>); 12] = [
     ("jitoProfitGuardedTip", jito_profit_guarded_tip),
     ("jupiterDepositExactOutput", jupiter_deposit_exact_output),
     ("jupiterOracleCheckedSwap", jupiter_oracle_checked_swap),
@@ -1045,6 +1197,7 @@ pub const TEMPLATES: [(&str, fn() -> Vec<u8>); 11] = [
     ("orcaCompoundFees", orca_compound_fees),
     ("orcaHarvestManyPositions", orca_harvest_many_positions),
     ("pythFreshPriceGate", pyth_fresh_price_gate),
+    ("signedQuoteSettlement", signed_quote_settlement),
     ("tokenSweepIntoSwap", token_sweep_into_swap),
 ];
 

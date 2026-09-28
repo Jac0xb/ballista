@@ -12,7 +12,9 @@
 //! cargo run -p ballista-sdk --example protocol_templates_run
 //! ```
 
-use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID};
+use ballista_sdk::{
+    run_instruction, RunInputs, ED25519_PROGRAM_ID, SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID,
+};
 use solana_program::{
     instruction::{AccountMeta, Instruction},
     pubkey,
@@ -749,6 +751,109 @@ pub fn run_marginfi_to_kamino(
 }
 // #endregion marginfi-to-kamino
 
+// #region signed-quote
+/// The quote a maker signs off chain, as `signed-quote-settlement.ts` reads it.
+pub struct Quote {
+    /// Quote-token base units per 1,000,000 base-token base units.
+    pub price: u64,
+    /// The most base-token base units the maker delivers.
+    pub max_amount: u64,
+    /// The last Unix timestamp at which the quote can settle.
+    pub expiry: i64,
+    /// The one wallet that can take the quote.
+    pub taker: Pubkey,
+    /// The mint the maker delivers, and the mint the taker pays in.
+    pub base_mint: Pubkey,
+    pub quote_mint: Pubkey,
+}
+
+impl Quote {
+    /// The 128 bytes the maker signs: the tag `BLSTQT01`, then the fields, integers
+    /// little-endian.
+    pub fn message(&self) -> Vec<u8> {
+        let mut message = Vec::with_capacity(128);
+        message.extend_from_slice(b"BLSTQT01");
+        message.extend_from_slice(&self.price.to_le_bytes());
+        message.extend_from_slice(&self.max_amount.to_le_bytes());
+        message.extend_from_slice(&self.expiry.to_le_bytes());
+        for key in [self.taker, self.base_mint, self.quote_mint] {
+            message.extend_from_slice(key.as_ref());
+        }
+        message
+    }
+}
+
+/// The Ed25519 precompile instruction that verifies `signature`, `signer`'s over `message`. It
+/// holds one signature, with the key, the signature and the message in its own data, laid out as
+/// `new_ed25519_instruction_with_signature` lays them out.
+pub fn ed25519_instruction(signer: &Pubkey, signature: &[u8; 64], message: &[u8]) -> Instruction {
+    // `u16::MAX` as an instruction index: the bytes are in this instruction's own data.
+    const OWN_DATA: u16 = u16::MAX;
+    let key_offset: u16 = 2 + 14;
+    let signature_offset = key_offset + 32;
+    let message_offset = signature_offset + 64;
+    let mut data = vec![1, 0]; // one signature, then a padding byte
+    for field in [
+        signature_offset,
+        OWN_DATA,
+        key_offset,
+        OWN_DATA,
+        message_offset,
+        message.len() as u16,
+        OWN_DATA,
+    ] {
+        data.extend_from_slice(&field.to_le_bytes());
+    }
+    data.extend_from_slice(signer.as_ref());
+    data.extend_from_slice(signature);
+    data.extend_from_slice(message);
+    Instruction {
+        program_id: ED25519_PROGRAM_ID,
+        accounts: vec![],
+        data,
+    }
+}
+
+pub struct SignedQuoteAccounts {
+    pub taker: Pubkey,
+    pub maker: Pubkey,
+    /// Pays, in the quote mint.
+    pub taker_quote_account: Pubkey,
+    /// Is paid, in the quote mint: the maker's own account.
+    pub maker_quote_account: Pubkey,
+    /// Delivers, in the base mint.
+    pub maker_base_account: Pubkey,
+    /// Receives, in the base mint.
+    pub taker_base_account: Pubkey,
+}
+
+/// The transaction's two instructions, in order: the Ed25519 instruction carrying `signature`,
+/// the maker's over `quote`, and the run, which reads the signature from the instruction directly
+/// before it. The taker and the maker both sign the transaction. `amount` is in base-token base
+/// units, up to the quote's `max_amount`.
+pub fn run_signed_quote(
+    template: Pubkey,
+    a: &SignedQuoteAccounts,
+    quote: &Quote,
+    signature: &[u8; 64],
+    amount: u64,
+) -> [Instruction; 2] {
+    let verify = ed25519_instruction(&a.maker, signature, &quote.message());
+    let inputs = RunInputs::new().u64(amount).finish();
+    let accounts = vec![
+        pinned(SYSVAR_INSTRUCTIONS),
+        pinned(TOKEN_PROGRAM_ID),
+        AccountMeta::new_readonly(a.taker, true),
+        AccountMeta::new_readonly(a.maker, true),
+        AccountMeta::new(a.taker_quote_account, false),
+        AccountMeta::new(a.maker_quote_account, false),
+        AccountMeta::new(a.maker_base_account, false),
+        AccountMeta::new(a.taker_base_account, false),
+    ];
+    [verify, run_instruction(template, accounts, &inputs)]
+}
+// #endregion signed-quote
+
 // ------------------------------------------------------------- sample runs
 
 /// A stand-in template address for the sample runs.
@@ -781,7 +886,7 @@ fn route_data() -> Vec<u8> {
 
 /// A sample transaction for every template, under the name `fixtures/protocol-examples.json`
 /// records it by: its instructions, the run last.
-pub const RUNS: [(&str, fn() -> Vec<Instruction>); 11] = [
+pub const RUNS: [(&str, fn() -> Vec<Instruction>); 12] = [
     ("jitoProfitGuardedTip", || {
         let a = JitoTipAccounts { searcher: key(1), wsol_account: key(2), jito_tip: key(3) };
         vec![run_jito_tip(TEMPLATE, &a, &[7; 80], 10_000, 100_000, group(40))]
@@ -950,6 +1055,28 @@ pub const RUNS: [(&str, fn() -> Vec<Instruction>); 11] = [
         // A minute old at most, confident to $0.10, between $100 and $150.
         let band = (100_00000000, 150_00000000);
         vec![run_pyth_gate(TEMPLATE, &gate, 60, 10_000_000, band, &[7; 96], group(14))]
+    }),
+    ("signedQuoteSettlement", || {
+        let a = SignedQuoteAccounts {
+            taker: key(1),
+            maker: key(2),
+            taker_quote_account: key(3),
+            maker_quote_account: key(4),
+            maker_base_account: key(5),
+            taker_base_account: key(6),
+        };
+        // 2.5 quote units per base unit, at most 4 base units, for a minute.
+        let quote = Quote {
+            price: 2_500_000,
+            max_amount: 4_000_000,
+            expiry: 1_800_000_060,
+            taker: a.taker,
+            base_mint: key(7),
+            quote_mint: key(8),
+        };
+        // A stand-in for the signature the maker sends with the quote.
+        let signature = [9; 64];
+        run_signed_quote(TEMPLATE, &a, &quote, &signature, 3_000_000).to_vec()
     }),
     ("tokenSweepIntoSwap", || {
         let a = TokenSweepAccounts { seller: key(1), source_ata: key(2), destination_ata: key(3) };

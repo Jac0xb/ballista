@@ -96,10 +96,12 @@ fn rust_templates_match_the_typescript_fixture_byte_for_byte() {
 /// Each Rust run passes the template account, then one meta per declared account with the
 /// declared signer and writable flags, then the group members; and encodes one value per
 /// declared input, after one length byte per group. A template that calls Kamino runs right
-/// after Kamino's refreshes, and any other runs alone.
+/// after Kamino's refreshes, one that reads an Ed25519 signature right after the precompile
+/// instruction carrying it, and any other runs alone.
 #[test]
 fn rust_runs_match_the_accounts_and_inputs_each_template_declares() {
     let kamino = solana_program::pubkey!("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");
+    let ed25519 = ballista_sdk::ED25519_PROGRAM_ID;
     let refresh_obligation = solana_sha256_hasher::hash(b"global:refresh_obligation").to_bytes();
     let refresh_obligation = &refresh_obligation[..8];
     assert_eq!(runs::RUNS.len(), templates::TEMPLATES.len(), "one run per template");
@@ -116,9 +118,12 @@ fn rust_runs_match_the_accounts_and_inputs_each_template_declares() {
         let (instruction, before) =
             transaction.split_last().unwrap_or_else(|| panic!("{name}: no instructions"));
 
+        let pins = |address: solana_program::pubkey::Pubkey| {
+            program.pubkeys.iter().any(|key| key.bytes == address.to_bytes())
+        };
         // klend's v2 deposit, repayment and liquidation need the obligation refreshed in the same
         // slot, and no template refreshes it.
-        if program.pubkeys.iter().any(|key| key.bytes == kamino.to_bytes()) {
+        if pins(kamino) {
             assert!(
                 before.iter().all(|refresh| refresh.program_id == kamino),
                 "{name}: only Kamino's refreshes precede the run"
@@ -128,6 +133,9 @@ fn rust_runs_match_the_accounts_and_inputs_each_template_declares() {
                 Some(refresh_obligation),
                 "{name}: refresh_obligation comes right before the run"
             );
+        } else if pins(ed25519) {
+            let programs: Vec<_> = before.iter().map(|verify| verify.program_id).collect();
+            assert_eq!(programs, [ed25519], "{name}: the Ed25519 instruction comes right before");
         } else {
             assert!(before.is_empty(), "{name}: the run needs nothing before it");
         }

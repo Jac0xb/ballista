@@ -1,15 +1,15 @@
 {
-  "create template, payroll 30 rows": 4481,
-  "run, count loop 30 passes, no cpi": 8210,
+  "create template, payroll 30 rows": 4476,
+  "run, count loop 30 passes, no cpi": 8208,
   "run, empty template": 582,
-  "run, introspection, no cpi": 3488,
-  "run, log and return 16 bytes": 1481,
-  "run, math opcodes, no cpi": 2546,
+  "run, introspection, no cpi": 3105,
+  "run, log and return 16 bytes": 1477,
+  "run, math opcodes, no cpi": 2501,
   "run, one system transfer": 2390,
   "run, oracle band, no cpi": 1038,
-  "run, payroll 30 rows": 46436,
-  "run, payroll 8 rows": 13358,
+  "run, payroll 30 rows": 46435,
+  "run, payroll 8 rows": 13357,
   "run, pda derivation, bump search": 1992,
   "run, pda derivation, bump supplied": 1487,
-  "run, sum 30 rows, no cpi": 10359
+  "run, sum 30 rows, no cpi": 10358
 }

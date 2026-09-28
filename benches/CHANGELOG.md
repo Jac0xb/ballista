@@ -34,6 +34,24 @@ the same commit and says why here.
 
 ## Pending: runtime extensions, not merged
 
+### 2026-09-27 · Introspection on top of loops and output · `claude/runtime-introspection`
+- **Change:** the branch is rebased onto the output tip. `FOREACH`, `REPEAT`, `EMIT` and
+  `SET_RETURN_DATA` reach `write_output` through `extended_instruction`'s fallback arm, and rustc
+  tests a range pattern apart from the match's switch, on that path. The arm for the seven
+  instruction reads now lists its opcodes instead of a range.
+- **Measured** against the output tip (`8c93291`):
+  - A loop entry: 1 CU less for `FOREACH` and 2 for `REPEAT`; an output: 2 less. That moves the
+    four fixed cases with a loop, the output case (1,481 → 1,477) and the 11 examples that loop.
+  - The math opcodes case: 2,534 → 2,501. The TypeScript math fixture: 4,309 → 4,276.
+  - `create template, payroll 30 rows`: 4,481 → 4,476, and creating a cookbook example moves
+    between −15 and +16, from the verifier's new arms.
+  - `run, introspection, no cpi`: 3,105, now ratcheted.
+  - Cookbook total: 552,315 → 552,304 (−11). Every other case and example: unchanged.
+- **Checked:** every host, SDK and Mollusk test, both ceiling tests, the proptest suites and the
+  Certora specs' host tests.
+- **Watch:** a range pattern in `extended_instruction`'s match puts its test on the fallback path,
+  which every loop entry and every output takes.
+
 ### 2026-09-27 · Introspection and byte opcodes · `claude/runtime-introspection`
 - **Change:** eleven opcodes, 64 to 74, reach the executor through `extended_instruction`'s inner
   match, whose outer dispatch is untouched. The count, the index and `BYTES_LEN` run there; the
@@ -326,6 +344,8 @@ combined numbers; the entries after it keep what each branch measured alone.
   - One `64..=74` arm into one helper: +47, and +42 on an introspecting run.
   - The router's fallback arm into the helper: +47, and +53 on a settlement.
   - Sharing the count-and-index code between the router and the parser: +10 on the ratchet case.
+  - On top of loops and output (`8c93291`), the seven instruction reads as one range arm: +5 on
+    every loop entry and every output, from the range's own test on the way to the fallback arm.
 
 ## Landed
 

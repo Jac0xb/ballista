@@ -16,6 +16,11 @@
  * - Kamino's own `min_acceptable_received_liquidity_amount` is a floor on its computed liquidity
  *   leg. It is not a measurement of what arrived.
  *
+ * Kamino checks the mints of the accounts it pays, not whose they are, and the run names them. So
+ * the liquidator must own both: `userDestinationLiquidity` (`bountyGoesToTheLiquidator`) and
+ * `userDestinationCollateral` (`seizedCollateralGoesToTheLiquidator`). Otherwise a run could pay
+ * the seized collateral to someone else, and the bounty would be measured on their account.
+ *
  * The liquidation is Kamino's `_v2` handler; the v1 handler refuses every caller but Kamino itself
  * and a short whitelist. v2 takes the 20 accounts declared below, then `farmAccounts`:
  * - the borrower's user state in the withdrawn reserve's collateral farm, and that farm;
@@ -43,6 +48,7 @@ import {
   SYSVAR_INSTRUCTIONS,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_LENGTH,
+  TOKEN_ACCOUNT_OWNER_OFFSET,
   addressBytes,
 } from './shared.js';
 
@@ -76,7 +82,11 @@ export const kaminoLiquidateWithProof = defineTemplate({
     /** Pays the repayment. */
     userSourceLiquidity: { writable: true },
     /** Receives the seized cTokens, which Kamino redeems in the same instruction. */
-    userDestinationCollateral: { writable: true },
+    userDestinationCollateral: {
+      writable: true,
+      owner: TOKEN_PROGRAM_ADDRESS_BYTES,
+      minDataLength: TOKEN_ACCOUNT_LENGTH,
+    },
     /** Receives the redeemed collateral: the account the bounty is measured on. */
     userDestinationLiquidity: {
       writable: true,
@@ -87,6 +97,21 @@ export const kaminoLiquidateWithProof = defineTemplate({
   /** Kamino's v2 tail, described above. */
   accountGroups: ['farmAccounts'],
   steps: [
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('userDestinationLiquidity'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('liquidator'), 'key'),
+      ),
+      'bountyGoesToTheLiquidator',
+    ),
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('userDestinationCollateral'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('liquidator'), 'key'),
+      ),
+      'seizedCollateralGoesToTheLiquidator',
+    ),
+
     step.snapshot(
       'payoutBefore',
       expression.accountData(account.fixed('userDestinationLiquidity'), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64'),

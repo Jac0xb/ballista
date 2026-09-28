@@ -19,9 +19,9 @@ them, and the Ballista run.
 | Template | As written | Fix (commit) | Real tests | CU | Bytes |
 | --- | --- | --- | --- | --- | --- |
 | `jupiterDepositExactOutput` | The swap landed, then klend failed in the deposit CPI: `InstructionError(3, InvalidAccountData)`, no custom code, "ProgramError caused by account: reserve_liquidity_mint". It sent v2's discriminator with a 10-account legacy list | v2's 14 declared accounts plus `farmAccounts`; refreshes before the run (`67535b3`) | `tests/jupiter_deposit_exact_output.rs` | 150,842 | 1,072 |
-| `kaminoRepaySwapOutput` | The swap landed, then its own `refresh_reserve` CPI failed in klend with 3005 (`AccountNotEnoughKeys`, at `switchboard_price_oracle`): three of six accounts | No refresh step; v2's 9 declared accounts plus `farmAccounts`; `reservePriceFeed` removed (`5d7ac45`) | `tests/kamino_repay_swap_output.rs` | 140,993 | 993 |
-| `kaminoLiquidateWithProof` | Its first `refresh_reserve` CPI failed in klend with 3005, as above. It also measured the cToken account, which klend leaves at 0: the seized cTokens are redeemed in the same instruction | No refresh steps; v2's 20 declared accounts plus `farmAccounts`; the bounty is measured on `userDestinationLiquidity` (`a4b6428`) | `tests/kamino_liquidate_with_proof.rs` | 184,809 | 1,045 |
-| `marginfiWithdrawAllWithFloor` | Worked for a sole balance (59,536 CU; 99,999,999 of 100,000,000 swept). With a second balance, marginfi failed with 6008 (`InvalidBankAccount`) | `healthAccounts` group after withdraw's 8 accounts; vault authority read-only (`7664007`) | `tests/marginfi_withdraw_all_with_floor.rs` | 59,584 sole; 77,478 with a second balance | 550; 616 |
+| `kaminoRepaySwapOutput` | The swap landed, then its own `refresh_reserve` CPI failed in klend with 3005 (`AccountNotEnoughKeys`, at `switchboard_price_oracle`): three of six accounts | No refresh step; v2's 9 declared accounts plus `farmAccounts`; `reservePriceFeed` removed (`5d7ac45`) | `tests/kamino_repay_swap_output.rs` | 141,282 | 993 |
+| `kaminoLiquidateWithProof` | Its first `refresh_reserve` CPI failed in klend with 3005, as above. It also measured the cToken account, which klend leaves at 0: the seized cTokens are redeemed in the same instruction | No refresh steps; v2's 20 declared accounts plus `farmAccounts`; the bounty is measured on `userDestinationLiquidity` (`a4b6428`) | `tests/kamino_liquidate_with_proof.rs` | 185,404 | 1,045 |
+| `marginfiWithdrawAllWithFloor` | Worked for a sole balance (59,536 CU; 99,999,999 of 100,000,000 swept). With a second balance, marginfi failed with 6008 (`InvalidBankAccount`) | `healthAccounts` group after withdraw's 8 accounts; vault authority read-only (`7664007`) | `tests/marginfi_withdraw_all_with_floor.rs` | 60,162 sole; 78,056 with a second balance | 550; 616 |
 | `marginfiToKaminoRebalance` | New; replaces `driftRebalanceExact` | (`d32dfe4`) | `tests/marginfi_to_kamino_rebalance.rs` | 162,738 | 1,009 |
 | `driftRebalanceExact`, `driftSettleWhenProfitable` | Cannot run: Drift v2 is now a withdraw-only drain program | Deleted (`d32dfe4`) | none | | |
 
@@ -40,6 +40,37 @@ Why Drift is retired (research `drift.md` §0): Drift v2's instructions were dis
 (v2.162.0, upgrade at slot 410,366,404). Since the program-data upgrade at slot 429,731,225
 (2026-06-29), the program at `dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH` is a withdraw-only drain
 with three instructions and no `deposit`, `withdraw` or `settle_pnl`, and its vaults are empty.
+
+## Paying only the signer
+
+Assume the run's builder is hostile, say a frontend the signer trusts only to build transactions:
+it names every account. klend and marginfi check the mints of the token accounts they pay, not
+their owners, and three templates paid an account the run named. Each test in the table names an
+attacker's account (right mint) in the slot, on a run that otherwise lands. Before the fix each run
+landed, as the test's panic printed:
+
+| Template | Slot the attacker filled | Before the fix | Refused now at |
+| --- | --- | --- | --- |
+| `kaminoLiquidateWithProof` | `userDestinationLiquidity`, approved to the liquidator | Landed. Attacker 0 → 81,344,262 lamports; the liquidator repaid 8,497,265 USDC units and got nothing | `bountyGoesToTheLiquidator` |
+| `kaminoLiquidateWithProof` | `userDestinationCollateral`, approved to the liquidator | Landed; the attacker's cTokens ended at 0 because klend redeemed them all. What klend cannot redeem stays there (`lending_operations.rs:2171`, handler lines 183-209) | `seizedCollateralGoesToTheLiquidator` |
+| `marginfiWithdrawAllWithFloor` | `treasuryAta` | Landed. Attacker got 99,999,999 of 100,000,000 | `sweepGoesToTheAuthority` |
+| `marginfiWithdrawAllWithFloor` | `destinationAta` and `treasuryAta`, approved to the authority | Landed. Attacker got 99,999,999 | `withdrawalGoesToTheAuthority` |
+| `kaminoRepaySwapOutput` | `borrowedAssetAta` and the route's output account, approved to the borrower | Landed. 1 SOL of the borrower's sold, debt 60,695,552 → 0, attacker kept 60,695,553 | `swapPaysTheBorrower` |
+
+- "Approved": the attacker's own `Approve`, which lets the signer's authority move tokens out of the
+  account. Without it, the liquidation's payout slot fails closed at klend's fee transfer (SPL
+  Token 4, `OwnerMismatch`).
+- The fix: each slot's token owner (offset 32) must be the signer, checked before anything moves.
+  The marginfi treasury is now another account of the authority's own.
+- `jupiterDepositExactOutput` and `marginfiToKaminoRebalance` fail closed: klend's v2 deposit
+  requires the source to be the signer's, approval or not (`token::authority = owner`,
+  `handler_deposit_reserve_liquidity_and_obligation_collateral.rs:214`; Anchor 2015
+  `ConstraintTokenOwner`).
+- `kaminoRepaySwapOutput` did not fail closed: klend's repay checks only the
+  source's mint (`handler_repay_obligation_liquidity.rs:143`) and repays at most the debt
+  (`state/reserve.rs:960`), so the rest of the swap stayed with the attacker.
+
+klend paths are at `Kamino-Finance/klend@a08760976f`, under `programs/klend/src/`.
 
 ## What klend and marginfi require of a caller
 
@@ -178,6 +209,7 @@ Line numbers are as of this branch (`claude/protocol-lending`).
     `refresh_reserve` for each reserve the obligation holds and `refresh_obligation` before the run.
   - `reservePriceFeed` is gone; `instructionsSysvar` and `reserveLiquidityMint` are new; v2's
     tail (debt farm pair, lending market authority, Farms) arrives as `farmAccounts`.
+  - New: the borrower must own `borrowedAssetAta` (`swapPaysTheBorrower`).
 - `docs/examples/protocols/kamino-liquidate.md`:
   - Lines 12-15 are now false. The template does not refresh, and it measures
     `userDestinationLiquidity`, where Kamino pays the redeemed collateral (SOL for SOL
@@ -186,6 +218,9 @@ Line numbers are as of this branch (`claude/protocol-lending`).
   - The liquidation has 25 accounts: 20 declared and 5 in `farmAccounts`.
   - Its Rust tab shows `#plain`, and lines 31-33 say "This template has no account group, so
     leave out the `.groups(...)` call": no longer true.
+  - New: the liquidator must own `userDestinationLiquidity` and `userDestinationCollateral`
+    (`bountyGoesToTheLiquidator`, `seizedCollateralGoesToTheLiquidator`); see "Paying only the
+    signer".
   - Lines 25-28 on gating by health: the research put `borrow_factor_adjusted_debt_value_sf` at
     offset 2208 and `unhealthy_borrow_value_sf` at 2256 of the obligation (u128, 60 fractional
     bits; liquidatable when the first is at least the second). The harness reads them through
@@ -195,6 +230,9 @@ Line numbers are as of this branch (`claude/protocol-lending`).
     address first; empty for a sole balance; without it any second balance fails
     (`InvalidBankAccount`).
   - The vault authority is now read-only.
+  - Lines 3-4 ("sends the proceeds on to a treasury account") and 12-14: the treasury must now be
+    the authority's own account, and so must the destination (`withdrawalGoesToTheAuthority`,
+    `sweepGoesToTheAuthority`).
   - Its Rust tab shows `#plain`, and lines 29-31 say the template has no account group: no longer
     true.
 - The "Not yet run against …" lines of all five lending pages are now false. The tests are

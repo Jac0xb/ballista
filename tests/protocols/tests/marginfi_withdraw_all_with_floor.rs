@@ -26,12 +26,14 @@ struct Scene {
     account: Address,
     /// The authority's USDC account: the deposit came from it and the withdrawal lands in it.
     usdc: Address,
+    /// A second USDC account of the authority's: the template sweeps only to the authority.
     treasury: Address,
     template: Address,
 }
 
 /// A marginfi account holding 100 USDC and, with `with_sol`, 1 SOL, deposited from its
-/// authority's token accounts (rule 1); an empty USDC treasury; the template, uploaded.
+/// authority's token accounts (rule 1); an empty treasury, created as a second USDC account of the
+/// authority's; the template, uploaded.
 fn scene(with_sol: bool) -> (LiteSVM, Scene) {
     let mut svm = lending::svm();
     let authority = wallet::keypair(b"ballista-protocol-tests-mfi-auth");
@@ -45,8 +47,10 @@ fn scene(with_sol: bool) -> (LiteSVM, Scene) {
         deposits.push((SOL_BANK, wsol, SOL));
     }
     let account = lending::marginfi_account(&mut svm, &authority, &account, &deposits);
-    let treasury_owner = wallet::keypair(b"ballista-protocol-tests-treasury").pubkey();
-    let treasury = wallet::token_account(&mut svm, &treasury_owner, &USDC_MINT, 0);
+    let treasury = wallet::keypair(b"ballista-protocol-tests-treasury");
+    let create = wallet::create_token_account(&svm, &a, &treasury.pubkey(), &USDC_MINT, &a);
+    lending::setup(&mut svm, &authority, &[&treasury], create);
+    let treasury = treasury.pubkey();
     let template = lending::upload(&mut svm, &template::examples()[NAME]);
     (
         svm,
@@ -61,6 +65,18 @@ fn scene(with_sol: bool) -> (LiteSVM, Scene) {
 }
 
 fn run(svm: &LiteSVM, scene: &Scene, minimum_withdrawn: u64) -> Instruction {
+    run_paying(svm, scene, scene.usdc, scene.treasury, minimum_withdrawn)
+}
+
+/// [`run`] with the withdrawal paid into `destination` and swept on to `treasury`, which a hostile
+/// builder may name.
+fn run_paying(
+    svm: &LiteSVM,
+    scene: &Scene,
+    destination: Address,
+    treasury: Address,
+    minimum_withdrawn: u64,
+) -> Instruction {
     let examples = template::examples();
     Run::new(scene.template, &examples[NAME])
         .group(
@@ -86,8 +102,8 @@ fn run(svm: &LiteSVM, scene: &Scene, minimum_withdrawn: u64) -> Instruction {
             false,
             false,
         )
-        .account("destinationAta", scene.usdc, true, false)
-        .account("treasuryAta", scene.treasury, true, false)
+        .account("destinationAta", destination, true, false)
+        .account("treasuryAta", treasury, true, false)
         .input_u64("minimumWithdrawn", minimum_withdrawn)
         .build()
 }
@@ -160,4 +176,60 @@ fn a_floor_above_the_position_refuses_at_withdrawal_met_its_floor() {
     );
     assert_eq!(marginfi::active_banks(&svm, &scene.account), [USDC_BANK]);
     assert_eq!(wallet::token_balance(&svm, &scene.treasury), 0);
+}
+
+/// Sends a run whose builder named the attacker's `attacker` account as `destination`, `treasury`
+/// or both, and asserts it stops at `label` with nothing moved. Before the template checked owners
+/// it landed, and the panic says what the attacker got.
+fn assert_hostile_run_refused(
+    mut svm: LiteSVM,
+    scene: &Scene,
+    (destination, treasury): (Address, Address),
+    attacker: Address,
+    label: &str,
+) {
+    let run = run_paying(&svm, scene, destination, treasury, 99_000_000);
+    let failure = match send_run(&mut svm, scene, run) {
+        Err(failure) => failure,
+        Ok(_) => panic!(
+            "the run landed: the attacker's account holds {} of the {DEPOSIT} deposited, and the \
+             authority's accounts {} and {}",
+            wallet::token_balance(&svm, &attacker),
+            wallet::token_balance(&svm, &scene.usdc),
+            wallet::token_balance(&svm, &scene.treasury)
+        ),
+    };
+    tx::assert_requirement_failed(&failure, &template::examples()[NAME], label);
+    assert_eq!(marginfi::active_banks(&svm, &scene.account), [USDC_BANK]);
+    assert_eq!(wallet::token_balance(&svm, &attacker), 0);
+}
+
+/// marginfi pays the withdrawal into the authority's account, and the sweep then pays whatever
+/// treasury the run names: here the attacker's.
+#[test]
+fn an_attackers_treasury_is_refused_at_sweep_goes_to_the_authority() {
+    let (mut svm, scene) = scene(false);
+    let attacker = lending::attacker_account(&mut svm, &USDC_MINT, None);
+    assert_hostile_run_refused(
+        svm,
+        &scene,
+        (scene.usdc, attacker),
+        attacker,
+        "sweepGoesToTheAuthority",
+    );
+}
+
+/// marginfi pays any USDC account it is given. The attacker names theirs as the destination and
+/// the treasury, and has approved the authority, so the sweep's transfer out of it passes.
+#[test]
+fn an_attackers_destination_is_refused_at_withdrawal_goes_to_the_authority() {
+    let (mut svm, scene) = scene(false);
+    let attacker = lending::attacker_account(&mut svm, &USDC_MINT, Some(&scene.authority.pubkey()));
+    assert_hostile_run_refused(
+        svm,
+        &scene,
+        (attacker, attacker),
+        attacker,
+        "withdrawalGoesToTheAuthority",
+    );
 }

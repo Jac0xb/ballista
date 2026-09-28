@@ -7,7 +7,7 @@ use {
         lending::{self, Unhealthy, MARKET, SOL_RESERVE, USDC_RESERVE},
         template::{self, Run},
         tx::{self, Failure, Outcome},
-        wallet,
+        wallet::{self, WSOL_MINT},
     },
     ballista_sdk::TOKEN_PROGRAM_ID,
     litesvm::LiteSVM,
@@ -45,6 +45,23 @@ fn scene() -> (LiteSVM, Scene) {
 }
 
 fn run(svm: &LiteSVM, scene: &Scene, liquidity_amount: u64, minimum_bounty: u64) -> Instruction {
+    run_paying(
+        svm,
+        scene,
+        &scene.accounts,
+        liquidity_amount,
+        minimum_bounty,
+    )
+}
+
+/// [`run`] with the liquidator's token accounts in `accounts`, which a hostile builder may swap.
+fn run_paying(
+    svm: &LiteSVM,
+    scene: &Scene,
+    accounts: &kamino::Liquidator,
+    liquidity_amount: u64,
+    minimum_bounty: u64,
+) -> Instruction {
     let examples = template::examples();
     let repay = kamino::reserve_accounts(svm, &USDC_RESERVE);
     let withdraw = kamino::reserve_accounts(svm, &SOL_RESERVE);
@@ -113,19 +130,19 @@ fn run(svm: &LiteSVM, scene: &Scene, liquidity_amount: u64, minimum_bounty: u64)
         )
         .account(
             "userSourceLiquidity",
-            scene.accounts.source_liquidity,
+            accounts.source_liquidity,
             true,
             false,
         )
         .account(
             "userDestinationCollateral",
-            scene.accounts.destination_collateral,
+            accounts.destination_collateral,
             true,
             false,
         )
         .account(
             "userDestinationLiquidity",
-            scene.accounts.destination_liquidity,
+            accounts.destination_liquidity,
             true,
             false,
         )
@@ -220,4 +237,78 @@ fn a_bounty_above_the_payout_refuses_at_liquidation_paid_the_bounty() {
         "liquidationPaidTheBounty",
     );
     assert_eq!(holdings(&svm, &scene), before);
+}
+
+/// Sends a run whose builder put the attacker's `account` into `accounts`, at the bounty the
+/// honest run clears, and asserts it stops at `label` with nothing moved. Before the template
+/// checked owners it landed, and the panic says what the attacker got.
+fn assert_hostile_run_refused(
+    mut svm: LiteSVM,
+    scene: &Scene,
+    accounts: &kamino::Liquidator,
+    account: Address,
+    label: &str,
+) {
+    let Unhealthy {
+        debt,
+        sol_price,
+        usdc_price,
+        ..
+    } = scene.unhealthy;
+    let liquidity_amount = debt / 10;
+    let minimum_bounty = lending::break_even(liquidity_amount, usdc_price, sol_price);
+    let before = (holdings(&svm, scene), wallet::token_balance(&svm, &account));
+    let run = run_paying(&svm, scene, accounts, liquidity_amount, minimum_bounty);
+    let failure = match send_run(&mut svm, scene, run) {
+        Err(failure) => failure,
+        Ok(_) => panic!(
+            "the run landed: the attacker's account went from {} to {}, and the liquidator's \
+             (USDC, SOL, cTokens) from {:?} to {:?}",
+            before.1,
+            wallet::token_balance(&svm, &account),
+            before.0,
+            holdings(&svm, scene)
+        ),
+    };
+    tx::assert_requirement_failed(&failure, &template::examples()[NAME], label);
+    assert_eq!(
+        (holdings(&svm, scene), wallet::token_balance(&svm, &account)),
+        before
+    );
+}
+
+/// klend checks that `userDestinationLiquidity` holds the seized reserve's mint, not whose it is,
+/// so a builder can name the attacker's wrapped SOL account and the bounty is measured there.
+/// Having approved the liquidator, the attacker also passes klend's fee transfer out of it.
+#[test]
+fn an_attackers_payout_account_is_refused_at_bounty_goes_to_the_liquidator() {
+    let (mut svm, scene) = scene();
+    let attacker =
+        lending::attacker_account(&mut svm, &WSOL_MINT, Some(&scene.liquidator.pubkey()));
+    let hostile = kamino::Liquidator {
+        destination_liquidity: attacker,
+        ..scene.accounts
+    };
+    assert_hostile_run_refused(svm, &scene, &hostile, attacker, "bountyGoesToTheLiquidator");
+}
+
+/// The seized cTokens pass through `userDestinationCollateral`, and whatever klend cannot redeem
+/// stays there. Having approved the liquidator, the attacker's cToken account passes klend's burn.
+#[test]
+fn an_attackers_collateral_account_is_refused_at_seized_collateral_goes_to_the_liquidator() {
+    let (mut svm, scene) = scene();
+    let collateral_mint = kamino::reserve_accounts(&svm, &SOL_RESERVE).collateral_mint;
+    let attacker =
+        lending::attacker_account(&mut svm, &collateral_mint, Some(&scene.liquidator.pubkey()));
+    let hostile = kamino::Liquidator {
+        destination_collateral: attacker,
+        ..scene.accounts
+    };
+    assert_hostile_run_refused(
+        svm,
+        &scene,
+        &hostile,
+        attacker,
+        "seizedCollateralGoesToTheLiquidator",
+    );
 }

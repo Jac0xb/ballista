@@ -13,7 +13,7 @@ use {
     ballista_sdk::TOKEN_PROGRAM_ID,
     litesvm::LiteSVM,
     solana_address::Address,
-    solana_instruction::Instruction,
+    solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_signer::Signer,
 };
@@ -25,16 +25,26 @@ struct Scene {
     borrower: Keypair,
     leg: Leg,
     obligation: Address,
-    /// USDC base units borrowed: three times the route's quote, so one repayment cannot clear it.
+    /// USDC base units borrowed.
     debt: u64,
     template: Address,
 }
 
+/// Three times the route's quote, so one repayment cannot clear it.
+fn three_quotes(leg: &Leg) -> u64 {
+    3 * leg.out_amount
+}
+
 /// The wallet the route was built for, as a Kamino borrower:
-/// - 10 SOL deposited as collateral, then three times the route's quote borrowed in USDC into
-///   its USDC account, the route's destination;
+/// - 10 SOL deposited as collateral, then [`three_quotes`] borrowed in USDC into its USDC account,
+///   the route's destination;
 /// - then its wrapped SOL account holding exactly what the route sells (rule 1).
 fn scene() -> (LiteSVM, Scene) {
+    scene_owing(three_quotes)
+}
+
+/// [`scene`], having borrowed `debt(leg)`.
+fn scene_owing(debt: fn(&Leg) -> u64) -> (LiteSVM, Scene) {
     let leg = lending::snapshot().route(SOL_TO_USDC).legs[0].clone();
     let mut svm = lending::svm();
     let borrower = wallet::wallet();
@@ -55,7 +65,7 @@ fn scene() -> (LiteSVM, Scene) {
         &collateral,
         10 * SOL,
     );
-    let debt = 3 * leg.out_amount;
+    let debt = debt(&leg);
     lending::borrow(
         &mut svm,
         &borrower,
@@ -79,8 +89,34 @@ fn scene() -> (LiteSVM, Scene) {
 }
 
 fn run(svm: &LiteSVM, scene: &Scene, minimum_repayment: u64) -> Instruction {
+    run_paying(
+        svm,
+        scene,
+        scene.leg.destination_token_account,
+        minimum_repayment,
+    )
+}
+
+/// [`run`] with the swap paying `destination`, which a hostile builder may name: as
+/// `borrowedAssetAta` and wherever the route's own accounts name the borrower's USDC account.
+fn run_paying(
+    svm: &LiteSVM,
+    scene: &Scene,
+    destination: Address,
+    minimum_repayment: u64,
+) -> Instruction {
     let examples = template::examples();
     let usdc = kamino::reserve_accounts(svm, &USDC_RESERVE);
+    let route_accounts = lending::route_group(&scene.leg).into_iter().map(|meta| {
+        if meta.pubkey == scene.leg.destination_token_account {
+            AccountMeta {
+                pubkey: destination,
+                ..meta
+            }
+        } else {
+            meta
+        }
+    });
     Run::new(scene.template, &examples[NAME])
         .account("jupiter", JUPITER, false, false)
         .account("kamino", kamino::KLEND, false, false)
@@ -93,12 +129,7 @@ fn run(svm: &LiteSVM, scene: &Scene, minimum_repayment: u64) -> Instruction {
         )
         .account("borrower", scene.borrower.pubkey(), true, true)
         .account("collateralAta", scene.leg.source_token_account, true, false)
-        .account(
-            "borrowedAssetAta",
-            scene.leg.destination_token_account,
-            true,
-            false,
-        )
+        .account("borrowedAssetAta", destination, true, false)
         .account("obligation", scene.obligation, true, false)
         .account("lendingMarket", MARKET, false, false)
         .account("repayReserve", USDC_RESERVE, true, false)
@@ -106,7 +137,7 @@ fn run(svm: &LiteSVM, scene: &Scene, minimum_repayment: u64) -> Instruction {
         .account("reserveLiquiditySupply", usdc.supply_vault, true, false)
         .input_bytes("routeArgs", &scene.leg.route.args)
         .input_u64("minimumRepayment", minimum_repayment)
-        .group("routeAccounts", lending::route_group(&scene.leg))
+        .group("routeAccounts", route_accounts)
         .group(
             "farmAccounts",
             kamino::repay_farm_accounts(svm, &scene.obligation, &USDC_RESERVE),
@@ -171,4 +202,35 @@ fn repays_exactly_what_the_swap_produced() {
         scene.debt,
         "the output went to the debt, not the wallet"
     );
+}
+
+/// klend's repayment takes any USDC account the borrower can spend from, including one whose owner
+/// approved the borrower as its delegate. So a builder can have the route pay an attacker's account
+/// approved that way. klend repays only the debt, here half what the swap produced, and the rest
+/// would stay with the attacker.
+#[test]
+fn an_attackers_swap_destination_is_refused_at_swap_pays_the_borrower() {
+    let (mut svm, scene) = scene_owing(|leg| leg.out_amount / 2);
+    let attacker = lending::attacker_account(&mut svm, &USDC_MINT, Some(&scene.borrower.pubkey()));
+    let debt_before = kamino::borrowed_sf(&svm, &scene.obligation, &USDC_RESERVE);
+    let collateral_before = wallet::token_balance(&svm, &scene.leg.source_token_account);
+
+    let run = run_paying(&svm, &scene, attacker, 1);
+    let failure = match send_run(&mut svm, &scene, run) {
+        Err(failure) => failure,
+        Ok(_) => panic!(
+            "the run landed: it sold {} lamports of the borrower's SOL, the debt went from {} to \
+             {} USDC units, and the attacker kept {}",
+            collateral_before - wallet::token_balance(&svm, &scene.leg.source_token_account),
+            debt_before >> 60,
+            kamino::borrowed_sf(&svm, &scene.obligation, &USDC_RESERVE) >> 60,
+            wallet::token_balance(&svm, &attacker)
+        ),
+    };
+    tx::assert_requirement_failed(&failure, &template::examples()[NAME], "swapPaysTheBorrower");
+    assert_eq!(
+        kamino::borrowed_sf(&svm, &scene.obligation, &USDC_RESERVE),
+        debt_before
+    );
+    assert_eq!(wallet::token_balance(&svm, &attacker), 0);
 }

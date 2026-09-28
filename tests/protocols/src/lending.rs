@@ -283,6 +283,26 @@ pub fn liquidator(svm: &mut LiteSVM, usdc: u64) -> (Keypair, kamino::Liquidator)
     (liquidator, accounts)
 }
 
+/// The attacker: a wallet whose token accounts a hostile run builder names in place of the
+/// signer's.
+pub const ATTACKER_SEED: &[u8; 32] = b"ballista-protocol-tests-attacker";
+
+/// The attacker's empty token account for `mint` (rule 1). With `delegate`, the attacker has also
+/// approved `delegate` to move any amount out of it, in a real `Approve`. klend and the templates
+/// move tokens out of the accounts they are given with the signer's authority, and a delegate's
+/// signature is that authority too, so this is the account an attacker would name.
+pub fn attacker_account(svm: &mut LiteSVM, mint: &Address, delegate: Option<&Address>) -> Address {
+    let attacker = wallet::keypair(ATTACKER_SEED);
+    let a = attacker.pubkey();
+    wallet::fund(svm, &a, SOL);
+    let account = wallet::token_account(svm, &a, mint, 0);
+    if let Some(delegate) = delegate {
+        let approve = wallet::approve(&account, delegate, &a, u64::MAX);
+        setup(svm, &attacker, &[], vec![approve]);
+    }
+    account
+}
+
 /// `repaid` USDC base units, in lamports, at the given Scope prices (exponent 8). SOL has 9
 /// decimals and USDC 6, hence the 1,000.
 pub fn break_even(repaid: u64, usdc_price: u64, sol_price: u64) -> u64 {

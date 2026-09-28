@@ -43,6 +43,7 @@ import {
   SYSVAR_INSTRUCTIONS,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_MINT_OFFSET,
+  TOKEN_ACCOUNT_OWNER_OFFSET,
   addressBytes,
   anchorDiscriminator,
 } from '../examples/protocols/shared.js';
@@ -345,6 +346,34 @@ describe('the Kamino liquidation', () => {
     expect(dependsOn(check.condition, bindings, reads('userDestinationCollateral', TOKEN_ACCOUNT_AMOUNT_OFFSET))).toBe(false);
     const [liquidate] = invokesOf(kaminoLiquidateWithProof, 'kamino') as [Invoke];
     expect(nameOf(liquidate.accounts[15]!.account)).toBe('userDestinationLiquidity');
+  });
+});
+
+/**
+ * The run names every token account these templates pay, and the protocols check those accounts'
+ * mints, not their owners. Each one must belong to the signer, checked before anything moves:
+ * otherwise a hostile run builder names an account of its own, and the template's guarantee is
+ * measured on it.
+ */
+const payouts: [string, string, Template, { account: string; signer: string }][] = [
+  ['kaminoLiquidateWithProof', 'bountyGoesToTheLiquidator', kaminoLiquidateWithProof, { account: 'userDestinationLiquidity', signer: 'liquidator' }],
+  ['kaminoLiquidateWithProof', 'seizedCollateralGoesToTheLiquidator', kaminoLiquidateWithProof, { account: 'userDestinationCollateral', signer: 'liquidator' }],
+  ['kaminoRepaySwapOutput', 'swapPaysTheBorrower', kaminoRepaySwapOutput, { account: 'borrowedAssetAta', signer: 'borrower' }],
+  ['marginfiWithdrawAllWithFloor', 'withdrawalGoesToTheAuthority', marginfiWithdrawAllWithFloor, { account: 'destinationAta', signer: 'authority' }],
+  ['marginfiWithdrawAllWithFloor', 'sweepGoesToTheAuthority', marginfiWithdrawAllWithFloor, { account: 'treasuryAta', signer: 'authority' }],
+];
+
+describe('every token account a lending template pays belongs to its signer', () => {
+  test.each(payouts)('%s: %s', (_, label, template, { account, signer }) => {
+    const check = requireLabeled(template, label);
+    expect(check.condition).toMatchObject({ kind: 'binary', op: 'equal' });
+    const bindings = bindingsOf(template);
+    expect(dependsOn(check.condition, bindings, reads(account, TOKEN_ACCOUNT_OWNER_OFFSET))).toBe(true);
+    expect(dependsOn(check.condition, bindings, accountKey(signer))).toBe(true);
+    expect(template.accounts[account]?.owner).toEqual(TOKEN_PROGRAM_ADDRESS_BYTES);
+    expect(template.accounts[signer]?.signer).toBe(true);
+    const all = steps(template);
+    expect(all.indexOf(check)).toBeLessThan(all.findIndex((step) => step.kind === 'invoke'));
   });
 });
 

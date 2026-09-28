@@ -6,6 +6,7 @@ use {
     litesvm::LiteSVM,
     solana_account::Account,
     solana_address::Address,
+    solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_signer::Signer,
 };
@@ -149,6 +150,60 @@ pub fn token_account(svm: &mut LiteSVM, owner: &Address, mint: &Address, amount:
     address
 }
 
+/// Creates `account` as a second SPL Token account of `owner`'s for `mint`, which [`token_account`]
+/// cannot write: it writes only the associated one. These are instructions, not a write: the
+/// System program's `CreateAccount` (paid by `payer`, signed by `account`), then the Token
+/// program's `InitializeAccount3`. The account starts empty.
+pub fn create_token_account(
+    svm: &LiteSVM,
+    payer: &Address,
+    account: &Address,
+    mint: &Address,
+    owner: &Address,
+) -> Vec<Instruction> {
+    let lamports = svm.minimum_balance_for_rent_exemption(TOKEN_ACCOUNT_LEN);
+    let mut create = vec![0, 0, 0, 0]; // SystemInstruction::CreateAccount
+    create.extend_from_slice(&lamports.to_le_bytes());
+    create.extend_from_slice(&(TOKEN_ACCOUNT_LEN as u64).to_le_bytes());
+    create.extend_from_slice(TOKEN_PROGRAM_ID.as_ref());
+    let mut initialize = vec![18]; // TokenInstruction::InitializeAccount3
+    initialize.extend_from_slice(owner.as_ref());
+    vec![
+        Instruction {
+            program_id: SYSTEM_PROGRAM_ID,
+            accounts: vec![
+                AccountMeta::new(*payer, true),
+                AccountMeta::new(*account, true),
+            ],
+            data: create,
+        },
+        Instruction {
+            program_id: TOKEN_PROGRAM_ID,
+            accounts: vec![
+                AccountMeta::new(*account, false),
+                AccountMeta::new_readonly(*mint, false),
+            ],
+            data: initialize,
+        },
+    ]
+}
+
+/// SPL Token's `Approve`: `owner` lets `delegate` move up to `amount` out of `account`. An
+/// instruction for the owner to sign, not a write: a delegate is not a balance.
+pub fn approve(account: &Address, delegate: &Address, owner: &Address, amount: u64) -> Instruction {
+    let mut data = vec![4]; // TokenInstruction::Approve
+    data.extend_from_slice(&amount.to_le_bytes());
+    Instruction {
+        program_id: TOKEN_PROGRAM_ID,
+        accounts: vec![
+            AccountMeta::new(*account, false),
+            AccountMeta::new_readonly(*delegate, false),
+            AccountMeta::new_readonly(*owner, true),
+        ],
+        data,
+    }
+}
+
 /// A token account's balance.
 ///
 /// # Panics
@@ -170,7 +225,6 @@ mod tests {
     use {
         super::*,
         crate::{snapshot::Snapshot, tx},
-        solana_instruction::{AccountMeta, Instruction},
     };
 
     const USDC_MINT: Address =

@@ -7,6 +7,10 @@
  * The template swaps, measures what landed in the borrowed-asset account, and repays exactly
  * that.
  *
+ * The run names that account, and Kamino repays from any account the borrower may spend,
+ * including one whose owner approved the borrower as a delegate. It repays at most the debt, and
+ * the rest of the swap stays in the account. So the borrower must own it (`swapPaysTheBorrower`).
+ *
  * The repayment is Kamino's `_v2` handler: the v1 handler refuses every caller but Kamino itself
  * and a short whitelist. v2 takes the 9 accounts declared below, then `farmAccounts`, its tail:
  * - the obligation's farm user state and the reserve's debt farm, or the Kamino program for each
@@ -37,6 +41,7 @@ import {
   SYSVAR_INSTRUCTIONS,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_LENGTH,
+  TOKEN_ACCOUNT_OWNER_OFFSET,
   addressBytes,
 } from './shared.js';
 
@@ -73,6 +78,14 @@ export const kaminoRepaySwapOutput = defineTemplate({
    */
   accountGroups: ['routeAccounts', 'farmAccounts'],
   steps: [
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('borrowedAssetAta'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('borrower'), 'key'),
+      ),
+      'swapPaysTheBorrower',
+    ),
+
     step.snapshot(
       'balanceBefore',
       expression.accountData(account.fixed('borrowedAssetAta'), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64'),

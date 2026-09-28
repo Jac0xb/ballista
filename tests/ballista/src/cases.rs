@@ -6,14 +6,17 @@
 use ballista_common::instruction::{IX_CREATE_TEMPLATE, IX_RUN};
 use ballista_common::template::{
     ProgramBuilder, Segment, TemplateAccountHeader, ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER,
-    ACCOUNT_WRITABLE, DATA_REG_U64, OP_ADD, OP_AND, OP_BIT_AND, OP_BIT_OR, OP_BIT_XOR, OP_CAST_U64,
-    OP_EQ, OP_GTE, OP_LT, OP_LTE, OP_READ_I32, OP_READ_U64, OP_REM, OP_SHL, OP_SHR, VALUE_U64,
+    ACCOUNT_WRITABLE, DATA_REG_U64, INSTRUCTIONS_SYSVAR_ID, NO_INDEX, OP_ADD, OP_AND, OP_BIT_AND,
+    OP_BIT_OR, OP_BIT_XOR, OP_CAST_U64, OP_EQ, OP_GTE, OP_INSTRUCTION_ACCOUNT,
+    OP_INSTRUCTION_ACCOUNT_COUNT, OP_INSTRUCTION_ACCOUNT_FLAGS, OP_INSTRUCTION_COUNT,
+    OP_INSTRUCTION_DATA_LEN, OP_INSTRUCTION_INDEX, OP_INSTRUCTION_PROGRAM, OP_LT, OP_LTE,
+    OP_READ_I32, OP_READ_U64, OP_READ_U8, OP_REM, OP_SHL, OP_SHR, VALUE_U64,
 };
 use mollusk_svm::{program::loader_keys::LOADER_V3, Mollusk};
 use solana_account::Account;
 use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::{pubkey, Pubkey};
-use solana_sdk_ids::system_program;
+use solana_sdk_ids::{system_program, sysvar};
 
 pub const BALLISTA_ELF: &[u8] = include_bytes!("../../../target/deploy/ballista.so");
 pub const ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
@@ -49,8 +52,11 @@ pub fn cases() -> Vec<(&'static str, Case)> {
         ("run, oracle band, no cpi", oracle_band(creator, 6)),
         ("run, pda derivation, bump search", pda_case(creator, 7, false)),
         ("run, pda derivation, bump supplied", pda_case(creator, 8, true)),
+        ("run, log and return 16 bytes", output_case(creator, 12)),
         ("create template, payroll 30 rows", upload(9)),
         ("run, math opcodes, no cpi", math_ops(creator, 10)),
+        ("run, count loop 30 passes, no cpi", count_loop(creator, 11, 30)),
+        ("run, introspection, no cpi", introspection(creator, 13)),
     ]
 }
 
@@ -295,6 +301,34 @@ fn pda_case(creator: Pubkey, template_id: u16, supply_bump: bool) -> Case {
     )
 }
 
+/// A read and an input, logged with a tag and then returned: the two output opcodes and their
+/// syscalls, `sol_log_data` and `sol_set_return_data`.
+fn output_case(creator: Pubkey, template_id: u16) -> Case {
+    let mut builder = ProgramBuilder::new();
+    let oracle = builder.account(0, None, None, 128);
+    let price = builder.read(OP_READ_U64, oracle, 64);
+    let amount_input = builder.input(VALUE_U64, 0);
+    let amount = builder.load_input(amount_input);
+    let tag = builder.blob(b"BOUT");
+    builder.emit_data(&[
+        Segment::Literal(tag),
+        Segment::Register(DATA_REG_U64, price),
+        Segment::Register(DATA_REG_U64, amount),
+    ]);
+    builder.set_return_data(&[
+        Segment::Register(DATA_REG_U64, price),
+        Segment::Register(DATA_REG_U64, amount),
+    ]);
+    let (account_key, account) = with_data(template_id * 100 + 1);
+    run_case(
+        creator,
+        template_id,
+        builder.build().expect("builds"),
+        vec![(AccountMeta::new_readonly(account_key, false), account)],
+        1_000u64.to_le_bytes().to_vec(),
+    )
+}
+
 /// Reading and comparing a field on every row, with no CPI: the cost of iteration by itself.
 fn sum_rows(creator: Pubkey, template_id: u16, rows: u8) -> Case {
     let mut builder = ProgramBuilder::new();
@@ -315,6 +349,29 @@ fn sum_rows(creator: Pubkey, template_id: u16, rows: u8) -> Case {
         runtime.push((AccountMeta::new_readonly(address, false), account));
     }
     run_case(creator, template_id, builder.build().expect("builds"), runtime, Vec::new())
+}
+
+/// Adding up the pass index over thirty passes of a count loop: what a pass costs without rows.
+fn count_loop(creator: Pubkey, template_id: u16, passes: u8) -> Case {
+    let mut builder = ProgramBuilder::new();
+    let count_input = builder.input(VALUE_U64, 0);
+    let total = builder.const_u64(0);
+    let count = builder.load_input(count_input);
+    builder.repeat(count, passes, 1u64 << total, |body| {
+        let index = body.loop_index();
+        let next = body.binary(OP_ADD, total, index);
+        body.mov(total, next);
+    });
+    let limit = builder.const_u64(u64::MAX);
+    let under = builder.binary(OP_LTE, total, limit);
+    builder.require(under);
+    run_case(
+        creator,
+        template_id,
+        builder.build().expect("builds"),
+        Vec::new(),
+        (passes as u64).to_le_bytes().to_vec(),
+    )
 }
 
 /// Uploading a template in one instruction: the one-time cost a template pays before any run.
@@ -362,3 +419,71 @@ fn upload(template_id: u16) -> Case {
     }
 }
 
+/// Every introspection and byte opcode once, against the run's own instruction. Alone in its
+/// transaction it is instruction 0, the template is its first account, and its data is the
+/// `IX_RUN` discriminator and then the one `u64` input, which the template compares with the same
+/// eight bytes read from an account.
+fn introspection(creator: Pubkey, template_id: u16) -> Case {
+    let (template, _) = Pubkey::find_program_address(
+        &[TEMPLATE_SEED, creator.as_ref(), &template_id.to_le_bytes()],
+        &ID,
+    );
+    let mut builder = ProgramBuilder::new();
+    let instructions = builder.account(0, Some(INSTRUCTIONS_SYSVAR_ID), None, 0);
+    let oracle = builder.account(0, None, None, 128);
+    builder.input(VALUE_U64, 0);
+    let zero = builder.const_u64(0);
+    let one = builder.const_u64(1);
+    let at_price = builder.const_u64(64);
+    let current = builder.introspect(OP_INSTRUCTION_INDEX, instructions, NO_INDEX, NO_INDEX);
+    let input = builder.read_instruction_bytes(instructions, current, one, 8);
+    let checks = [
+        (
+            builder.introspect(OP_INSTRUCTION_COUNT, instructions, NO_INDEX, NO_INDEX),
+            builder.const_u64(1),
+        ),
+        (
+            builder.introspect(OP_INSTRUCTION_PROGRAM, instructions, current, NO_INDEX),
+            builder.const_pubkey(ID.to_bytes()),
+        ),
+        (
+            builder.introspect(OP_INSTRUCTION_ACCOUNT_COUNT, instructions, current, NO_INDEX),
+            builder.const_u64(3),
+        ),
+        (
+            builder.introspect(OP_INSTRUCTION_ACCOUNT, instructions, current, zero),
+            builder.const_pubkey(template.to_bytes()),
+        ),
+        (
+            builder.introspect(OP_INSTRUCTION_ACCOUNT_FLAGS, instructions, current, zero),
+            zero,
+        ),
+        (
+            builder.introspect(OP_INSTRUCTION_DATA_LEN, instructions, current, NO_INDEX),
+            builder.const_u64(9),
+        ),
+        (
+            builder.read_instruction_data(OP_READ_U8, instructions, current, zero),
+            builder.const_u64(IX_RUN as u64),
+        ),
+        (input, builder.read_account_bytes(oracle, at_price, 8)),
+        (builder.bytes_len(input), builder.const_u64(8)),
+    ];
+    for (value, expected) in checks {
+        let same = builder.binary(OP_EQ, value, expected);
+        builder.require(same);
+    }
+    let (oracle_key, oracle_account) = with_data(template_id * 100 + 1);
+    let mut case = run_case(
+        creator,
+        template_id,
+        builder.build().expect("builds"),
+        vec![(AccountMeta::new_readonly(oracle_key, false), oracle_account)],
+        7u64.to_le_bytes().to_vec(),
+    );
+    // Mollusk builds the Instructions sysvar from the instruction when the case does not supply it.
+    case.instruction
+        .accounts
+        .insert(1, AccountMeta::new_readonly(sysvar::instructions::id(), false));
+    case
+}

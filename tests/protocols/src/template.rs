@@ -551,7 +551,7 @@ mod tests {
     #[test]
     fn every_example_lines_up_with_its_payload() {
         let examples = examples();
-        assert_eq!(examples.iter().count(), 11);
+        assert_eq!(examples.iter().count(), 12);
         for (name, example) in examples.iter() {
             // `Run::new` checks the header's counts against the name lists.
             let view = Run::new(key(1), example).view;

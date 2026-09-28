@@ -12,7 +12,7 @@ machine. Build the program first with `pnpm build:program`.
 | What | Command | Output |
 | --- | --- | --- |
 | Cost of each feature | `cargo test --manifest-path tests/ballista/Cargo.toml profile_compute_units -- --nocapture` | printed table |
-| Ten fixed cases | `pnpm cu:bench` | `benches/compute_units.md` |
+| Thirteen fixed cases | `pnpm cu:bench` | `benches/compute_units.md` |
 | Every cookbook example | `cargo test --manifest-path tests/ballista/Cargo.toml measure_every_example -- --nocapture` | one line per example |
 | Where one run's compute goes | `pnpm cu:phases` | `fixtures/cu-phases.json` |
 | Lock in a win | `pnpm cu:ceilings`, `pnpm benchmarks` | lowers `fixtures/cu-ceilings.json`, `fixtures/example-ceilings.json` |
@@ -33,6 +33,95 @@ the same commit and says why here.
 ---
 
 ## Pending: runtime extensions, not merged
+
+### 2026-09-27 · Introspection on top of loops and output · `claude/runtime-introspection`
+- **Change:** the branch is rebased onto the output tip. `FOREACH`, `REPEAT`, `EMIT` and
+  `SET_RETURN_DATA` reach `write_output` through `extended_instruction`'s fallback arm, and rustc
+  tests a range pattern apart from the match's switch, on that path. The arm for the seven
+  instruction reads now lists its opcodes instead of a range.
+- **Measured** against the output tip (`8c93291`):
+  - A loop entry: 1 CU less for `FOREACH` and 2 for `REPEAT`; an output: 2 less. That moves the
+    four fixed cases with a loop, the output case (1,481 → 1,477) and the 11 examples that loop.
+  - The math opcodes case: 2,534 → 2,501. The TypeScript math fixture: 4,309 → 4,276.
+  - `create template, payroll 30 rows`: 4,481 → 4,476, and creating a cookbook example moves
+    between −15 and +16, from the verifier's new arms.
+  - `run, introspection, no cpi`: 3,105, now ratcheted.
+  - Cookbook total: 552,315 → 552,304 (−11). Every other case and example: unchanged.
+- **Review polish:** `create template, payroll 30 rows` 4,476 → 4,483; every run unchanged.
+- **Checked:** every host, SDK and Mollusk test, both ceiling tests, the proptest suites and the
+  Certora specs' host tests.
+- **Bisecting:** every commit from `a31b686` through `e179e58` fails both ceiling tests, by 5 CU
+  per loop entry or output. `9b57112` fixes it.
+- **Watch:** a range pattern in `extended_instruction`'s match puts its test on the fallback path,
+  which every loop entry and every output takes.
+
+### 2026-09-27 · Introspection and byte opcodes · `claude/runtime-introspection`
+- **Change:** eleven opcodes, 64 to 74, reach the executor through `extended_instruction`'s inner
+  match, whose outer dispatch is untouched. The count, the index and `BYTES_LEN` run there; the
+  sysvar parsing and both byte reads run in two `#[inline(never)]` helpers that take four words
+  each, all in registers.
+- **Measured** against the phase-1 tip (`1efbd24`):
+  - Uploading the 30-row payroll: 4,446 → 4,448, the verifier's new arms.
+  - A run using all eleven (`run, introspection, no cpi`): 3,552, now ratcheted.
+  - One check per data read, no dead parser arms: 3,552 → 3,488; the settlement, 9,895 → 9,568.
+  - The math opcodes case: 2,797 → 2,761. The TypeScript math fixture: 4,712 → 4,676.
+  - Every other case and every cookbook example: unchanged.
+- **Checked:** the introspection fixture and a signed-quote settlement under Mollusk; every host
+  and Mollusk test.
+- **Watch:** a helper that takes the loop context as an argument takes words from the stack, and
+  their loads move to `extended_instruction`'s entry, where every math opcode pays for them. The
+  larger router also stopped LLVM inlining `math::remainder`, which `#[inline(always)]` now pins.
+
+### 2026-09-27 · An output buffer for `EMIT` and `SET_RETURN_DATA` · `claude/runtime-output`
+- **Change:** `Scratch` holds the output opcodes' buffer. Every run sets it to `None`, the run's
+  first output allocates it at 1,024 bytes, and later outputs reuse it. Both opcodes reach one
+  out-of-line, `#[cold]` helper through `extended_instruction`'s fallback arm and encode through a
+  sink type of their own.
+- **Measured** against the loops tip (`2e300e4`):
+  - Every run: +1 CU, the store that sets the buffer to `None`. Five of the ten fixed run cases and
+    21 of the 32 cookbook examples rose by exactly 1.
+  - Every loop: +8 more. `FOREACH` and `REPEAT` start from the executor's fallback arm, which now
+    calls the helper before failing. The four fixed cases with a loop, and 11 examples, rose by 9.
+  - The math fixture: 4,321 → 4,309, and the math case: 2,546 → 2,534. Without `#[cold]` on the
+    helper, the fixture cost 4,358.
+  - Cookbook total: 552,195 → 552,315 (+120).
+  - `run, log and return 16 bytes`, a new case: 1,481.
+  - `create template, payroll 30 rows`: 4,470 → 4,481, from the verifier's two new arms. Creating a
+    cookbook example costs 11 to 48 more.
+  - The verifier's check that every `EMIT` starts with a tag outside the run event's family,
+    against `02c3017`: no fixed case moved, and no cookbook example's run or create.
+- **Measured** on the phase-1 tip (`1efbd24`), what one output costs:
+  - A 20-byte `EMIT` in three parts: 429 CU, of which `sol_log_data` charges 220. A run's first
+    output also allocates the buffer, about 38 CU more.
+  - A 16-byte `SET_RETURN_DATA` as a run's first output: 296 CU, of which `sol_set_return_data`
+    charges 100.
+- **Checked:** the executor's unit tests, and the Mollusk suite with its ceilings. Later commits on
+  the branch run the path on chain: a fixture that logs between two sends of a cached transfer
+  payload, and generated programs that log and return data.
+- **Bisecting:** `9ec10fc` and `683689f` fail the ceiling test: `create template, payroll 30 rows`
+  measures 4,481 against its 4,470 ceiling, which `d6faac0` raises.
+- **Watch:** `sol_log_data` charges 100 CU per call, 100 per field and 1 per byte, so a 1,024-byte
+  `EMIT` costs 1,224 CU in the syscall alone.
+
+### 2026-09-27 · Enter loops from the failure branch · `claude/runtime-loops`
+- **Change:**
+  - `dispatch` no longer compares every instruction's opcode with `FOREACH`. The handler already
+    fails an opcode it does not run, before reading an operand; at the root, that failure is
+    where a `FOREACH` or a `REPEAT` starts its loop.
+  - Both loop kinds share one `Loop` state, and every loop of a run snapshots its registers into
+    one buffer in `Scratch`.
+- **Measured** against the phase-1 tip (`1efbd24`):
+  - Ten fixed cases: −1,358 in total. Sum 30 rows without CPIs: 11,047 → 10,350. Oracle band:
+    1,083 → 1,037. Math opcodes: 2,797 → 2,546.
+  - Payroll 8 rows: 13,371 → 13,349.
+  - Create template: 4,446 → 4,470, the verifier's loop rules.
+  - Cookbook total: 557,356 → 552,195 (−5,161).
+  - A 30-pass count loop costs 8,201.
+- **Checked:** every host, SDK and Mollusk test. Eight loops over 64 registers run in the default
+  heap only because the snapshot is shared.
+- **Watch:** in a prototype on `dedc168`, a field added to `Machine` moved the dispatch loop's
+  register allocation and cost +1,686 over the nine fixed cases of the time, even on templates
+  without loops. Keep per-run state in `Scratch`.
 
 ### 2026-09-27 · Run the new opcodes behind the dispatch loop's fallback arm · `claude/runtime-extensions`
 - **Change:** The ten runtime-math opcodes, `MUL_DIV` (51) to `READ_I32` (60), run in one
@@ -223,6 +312,43 @@ combined numbers; the entries after it keep what each branch measured alone.
   - A guard or `if` on the opcode inside the fallback arm: LLVM folds it into the match as a case
     of its own, and it measured the same as an arm.
   - `#[cold]` on the helper: no better.
+- **Loop entry:**
+  - Testing `REPEAT` beside `FOREACH` ahead of every instruction: +23 over the ten fixed cases,
+    +160 over the cookbook.
+  - Keeping `FOREACH`'s test there and recognising only `REPEAT` on the failure branch: −272 and
+    −1,085, against −1,358 and −5,161 for both on the failure branch.
+  - A scope parameter on every account lookup in the verifier: 56 units on `create template` in
+    the prototype, against 24 for one check on each instruction in a count-loop body.
+- **Output opcodes:**
+  - Encoding outputs through the invocation data's `Vec<u8>` sink gave the encoder a second caller.
+    The compiler stopped inlining it into `invoke_cpi`, which cost about +50 CU per invocation and
+    +1,600 on `index-weighted-rewards`. Marking both encoders `#[inline(always)]` still cost about
+    +13 per invocation.
+  - An empty `Vec<u8>` for the buffer cost 3–4 CU per run, and an `Option<Vec<u8>>` cost 2.
+  - In a prototype of the `Machine`-shaped router, arms of their own in `extended_instruction` cost
+    every math opcode about 7 CU. One helper per opcode gave the encoder two callers again, and
+    each output cost about 65 CU more.
+  - The helper without `#[cold]`, on the loops tip: the math fixture +37. Keeping `instruction`
+    alive for the call cost the math arms spills.
+  - In the verifier, both opcodes in one out-of-line helper. Reached from a shared arm, `create
+    template` rose 7 rather than 11, but each cookbook example's create moved between −14 and +13
+    against the two arms. Reached from the fallback arm, it rose 13.
+  - Routing the outputs from `dispatch`'s failure branch, where loops are entered, so that a loop
+    entry no longer passes through `write_output`:
+    - Calling `write_output` there and then setting `rest = tail` cost +4,462 CU over the 44
+      ceiling cases, from register pressure in `dispatch`.
+    - Rebuilding `rest` and `loop_context` from `current` after the call was −142 net, but single
+      cases moved between −99 and +110, and the output case cost 96 more.
+    - The outputs stay behind `extended_instruction`'s fallback arm, and each loop entry keeps its
+      +8.
+- **Introspection dispatch** (math fixture 4,859 at base, on `7a5e15e`'s layout):
+  - Three arms whose helpers took the loop context: +50, from the stack-passed words' loads on
+    the router's entry.
+  - One `64..=74` arm into one helper: +47, and +42 on an introspecting run.
+  - The router's fallback arm into the helper: +47, and +53 on a settlement.
+  - Sharing the count-and-index code between the router and the parser: +10 on the ratchet case.
+  - On top of loops and output (`8c93291`), the seven instruction reads as one range arm: +5 on
+    every loop entry and every output, from the range's own test on the way to the fallback arm.
 
 ## Landed
 

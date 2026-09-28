@@ -230,6 +230,7 @@ fn run_template(accounts: &mut [AccountView], input_bytes: &[u8]) -> ProgramResu
     };
     profile::mark(profile::TAG_TEMPLATE_LOADED);
     let result = processor::run(&program, input_bytes, runtime_accounts, template.address());
+    // A `cu-profile` build sets its record as return data here, over any the run set.
     profile::report();
     result
 }

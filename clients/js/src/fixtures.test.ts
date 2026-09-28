@@ -13,6 +13,7 @@ import { afterAll, describe, expect, test } from 'vitest';
 
 import {
   ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES,
+  INSTRUCTIONS_SYSVAR_ADDRESS_BYTES,
   RUNTIME_ERROR_NAMES,
   SYSTEM_PROGRAM_ADDRESS_BYTES,
   TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -28,6 +29,7 @@ import {
   systemTransfer,
   type Template,
 } from './index.js';
+import { signedQuoteSettlement } from '../examples/protocols/signed-quote-settlement.js';
 
 const FIXTURE_DIR = fileURLToPath(new URL('../../../fixtures/', import.meta.url));
 const MANIFEST_PATH = `${FIXTURE_DIR}manifest.json`;
@@ -35,6 +37,12 @@ const UPDATE = process.env.UPDATE_FIXTURES === '1';
 
 const hex = (bytes: Uint8Array) => [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 const fill = (byte: number) => new Uint8Array(32).fill(byte);
+
+/** `MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr`, the SPL Memo program the Mollusk suite loads. */
+const MEMO_PROGRAM_ADDRESS_BYTES = Uint8Array.of(
+  5, 74, 83, 90, 153, 41, 33, 6, 77, 36, 232, 113, 96, 218, 56, 124, 124, 53, 181, 221, 188, 146, 187, 129,
+  228, 31, 168, 64, 65, 5, 68, 141,
+);
 
 const systemPrograms = {
   systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
@@ -370,6 +378,66 @@ export const fixtures: Record<string, () => Template> = {
       ],
     }),
 
+  loops: () =>
+    defineTemplate({
+      inputs: { rounds: { type: 'u64' }, amount: { type: 'u64' } },
+      accounts: {
+        ...systemPrograms,
+        payer: { signer: true, writable: true },
+        recipient: { writable: true },
+      },
+      batch: { maxIterations: 3, minIterations: 1, row: { holder: {} } },
+      steps: [
+        // A count loop pays `amount` once per round and adds up the round indexes.
+        step.let('indexSum', expression.u64(0)),
+        step.repeat(
+          expression.input('rounds'),
+          [
+            systemTransfer({
+              systemProgram: account.fixed('systemProgram'),
+              from: account.fixed('payer'),
+              to: account.fixed('recipient'),
+              lamports: expression.input('amount'),
+            }),
+            step.assign('indexSum', expression.add(expression.variable('indexSum'), expression.loopIndex())),
+          ],
+          { max: 4, carry: ['indexSum'], label: 'payEachRound' },
+        ),
+        // 2 × (0 + 1 + … + (rounds − 1)) + rounds = rounds².
+        step.require(
+          expression.equal(
+            expression.add(expression.multiply(expression.variable('indexSum'), expression.u64(2)), expression.input('rounds')),
+            expression.multiply(expression.input('rounds'), expression.input('rounds')),
+          ),
+          'indexesAddUp',
+        ),
+        // Two row loops over the same rows: the first totals their lamports, and the second
+        // checks that no row holds more than half of that total.
+        step.let('total', expression.u64(0)),
+        step.forEach(
+          [
+            step.assign(
+              'total',
+              expression.add(expression.variable('total'), expression.accountField(account.iteration('holder'), 'lamports')),
+            ),
+          ],
+          { carry: ['total'], label: 'totalRows' },
+        ),
+        step.forEach(
+          [
+            step.require(
+              expression.lessThanOrEqual(
+                expression.multiply(expression.accountField(account.iteration('holder'), 'lamports'), expression.u64(2)),
+                expression.variable('total'),
+              ),
+              'noRowAboveHalf',
+            ),
+          ],
+          { label: 'checkShares' },
+        ),
+      ],
+    }),
+
   'return-data': () =>
     defineTemplate({
       accounts: {
@@ -386,6 +454,50 @@ export const fixtures: Record<string, () => Template> = {
         }),
         step.let('size', expression.returnData('u64')),
         step.require(expression.equal(expression.variable('size'), expression.u64(165)), 'sizeIs165'),
+      ],
+    }),
+
+  output: () =>
+    defineTemplate({
+      inputs: { amount: { type: 'u64' }, memo: { type: 'bytes', maxLength: 16 } },
+      accounts: { ...systemPrograms, payer: { signer: true, writable: true } },
+      batch: { maxIterations: 2, minIterations: 1, row: { recipient: { writable: true } } },
+      steps: [
+        step.let('paid', expression.u64(0)),
+        step.forEach(
+          [
+            systemTransfer({
+              systemProgram: account.fixed('systemProgram'),
+              from: account.fixed('payer'),
+              to: account.iteration('recipient'),
+              lamports: expression.input('amount'),
+            }),
+            // The next row sends the transfer's data again without encoding it, so this log
+            // must leave the invocation's buffer alone.
+            step.emit(
+              [
+                data.literal(Uint8Array.of(0x50, 0x41, 0x49, 0x44)),
+                data.encode('u8', expression.loopIndex()),
+                data.encode('pubkey', expression.accountField(account.iteration('recipient'), 'key')),
+              ],
+              'logRow',
+            ),
+            step.assign('paid', expression.add(expression.variable('paid'), expression.input('amount'))),
+          ],
+          { carry: ['paid'] },
+        ),
+        // Every log starts with a tag of four bytes or more, here ASCII `MEMO`.
+        step.emit(
+          [data.literal(Uint8Array.of(0x4d, 0x45, 0x4d, 0x4f)), data.encode('bytes', expression.input('memo'))],
+          'logMemo',
+        ),
+        step.setReturnData(
+          [
+            data.encode('u64', expression.variable('paid')),
+            data.encode('pubkey', expression.accountField(account.fixed('payer'), 'key')),
+          ],
+          'returnTotal',
+        ),
       ],
     }),
 
@@ -407,6 +519,61 @@ export const fixtures: Record<string, () => Template> = {
         }),
       ],
     }),
+
+  // Run by the Mollusk suite as the second of three instructions, between two memos: "before",
+  // signed by `memoSigner`, and "after", with no accounts. The inputs point it at the first memo.
+  introspection: () => {
+    const sysvar = account.fixed('instructions');
+    const neighbour = expression.input('neighbour');
+    const position = expression.input('position');
+    return defineTemplate({
+      inputs: { neighbour: { type: 'u64' }, position: { type: 'u64' }, dataOffset: { type: 'u64' } },
+      accounts: {
+        instructions: { address: INSTRUCTIONS_SYSVAR_ADDRESS_BYTES },
+        memoSigner: { signer: true },
+        mint: { owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: 82 },
+      },
+      steps: [
+        step.require(expression.equal(expression.instructionCount(sysvar), expression.u64(3)), 'threeInstructions'),
+        step.require(expression.equal(expression.currentInstructionIndex(sysvar), expression.u64(1)), 'runsSecond'),
+        step.require(
+          expression.equal(expression.instructionProgram(sysvar, neighbour), expression.pubkey(MEMO_PROGRAM_ADDRESS_BYTES)),
+          'neighbourIsMemo',
+        ),
+        step.require(expression.equal(expression.instructionAccountCount(sysvar, neighbour), expression.u64(1)), 'oneAccount'),
+        step.require(
+          expression.equal(
+            expression.instructionAccount(sysvar, neighbour, position),
+            expression.accountField(account.fixed('memoSigner'), 'key'),
+          ),
+          'memoNamesItsSigner',
+        ),
+        step.require(expression.instructionAccountIsSigner(sysvar, neighbour, position), 'memoIsSigned'),
+        step.require(expression.not(expression.instructionAccountIsWritable(sysvar, neighbour, position)), 'signerIsReadOnly'),
+        step.require(expression.equal(expression.instructionDataLength(sysvar, neighbour), expression.u64(6)), 'memoIsSixBytes'),
+        // "before" starts 62 65 66 6f: "befo" as a little-endian u32.
+        step.require(
+          expression.equal(expression.instructionData(sysvar, neighbour, 0, 'u32'), expression.u64(0x6f66_6562)),
+          'memoSaysBefore',
+        ),
+        step.let('after', expression.instructionDataBytes(sysvar, 2, 0, 5)),
+        step.require(
+          expression.equal(expression.variable('after'), expression.bytes(new TextEncoder().encode('after'))),
+          'lastMemoSaysAfter',
+        ),
+        step.require(expression.equal(expression.bytesLength(expression.variable('after')), expression.u64(5)), 'fiveBytes'),
+        step.require(
+          expression.equal(
+            expression.accountDataBytes(account.fixed('mint'), expression.input('dataOffset'), 1),
+            expression.bytes(Uint8Array.of(6)),
+          ),
+          'mintHasSixDecimals',
+        ),
+      ],
+    });
+  },
+
+  'signed-quote-settlement': () => signedQuoteSettlement,
 
   'pinned-mint-read': () =>
     defineTemplate({

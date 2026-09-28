@@ -2,10 +2,14 @@
 //!
 //! The release binary has none of this: every call below is `#[cfg]`-gated away, so instrumenting
 //! a phase costs nothing in production. Under the feature each `mark` reads
-//! `sol_remaining_compute_units` and stores it; the run ends by emitting one `sol_log_data` record
-//! that `cargo test --features cu-profile -- phase_profile` decodes into the table in
+//! `sol_remaining_compute_units` and stores it; the run ends by setting one record that
+//! `cargo test --features cu-profile -- phase_profile` decodes into the table in
 //! `docs/cu-profile.md`. The record goes out as the instruction's return data, which is where a
 //! Mollusk harness can read it without parsing logs.
+//!
+//! Setting it replaces whatever return data the run set with `SET_RETURN_DATA`, so a template run
+//! on a profiling build never returns its own result. That is acceptable for a build that exists
+//! only to measure; the deployed binary never enables the feature.
 //!
 //! Reading the counter is itself a syscall, so the first two marks are taken back to back and the
 //! decoder subtracts that calibration from every interval.
@@ -135,7 +139,8 @@ mod enabled {
         let _ = value;
     }
 
-    /// Emits the record: magic, mark count, `(tag, remaining)` pairs, then the CPI totals.
+    /// Emits the record: magic, mark count, `(tag, remaining)` pairs, then the CPI totals. It
+    /// becomes the instruction's return data, replacing any the template set.
     pub fn report() {
         let mut record = [0u8; 4 + 1 + MAX_MARKS * 9 + 20];
         record[..4].copy_from_slice(&PROFILE_MAGIC);

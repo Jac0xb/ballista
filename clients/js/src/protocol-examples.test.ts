@@ -27,7 +27,7 @@ describe('live protocol examples', () => {
   const entries = Object.entries(protocols) as [string, Template][];
 
   test('every example is exported', () => {
-    expect(entries.length).toBe(11);
+    expect(entries.length).toBe(12);
   });
 
   test.each(entries)('%s compiles to a template the verifier can parse', (name, template) => {

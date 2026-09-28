@@ -24,6 +24,11 @@ pub const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111"
 pub const TOKEN_PROGRAM_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 pub const ASSOCIATED_TOKEN_PROGRAM_ID: Pubkey =
     pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+/// The Instructions sysvar. Introspecting templates declare it as a fixed account pinned to this
+/// address; pass it read-only, as `AccountMeta::new_readonly(INSTRUCTIONS_SYSVAR_ID, false)`.
+pub const INSTRUCTIONS_SYSVAR_ID: Pubkey = pubkey!("Sysvar1nstructions1111111111111111111111111");
+/// The Ed25519 signature-verification precompile.
+pub const ED25519_PROGRAM_ID: Pubkey = pubkey!("Ed25519SigVerify111111111111111111111111111");
 pub const TEMPLATE_SEED: &[u8] = b"template";
 
 pub fn find_template_pda(creator: &Pubkey, template_id: u16) -> (Pubkey, u8) {
@@ -301,6 +306,16 @@ mod tests {
     }
 
     #[test]
+    fn well_known_addresses_match_the_shared_constants() {
+        assert_eq!(
+            INSTRUCTIONS_SYSVAR_ID.to_bytes(),
+            ballista_common::template::INSTRUCTIONS_SYSVAR_ID
+        );
+        assert_eq!(INSTRUCTIONS_SYSVAR_ID, solana_program::sysvar::instructions::ID);
+        assert_eq!(ED25519_PROGRAM_ID, solana_program::ed25519_program::ID);
+    }
+
+    #[test]
     fn error_codes_decode_with_context() {
         let decoded = decode_ballista_error((7 << 16) | 6015).unwrap();
         assert_eq!(decoded.name, "RequirementFailed");
@@ -311,8 +326,17 @@ mod tests {
         assert_eq!(verifier.source, ErrorSource::Verifier);
         assert_eq!(decode_ballista_error(6021).unwrap().name, "CpiAccountLimitExceeded");
         assert_eq!(decode_ballista_error(6128).unwrap().name, "TooManyAccountGroups");
+        assert_eq!(decode_ballista_error(6022).unwrap().name, "LoopCountExceeded");
+        assert_eq!(decode_ballista_error(6129).unwrap().name, "InvalidLoop");
         assert!(decode_ballista_error(1).is_none());
-        assert!(decode_ballista_error(6022).is_none());
-        assert!(decode_ballista_error(6129).is_none());
+        assert_eq!(decode_ballista_error(6130).unwrap().name, "InvalidOutput");
+        assert_eq!(decode_ballista_error(6023).unwrap().name, "InstructionOutOfRange");
+        assert_eq!(
+            decode_ballista_error((5 << 16) | 6024).unwrap().name,
+            "WritableAccountBytesRead"
+        );
+        assert_eq!(decode_ballista_error(6131).unwrap().name, "InvalidIntrospection");
+        assert!(decode_ballista_error(6025).is_none());
+        assert!(decode_ballista_error(6132).is_none());
     }
 }

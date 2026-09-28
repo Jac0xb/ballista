@@ -8,7 +8,7 @@
 //! Induction over the instruction sequence then gives the whole-program guarantee.
 
 use ballista::error::BallistaError;
-use ballista::processor::execute::{execute_instruction, RunError, RuntimeValue, Scratch};
+use ballista::processor::execute::{execute_instruction, RunError, RuntimeValue, Scratch, NO_ROWS};
 use ballista_common::template::*;
 use cvlr::nondet::havoc::alloc_mut_ref_havoced;
 use cvlr::prelude::*;
@@ -16,11 +16,16 @@ use cvlr_pinocchio::nondet_account_views;
 use pinocchio::AccountView;
 
 use super::util::{
-    nondet_instruction, nondet_register_info, runtime_type, runtime_value_for, spec_program,
+    nondet_instruction, nondet_register_info, pick, runtime_type, runtime_value_for, spec_program,
     writes_destination, REGISTERS,
 };
 
 /// Errors an accepted instruction may raise because of the values it sees, not its shape.
+///
+/// `READ_ACCOUNT_BYTES` reaches the executor in the account rule, whose one account is
+/// unconstrained: the account may be writable, and the offset register may point past its data.
+/// The introspection opcodes never do, since neither spec program pins the Instructions sysvar,
+/// but an index past the transaction is value-dependent too.
 fn value_dependent(kind: BallistaError) -> bool {
     matches!(
         kind,
@@ -28,7 +33,20 @@ fn value_dependent(kind: BallistaError) -> bool {
             | BallistaError::DivisionByZero
             | BallistaError::RequirementFailed
             | BallistaError::InvalidPdaDerivation
+            | BallistaError::InstructionOutOfRange
+            | BallistaError::WritableAccountBytesRead
     )
+}
+
+/// One past the highest pass index a loop in `scope` reaches. A FOREACH makes one pass per batch
+/// row, and the rows' accounts are runtime accounts, so it makes fewer than
+/// `MAX_RUNTIME_ACCOUNTS`. A REPEAT makes at most its maximum, a byte, so its last pass is 254.
+fn pass_bound(scope: LoopScope) -> usize {
+    if scope.in_row_loop() {
+        MAX_RUNTIME_ACCOUNTS
+    } else {
+        usize::from(u8::MAX) + 1
+    }
 }
 
 fn check_typing_preservation(with_account: bool, accounts: &[AccountView]) {
@@ -47,18 +65,24 @@ fn check_typing_preservation(with_account: bool, accounts: &[AccountView]) {
     }
 
     let instruction = nondet_instruction();
-    let in_loop: bool = nondet();
+    let scope = pick!(LoopScope::Root, LoopScope::Rows, LoopScope::Count);
     clog!(instruction.opcode, instruction.dst, instruction.a, instruction.b, instruction.c);
 
     // Only instructions the verifier accepts are of interest.
-    let verdict = program.verify_single_instruction(&instruction, 0, in_loop, None, typing);
+    let verdict = program.verify_single_instruction(&instruction, 0, scope, None, typing);
     cvlr_assume!(verdict.is_ok());
 
     let mut scratch = Scratch::new(&program);
-    let loop_context = if in_loop {
-        let iteration: usize = nondet();
-        cvlr_assume!(iteration < MAX_RUNTIME_ACCOUNTS);
-        Some((iteration, program.header.fixed_account_count()))
+    // A FOREACH's rows start after the fixed accounts; a REPEAT has none.
+    let loop_context = if scope.in_loop() {
+        let pass: usize = nondet();
+        cvlr_assume!(pass < pass_bound(scope));
+        let row_base = if scope.in_row_loop() {
+            program.header.fixed_account_count()
+        } else {
+            NO_ROWS
+        };
+        Some((pass, row_base))
     } else {
         None
     };
@@ -122,4 +146,48 @@ pub fn rule_verified_pure_instructions_preserve_register_typing() {
 pub fn rule_verified_account_reads_preserve_register_typing() {
     let accounts = nondet_account_views::<1, 64>();
     check_typing_preservation(true, &accounts[..]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A program with one loop of the most passes its kind allows, which must verify.
+    fn verifies(build: impl FnOnce(&mut ProgramBuilder)) -> bool {
+        let mut builder = ProgramBuilder::new();
+        build(&mut builder);
+        let bytes = builder.build().expect("builds");
+        ProgramView::parse(&bytes).expect("parses").verify().is_ok()
+    }
+
+    /// The rule's pass index reaches the last pass of every loop the verifier accepts: a REPEAT
+    /// at the largest maximum, and a FOREACH over the most rows a batch holds.
+    #[test]
+    fn the_pass_bound_covers_the_last_pass_of_every_verified_loop() {
+        let longest_repeat = u8::MAX;
+        assert!(verifies(|builder| {
+            let count = builder.const_u64(u64::from(longest_repeat));
+            builder.repeat(count, longest_repeat, 0, |body| {
+                body.loop_index();
+            });
+        }));
+        assert!(usize::from(longest_repeat) - 1 < pass_bound(LoopScope::Count));
+
+        let most_rows = MAX_RUNTIME_ACCOUNTS as u8;
+        assert!(verifies(|builder| {
+            builder.row_account(0, None, None, 0);
+            builder.batch(most_rows, 0);
+            builder.for_each(0, |body| {
+                body.loop_index();
+            });
+        }));
+        assert!(!verifies(|builder| {
+            builder.row_account(0, None, None, 0);
+            builder.batch(most_rows + 1, 0);
+            builder.for_each(0, |body| {
+                body.loop_index();
+            });
+        }));
+        assert!(usize::from(most_rows) - 1 < pass_bound(LoopScope::Rows));
+    }
 }

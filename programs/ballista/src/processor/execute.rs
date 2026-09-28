@@ -10,7 +10,7 @@ use pinocchio::{
 };
 use solana_address::Address;
 
-use super::math;
+use super::{introspect, math};
 use crate::error::{vm_error, BallistaError};
 use crate::utils::pda;
 
@@ -129,12 +129,23 @@ fn log_failure(a: u64, b: u64, c: u64, d: u64, e: u64) {
     let _ = (a, b, c, d, e);
 }
 
-/// Per-run state: buffers allocated once and reused by every CPI, so heap use does not grow with
-/// the number of invocations (the default SBF allocator never frees), plus the invoke trace.
+/// Per-run state: buffers allocated once and reused by every CPI and every loop, so heap use does
+/// not grow with the number of invocations or loops (the default SBF allocator never frees), plus
+/// the invoke trace.
 pub struct Scratch<'data> {
     metas: Vec<InstructionAccount<'data>>,
     views: Vec<&'data AccountView>,
     data: Vec<u8>,
+    /// The bytes an `EMIT` or `SET_RETURN_DATA` encodes. Never `data`: inside a batch, `data` can
+    /// hold a loop-invariant invocation payload that the next row sends again without encoding
+    /// it, and an output written there would replace it.
+    ///
+    /// `None` until the run's first output, which allocates the buffer at `MAX_RETURN_DATA_LEN`
+    /// bytes, the most any verified output encodes, for every later output to reuse. It is leaked
+    /// rather than owned: the SBF heap never frees, so that costs nothing, and a null reference is
+    /// the cheapest field to initialize. Every run pays for that store, one compute unit here
+    /// against two for an `Option<Vec<u8>>` and three or four for an empty `Vec<u8>`.
+    output: Option<&'data mut Vec<u8>>,
     /// Program invoked by the most recent executed CPI, for return-data provenance checks. A
     /// reference into the account, not a copy: an address never changes during a run.
     last_invoked: Option<&'data Address>,
@@ -156,6 +167,10 @@ pub struct Scratch<'data> {
     data_invariant: bool,
     /// What the repeat pass needs from that descriptor, taken when its list was built.
     built_call: Option<BuiltCall<'data>>,
+    /// The registers as the running loop found them, plus every value it has carried so far; each
+    /// pass starts from them. Loops never nest, so at most one runs at a time and one buffer
+    /// serves every loop of a run: the first allocates it, and every later one copies into it.
+    snapshot: Vec<RuntimeValue<'data>>,
 }
 
 /// The parts of a cached descriptor the repeat pass reads, looked up and checked once when its
@@ -183,6 +198,7 @@ impl<'data> Scratch<'data> {
             metas: Vec::with_capacity(MAX_CPI_ACCOUNTS),
             views: Vec::with_capacity(MAX_CPI_ACCOUNTS),
             data: Vec::with_capacity(max_data),
+            output: None,
             last_invoked: None,
             expanded: 0,
             executed: 0,
@@ -191,6 +207,7 @@ impl<'data> Scratch<'data> {
             built: false,
             data_invariant: false,
             built_call: None,
+            snapshot: Vec::new(),
         }
     }
 
@@ -260,13 +277,16 @@ pub fn run<'data>(
     Ok(())
 }
 
-/// Magic prefix of the run event emitted through `sol_log_data` when the template opts in.
+/// Magic prefix of the run event emitted through `sol_log_data` when the template opts in. Its
+/// first three bytes are `RUN_EVENT_TAG_FAMILY`, which the verifier refuses as an `EMIT` tag, so no
+/// template can log a line that reads as a run event. A later version keeps them.
 pub const EVENT_MAGIC: [u8; 4] = *b"BEV1";
 /// Size of the run event: magic, bytecode version, iterations, expanded invokes, executed mask,
 /// template address.
 pub const EVENT_LEN: usize = 4 + 1 + 1 + 1 + 8 + 32;
 
-/// Encodes the run event. Indexers decode it from the `Program data:` log line.
+/// Encodes the run event. Indexers decode it from the `Program data:` log line. `iterations` is
+/// the number of batch rows the run was given; a count loop's passes are not counted in it.
 pub fn encode_event(
     iterations: usize,
     expanded: u8,
@@ -283,6 +303,7 @@ pub fn encode_event(
     event
 }
 
+/// Logs `event` as one `Program data:` field: the run event, and every `EMIT`.
 #[inline(always)]
 fn emit_event(event: &[u8]) {
     #[cfg(target_os = "solana")]
@@ -587,43 +608,45 @@ fn execute_root<'data>(
     dispatch(&mut machine)
 }
 
-/// The dispatch loop, for the whole program including the batch body. `step` is inlined here, so
-/// an instruction costs a dispatch rather than a call. The FOREACH body runs in
-/// this same loop: reaching the end of the body hands over to `next_iteration`, which rewinds to
-/// the body's first instruction until every row has run, so a row costs no call and no frame.
+/// The dispatch loop, for the whole program including every loop body. `step` is inlined here, so
+/// an instruction costs a dispatch rather than a call. A loop body runs in this same loop: reaching
+/// the end of the body hands over to `next_pass`, which rewinds to the body's first
+/// instruction until every pass has run, so a pass costs no call and no frame.
 #[inline(never)]
 fn dispatch<'data>(machine: &mut Machine<'_, 'data>) -> ProgramResult {
     let instructions = machine.program.instructions;
     let mut rest = instructions;
-    let mut batch: Option<Batch<'data>> = None;
+    let mut current: Option<Loop> = None;
     let mut loop_context: Option<(usize, usize)> = None;
     loop {
         let [instruction, tail @ ..] = rest else {
-            // The end of the program, or of one pass over the batch body.
-            let Some(active) = &mut batch else {
+            // The end of the program, or of one pass over a loop body.
+            let Some(active) = &mut current else {
                 return Ok(());
             };
-            loop_context = next_iteration(machine, active);
+            loop_context = next_pass(machine, active);
             rest = if loop_context.is_some() {
                 &instructions[active.body_start..active.body_end]
             } else {
                 let body_end = active.body_end;
-                batch = None;
+                current = None;
                 &instructions[body_end..]
             };
             continue;
         };
-        // Only the root can hold a loop. Inside a body, FOREACH reaches the dispatch and is
-        // rejected there like any opcode the executor does not run, with the same error.
-        if instruction.opcode == OP_FOREACH && loop_context.is_none() {
-            let pc = index_of(instructions, instruction);
-            let (start, end) = enter_batch(machine, pc, instruction, &mut batch)?;
-            loop_context = batch.as_ref().map(|active| (active.iteration, active.row_base));
-            rest = &instructions[start..end];
-            continue;
-        }
         if let Err(error) = step(machine, instruction, loop_context) {
-            return Err(error.at(index_of(instructions, instruction), instruction));
+            let pc = index_of(instructions, instruction);
+            // `step` fails a loop instruction, as an opcode it does not run, before reading an
+            // operand. At the root that failure is where the loop starts, which keeps both loop
+            // kinds off the path of every other instruction. Only the root can hold a loop: inside
+            // a body the failure stands.
+            if matches!(instruction.opcode, OP_FOREACH | OP_REPEAT) && loop_context.is_none() {
+                let (start, end) = enter_loop(machine, pc, instruction, &mut current)?;
+                loop_context = current.as_ref().map(|active| (active.pass, active.row_base));
+                rest = &instructions[start..end];
+                continue;
+            }
+            return Err(error.at(pc, instruction));
         }
         rest = tail;
     }
@@ -638,34 +661,45 @@ fn index_of(instructions: &[InstructionRecord], instruction: &InstructionRecord)
         / core::mem::size_of::<InstructionRecord>()
 }
 
-/// A FOREACH in progress.
-struct Batch<'data> {
+/// The row base of a count loop, which has no rows. It is far past any account index, so a row
+/// account named there resolves to nothing, though the verifier already rejects one; and far
+/// below `usize::MAX`, so adding a row offset cannot wrap it back into range.
+pub const NO_ROWS: usize = usize::MAX / 2;
+
+/// A loop in progress: a FOREACH over the batch rows or a REPEAT over a count. The kind decides
+/// only how the loop starts, as its pass count, first row base and stride, so it is not stored.
+struct Loop {
     body_start: usize,
     body_end: usize,
+    /// Passes to run: one per batch row for FOREACH, the count for REPEAT.
+    passes: usize,
+    /// Added to `row_base` after each pass: the batch stride for FOREACH, and zero for REPEAT,
+    /// whose base stays `NO_ROWS`.
+    stride: usize,
     /// The registers the carry mask names, in ascending order: the first `carried_len` entries.
-    /// Listed once at loop entry so a row copies just these instead of testing every register.
+    /// Listed once at loop entry so a pass copies just these instead of testing every register.
     carried: [u8; MAX_REGISTERS],
     carried_len: usize,
     /// Whether the body names a destination outside the carry mask. When it does not, every
-    /// register already equals its snapshot at the end of a row (the carried ones were just
+    /// register already equals its snapshot at the end of a pass (the carried ones were just
     /// copied into it), so the restore would copy the file onto itself and is skipped.
     restore: bool,
-    /// The registers as the loop found them, plus every carried value so far. Each row starts
-    /// from this snapshot.
-    base_registers: Vec<RuntimeValue<'data>>,
-    iteration: usize,
+    /// The pass running now, from zero: the value `LOOP_INDEX` reads.
+    pass: usize,
+    /// Where the current pass's row starts among the runtime accounts; `NO_ROWS` for REPEAT.
     row_base: usize,
 }
 
-/// Starts the FOREACH at `pc`: checks its body range, snapshots the registers, and decides what
-/// the batch's invocations can reuse between rows. With rows to run, fills `batch` in place and
-/// returns the body's range; with none, leaves it empty and returns the code after the loop.
+/// Starts the loop at `pc`: checks its body range, finds how many passes it makes, snapshots the
+/// registers, and decides what the loop's invocations can reuse between passes. With a pass to
+/// run, fills `slot` in place and returns the body's range; with none, leaves it empty and
+/// returns the code after the loop.
 #[inline(never)]
-fn enter_batch<'data>(
-    machine: &mut Machine<'_, 'data>,
+fn enter_loop(
+    machine: &mut Machine<'_, '_>,
     pc: usize,
     instruction: &InstructionRecord,
-    batch: &mut Option<Batch<'data>>,
+    slot: &mut Option<Loop>,
 ) -> Result<(usize, usize), ProgramError> {
     let program = machine.program;
     let body_start = pc + 1;
@@ -673,8 +707,22 @@ fn enter_batch<'data>(
         .checked_add(instruction.a as usize)
         .filter(|end| *end <= program.instructions.len())
         .ok_or_else(|| RunError::from(BallistaError::InvalidTemplateProgram).at(pc, instruction))?;
-    // Registers written inside the body are discarded after each iteration, except the ones named
-    // in the carry mask, which flow into the next iteration and out of the loop.
+    // FOREACH makes one pass per batch row, starting at the first row. REPEAT makes as many
+    // passes as its count register holds now, read once so the body cannot change it, and has
+    // no rows.
+    let (passes, row_base, stride) = if instruction.opcode == OP_FOREACH {
+        (
+            machine.iterations,
+            program.header.fixed_account_count(),
+            program.header.batch_stride(),
+        )
+    } else {
+        let count = loop_count(machine.registers, instruction)
+            .map_err(|error| error.at(pc, instruction))?;
+        (count, NO_ROWS, 0)
+    };
+    // Registers written inside the body are discarded after each pass, except the ones named in
+    // the carry mask, which flow into the next pass and out of the loop.
     let carry = instruction.immediate();
     let register_count = machine.registers.len();
     // Every write goes through an instruction's `dst`, whatever its opcode, so a body whose
@@ -688,24 +736,31 @@ fn enter_batch<'data>(
     machine.scratch.cache_cpi = cache_cpi;
     machine.scratch.data_invariant = data_invariant;
     machine.scratch.built = false;
-    if machine.iterations == 0 {
-        finish_batch(machine);
+    if passes == 0 {
+        finish_loop(machine);
         return Ok((body_end, program.instructions.len()));
     }
     // `run` allocates exactly the header's one-byte count of registers. Sliced by that count
     // rather than by the file's own length, the copy is visibly small and needs no overflow
     // check, which on SBF is a 128-bit multiply.
-    let snapshot = machine.registers[..program.header.register_count()].to_vec();
-    // Built in place: moving a finished batch into the slot would copy it with a syscall.
-    let active = batch.insert(Batch {
+    let registers = &machine.registers[..program.header.register_count()];
+    let snapshot = &mut machine.scratch.snapshot;
+    if snapshot.len() == registers.len() {
+        snapshot.copy_from_slice(registers);
+    } else {
+        *snapshot = registers.to_vec();
+    }
+    // Built in place: moving a finished loop into the slot would copy it with a syscall.
+    let active = slot.insert(Loop {
         body_start,
         body_end,
+        passes,
+        stride,
         carried: [0; MAX_REGISTERS],
         carried_len: 0,
         restore,
-        base_registers: snapshot,
-        iteration: 0,
-        row_base: program.header.fixed_account_count(),
+        pass: 0,
+        row_base,
     });
     for register in 0..register_count.min(MAX_REGISTERS) {
         if carry & (1u64 << register) != 0 {
@@ -713,42 +768,55 @@ fn enter_batch<'data>(
             active.carried_len += 1;
         }
     }
-    // The first row starts from registers equal to the snapshot, so it needs no restore.
+    // The first pass starts from registers equal to the snapshot, so it needs no restore.
     Ok((body_start, body_end))
 }
 
-/// Ends one pass over the batch body: keeps the carried registers, then either restores the
-/// snapshot for the next row and returns its loop context, or restores it for the code after the
+/// The pass count a REPEAT names: register `b`, which must hold a `u64` no greater than the
+/// static maximum in `c`.
+#[inline(always)]
+fn loop_count(registers: &[RuntimeValue<'_>], instruction: &InstructionRecord) -> RunResult<usize> {
+    let count = match registers.get(instruction.b as usize) {
+        Some(RuntimeValue::U64(count)) => *count,
+        Some(RuntimeValue::Unset) | None => return Err(BallistaError::InvalidRegister.into()),
+        Some(_) => return Err(BallistaError::TypeMismatch.into()),
+    };
+    if count > instruction.c as u64 {
+        return Err(BallistaError::LoopCountExceeded.into());
+    }
+    // At most 255, so it fits.
+    Ok(count as usize)
+}
+
+/// Ends one pass over a loop body: keeps the carried registers, then either restores the
+/// snapshot for the next pass and returns its loop context, or restores it for the code after the
 /// loop and returns `None`.
 #[inline(never)]
-fn next_iteration<'data>(
-    machine: &mut Machine<'_, 'data>,
-    batch: &mut Batch<'data>,
-) -> Option<(usize, usize)> {
-    for &register in &batch.carried[..batch.carried_len] {
+fn next_pass(machine: &mut Machine<'_, '_>, active: &mut Loop) -> Option<(usize, usize)> {
+    let snapshot = &mut machine.scratch.snapshot;
+    for &register in &active.carried[..active.carried_len] {
         let register = register as usize;
-        batch.base_registers[register] = machine.registers[register];
+        snapshot[register] = machine.registers[register];
     }
-    if batch.restore {
-        machine.registers.copy_from_slice(&batch.base_registers);
+    if active.restore {
+        machine.registers.copy_from_slice(snapshot);
     }
-    // Both stay below the row count and the runtime account count, which are at most 255.
-    batch.iteration = batch.iteration.wrapping_add(1);
-    if batch.iteration < machine.iterations {
+    // Neither add wraps: a loop makes at most 255 passes, a FOREACH's row base stays below the
+    // runtime account count, and a REPEAT's stays `NO_ROWS`, since its stride is zero.
+    active.pass = active.pass.wrapping_add(1);
+    if active.pass < active.passes {
         // Row `n` starts at `fixed + n * stride`; stepping by the stride avoids a checked
         // multiplication, which SBF implements with a 128-bit multiply routine of about fifty
-        // instructions.
-        batch.row_base = batch
-            .row_base
-            .wrapping_add(machine.program.header.batch_stride());
-        return Some((batch.iteration, batch.row_base));
+        // instructions. A REPEAT's stride is zero.
+        active.row_base = active.row_base.wrapping_add(active.stride);
+        return Some((active.pass, active.row_base));
     }
-    finish_batch(machine);
+    finish_loop(machine);
     None
 }
 
-/// Clears the per-batch invocation cache once the loop is over.
-fn finish_batch(machine: &mut Machine<'_, '_>) {
+/// Clears the loop's invocation cache once the loop is over.
+fn finish_loop(machine: &mut Machine<'_, '_>) {
     machine.scratch.cache_cpi = None;
     machine.scratch.built = false;
     machine.scratch.data_invariant = false;
@@ -982,9 +1050,10 @@ fn step<'data>(
     Ok(())
 }
 
-/// Runs every opcode from `OP_MUL_DIV` up out of line; any other opcode it sees is one the executor
-/// does not run, and fails. As arms of the dispatch loop, the math opcodes cost every run compute
-/// units whether it used them or not; behind this call they cost only the templates that use them.
+/// Runs every opcode from `OP_MUL_DIV` up out of line, the introspection and byte opcodes among
+/// them; any other opcode it sees is one the executor does not run, and fails. As arms of the
+/// dispatch loop, the math opcodes cost every run compute units whether it used them or not; behind
+/// this call they cost only the templates that use them.
 ///
 /// It returns `RunResult<()>` and writes the destination register itself. Returning the value
 /// instead would give the dispatch loop a return slot of its own for this call, and LLVM hoists
@@ -1022,8 +1091,90 @@ fn extended_instruction<'data>(
             instruction,
             loop_context,
         ),
-        _ => Err(BallistaError::InvalidTemplateProgram.into()),
+        // Introspection names a fixed account, so it resolves without the loop context. The count
+        // and the index are two bytes at either end of the sysvar and need no parsing.
+        OP_INSTRUCTION_COUNT | OP_INSTRUCTION_INDEX => {
+            let sysvar = resolve(machine.program, machine.accounts, instruction.a, None)?;
+            let value = introspect::count_or_index(instruction.opcode, sysvar)?;
+            set(registers, dst, RuntimeValue::U64(value))
+        }
+        // Parsing the sysvar and reading byte ranges run in their own frames. Each helper takes
+        // four words, all passed in registers: one that took the loop context as well would take
+        // words from the stack, and their loads would run on entry here, for every opcode.
+        //
+        // The seven reads are listed, not written as a range. rustc tests a range pattern apart
+        // from the match's switch, on the way to the fallback arm, where it cost every loop entry
+        // and every output 5 compute units.
+        OP_INSTRUCTION_PROGRAM
+        | OP_INSTRUCTION_ACCOUNT_COUNT
+        | OP_INSTRUCTION_ACCOUNT
+        | OP_INSTRUCTION_ACCOUNT_FLAGS
+        | OP_INSTRUCTION_DATA_LEN
+        | OP_READ_INSTRUCTION_DATA
+        | OP_READ_INSTRUCTION_BYTES => {
+            let sysvar = resolve(machine.program, machine.accounts, instruction.a, None)?;
+            introspect::read_instruction(sysvar, registers, instruction)
+        }
+        OP_READ_ACCOUNT_BYTES => {
+            let account = resolve(machine.program, machine.accounts, instruction.a, loop_context)?;
+            introspect::read_account_bytes(account, registers, instruction)
+        }
+        OP_BYTES_LEN => {
+            let length = introspect::bytes_len(operand(registers, instruction.a)?)?;
+            set(registers, dst, RuntimeValue::U64(length))
+        }
+        _ => write_output(machine, instruction),
     }
+}
+
+/// `EMIT` and `SET_RETURN_DATA`, reached through `extended_instruction`'s fallback arm so that
+/// its match keeps its shape. Every opcode the executor does not run arrives here too, and fails
+/// before anything is read.
+///
+/// The output's parts are encoded into the run's output buffer, exactly as invocation data is,
+/// then logged as one `Program data:` field or set as the run's return data. The verifier bounds
+/// every output at `MAX_RETURN_DATA_LEN` bytes, and admits one `SET_RETURN_DATA`, outside every
+/// loop and after the last invoke, because the runtime clears return data whenever a program is
+/// invoked. It also requires every `EMIT` to start with a literal tag outside the run event's
+/// family, so no log reads as a run event; nothing here checks that again. A `cu-profile` build
+/// replaces the return data with the profile record once the run ends; see `profile::report`.
+///
+/// Cold, so the register allocator charges this call rather than the math arms beside it. Without
+/// that, keeping `instruction` alive for the call cost the math opcodes spills, and the math
+/// fixture cost 37 compute units more. A loop still passes through here on entry, as an opcode
+/// the executor does not run, which costs each loop 8 compute units.
+#[cold]
+#[inline(never)]
+fn write_output(machine: &mut Machine<'_, '_>, instruction: &InstructionRecord) -> RunResult<()> {
+    let emit = match instruction.opcode {
+        OP_EMIT => true,
+        OP_SET_RETURN_DATA => false,
+        _ => return Err(BallistaError::InvalidTemplateProgram.into()),
+    };
+    let (start, count) = instruction.blob_range();
+    let segments = start
+        .checked_add(count)
+        .and_then(|end| machine.program.data_segments.get(start..end))
+        .ok_or(BallistaError::InvalidTemplateProgram)?;
+    let buffer = machine
+        .scratch
+        .output
+        .get_or_insert_with(|| Box::leak(Box::new(Vec::with_capacity(MAX_RETURN_DATA_LEN))));
+    buffer.clear();
+    let mut sink = OutputSink(buffer);
+    for segment in segments {
+        encode_segment(machine.program, machine.registers, segment, &mut sink)?;
+    }
+    let bytes = sink.0.as_slice();
+    if bytes.len() > MAX_RETURN_DATA_LEN {
+        return Err(BallistaError::InvalidTemplateProgram.into());
+    }
+    if emit {
+        emit_event(bytes);
+    } else {
+        pinocchio::cpi::set_return_data(bytes);
+    }
+    Ok(())
 }
 
 /// `MUL_DIV` and `MUL_DIV_CEIL`, out of line from `extended_instruction`. Inside it, their three
@@ -1426,8 +1577,8 @@ fn sole_invoked_cpi(body: &[InstructionRecord]) -> Option<usize> {
     only
 }
 
-/// What a batch can reuse between rows: the descriptor every invoke in the body names, if they
-/// all name the same one, and whether its data bytes are the same on every row. Decided once, at
+/// What a loop can reuse between passes: the descriptor every invoke in the body names, if they
+/// all name the same one, and whether its data bytes are the same on every pass. Decided once, at
 /// loop entry, and out of line so the decision does not bloat the interpreter's own loop.
 #[inline(never)]
 fn loop_cache_plan(program: &ProgramView<'_>, body: &[InstructionRecord]) -> (Option<usize>, bool) {
@@ -1444,7 +1595,7 @@ fn loop_cache_plan(program: &ProgramView<'_>, body: &[InstructionRecord]) -> (Op
 }
 
 /// The registers a loop body can write. Every other register is restored from the pre-loop
-/// snapshot each iteration, so its value is the same on every row.
+/// snapshot after each pass, so its value is the same on every pass.
 fn registers_written(body: &[InstructionRecord]) -> u64 {
     let mut written = 0u64;
     for record in body {
@@ -1455,7 +1606,7 @@ fn registers_written(body: &[InstructionRecord]) -> u64 {
     written
 }
 
-/// Whether a descriptor's data bytes are identical on every row: each segment is either a
+/// Whether a descriptor's data bytes are identical on every pass: each segment is either a
 /// literal, or reads a register the body never writes.
 fn cpi_data_is_loop_invariant(
     program: &ProgramView<'_>,
@@ -1540,8 +1691,9 @@ fn bounded_invoke(instruction: &InstructionView, views: &[&AccountView]) -> Prog
     Ok(())
 }
 
-/// Destination for encoded segment bytes: a `Vec` for CPI data or a fixed stack buffer for PDA
-/// seeds. Spec builds keep `push_bytes` out of line so the prover can summarize the copy inside.
+/// Destination for encoded segment bytes: a `Vec` for CPI data, the output buffer for `EMIT` and
+/// `SET_RETURN_DATA`, or a fixed stack buffer for PDA seeds. Spec builds keep `push_bytes` out of
+/// line so the prover can summarize the copy inside.
 pub trait ByteSink {
     fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()>;
 }
@@ -1551,6 +1703,21 @@ impl ByteSink for Vec<u8> {
     #[cfg_attr(not(feature = "spec-api"), inline(always))]
     fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()> {
         self.extend_from_slice(bytes);
+        Ok(())
+    }
+}
+
+/// The output buffer as a byte sink. A type of its own rather than the `Vec<u8>` sink, so the
+/// output opcodes get their own copy of the segment encoder: sharing the invocation's copy made
+/// the compiler stop inlining it into `invoke_cpi`, which cost every invocation about 50 compute
+/// units.
+struct OutputSink<'buffer>(&'buffer mut Vec<u8>);
+
+impl ByteSink for OutputSink<'_> {
+    #[cfg_attr(feature = "spec-api", inline(never))]
+    #[cfg_attr(not(feature = "spec-api"), inline(always))]
+    fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()> {
+        self.0.extend_from_slice(bytes);
         Ok(())
     }
 }
@@ -1681,8 +1848,9 @@ fn resolve<'data>(
         if offset >= program.header.batch_stride() {
             return Err(BallistaError::InvalidRuntimeAccount.into());
         }
-        // A row starts below the runtime account count, which is at most 120, and the offset is
-        // below the stride, so this cannot wrap; the lookup below bounds-checks it regardless.
+        // In a FOREACH a row starts below the runtime account count, which is at most 120; in a
+        // REPEAT the base is `NO_ROWS`, far below `usize::MAX`. The offset is below the stride, so
+        // neither add wraps, and the lookup below bounds-checks the index regardless.
         row_base.wrapping_add(offset)
     };
     accounts
@@ -1970,6 +2138,10 @@ mod tests {
         let event = encode_event(3, 5, 0b10110, &template);
         assert_eq!(event.len(), EVENT_LEN);
         assert_eq!(&event[..4], b"BEV1");
+        assert!(
+            EVENT_MAGIC.starts_with(&RUN_EVENT_TAG_FAMILY),
+            "the verifier reserves this family, so no EMIT can log a line that reads as the event"
+        );
         assert_eq!(event[4], TEMPLATE_PROGRAM_VERSION);
         assert_eq!(event[5], 3, "iterations");
         assert_eq!(event[6], 5, "expanded invokes");
@@ -2507,9 +2679,10 @@ mod tests {
         let program = ProgramView::parse(&bytes).unwrap();
         let mut scratch = Scratch::new(&program);
         let mut registers = vec![U64(7)];
-        // 39 is unassigned, and FOREACH reaches the executor only from inside a loop body. The
-        // runtime extensions assign opcodes up to 74, so 75 and 0xfe stay free.
-        for opcode in [0, 39, OP_FOREACH, 75, 0xfe] {
+        // 39 is unassigned, and so is every number after `OP_BYTES_LEN`, 74, the last opcode the
+        // runtime extensions take. FOREACH and REPEAT fail here too: at the root, the dispatch
+        // loop starts a loop from that failure, and inside a body the failure stands.
+        for opcode in [0, 39, OP_FOREACH, OP_REPEAT, OP_BYTES_LEN + 1, 0xfe, u8::MAX] {
             for dst in [0, 9] {
                 assert_eq!(
                     execute_instruction(
@@ -2527,6 +2700,115 @@ mod tests {
             }
         }
         assert_eq!(registers[0], U64(7));
+        assert!(
+            scratch.output.is_none(),
+            "the reject path, which every loop entry takes, allocates no output buffer"
+        );
+    }
+
+    /// `EMIT` and `SET_RETURN_DATA` encode into their own buffer. `data` may hold an invocation
+    /// payload that a batch sends again without encoding it, so an output must never write there.
+    #[test]
+    fn outputs_encode_into_their_own_buffer() {
+        let mut builder = ProgramBuilder::new();
+        let amount = builder.const_u64(0x0102);
+        let key = builder.const_pubkey([7; 32]);
+        let tag = builder.blob(b"OUT1");
+        let logged = builder.emit_data(&[
+            Segment::Literal(tag),
+            Segment::Register(DATA_REG_U16, amount),
+            Segment::Register(DATA_REG_PUBKEY, key),
+        ]);
+        let returned = builder.set_return_data(&[Segment::Register(DATA_REG_U64, amount)]);
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut scratch = Scratch::new(&program);
+        assert!(
+            scratch.output.is_none(),
+            "no buffer before the run's first output"
+        );
+        scratch.data.extend_from_slice(b"cached payload");
+        let mut registers = vec![U64(0x0102), Pubkey([7; 32])];
+
+        execute_instruction(
+            &program,
+            &[],
+            &[],
+            &mut registers,
+            &mut scratch,
+            &program.instructions[logged],
+            None,
+        )
+        .unwrap();
+        let mut expected = b"OUT1".to_vec();
+        expected.extend_from_slice(&0x0102u16.to_le_bytes());
+        expected.extend_from_slice(&[7; 32]);
+        assert_eq!(scratch.output.as_deref(), Some(&expected));
+        assert_eq!(scratch.data, b"cached payload", "the invocation buffer is untouched");
+        // The first output allocates the most any output encodes; later ones reuse it.
+        let buffer = scratch.output.as_ref().unwrap();
+        assert_eq!(buffer.capacity(), MAX_RETURN_DATA_LEN);
+        let allocated = buffer.as_ptr();
+
+        execute_instruction(
+            &program,
+            &[],
+            &[],
+            &mut registers,
+            &mut scratch,
+            &program.instructions[returned],
+            None,
+        )
+        .unwrap();
+        assert_eq!(scratch.output.as_deref(), Some(&0x0102u64.to_le_bytes().to_vec()));
+        assert_eq!(scratch.output.as_ref().unwrap().as_ptr(), allocated, "no second allocation");
+        assert_eq!(scratch.data, b"cached payload");
+        assert_eq!(registers, vec![U64(0x0102), Pubkey([7; 32])], "outputs write no register");
+    }
+
+    /// Outputs fail like invocation data does on a bad register, and as an invalid program on a
+    /// shape the verifier rules out.
+    #[test]
+    fn outputs_reject_bad_operands_and_unverified_shapes() {
+        let mut builder = ProgramBuilder::new();
+        for _ in 0..3 {
+            builder.register();
+        }
+        // r0 is unset, r1 holds a u64 too wide for a u8, r2 holds an i64.
+        let unset = builder.emit_data(&[Segment::Register(DATA_REG_U64, 0)]);
+        let narrow = builder.emit_data(&[Segment::Register(DATA_REG_U8, 1)]);
+        let mistyped = builder.set_return_data(&[Segment::Register(DATA_REG_U64, 2)]);
+        let long = builder.blob(&[0; MAX_RETURN_DATA_LEN + 1]);
+        let too_long = builder.emit_data(&[Segment::Literal(long)]);
+        let past_the_table = builder.emit(record(
+            OP_EMIT,
+            NO_INDEX,
+            NO_INDEX,
+            NO_INDEX,
+            NO_INDEX,
+            0,
+            range_immediate(4, 1),
+        ));
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut scratch = Scratch::new(&program);
+        let mut registers = vec![Unset, U64(256), I64(-1)];
+        let mut run = |index: usize| {
+            execute_instruction(
+                &program,
+                &[],
+                &[],
+                &mut registers,
+                &mut scratch,
+                &program.instructions[index],
+                None,
+            )
+        };
+        assert_eq!(run(unset), Err(err(BallistaError::InvalidRegister)));
+        assert_eq!(run(narrow), Err(err(BallistaError::ArithmeticOverflow)));
+        assert_eq!(run(mistyped), Err(err(BallistaError::TypeMismatch)));
+        assert_eq!(run(too_long), Err(err(BallistaError::InvalidTemplateProgram)));
+        assert_eq!(run(past_the_table), Err(err(BallistaError::InvalidTemplateProgram)));
     }
 
     #[test]
@@ -2560,6 +2842,178 @@ mod tests {
         assert_eq!(
             read_value(OP_ADD, &data, 0),
             Err(err(BallistaError::InvalidTemplateProgram))
+        );
+    }
+
+    /// A REPEAT runs its body as many times as its count register held when the loop started, and
+    /// a carried register leaves the loop with the last pass's value.
+    #[test]
+    fn count_loops_run_their_body_count_times_and_carry_values_out() {
+        let mut builder = ProgramBuilder::new();
+        let rounds_input = builder.input(VALUE_U64, 0);
+        let total = builder.const_u64(0);
+        let rounds = builder.load_input(rounds_input);
+        let repeat = builder.repeat(rounds, 4, 1 << total, |body| {
+            let index = body.loop_index();
+            let sum = body.binary(OP_ADD, total, index);
+            body.mov(total, sum);
+        });
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let run = |rounds: RuntimeValue<'static>| {
+            let inputs = [rounds];
+            let mut registers = vec![Unset; program.header.register_count()];
+            let mut scratch = Scratch::new(&program);
+            let result = execute_root(&program, &inputs, &[], 0, &mut registers, &mut scratch);
+            (result, registers[total as usize])
+        };
+        // 0 + 1 + … + (rounds − 1), and no pass at all for zero rounds.
+        for (rounds, expected) in [(0u64, 0u64), (1, 0), (3, 3), (4, 6)] {
+            assert_eq!(run(U64(rounds)), (Ok(()), U64(expected)), "{rounds} rounds");
+        }
+        let at_repeat = |kind: BallistaError| {
+            Err(ProgramError::Custom(encode_error(kind.code(), repeat as u16)))
+        };
+        // A count above the maximum fails at the REPEAT, before its body runs.
+        assert_eq!(run(U64(5)).0, at_repeat(BallistaError::LoopCountExceeded));
+        assert_eq!(run(U64(u64::MAX)).0, at_repeat(BallistaError::LoopCountExceeded));
+        // The count is an operand like any other: it must be set and be a u64.
+        assert_eq!(run(I64(1)).0, at_repeat(BallistaError::TypeMismatch));
+        assert_eq!(run(Unset).0, at_repeat(BallistaError::InvalidRegister));
+    }
+
+    /// A REPEAT reads its count once, when the loop starts. A body that carries the count register
+    /// and rewrites it, up or down, still makes as many passes as the count held then, and the
+    /// rewritten value leaves the loop.
+    #[test]
+    fn rewriting_the_count_in_the_body_leaves_the_passes_unchanged() {
+        for (raise, count_after) in [(true, 6), (false, 0)] {
+            let mut builder = ProgramBuilder::new();
+            let count = builder.const_u64(3);
+            let passes = builder.const_u64(0);
+            builder.repeat(count, 8, (1 << count) | (1 << passes), |body| {
+                let one = body.const_u64(1);
+                let next = body.binary(OP_ADD, passes, one);
+                body.mov(passes, next);
+                // One more on every pass, or zero.
+                let rewritten = if raise {
+                    body.binary(OP_ADD, count, one)
+                } else {
+                    body.const_u64(0)
+                };
+                body.mov(count, rewritten);
+            });
+            let bytes = builder.build().unwrap();
+            let program = ProgramView::parse(&bytes).unwrap();
+            assert!(program.verify().is_ok());
+            let mut registers = vec![Unset; program.header.register_count()];
+            let mut scratch = Scratch::new(&program);
+            assert_eq!(
+                execute_root(&program, &[], &[], 0, &mut registers, &mut scratch),
+                Ok(())
+            );
+            assert_eq!(registers[passes as usize], U64(3), "raise {raise}");
+            assert_eq!(registers[count as usize], U64(count_after), "raise {raise}");
+        }
+    }
+
+    /// Loops run one after another, and each FOREACH starts again at the first row.
+    #[test]
+    fn loops_run_in_sequence_and_every_foreach_starts_at_the_first_row() {
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        let amount = builder.row_input(VALUE_U64, 0);
+        let first = builder.const_u64(0);
+        let passes = builder.const_u64(0);
+        let second = builder.const_u64(0);
+        let three = builder.const_u64(3);
+        builder.for_each(1 << first, |body| {
+            let value = body.load_input(amount);
+            let sum = body.binary(OP_ADD, first, value);
+            body.mov(first, sum);
+        });
+        builder.repeat(three, 3, 1 << passes, |body| {
+            let one = body.const_u64(1);
+            let sum = body.binary(OP_ADD, passes, one);
+            body.mov(passes, sum);
+        });
+        builder.for_each(1 << second, |body| {
+            let value = body.load_input(amount);
+            let index = body.loop_index();
+            let weighted = body.binary(OP_MUL, value, index);
+            let sum = body.binary(OP_ADD, second, weighted);
+            body.mov(second, sum);
+        });
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let inputs = [U64(10), U64(20), U64(30)];
+        let mut registers = vec![Unset; program.header.register_count()];
+        let mut scratch = Scratch::new(&program);
+        execute_root(&program, &inputs, &[], 3, &mut registers, &mut scratch).unwrap();
+        assert_eq!(registers[first as usize], U64(60));
+        assert_eq!(registers[passes as usize], U64(3));
+        // 10 × 0 + 20 × 1 + 30 × 2: the second FOREACH read every row again, with its index.
+        assert_eq!(registers[second as usize], U64(80));
+    }
+
+    /// The bump heap never frees, so every loop of a run snapshots its registers into the buffer
+    /// the first loop allocated.
+    #[test]
+    fn every_loop_of_a_run_snapshots_into_one_buffer() {
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(2);
+        let first = builder.repeat(count, 2, 0, |body| {
+            body.loop_index();
+        });
+        let second = builder.repeat(count, 2, 0, |body| {
+            body.loop_index();
+        });
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut registers = vec![Unset; program.header.register_count()];
+        registers[count as usize] = U64(2);
+        let mut scratch = Scratch::new(&program);
+        let mut machine = Machine {
+            program: &program,
+            inputs: &[],
+            accounts: &[],
+            registers: &mut registers,
+            scratch: &mut scratch,
+            iterations: 0,
+        };
+        let mut slot = None;
+        let body = enter_loop(&mut machine, first, &program.instructions[first], &mut slot);
+        assert_eq!(body, Ok((first + 1, first + 2)));
+        // A count loop has an index and no rows.
+        assert_eq!(slot.as_ref().map(|active| (active.pass, active.row_base)), Some((0, NO_ROWS)));
+        let buffer = machine.scratch.snapshot.as_ptr();
+        slot = None;
+        enter_loop(&mut machine, second, &program.instructions[second], &mut slot).unwrap();
+        assert_eq!(machine.scratch.snapshot.as_ptr(), buffer, "the second loop reuses the first one's buffer");
+    }
+
+    /// Loops never nest: a loop instruction inside a body is an opcode the executor does not run.
+    #[test]
+    fn a_loop_inside_a_loop_body_fails_as_an_invalid_program() {
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let mut inner = 0;
+        builder.repeat(count, 1, 0, |body| {
+            inner = body.repeat(count, 1, 0, |inner_body| {
+                inner_body.loop_index();
+            });
+        });
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut registers = vec![Unset; program.header.register_count()];
+        let mut scratch = Scratch::new(&program);
+        assert_eq!(
+            execute_root(&program, &[], &[], 0, &mut registers, &mut scratch),
+            Err(ProgramError::Custom(encode_error(
+                BallistaError::InvalidTemplateProgram.code(),
+                inner as u16
+            )))
         );
     }
 

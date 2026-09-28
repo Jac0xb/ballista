@@ -132,7 +132,10 @@ The cap and the refill rate are literals. They must not come from the caller: wh
 transaction sets every input, so a cap taken from an input is a limit the caller picks. Values the
 author controls work too, such as a registry field only an author-only branch writes.
 
-- The compiler places each `OPEN_REGISTRY` at the start of the root and maps field names to offsets.
+- The compiler places each `OPEN_REGISTRY` at the start of the root, in declaration order, and maps
+  field names to offsets. A key may read the fields of entries declared before its own; one that
+  reads a later entry, or its own, is refused at compile time, since its read would precede the
+  open.
 - `expression.registry(entryAccount, 'spent')` reads a field and `step.setRegistry(entryAccount,
   'spent', value)` writes one. They name the entry's account, so two entries of one registry (for
   example a sender's and a receiver's) stay distinct. `expression.accountKey` and

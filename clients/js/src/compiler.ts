@@ -379,6 +379,10 @@ class Compiler {
   readonly sourceMap: SourceMapEntry[] = [];
   /** Each registry's index, size and fields, in declaration order. */
   readonly registries = new Map<string, RegistryLayout>();
+  /** The registry accounts whose open has compiled; a field read names one of them. */
+  readonly openedEntries = new Set<string>();
+  /** The registry account whose key is compiling, before its own open. */
+  keyedEntry: string | undefined;
   /** How often each literal and fixed input appears; see `countUses`. */
   readonly uses: Map<string, number>;
   location: { path: string; label?: string } = { path: 'template' };
@@ -597,7 +601,9 @@ class Compiler {
       }
       let key = NO_INDEX;
       if (registry.key !== undefined) {
+        this.keyedEntry = name;
         const value = this.compileExpression(registry.key, undefined, new Map());
+        this.keyedEntry = undefined;
         requireType(value, 'pubkey', `${name}'s key`);
         key = value.register;
       }
@@ -605,6 +611,7 @@ class Compiler {
       this.pushInstruction(
         instructionRecord(opcode.openRegistry, NO_INDEX, this.fixedIndices.get(name)!, key, this.fixedIndices.get(registry.payer)!, immediate),
       );
+      this.openedEntries.add(name);
     }
   }
 
@@ -1098,6 +1105,16 @@ class Compiler {
     }
     if (current.kind === 'registry') {
       const field = this.registryField(current.account, current.field);
+      // Every entry opens before the first step, so only a key can read one that has not opened:
+      // the verifier would refuse the read, which needs its entry's open at a lower pc.
+      if (!this.openedEntries.has(current.account)) {
+        const keyed = this.keyedEntry ?? current.account;
+        throw new TypeError(
+          current.account === keyed
+            ? `${keyed}'s key reads its own entry, which opens only once its key is known`
+            : `${keyed}'s key reads ${current.account}, whose entry opens after ${keyed}'s: declare ${current.account} before ${keyed}`,
+        );
+      }
       return this.emit(
         opcode.readRegistry,
         field.type,

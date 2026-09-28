@@ -1876,6 +1876,35 @@ describe('registries: compiler', () => {
     );
   });
 
+  test('a key reads only the fields of entries declared before it', () => {
+    const keyedBy = (entry: 'mine' | 'theirs', key: Expression): TemplateInput => {
+      const input = base([step.require(expression.registry('global', 'on'))]);
+      return {
+        ...input,
+        accounts: { ...input.accounts, [entry]: account.registry('limits', { key, payer: 'caller' }) },
+      };
+    };
+    // `mine` opens first, so `theirs` can be keyed by the holder `mine` records.
+    const chained = compileTemplate(keyedBy('theirs', expression.registry('mine', 'holder')));
+    const kinds = records(chained).map((record) => record[0]);
+    expect(kinds.indexOf(opcode.readRegistry)).toBeGreaterThan(kinds.indexOf(opcode.openRegistry));
+    expect(kinds.indexOf(opcode.readRegistry)).toBeLessThan(kinds.lastIndexOf(opcode.openRegistry));
+    // The other way round, the read would come before `theirs` opens, and finalize would refuse it.
+    expect(() => compileTemplate(keyedBy('mine', expression.registry('theirs', 'holder')))).toThrow(
+      "mine's key reads theirs, whose entry opens after mine's: declare theirs before mine",
+    );
+    expect(() => compileTemplate(keyedBy('mine', expression.registry('mine', 'holder')))).toThrow(
+      "mine's key reads its own entry, which opens only once its key is known",
+    );
+    // Nested inside the key, too.
+    const nested = expression.select(
+      expression.registry('global', 'on'),
+      expression.accountKey('caller'),
+      expression.input('owner'),
+    );
+    expect(() => compileTemplate(keyedBy('theirs', nested))).toThrow(/^theirs's key reads global,/);
+  });
+
   test("reads an entry's data only through its fields", () => {
     const message = /mine is a registry entry: read its fields with expression\.registry\('mine', field\)/;
     const mine = account.fixed('mine');

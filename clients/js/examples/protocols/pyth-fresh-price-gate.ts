@@ -1,5 +1,5 @@
 /**
- * Act only on a Pyth price that is fresh, confident, and inside a band — checked during
+ * Act only on a Pyth price that is fresh, confident, and inside a band. The checks run during
  * execution, not before signing.
  *
  * Inside a program this is `get_price_no_older_than`. A transaction cannot do it: it can read the

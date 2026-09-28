@@ -23,7 +23,7 @@
  * about ten fit a legacy transaction, and twelve, the template's limit, need a lookup table.
  *
  * `tokenOwnerAccountA` and `tokenOwnerAccountB` must belong to whoever holds each row's position
- * NFT, read from that row's `positionTokenAccount` β€” not to `positionAuthority`, which only has to
+ * NFT, read from that row's `positionTokenAccount`, not to `positionAuthority`, which only has to
  * sign for the position. Whirlpools lets `positionAuthority` be a delegate approved on
  * `positionTokenAccount` rather than the NFT's real owner (`MissingOrInvalidDelegate`, 6019, is
  * what guards that), so binding the fee destination to the signer would pay a delegate keeper

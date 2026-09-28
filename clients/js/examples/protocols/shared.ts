@@ -87,12 +87,12 @@ export const SPL_MINT = { length: 82, decimals: 44 } as const;
  * The offsets depend on the account's verification level, which is why `verificationLevel` is
  * read first. `VerificationLevel` is a Borsh enum: `Full` serializes as one byte, `Partial {
  * num_signatures: u8 }` as two. Anchor writes the struct sequentially, so a `Full` account puts
- * every later field one byte earlier than a `Partial` one — and the account is allocated at the
+ * every later field one byte earlier than a `Partial` one. The account is allocated at the
  * larger size either way, leaving a trailing byte unused.
  *
  * Deriving offsets from `PriceUpdateV2::LEN = 8 + 32 + 2 + 32 + 8 + …` therefore gives the
- * `Partial` layout, while most accounts on devnet are `Full`. Templates here require `Full` — it is
- * the stronger guarantee anyway, having all the signatures rather than some — and read at the
+ * `Partial` layout, while most accounts on devnet are `Full`. Templates here require `Full` (it is
+ * the stronger guarantee anyway, having all the signatures rather than some) and read at the
  * `Full` offsets.
  */
 export const PYTH = {

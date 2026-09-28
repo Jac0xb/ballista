@@ -3,7 +3,7 @@
  *
  * `orca-harvest-many-positions.ts` declares a row of four accounts and up to twelve iterations.
  * The caller passes one record per position and the iteration count follows from how many were
- * passed — there is no count in the instruction data to get wrong.
+ * passed: there is no count in the instruction data to get wrong.
  *
  * Every row passed here must belong to the same holder: `accounts.tokenOwnerAccountA` and
  * `tokenOwnerAccountB` are fixed for the whole batch, and each row's fees reach them only when

@@ -234,7 +234,7 @@ export const jupiterOracleCheckedSwap = defineTemplate({
     // sold × price, scaled by 10^scale, is the fill at the oracle price in destination base
     // units; multiplyDivide computes the exact product and applies it. sold × price fits u128
     // because both factors are below 2^64. Using max with zero means at least one of the two
-    // powers of ten below is 1, so no select is needed — a select evaluates both branches, and
+    // powers of ten below is 1, so no select is needed: a select evaluates both branches, and
     // the unused one would fail its cast.
     step.let(
       'fairOut',

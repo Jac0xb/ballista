@@ -3,7 +3,7 @@
  *
  * Jupiter v6's `route` carries the input amount, the *quoted* output, `slippageBps` and
  * `platformFeeBps`. What actually comes out is reported as an Anchor `SwapEvent` emitted through
- * a self-CPI — an event, not return data — so a caller cannot read it back with
+ * a self-CPI (an event, not return data), so a caller cannot read it back with
  * `get_return_data`. The destination token account is the only reliable source, and it can only
  * be read after the route has run.
  *
@@ -12,10 +12,12 @@
  * and the deposit fails, quote it low and the remainder is stranded in the ATA.
  *
  * `route` takes the token program, the signing owner, and the owner's source and destination token
- * accounts first, and the template passes those four itself: the destination is the account it
- * measures, so what Jupiter credits is what gets deposited. The rest of the route's list varies in
- * length with the route, so it arrives as the `routeAccounts` group. Group members are forwarded
- * with the transaction's own writable flag and never sign.
+ * accounts first, and the template passes those four itself. The destination is the account the
+ * template measures, and the run deposits exactly its measured increase. Kamino mints whole
+ * cTokens only, so it keeps back less than one cToken's worth as rounding (see below). If the
+ * destination is not the signer's, the deposit fails closed: Kamino refuses to debit it. The rest
+ * of the route's list varies in length with the route, so it arrives as the `routeAccounts` group.
+ * Group members are forwarded with the transaction's own writable flag and never sign.
  *
  * The deposit is Kamino's `_v2` handler. The v1 handler refuses every caller but Kamino itself and
  * a short whitelist (`CpiDisabled`), so a template cannot call it at all. v2 takes 17 accounts:

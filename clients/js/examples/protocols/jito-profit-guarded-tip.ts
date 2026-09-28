@@ -2,19 +2,19 @@
  * Pay a Jito tip only out of an arbitrage that actually worked.
  *
  * Jito's own advice is to keep the tip in the same transaction as the strategy, "this way if the
- * transaction fails, you don't pay the Jito tip" — but a strategy that succeeds thinner than the
+ * transaction fails, you don't pay the Jito tip". But a strategy that succeeds thinner than the
  * tip still pays it in full, and a transaction cannot compare its own profit to its own tip. This
  * template can: the strategy is a Jupiter `route` that starts and ends in the searcher's
  * wrapped-SOL account, measured instead of the searcher's lamports because `route` never moves
- * them — the Swap API wraps and unwraps SOL in instructions of its own, outside `route`. The
+ * them: the Swap API wraps and unwraps SOL in instructions of its own, outside `route`. The
  * template refuses to pay the tip unless the balance grew by the tip plus `minimumEdge`.
  *
  * Jupiter's API refuses a quote whose input and output mints are the same, so a round trip is
- * quoted as two legs, which the caller joins into one `route` before calling this template —
- * `round_trip` in the test suite is the only implementation. Jupiter does not tie a route's source
- * and destination to the accounts its steps move, so the route must be built to start and end in
- * them regardless; only single-step legs can be joined this way, since a step's two indices come
- * after its percent, which comes after a `Swap` enum whose variants differ in length.
+ * quoted as two legs, which the caller joins into one `route` before calling this template
+ * (`round_trip` in the test suite is the only implementation). Jupiter does not tie a route's
+ * source and destination to the accounts its steps move, so the route must be built to start and
+ * end in them regardless; only single-step legs can be joined this way, since a step's two indices
+ * come after its percent, which comes after a `Swap` enum whose variants differ in length.
  *
  * The tip is a fixed run input, not a share of profit computed at run time: the block engine is
  * closed source, and it is unsettled whether a runtime-computed amount is scored at its simulated

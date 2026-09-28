@@ -37,7 +37,7 @@
  * thousand base units is a safer default.
  *
  * `tokenOwnerAccountA` and `tokenOwnerAccountB` must belong to whoever holds the position's NFT,
- * read from `positionTokenAccount`'s own owner field β€” not to `positionAuthority`, which only has
+ * read from `positionTokenAccount`'s own owner field, not to `positionAuthority`, which only has
  * to sign for the position. Whirlpools lets `positionAuthority` be a delegate approved on
  * `positionTokenAccount` rather than the NFT's real owner (`MissingOrInvalidDelegate`, 6019, is
  * what guards that), so binding the fee destination to the signer would pay a delegate keeper

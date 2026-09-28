@@ -37,6 +37,8 @@ const JITO_TIP_PAYMENT: Pubkey = pubkey!("T1pyyaTNZsKv2WcRAB8oVnk93mLJw2XzjtVYqC
 /// Every Kamino v2 lending instruction takes the instructions sysvar.
 const SYSVAR_INSTRUCTIONS: Pubkey = pubkey!("Sysvar1nstructions1111111111111111111111111");
 const WRAPPED_SOL_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
+/// Orca's v2 instructions take the memo program, for Token-2022 transfers that need a memo.
+const MEMO_PROGRAM: Pubkey = pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
 // Layouts.
 const TOKEN_ACCOUNT_LEN: u32 = 165;
@@ -54,6 +56,7 @@ const PYTH_CONFIDENCE: u64 = 81;
 const PYTH_EXPONENT: u64 = 89;
 const PYTH_PUBLISH_TIME: u64 = 93;
 const ORCA_POSITION_LEN: u32 = 216;
+const ORCA_LIQUIDITY: u64 = 72;
 const ORCA_FEE_OWED_A: u64 = 112;
 const ORCA_FEE_OWED_B: u64 = 136;
 
@@ -519,36 +522,72 @@ pub fn pyth_fresh_price_gate() -> Vec<u8> {
 // #endregion pyth-gate
 
 // #region orca-compound
-/// Collect an Orca position's fees and add them back as liquidity, when they clear a floor.
+/// Update an Orca position's fees, collect them when either clears a floor, and reinvest them in
+/// the position by token amounts. The fee accounts must belong to whoever holds the position's
+/// NFT: `positionAuthority` may be only a delegate.
 pub fn orca_compound_fees() -> Vec<u8> {
     let mut b = ProgramBuilder::new();
     let whirlpool_program = program(&mut b, ORCA_WHIRLPOOL);
     let token_program = program(&mut b, TOKEN_PROGRAM_ID);
+    let memo_program = program(&mut b, MEMO_PROGRAM);
     let position_authority = b.account(SIGN, None, None, 0);
     let whirlpool = b.account(WRITE, None, None, 0);
     let position = b.account(WRITE, None, Some(ORCA_WHIRLPOOL.to_bytes()), ORCA_POSITION_LEN);
-    let position_token_account = b.account(READ, None, None, 0);
-    let token_owner_a = b.account(WRITE, None, None, 0);
-    let token_owner_b = b.account(WRITE, None, None, 0);
+    // Token or Token-2022, so only its length is pinned; Whirlpools checks its mint and amount.
+    let position_token_account = b.account(READ, None, None, TOKEN_ACCOUNT_LEN);
+    let token_mint_a = b.account(READ, None, None, 0);
+    let token_mint_b = b.account(READ, None, None, 0);
+    let token_owner_a = token_account(&mut b);
+    let token_owner_b = token_account(&mut b);
     let token_vault_a = b.account(WRITE, None, None, 0);
     let token_vault_b = b.account(WRITE, None, None, 0);
     let tick_array_lower = b.account(WRITE, None, None, 0);
     let tick_array_upper = b.account(WRITE, None, None, 0);
-    let liquidity_amount = b.input(VALUE_U128, 0);
     let dust_floor = b.input(VALUE_U64, 0);
+    let min_sqrt_price = b.input(VALUE_U128, 0);
+    let max_sqrt_price = b.input(VALUE_U128, 0);
 
-    let liquidity_amount = b.load_input(liquidity_amount);
     let dust_floor = b.load_input(dust_floor);
+    let min_sqrt_price = b.load_input(min_sqrt_price);
+    let max_sqrt_price = b.load_input(max_sqrt_price);
+    let zero = b.const_u128(0);
 
-    // Read the owed fees before collecting, because collecting zeroes them.
+    // collect_fees checks only the fee accounts' mint, so the template checks their owner.
+    let holder = b.read(OP_READ_PUBKEY, position_token_account, TOKEN_OWNER);
+    let owner_a = b.read(OP_READ_PUBKEY, token_owner_a, TOKEN_OWNER);
+    let pays_holder = b.binary(OP_EQ, owner_a, holder);
+    b.require(pays_holder);
+    let owner_b = b.read(OP_READ_PUBKEY, token_owner_b, TOKEN_OWNER);
+    let pays_holder = b.binary(OP_EQ, owner_b, holder);
+    b.require(pays_holder);
+
+    // Fold the pool's fee growth into the position; it fails on a position without liquidity.
+    let liquidity = b.read(OP_READ_U128, position, ORCA_LIQUIDITY);
+    let has_liquidity = b.binary(OP_GT, liquidity, zero);
+    let update = b.blob(&anchor("update_fees_and_rewards"));
+    let update = b.cpi(
+        whirlpool_program,
+        &[
+            (whirlpool, WRITE),
+            (position, WRITE),
+            (tick_array_lower, READ),
+            (tick_array_upper, READ),
+        ],
+        &[Segment::Literal(update)],
+    );
+    b.invoke(update, Some(has_liquidity));
+
+    // Read after the update, which makes them current, and before the collect, which zeroes them.
     let owed_a = b.read(OP_READ_U64, position, ORCA_FEE_OWED_A);
     let owed_b = b.read(OP_READ_U64, position, ORCA_FEE_OWED_B);
+    let earned_a = b.binary(OP_GT, owed_a, dust_floor);
+    let earned_b = b.binary(OP_GT, owed_b, dust_floor);
 
     let collect = b.blob(&anchor("collect_fees"));
     let collect = b.cpi(
         whirlpool_program,
         &[
-            (whirlpool, WRITE),
+            (whirlpool, READ),
             (position_authority, SIGN),
             (position, WRITE),
             (position_token_account, READ),
@@ -560,18 +599,25 @@ pub fn orca_compound_fees() -> Vec<u8> {
         ],
         &[Segment::Literal(collect)],
     );
-    let worth_it = b.binary(OP_GT, owed_a, dust_floor);
-    b.invoke(collect, Some(worth_it));
+    let either = b.binary(OP_OR, earned_a, earned_b);
+    b.invoke(collect, Some(either));
 
-    let increase = b.blob(&anchor("increase_liquidity"));
+    // The fees as caps: Orca works out the most liquidity they buy at the price when it runs.
+    let increase = b.blob(&anchor("increase_liquidity_by_token_amounts_v2"));
+    let by_token_amounts = b.blob(&[0]); // IncreaseLiquidityMethod::ByTokenAmounts
+    let no_remaining_accounts = b.blob(&[0]); // Option::None
     let increase = b.cpi(
         whirlpool_program,
         &[
             (whirlpool, WRITE),
-            (token_program, READ),
+            (token_program, READ), // token_program_a
+            (token_program, READ), // token_program_b
+            (memo_program, READ),
             (position_authority, SIGN),
             (position, WRITE),
             (position_token_account, READ),
+            (token_mint_a, READ),
+            (token_mint_b, READ),
             (token_owner_a, WRITE),
             (token_owner_b, WRITE),
             (token_vault_a, WRITE),
@@ -581,57 +627,95 @@ pub fn orca_compound_fees() -> Vec<u8> {
         ],
         &[
             Segment::Literal(increase),
-            Segment::Register(DATA_REG_U128, liquidity_amount),
-            Segment::Register(DATA_REG_U64, owed_a),
-            Segment::Register(DATA_REG_U64, owed_b),
+            Segment::Literal(by_token_amounts),
+            Segment::Register(DATA_REG_U64, owed_a), // token_max_a
+            Segment::Register(DATA_REG_U64, owed_b), // token_max_b
+            Segment::Register(DATA_REG_U128, min_sqrt_price),
+            Segment::Register(DATA_REG_U128, max_sqrt_price),
+            Segment::Literal(no_remaining_accounts),
         ],
     );
-    let worth_it = b.binary(OP_GT, owed_a, dust_floor);
-    b.invoke(increase, Some(worth_it));
+    // In range, liquidity needs both tokens; an emptied position stays empty.
+    let both = b.binary(OP_AND, earned_a, earned_b);
+    let reinvest = b.binary(OP_AND, has_liquidity, both);
+    b.invoke(increase, Some(reinvest));
     b.build().unwrap()
 }
 // #endregion orca-compound
 
 // #region orca-harvest
-/// Collect fees from up to twelve Orca positions, skipping any that earned less than a floor.
+/// Update and collect the fees of up to twelve Orca positions of one holder, skipping any whose
+/// fees are all at or below a floor.
 pub fn orca_harvest_many_positions() -> Vec<u8> {
     let mut b = ProgramBuilder::new();
     let whirlpool_program = program(&mut b, ORCA_WHIRLPOOL);
     let token_program = program(&mut b, TOKEN_PROGRAM_ID);
     let position_authority = b.account(SIGN, None, None, 0);
     let whirlpool = b.account(WRITE, None, None, 0);
-    let token_owner_a = b.account(WRITE, None, None, 0);
-    let token_owner_b = b.account(WRITE, None, None, 0);
+    let token_owner_a = token_account(&mut b);
+    let token_owner_b = token_account(&mut b);
     let token_vault_a = b.account(WRITE, None, None, 0);
     let token_vault_b = b.account(WRITE, None, None, 0);
-    // One row per position: the position and the token account that proves ownership of it.
+    // One row per position: the position, the token account holding its NFT, and the tick arrays
+    // holding its lower and upper ticks.
     let position = b.row_account(WRITE, None, Some(ORCA_WHIRLPOOL.to_bytes()), ORCA_POSITION_LEN);
-    let position_token_account = b.row_account(READ, None, None, 0);
+    let position_token_account = b.row_account(READ, None, None, TOKEN_ACCOUNT_LEN);
+    let tick_array_lower = b.row_account(READ, None, None, 0);
+    let tick_array_upper = b.row_account(READ, None, None, 0);
     b.batch(12, 1);
     let dust_floor = b.input(VALUE_U64, 0);
 
     let dust_floor = b.load_input(dust_floor);
+    let zero = b.const_u128(0);
 
-    let collect = b.blob(&anchor("collect_fees"));
-    let collect = b.cpi(
-        whirlpool_program,
-        &[
-            (whirlpool, WRITE),
-            (position_authority, SIGN),
-            (position, WRITE),
-            (position_token_account, READ),
-            (token_owner_a, WRITE),
-            (token_vault_a, WRITE),
-            (token_owner_b, WRITE),
-            (token_vault_b, WRITE),
-            (token_program, READ),
-        ],
-        &[Segment::Literal(collect)],
-    );
+    // Every row shares the fee accounts, so their owners are read once.
+    let fee_owner_a = b.read(OP_READ_PUBKEY, token_owner_a, TOKEN_OWNER);
+    let fee_owner_b = b.read(OP_READ_PUBKEY, token_owner_b, TOKEN_OWNER);
     b.for_each(0, |body| {
-        // This row's own earnings decide whether this row does anything.
+        // Each row's position NFT must be held by the fee accounts' owner.
+        let holder = body.read(OP_READ_PUBKEY, position_token_account, TOKEN_OWNER);
+        let same_a = body.binary(OP_EQ, holder, fee_owner_a);
+        body.require(same_a);
+        let same_b = body.binary(OP_EQ, holder, fee_owner_b);
+        body.require(same_b);
+
+        let update = body.blob(&anchor("update_fees_and_rewards"));
+        let update = body.cpi(
+            whirlpool_program,
+            &[
+                (whirlpool, WRITE),
+                (position, WRITE),
+                (tick_array_lower, READ),
+                (tick_array_upper, READ),
+            ],
+            &[Segment::Literal(update)],
+        );
+        let liquidity = body.read(OP_READ_U128, position, ORCA_LIQUIDITY);
+        let liquid = body.binary(OP_GT, liquidity, zero);
+        body.invoke(update, Some(liquid));
+
+        let collect = body.blob(&anchor("collect_fees"));
+        let collect = body.cpi(
+            whirlpool_program,
+            &[
+                (whirlpool, READ),
+                (position_authority, SIGN),
+                (position, WRITE),
+                (position_token_account, READ),
+                (token_owner_a, WRITE),
+                (token_vault_a, WRITE),
+                (token_owner_b, WRITE),
+                (token_vault_b, WRITE),
+                (token_program, READ),
+            ],
+            &[Segment::Literal(collect)],
+        );
+        // This row's own fees, just updated, decide whether it collects.
         let owed_a = body.read(OP_READ_U64, position, ORCA_FEE_OWED_A);
-        let worth_it = body.binary(OP_GT, owed_a, dust_floor);
+        let earned_a = body.binary(OP_GT, owed_a, dust_floor);
+        let owed_b = body.read(OP_READ_U64, position, ORCA_FEE_OWED_B);
+        let earned_b = body.binary(OP_GT, owed_b, dust_floor);
+        let worth_it = body.binary(OP_OR, earned_a, earned_b);
         body.invoke(collect, Some(worth_it));
     });
     b.build().unwrap()

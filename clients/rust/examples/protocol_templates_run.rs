@@ -25,6 +25,7 @@ const KAMINO_FARMS: Pubkey = pubkey!("FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91
 const ORCA_WHIRLPOOL: Pubkey = pubkey!("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc");
 const MARGINFI_V2: Pubkey = pubkey!("MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA");
 const SYSVAR_INSTRUCTIONS: Pubkey = pubkey!("Sysvar1nstructions1111111111111111111111111");
+const MEMO_PROGRAM: Pubkey = pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
 /// `in_amount`, `quoted_out_amount`, `slippage_bps` and `platform_fee_bps`: `route`'s data after
 /// its plan.
@@ -395,32 +396,48 @@ pub fn run_pyth_gate(
 
 // #region orca-compound
 pub struct OrcaCompoundAccounts {
+    /// Signs for the position: the holder of its NFT, or a delegate approved on it.
     pub position_authority: Pubkey,
     pub whirlpool: Pubkey,
     pub position: Pubkey,
+    /// The token account holding the position's NFT. Its owner is the position's holder.
     pub position_token_account: Pubkey,
+    pub token_mint_a: Pubkey,
+    pub token_mint_b: Pubkey,
+    /// The holder's own token accounts: the fees go there and are reinvested from there.
     pub token_owner_account_a: Pubkey,
     pub token_owner_account_b: Pubkey,
     pub token_vault_a: Pubkey,
     pub token_vault_b: Pubkey,
+    /// The tick arrays holding the position's lower and upper ticks.
     pub tick_array_lower: Pubkey,
     pub tick_array_upper: Pubkey,
 }
 
+/// `dust_floor` is not safe at 0: a fee too small to buy any liquidity fails the whole run.
+/// `sqrt_price_bounds` is `(min, max)`, the pool sqrt prices (Q64.64) the deposit accepts:
+/// Orca's `get_sqrt_price_slippage_bounds` for the current price and a tolerance.
 pub fn run_orca_compound(
     template: Pubkey,
     a: &OrcaCompoundAccounts,
-    liquidity_amount: u128,
     dust_floor: u64,
+    (min_sqrt_price, max_sqrt_price): (u128, u128),
 ) -> Instruction {
-    let inputs = RunInputs::new().u128(liquidity_amount).u64(dust_floor).finish();
+    let inputs = RunInputs::new()
+        .u64(dust_floor)
+        .u128(min_sqrt_price)
+        .u128(max_sqrt_price)
+        .finish();
     let accounts = vec![
         pinned(ORCA_WHIRLPOOL),
         pinned(TOKEN_PROGRAM_ID),
+        pinned(MEMO_PROGRAM),
         AccountMeta::new_readonly(a.position_authority, true),
         AccountMeta::new(a.whirlpool, false),
         AccountMeta::new(a.position, false),
         AccountMeta::new_readonly(a.position_token_account, false),
+        AccountMeta::new_readonly(a.token_mint_a, false),
+        AccountMeta::new_readonly(a.token_mint_b, false),
         AccountMeta::new(a.token_owner_account_a, false),
         AccountMeta::new(a.token_owner_account_b, false),
         AccountMeta::new(a.token_vault_a, false),
@@ -436,21 +453,34 @@ pub fn run_orca_compound(
 pub struct OrcaHarvestAccounts {
     pub position_authority: Pubkey,
     pub whirlpool: Pubkey,
+    /// The positions' holder's own token accounts, where every row's fees go.
     pub token_owner_account_a: Pubkey,
     pub token_owner_account_b: Pubkey,
     pub token_vault_a: Pubkey,
     pub token_vault_b: Pubkey,
 }
 
-/// One row per position: `(position, position_token_account)`. The template takes 1 to 12, and
-/// the row count comes from the account list, so there is no count to pass.
+/// One row per position.
+pub struct OrcaHarvestRow {
+    pub position: Pubkey,
+    /// The token account holding the position's NFT.
+    pub position_token_account: Pubkey,
+    /// The tick arrays holding the position's lower and upper ticks.
+    pub tick_array_lower: Pubkey,
+    pub tick_array_upper: Pubkey,
+}
+
+/// 1 to 12 rows, all of one holder: the fee accounts are fixed for the batch, and each row's NFT
+/// must be held by their owner. The row count comes from the account list, so there is no count
+/// to pass. A row that collects costs about 24,000 compute units, so more than eight need a
+/// compute budget.
 pub fn run_orca_harvest(
     template: Pubkey,
     a: &OrcaHarvestAccounts,
-    positions: &[(Pubkey, Pubkey)],
+    rows: &[OrcaHarvestRow],
     dust_floor: u64,
 ) -> Instruction {
-    assert!((1..=12).contains(&positions.len()), "the template takes 1 to 12 positions");
+    assert!((1..=12).contains(&rows.len()), "the template takes 1 to 12 positions");
     let inputs = RunInputs::new().u64(dust_floor).finish();
     let mut accounts = vec![
         pinned(ORCA_WHIRLPOOL),
@@ -462,9 +492,12 @@ pub fn run_orca_harvest(
         AccountMeta::new(a.token_vault_a, false),
         AccountMeta::new(a.token_vault_b, false),
     ];
-    for (position, position_token_account) in positions {
-        accounts.push(AccountMeta::new(*position, false));
-        accounts.push(AccountMeta::new_readonly(*position_token_account, false));
+    // One row after another, each in the order the row schema declares.
+    for row in rows {
+        accounts.push(AccountMeta::new(row.position, false));
+        accounts.push(AccountMeta::new_readonly(row.position_token_account, false));
+        accounts.push(AccountMeta::new_readonly(row.tick_array_lower, false));
+        accounts.push(AccountMeta::new_readonly(row.tick_array_upper, false));
     }
     run_instruction(template, accounts, &inputs)
 }
@@ -875,14 +908,17 @@ pub const RUNS: [(&str, fn() -> Vec<Instruction>); 11] = [
             whirlpool: key(2),
             position: key(3),
             position_token_account: key(4),
-            token_owner_account_a: key(5),
-            token_owner_account_b: key(6),
-            token_vault_a: key(7),
-            token_vault_b: key(8),
-            tick_array_lower: key(9),
-            tick_array_upper: key(10),
+            token_mint_a: key(5),
+            token_mint_b: key(6),
+            token_owner_account_a: key(7),
+            token_owner_account_b: key(8),
+            token_vault_a: key(9),
+            token_vault_b: key(10),
+            tick_array_lower: key(11),
+            tick_array_upper: key(12),
         };
-        vec![run_orca_compound(TEMPLATE, &a, 1_000_000_000, 10_000)]
+        let sqrt_price_bounds = (6_400_000_000_000_000_000, 6_550_000_000_000_000_000);
+        vec![run_orca_compound(TEMPLATE, &a, 5_000, sqrt_price_bounds)]
     }),
     ("orcaHarvestManyPositions", || {
         let a = OrcaHarvestAccounts {
@@ -893,8 +929,16 @@ pub const RUNS: [(&str, fn() -> Vec<Instruction>); 11] = [
             token_vault_a: key(5),
             token_vault_b: key(6),
         };
-        let positions: Vec<_> = (0..5).map(|row| (key(100 + row), key(150 + row))).collect();
-        vec![run_orca_harvest(TEMPLATE, &a, &positions, 10_000)]
+        // Positions in one pool often share tick arrays.
+        let rows: Vec<_> = (0..5)
+            .map(|row| OrcaHarvestRow {
+                position: key(100 + row),
+                position_token_account: key(150 + row),
+                tick_array_lower: key(7),
+                tick_array_upper: key(8),
+            })
+            .collect();
+        vec![run_orca_harvest(TEMPLATE, &a, &rows, 10_000)]
     }),
     ("pythFreshPriceGate", || {
         let gate = PriceGate {

@@ -4,6 +4,8 @@ import { INSTRUCTIONS_SYSVAR_ADDRESS_BYTES } from './helpers.js';
 import {
   TemplateSchema,
   readWidth,
+  registrySize,
+  type RegistryFieldType,
   type AccountConstraint,
   type AccountReference,
   type DataPart,
@@ -32,6 +34,13 @@ export const MAX_CPI_ACCOUNTS = 64;
 export const MAX_PDA_SEEDS = 15;
 export const MAX_PDA_SEED_LENGTH = 32;
 export const MAX_RETURN_DATA_LENGTH = 1_024;
+export const MAX_REGISTRIES = 8;
+export const MAX_REGISTRY_OPENS = 8;
+export const MAX_REGISTRY_SIZE = 512;
+/** An entry's header before its fields: magic, version, registry index, template and key. */
+export const REGISTRY_ENTRY_HEADER_LENGTH = 72;
+/** The CPIs an open makes at most: a transfer, an allocate and an assign for a pre-funded entry. */
+const REGISTRY_OPEN_CPIS = 3;
 
 /** Program header flag: emit a `BEV1` data log after every successful run. */
 export const PROGRAM_FLAG_EMIT_EVENT = 1;
@@ -366,6 +375,8 @@ class Compiler {
   /** Highest byte any fixed-offset read touches per account, used to infer `minDataLength`. */
   readonly requiredDataLength = new Map<string, number>();
   readonly sourceMap: SourceMapEntry[] = [];
+  /** Each registry's index, size and fields, in declaration order. */
+  readonly registries = new Map<string, RegistryLayout>();
   /** How often each literal and fixed input appears; see `countUses`. */
   readonly uses: Map<string, number>;
   location: { path: string; label?: string } = { path: 'template' };
@@ -386,6 +397,15 @@ class Compiler {
     this.batchEntries.forEach(([name], index) => this.batchIndices.set(name, index));
     template.accountGroups.forEach((name, index) => this.accountGroupIndices.set(name, index));
     this.uses = countUses(template.steps);
+    for (const [index, [name, fields]] of Object.entries(template.registries).entries()) {
+      let offset = 0;
+      const layout: RegistryLayout = { index, size: registrySize(fields), fields: new Map() };
+      for (const [field, type] of Object.entries(fields)) {
+        layout.fields.set(field, { offset, type });
+        offset += readWidth[type];
+      }
+      this.registries.set(name, layout);
+    }
   }
 
   compile(): CompiledTemplate {
@@ -413,6 +433,7 @@ class Compiler {
       constantIndex += 1;
       this.constants.set(key, this.emitLiteral(value));
     }
+    this.compileRegistryOpens();
     this.location = { path: 'template' };
     // Steps compile first so every static read has already raised its account's data floor.
     this.compileSteps(this.template.steps, undefined, new Map(), new Set(), 'steps');
@@ -436,7 +457,9 @@ class Compiler {
       throw new RangeError('Template constants exceed the wire format');
     }
 
-    const maxExpandedCpis = worstCaseCpis(this.template.steps, this.template.batch?.maxIterations ?? 0);
+    const opens = this.fixedEntries.filter(([, constraint]) => constraint.registry !== undefined).length;
+    const maxExpandedCpis =
+      worstCaseCpis(this.template.steps, this.template.batch?.maxIterations ?? 0) + REGISTRY_OPEN_CPIS * opens;
     if (maxExpandedCpis > MAX_EXPANDED_CPIS) {
       throw new RangeError(`Template can expand to ${maxExpandedCpis} CPIs; maximum is 64`);
     }
@@ -531,6 +554,59 @@ class Compiler {
     return writer.finish();
   }
 
+  /**
+   * One `OPEN_REGISTRY` per registry account, in declaration order, after the hoisted inputs and
+   * constants and before the first step: each key can be an input, an account's key or a constant,
+   * and every open precedes any `setReturnData`, as the verifier requires.
+   */
+  compileRegistryOpens(): void {
+    const entries = this.fixedEntries.filter(([, constraint]) => constraint.registry !== undefined);
+    if (entries.length === 0) return;
+    if (entries.length > MAX_REGISTRY_OPENS) {
+      throw new RangeError(`A template opens at most ${MAX_REGISTRY_OPENS} registry entries`);
+    }
+    const systemProgram = this.fixedEntries.findIndex(
+      ([, constraint]) => constraint.address !== undefined && constraint.address.every((byte) => byte === 0),
+    );
+    if (systemProgram < 0) {
+      throw new TypeError(
+        'Registry accounts need a fixed account pinned to the System program: declare one with account.systemProgram()',
+      );
+    }
+    for (const [name, constraint] of entries) {
+      const registry = constraint.registry!;
+      this.location = { path: `accounts.${name}` };
+      const layout = this.registries.get(registry.name);
+      if (layout === undefined) throw new TypeError(`Unknown registry: ${registry.name}`);
+      if (constraint.signer || constraint.executable || constraint.address || constraint.owner || constraint.minDataLength !== 0) {
+        throw new TypeError(`${name} must be declared only writable: build it with account.registry`);
+      }
+      const payer = this.template.accounts[registry.payer];
+      if (payer === undefined || !payer.signer || !payer.writable || payer.registry !== undefined) {
+        throw new TypeError(`${name}'s payer ${registry.payer} must be a fixed account declared signer and writable`);
+      }
+      let key = NO_INDEX;
+      if (registry.key !== undefined) {
+        const value = this.compileExpression(registry.key, undefined, new Map());
+        requireType(value, 'pubkey', `${name}'s key`);
+        key = value.register;
+      }
+      const immediate = BigInt(layout.index) | (BigInt(layout.size) << 8n) | (BigInt(systemProgram) << 24n);
+      this.pushInstruction(
+        instructionRecord(opcode.openRegistry, NO_INDEX, this.fixedIndices.get(name)!, key, this.fixedIndices.get(registry.payer)!, immediate),
+      );
+    }
+  }
+
+  /** The field `field` of the registry entry in fixed account `accountName`. */
+  registryField(accountName: string, field: string): RegistryField {
+    const registry = this.template.accounts[accountName]?.registry;
+    if (registry === undefined) throw new TypeError(`${accountName} is not a registry account`);
+    const found = this.registries.get(registry.name)?.fields.get(field);
+    if (found === undefined) throw new TypeError(`${registry.name} has no field ${field}`);
+    return found;
+  }
+
   compileSteps(steps: Step[], loop: LoopKind | undefined, bindings: Bindings, carried: Set<string>, path: string): void {
     let previous: Step | undefined;
     for (const [index, current] of steps.entries()) {
@@ -601,7 +677,21 @@ class Compiler {
       } else if (current.kind === 'emit' || current.kind === 'setReturnData') {
         this.compileOutput(current, loop, bindings);
       } else if (current.kind === 'setRegistry') {
-        throw new TypeError('setRegistry is not compiled yet');
+        const field = this.registryField(current.account, current.field);
+        const value = this.compileExpression(current.value, loop, bindings);
+        if (value.type !== field.type) {
+          throw new TypeError(`${current.account}.${current.field}: ${current.field} is a ${field.type}, not a ${value.type}`);
+        }
+        this.pushInstruction(
+          instructionRecord(
+            opcode.writeRegistry,
+            NO_INDEX,
+            value.register,
+            this.fixedIndices.get(current.account)!,
+            NO_INDEX,
+            registryFieldImmediate(field),
+          ),
+        );
       } else {
         this.compileInvoke(current, loop, bindings);
       }
@@ -651,6 +741,11 @@ class Compiler {
       const constraint = this.constraintFor(account.account, loop);
       if (account.signer && !constraint.signer) throw new TypeError('CPI signer is not required by its account schema');
       if (account.writable && !constraint.writable) throw new TypeError('CPI writable account is not writable in its schema');
+      if (account.writable && account.account.kind === 'account' && this.template.accounts[account.account.name]?.registry) {
+        throw new TypeError(
+          `${account.account.name} is a registry entry: a CPI that passes it writable fails with RegistryReentry`,
+        );
+      }
       this.cpiAccounts.push(Uint8Array.of(reference, (account.signer ? ACCOUNT_SIGNER : 0) | (account.writable ? ACCOUNT_WRITABLE : 0)));
     }
 
@@ -988,7 +1083,18 @@ class Compiler {
       requireType(value, 'bytes', 'bytesLength');
       return this.emit(opcode.bytesLength, 'u64', 0, value.register);
     }
-    if (current.kind === 'registry') throw new TypeError('registry reads are not compiled yet');
+    if (current.kind === 'registry') {
+      const field = this.registryField(current.account, current.field);
+      return this.emit(
+        opcode.readRegistry,
+        field.type,
+        0,
+        this.fixedIndices.get(current.account)!,
+        NO_INDEX,
+        NO_INDEX,
+        registryFieldImmediate(field),
+      );
+    }
     if (current.kind === 'select') {
       const condition = this.compileExpression(current.condition, loop, bindings);
       const ifTrue = this.compileExpression(current.ifTrue, loop, bindings);
@@ -1182,6 +1288,22 @@ function fixedKey(name: string): string {
 
 function rowKey(name: string): string {
   return `row:${name}`;
+}
+
+interface RegistryField {
+  offset: number;
+  type: RegistryFieldType;
+}
+
+interface RegistryLayout {
+  index: number;
+  size: number;
+  fields: Map<string, RegistryField>;
+}
+
+/** `READ_REGISTRY`'s and `WRITE_REGISTRY`'s immediate: the offset, then the read opcode at byte 2. */
+function registryFieldImmediate(field: RegistryField): bigint {
+  return BigInt(field.offset) | (BigInt(readOpcode[field.type]) << 16n);
 }
 
 function instructionRecord(

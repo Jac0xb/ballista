@@ -1770,3 +1770,99 @@ describe('registries: schema', () => {
     ).toThrow(/registry accounts are fixed accounts/);
   });
 });
+
+describe('registries: compiler', () => {
+  const SYSTEM = new Uint8Array(32);
+  const base = (steps: Step[], extra: Partial<TemplateInput> = {}): TemplateInput => ({
+    inputs: { owner: { type: 'pubkey' } },
+    registries: { flags: { on: 'bool' }, limits: { spent: 'u64', lastSpend: 'i64', holder: 'pubkey' } },
+    accounts: {
+      caller: { signer: true, writable: true },
+      mine: account.registry('limits', { key: expression.accountKey('caller'), payer: 'caller' }),
+      theirs: account.registry('limits', { key: expression.input('owner'), payer: 'caller' }),
+      global: account.registry('flags', { payer: 'caller' }),
+      systemProgram: account.systemProgram(),
+    },
+    steps,
+    ...extra,
+  });
+
+  test('opens every entry before the first step, in declaration order', () => {
+    const compiled = compileTemplate(
+      base([step.require(expression.equal(expression.registry('global', 'on'), expression.bool(false)))]),
+    );
+    const opens = records(compiled).filter((record) => record[0] === opcode.openRegistry);
+    // mine: accounts 1, key register, payer 0; registry 1 (limits), 48 bytes, System program 4.
+    expect(Array.from(opens[0]!.slice(0, 6))).toEqual([opcode.openRegistry, 0xff, 1, opens[0]![3], 0, 0]);
+    expect(readU64(opens[0]!, 6)).toBe(1n | (48n << 8n) | (4n << 24n));
+    expect(opens[1]![2]).toBe(2);
+    expect(readU64(opens[1]!, 6)).toBe(1n | (48n << 8n) | (4n << 24n));
+    // global: no key, registry 0, one byte.
+    expect(opens[2]![2]).toBe(3);
+    expect(opens[2]![3]).toBe(0xff);
+    expect(readU64(opens[2]!, 6)).toBe(0n | (1n << 8n) | (4n << 24n));
+    const pcs = records(compiled).map((record) => record[0]);
+    expect(pcs.lastIndexOf(opcode.openRegistry)).toBeLessThan(pcs.indexOf(opcode.readRegistry));
+    expect(compiled.stats.maxExpandedCpis).toBe(9);
+  });
+
+  test('reads and writes fields at their packed offsets and types', () => {
+    const compiled = compileTemplate(
+      base([
+        step.let('holder', expression.registry('theirs', 'holder')),
+        step.setRegistry('mine', 'lastSpend', expression.clockUnixTimestamp()),
+        step.setRegistry('mine', 'holder', expression.variable('holder')),
+      ]),
+    );
+    const read = records(compiled).find((record) => record[0] === opcode.readRegistry)!;
+    expect(read[2]).toBe(2);
+    expect(readU64(read, 6)).toBe(16n | (BigInt(opcode.readPubkey) << 16n));
+    const writes = records(compiled).filter((record) => record[0] === opcode.writeRegistry);
+    expect(writes.map((record) => [record[1], record[3], readU64(record, 6)])).toEqual([
+      [0xff, 1, 8n | (BigInt(opcode.readI64) << 16n)],
+      [0xff, 1, 16n | (BigInt(opcode.readPubkey) << 16n)],
+    ]);
+  });
+
+  test('refuses what the verifier or the run would refuse', () => {
+    const fails = (input: TemplateInput, message: RegExp) =>
+      expect(() => compileTemplate(input), String(message)).toThrow(message);
+    const read = (accountName: string, field: string) => [
+      step.require(expression.equal(expression.registry(accountName, field), expression.u64(0))),
+    ];
+    fails(base(read('caller', 'spent')), /caller is not a registry account/);
+    fails(base(read('mine', 'missing')), /limits has no field missing/);
+    fails(base([step.setRegistry('mine', 'spent', expression.i64(1))]), /spent is a u64/);
+    const { systemProgram: _, ...withoutSystem } = base([]).accounts!;
+    fails({ ...base(read('mine', 'spent')), accounts: withoutSystem }, /pinned to the System program/);
+    fails(
+      { ...base(read('mine', 'spent')), accounts: { ...base([]).accounts!, caller: { signer: true } } },
+      /payer caller must be a fixed account declared signer and writable/,
+    );
+    fails(
+      {
+        ...base(read('mine', 'spent')),
+        accounts: { ...base([]).accounts!, stray: account.registry('nothing', { payer: 'caller' }) },
+      },
+      /Unknown registry: nothing/,
+    );
+    fails(
+      {
+        ...base(read('mine', 'spent')),
+        accounts: { ...base([]).accounts!, mine: { ...account.registry('limits', { payer: 'caller' }), signer: true } },
+      },
+      /mine must be declared only writable/,
+    );
+    fails(
+      base([
+        step.invoke({
+          program: account.fixed('systemProgram'),
+          programAddress: SYSTEM,
+          accounts: [{ account: account.fixed('mine'), signer: false, writable: true }],
+          data: [data.literal(Uint8Array.of(2, 0, 0, 0))],
+        }),
+      ]),
+      /mine is a registry entry: a CPI that passes it writable fails with RegistryReentry/,
+    );
+  });
+});

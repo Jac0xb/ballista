@@ -52,6 +52,44 @@ jobs:
       - run: cargo build-sbf --manifest-path programs/ballista/Cargo.toml
       - run: cargo test --manifest-path tests/ballista/Cargo.toml
 
+  protocols:
+    name: Real-protocol suite
+    runs-on: ubuntu-latest
+    steps:
+      # Check out without the snapshots' program binaries, then restore them from the cache, so a
+      # run downloads only the Git LFS objects the cache lacks and doesn't spend the repository's
+      # LFS bandwidth every time.
+      - uses: actions/checkout@v5
+      - name: List the LFS objects
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-objects
+      - name: Restore the LFS objects
+        id: lfs
+        uses: actions/cache/restore@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-objects') }}
+      - run: git lfs pull
+      # Saved as soon as they are pulled, so a failing test doesn't cost the next run the download.
+      - name: Save the LFS objects
+        if: steps.lfs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-objects') }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            tests/protocols -> tests/protocols/target
+      - name: Install Solana platform tools
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v4.1.0/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      # The suite loads target/deploy/ballista.so, so the program is built first.
+      - run: cargo build-sbf --manifest-path programs/ballista/Cargo.toml
+      - run: cargo test --manifest-path tests/protocols/Cargo.toml
+
   nightly-properties:
     name: Extended property tests
     if: github.event_name == 'schedule'

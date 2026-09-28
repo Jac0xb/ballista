@@ -23,7 +23,9 @@ The Ballista program enforces these for every template, whichever SDK built it.
 - a program that is called is declared `executable`;
 - at most eight loops, never nested, each with a fixed maximum, and at most 64 calls even in the
   worst case;
-- fixed-offset reads stay within the account's declared minimum length.
+- fixed-offset reads stay within the account's declared minimum length;
+- a [registry entry](/guide/registries) is opened at the top level before it is used, read and written only
+  through its declared fields, and never passed writable to a call.
 
 **At every run:**
 
@@ -61,8 +63,12 @@ type safety, are written but blocked by prover limitations, so they are not prov
 - **Few `unsafe` blocks.** The release program uses `unsafe` only around Solana system calls (logs,
   return data, hashing and the CPI itself), to fill a CPI's account list in place, and to read the
   Instructions sysvar and read-only accounts without copying them.
-- **No authority of its own.** Ballista never signs as a PDA, holds no funds, and keeps no state
-  between runs. A template can only do what the transaction's own signers could do directly.
+- **No authority of its own.** Ballista never signs a template's calls and holds no funds. A
+  template can only do what the transaction's own signers could do directly.
+- **State only in registry entries.** Between runs, Ballista keeps only the
+  [registry entries](/guide/registries) templates declare. Only a template's own runs can change its entries, a
+  run checks each entry against the template and key before using it, and Ballista signs only to
+  create an entry's own account.
 - **Immutable templates.** A finalized template cannot be changed, so what you reviewed is what
   runs.
 

@@ -11,7 +11,8 @@ canonical address. An ATA (associated token account) is the token account at the
 Program's PDA for a given wallet, token program, and mint.
 
 These assertions prove how an address was derived. They do not let Ballista sign for the account:
-Ballista never signs.
+Ballista never signs a template's calls. Its one signature creates a
+[registry entry](/guide/registries)'s own account.
 
 ## Assert an associated token account
 

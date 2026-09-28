@@ -52,8 +52,9 @@ makes two SPL Token transfers: the taker pays that to the maker, and the maker d
 the taker.
 
 ::: warning A quote can settle more than once
-Ballista keeps no state, so it can't count settlements. Until a quote expires, it can settle again
-unless the maker's co-signer refuses a second settlement of the same quote.
+This template keeps no state, so it can't count settlements. Until a quote expires, it can settle
+again unless the maker's co-signer refuses a second settlement of the same quote. A template that
+must refuse replays itself can keep a per-maker nonce in a [registry entry](/guide/registries).
 :::
 
 ## Template

@@ -11,9 +11,9 @@ caller supplies, so its checks protect you only if you know which parts the call
 | Template author | The template, which cannot change once finalized (checked and locked on chain): account declarations, inputs, steps | What can happen, in what order, and under which conditions |
 | Caller | Every account, every input value, every signature | Which actual accounts and values the template works with |
 | Called programs | Their own instruction behavior and errors | What each call does with the accounts it receives |
-| Ballista | Checks at finalization, execution at run time, passing on signatures and write access | Nothing else: it never signs for a PDA (program-derived address), holds no funds, and keeps no state between runs |
+| Ballista | Checks at finalization, execution at run time, passing on signatures and write access, and the registry entries templates declare | Nothing else: it never signs a template's calls, holds no funds beyond each entry's rent, and keeps no state outside those entries |
 
-Ballista never signs. A CPI (a call from the template to another program) can pass a declared
+Ballista never signs a template's calls. A CPI (a call from the template to another program) can pass a declared
 account as a signer (an account that signed the transaction) or as writable (allowed to change)
 only if the account's declaration requires that privilege and the outer transaction actually
 granted it. Members of an [account group](/guide/account-groups) are the exception: they have no
@@ -21,6 +21,13 @@ declaration, so a call passes each one as writable whenever the transaction mark
 never as a signer. A template has no authority of its own: every call it makes, the caller could
 have made directly with the same signatures. What the template adds is that its steps and checks run together, in one
 transaction, exactly as written.
+
+Ballista keeps state in one place only: the [registry entries](/guide/registries) a template declares. Each entry is
+an account Ballista owns, at an address derived from the template, the registry and a key the
+template computes, and only that template's runs can change it. Before every use, a run checks that
+the entry belongs to the running template and the key it computed. Ballista signs for an entry
+only to create its account, the first time a run uses it, with the rent paid by a payer the run
+names. Entries are never closed, and anyone can read them.
 
 ## Pins
 

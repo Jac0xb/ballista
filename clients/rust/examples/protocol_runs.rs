@@ -219,27 +219,39 @@ pub fn kamino_refreshes(
 // #endregion refresh
 
 // #region rows
+/// This is `orca-harvest-many-positions`. Its row is a position, the token account holding the
+/// position's NFT, and the tick arrays holding the position's lower and upper ticks.
+pub struct HarvestRow {
+    pub position: Pubkey,
+    pub position_token_account: Pubkey,
+    pub tick_array_lower: Pubkey,
+    pub tick_array_upper: Pubkey,
+}
+
 /// Shape three: batch rows. The iteration count comes from how many rows are passed, so there is
 /// no count in the instruction data to get wrong.
 ///
-/// This is `orca-harvest-many-positions`, whose row is `(position, position_token_account)`.
+/// Every row must belong to the same holder: `owner_accounts` are fixed for the whole batch, and
+/// the fees a row earns reach them only when that row's own position NFT is held by the same
+/// owner.
 pub fn run_orca_harvest(
     template: Pubkey,
     authority: Pubkey,
     whirlpool: Pubkey,
     owner_accounts: (Pubkey, Pubkey),
     vaults: (Pubkey, Pubkey),
-    positions: &[(Pubkey, Pubkey)],
+    rows: &[HarvestRow],
     dust_floor: u64,
 ) -> Instruction {
-    assert!(!positions.is_empty(), "the template declares minIterations 1");
-    assert!(positions.len() <= 12, "the template declares maxIterations 12");
+    assert!(!rows.is_empty(), "the template declares minIterations 1");
+    assert!(rows.len() <= 12, "the template declares maxIterations 12");
 
     let inputs = RunInputs::new().u64(dust_floor).finish();
     let mut accounts = vec![
         AccountMeta::new_readonly(ORCA_WHIRLPOOL, false),
         AccountMeta::new_readonly(TOKEN_PROGRAM, false),
         AccountMeta::new_readonly(authority, true),
+        // Each row's update_fees_and_rewards writes the pool.
         AccountMeta::new(whirlpool, false),
         AccountMeta::new(owner_accounts.0, false),
         AccountMeta::new(owner_accounts.1, false),
@@ -247,9 +259,11 @@ pub fn run_orca_harvest(
         AccountMeta::new(vaults.1, false),
     ];
     // One row after another, each in the order the row schema declares.
-    for (position, position_token_account) in positions {
-        accounts.push(AccountMeta::new(*position, false));
-        accounts.push(AccountMeta::new_readonly(*position_token_account, false));
+    for row in rows {
+        accounts.push(AccountMeta::new(row.position, false));
+        accounts.push(AccountMeta::new_readonly(row.position_token_account, false));
+        accounts.push(AccountMeta::new_readonly(row.tick_array_lower, false));
+        accounts.push(AccountMeta::new_readonly(row.tick_array_upper, false));
     }
     run_instruction(template, accounts, &inputs)
 }
@@ -307,17 +321,24 @@ fn main() {
     let refreshes = kamino_refreshes(key(), key(), &[(key(), key())], &[], &[]);
     println!("kamino refreshes  {} instructions before the run", refreshes.len());
 
-    let positions: Vec<(Pubkey, Pubkey)> = (0..5).map(|_| (key(), key())).collect();
+    let rows: Vec<HarvestRow> = (0..5)
+        .map(|_| HarvestRow {
+            position: key(),
+            position_token_account: key(),
+            tick_array_lower: key(),
+            tick_array_upper: key(),
+        })
+        .collect();
     let harvest = run_orca_harvest(
         template,
         key(),
         key(),
         (key(), key()),
         (key(), key()),
-        &positions,
+        &rows,
         10_000,
     );
-    println!("orca harvest      {} accounts, {} rows", harvest.accounts.len(), positions.len());
+    println!("orca harvest      {} accounts, {} rows", harvest.accounts.len(), rows.len());
 
     // A guard that rejects is a `RequirementFailed` whose high half is the program counter, so a
     // runner can name the step that refused without knowing the bytecode.

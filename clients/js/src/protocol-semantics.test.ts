@@ -5,7 +5,7 @@
  * directly: which accounts reach Jupiter in which position, and which on-chain reads a guarantee
  * actually depends on. Each one pins a mistake an example once made.
  */
-import { getAddressDecoder, isWritableRole, type Address } from '@solana/kit';
+import { AccountRole, address, getAddressDecoder, isWritableRole, type Address } from '@solana/kit';
 import { describe, expect, test } from 'vitest';
 
 import {
@@ -27,10 +27,17 @@ import {
   kaminoRepaySwapOutput,
   marginfiToKaminoRebalance,
   marginfiWithdrawAllWithFloor,
+  orcaCompoundFees,
+  orcaHarvestManyPositions,
   pythFreshPriceGate,
   tokenSweepIntoSwap,
 } from '../examples/protocols/index.js';
 import { buildJupiterDepositRun } from '../examples/protocols/run-jupiter-deposit.js';
+import {
+  buildOrcaHarvestRun,
+  describeFailure,
+  getOrcaTickArrayAddress,
+} from '../examples/protocols/run-orca-harvest.js';
 import {
   JITO_TIP_PAYMENT,
   JUPITER_ROUTE,
@@ -680,5 +687,140 @@ describe('the Jupiter deposit runner', () => {
         minimumOut: 1n,
       }),
     ).rejects.toThrow(/useSharedAccounts/);
+  });
+});
+
+describe('Orca fee destinations belong to the position holder', () => {
+  // Whirlpools' collect_fees checks only these accounts' mint, never who owns them, so nothing
+  // else stops a run an untrusted builder assembled from paying a stranger instead of the holder.
+  // The holder is positionTokenAccount's own owner, not positionAuthority, which may be only a
+  // delegate Whirlpools accepts in the holder's place.
+  const readsRow = (name: string, offset: number) => (candidate: Expression) =>
+    candidate.kind === 'accountData' &&
+    candidate.account.kind === 'iterationAccount' &&
+    candidate.account.name === name &&
+    candidate.offset === offset;
+
+  test('orcaCompoundFees pins tokenOwnerAccountA/B to positionTokenAccount', () => {
+    const bindings = bindingsOf(orcaCompoundFees);
+    const check = requireLabeled(orcaCompoundFees, 'feesGoToThePositionHolder');
+    for (const acc of ['tokenOwnerAccountA', 'tokenOwnerAccountB'] as const) {
+      expect(dependsOn(check.condition, bindings, reads(acc, TOKEN_ACCOUNT_OWNER_OFFSET))).toBe(true);
+    }
+    expect(
+      dependsOn(check.condition, bindings, reads('positionTokenAccount', TOKEN_ACCOUNT_OWNER_OFFSET)),
+    ).toBe(true);
+    expect(dependsOn(check.condition, bindings, accountKey('positionAuthority'))).toBe(false);
+  });
+
+  test('orcaHarvestManyPositions checks each row against the fixed fee accounts', () => {
+    const bindings = bindingsOf(orcaHarvestManyPositions);
+    const check = requireLabeled(orcaHarvestManyPositions, 'positionBelongsToTheFeeOwner');
+    expect(
+      dependsOn(check.condition, bindings, readsRow('positionTokenAccount', TOKEN_ACCOUNT_OWNER_OFFSET)),
+    ).toBe(true);
+    for (const acc of ['tokenOwnerAccountA', 'tokenOwnerAccountB'] as const) {
+      expect(dependsOn(check.condition, bindings, reads(acc, TOKEN_ACCOUNT_OWNER_OFFSET))).toBe(true);
+    }
+    expect(dependsOn(check.condition, bindings, accountKey('positionAuthority'))).toBe(false);
+  });
+});
+
+describe('the Orca harvest runner', () => {
+  const decoder = getAddressDecoder();
+  const key = (byte: number): Address => decoder.decode(new Uint8Array(32).fill(byte));
+  const accounts = {
+    positionAuthority: key(2),
+    whirlpool: key(3),
+    tokenOwnerAccountA: key(4),
+    tokenOwnerAccountB: key(5),
+    tokenVaultA: key(6),
+    tokenVaultB: key(7),
+  };
+
+  test('passes each row as the position, its NFT account and its two tick arrays', async () => {
+    const instruction = await buildOrcaHarvestRun({
+      creator: key(1),
+      templateId: 0,
+      accounts,
+      positions: [
+        { position: key(10), positionTokenAccount: key(11), tickArrayLower: key(12), tickArrayUpper: key(13) },
+        { position: key(20), positionTokenAccount: key(21), tickArrayLower: key(12), tickArrayUpper: key(13) },
+      ],
+      dustFloor: 5n,
+    });
+    const metas = (instruction.accounts ?? []).map((meta) => [meta.address, meta.role]);
+    // The template, then eight fixed accounts. Each row's update writes the pool.
+    expect(metas[4]).toEqual([key(3), AccountRole.WRITABLE]);
+    expect(metas.slice(9)).toEqual([
+      [key(10), AccountRole.WRITABLE],
+      [key(11), AccountRole.READONLY],
+      [key(12), AccountRole.READONLY],
+      [key(13), AccountRole.READONLY],
+      [key(20), AccountRole.WRITABLE],
+      [key(21), AccountRole.READONLY],
+      [key(12), AccountRole.READONLY],
+      [key(13), AccountRole.READONLY],
+    ]);
+  });
+
+  test('finds the tick array holding a tick, as mainnet derives it', async () => {
+    const solUsdc = address('Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE');
+    expect(await getOrcaTickArrayAddress(solUsdc, -20_980, 4)).toBe('FdtvWk8j5u1a64YK2Uxk9eXxKZJTwLHDGx8aJPbJyw2Q');
+    // An array starts at a multiple of 88 tick spacings; the tick below it is in the previous one.
+    expect(await getOrcaTickArrayAddress(solUsdc, -21_120, 4)).toBe('FdtvWk8j5u1a64YK2Uxk9eXxKZJTwLHDGx8aJPbJyw2Q');
+    expect(await getOrcaTickArrayAddress(solUsdc, -21_121, 4)).toBe('6hA1LN1fzCiXqymDiQXeBFn5da1b7STP1L7JmDc6hR3M');
+    const thin = address('HJPjoWUrhoZzkNfRpHuieeFk9WcZWjwy6PBjZ81ngndJ');
+    expect(await getOrcaTickArrayAddress(thin, -20_989, 64)).toBe('CEstjhG1v4nUgvGDyFruYEbJ18X8XeN4sX1WFCLt4D5c');
+  });
+});
+
+describe('the Orca harvest runner names the program that refused', () => {
+  const BALLISTA = 'BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD';
+  const WHIRLPOOLS = 'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc';
+
+  test('blames Whirlpools for its own code, though Ballista uses the same number', () => {
+    const logs = [
+      `Program ${BALLISTA} invoke [1]`,
+      `Program ${WHIRLPOOLS} invoke [2]`,
+      'Program log: Instruction: UpdateFeesAndRewards',
+      `Program ${WHIRLPOOLS} consumed 7835 of 196554 compute units`,
+      `Program ${WHIRLPOOLS} success`,
+      `Program ${WHIRLPOOLS} invoke [2]`,
+      'Program log: Instruction: CollectFees',
+      'Program log: AnchorError occurred. Error Code: MissingOrInvalidDelegate. Error Number: 6019. Error Message: Position token account has a missing or invalid delegate.',
+      `Program ${WHIRLPOOLS} consumed 7400 of 186548 compute units`,
+      `Program ${WHIRLPOOLS} failed: custom program error: 0x1783`,
+      `Program ${BALLISTA} consumed 20852 of 200000 compute units`,
+      `Program ${BALLISTA} failed: custom program error: 0x1783`,
+    ];
+    expect(describeFailure(6019, logs)).toBe('code 6019 came from Whirlpools, not Ballista');
+  });
+
+  test('explains a refusal in Ballista by its account or step', () => {
+    const logs = [
+      `Program ${BALLISTA} invoke [1]`,
+      `Program ${BALLISTA} consumed 1200 of 200000 compute units`,
+      `Program ${BALLISTA} failed: custom program error: 0x81784`,
+    ];
+    expect(describeFailure((8 << 16) | 6020, logs)).toBe(
+      'AccountConstraintFailed: account position in row 0 does not satisfy its constraint',
+    );
+  });
+
+  test('does not guess without logs', () => {
+    expect(describeFailure(6019, [])).toBe('code 6019; the logs name no program that failed');
+  });
+
+  test('calls out truncated logs instead of reporting that no program failed', () => {
+    const logs = [
+      `Program ${BALLISTA} invoke [1]`,
+      `Program ${WHIRLPOOLS} invoke [2]`,
+      'Program log: Instruction: CollectFees',
+      'Log truncated',
+    ];
+    expect(describeFailure(6019, logs)).toBe(
+      'code 6019; the logs were truncated, so they cannot say which program failed',
+    );
   });
 });

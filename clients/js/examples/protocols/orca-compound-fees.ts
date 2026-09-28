@@ -1,17 +1,61 @@
 /**
- * Collect Orca Whirlpool fees and reinvest exactly what was collected.
+ * Collect an Orca Whirlpool position's fees and reinvest them in the position.
  *
- * `increase_liquidity(liquidity_amount: u128, token_max_a: u64, token_max_b: u64)` takes caps,
- * not amounts. Pass caps that are too low and the call fails; too high and you top up from the
- * wallet without meaning to. The right caps are the fees the position had actually earned when
- * the block ran, which is a number that does not exist at signing.
+ * A position's `fee_owed_a` and `fee_owed_b` hold what its last update recorded, not what it has
+ * earned since. Swaps raise the pool's fee growth, and `update_fees_and_rewards` is what folds that
+ * growth into the position. Orca's own SDK calls it before every collect, and so does this
+ * template, before it reads the fees. The update needs no signature. It fails with `LiquidityZero`
+ * (6012) on a position without liquidity, which earns nothing, so it is skipped for one.
+ *
+ * The reinvestment is `increase_liquidity_by_token_amounts_v2`, as in Orca's SDK. Given the two
+ * fees as caps, the program works out the most liquidity they buy at the price when the block
+ * runs, so nothing is topped up from the wallet and a price move within the bounds below does not
+ * matter. One fee is used up and part of the other stays in the wallet. `increase_liquidity`, by
+ * contrast, takes a liquidity chosen at signing and fails with `TokenMaxExceeded` (6017) once the
+ * price has moved or the fees are in one token.
+ *
+ * While the price is inside the position's range, liquidity takes both tokens: with either cap at
+ * zero the program works out none and fails with `LiquidityZero`. So fees in one token are
+ * collected and not reinvested. Nor are the fees of a position emptied with `decrease_liquidity`:
+ * they are collected, and the position stays empty.
+ *
+ * `minSqrtPrice` and `maxSqrtPrice` bound the pool price the deposit accepts. Orca's
+ * `get_sqrt_price_slippage_bounds` computes them from a price and a tolerance. Outside them the
+ * deposit fails with `PriceSlippageOutOfBounds` (6069), and the whole run reverts with it.
+ *
+ * `collect_fees` and the pinned token program are SPL Token's, so both of the pool's mints must be
+ * SPL Token mints, as SOL and USDC are.
+ *
+ * With nothing above `dustFloor` in either token, the collect and the deposit are skipped and the
+ * run lands: a scheduled compounder that finds nothing to do should not revert and burn the fee.
+ *
+ * `dustFloor` is not safe at 0. A fee just above the floor can still be too small to buy one unit
+ * of liquidity over the position's range, and the deposit then fails with `LiquidityZero` (6012),
+ * taking the whole run down with it, collect included
+ * (`dust_that_buys_no_liquidity_fails_the_run_unless_the_floor_skips_it`). A few base units covers
+ * a SOL/USDC position; a pool whose token A is worth less per base unit needs more, so a few
+ * thousand base units is a safer default.
+ *
+ * `tokenOwnerAccountA` and `tokenOwnerAccountB` must belong to whoever holds the position's NFT,
+ * read from `positionTokenAccount`'s own owner field β€” not to `positionAuthority`, which only has
+ * to sign for the position. Whirlpools lets `positionAuthority` be a delegate approved on
+ * `positionTokenAccount` rather than the NFT's real owner (`MissingOrInvalidDelegate`, 6019, is
+ * what guards that), so binding the fee destination to the signer would pay a delegate keeper
+ * instead of the position's real owner. Whirlpools' `collect_fees` checks only the fee accounts'
+ * mint, never who owns them, so nothing else stops a run built by someone else from pointing them
+ * anywhere; the template requires it itself (`feesGoToThePositionHolder`).
+ *
+ * A delegate keeper that reinvests, not merely collects, must also be approved on
+ * `tokenOwnerAccountA` and `tokenOwnerAccountB` themselves, not only on the position's NFT:
+ * `increase_liquidity_by_token_amounts_v2` debits them under `positionAuthority`'s signature, which
+ * the NFT approval does not cover. With only the NFT approved, a run whose `dustFloor` is 0 still
+ * reaches the deposit and fails with Token's `OwnerMismatch` (error 4); the collect before it
+ * reverts too. Approve the keeper for a bounded amount there, not `u64::MAX`: an unlimited approval
+ * lets it spend the account outside this template as well.
  *
  * Offsets come from `Position`, declared as `whirlpool, position_mint, liquidity,
  * tick_lower_index, tick_upper_index, fee_growth_checkpoint_a, fee_owed_a,
  * fee_growth_checkpoint_b, fee_owed_b, reward_infos` with `LEN = 8 + 136 + 72`.
- *
- * The `when` guard is the other half: a scheduled compounder that finds nothing to compound
- * should land a no-op, not revert and burn the fee.
  */
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -23,58 +67,128 @@ import {
   step,
 } from '../../src/index.js';
 import {
+  MEMO_PROGRAM,
+  OPTION_NONE,
+  ORCA_BY_TOKEN_AMOUNTS,
   ORCA_COLLECT_FEES,
-  ORCA_INCREASE_LIQUIDITY,
+  ORCA_INCREASE_LIQUIDITY_BY_TOKEN_AMOUNTS_V2,
   ORCA_POSITION,
+  ORCA_UPDATE_FEES_AND_REWARDS,
   ORCA_WHIRLPOOL,
+  TOKEN_ACCOUNT_LENGTH,
+  TOKEN_ACCOUNT_OWNER_OFFSET,
   addressBytes,
 } from './shared.js';
 
+const position = account.fixed('position');
+
 export const orcaCompoundFees = defineTemplate({
   inputs: {
-    /** How much liquidity the caller wants minted; the token caps below bound what it costs. */
-    liquidityAmount: { type: 'u128' },
-    /** Below this the fees are not worth a transaction. */
+    /**
+     * Fees at or below this, in either token's base units, are not worth collecting. Not safe at
+     * 0: see the header.
+     */
     dustFloor: { type: 'u64' },
+    /** The lowest pool sqrt price (Q64.64) the deposit accepts. */
+    minSqrtPrice: { type: 'u128' },
+    /** The highest pool sqrt price (Q64.64) the deposit accepts. */
+    maxSqrtPrice: { type: 'u128' },
   },
   accounts: {
     whirlpoolProgram: { executable: true, address: addressBytes(ORCA_WHIRLPOOL) },
     tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
+    memoProgram: { executable: true, address: addressBytes(MEMO_PROGRAM) },
     positionAuthority: { signer: true },
     whirlpool: { writable: true },
-    /** Owner-pinned so `fee_owed_a` and `fee_owed_b` are read from a real Whirlpool position. */
+    /** Owner-pinned so `liquidity` and the owed fees are read from a real Whirlpool position. */
     position: {
       writable: true,
       owner: addressBytes(ORCA_WHIRLPOOL),
       minDataLength: ORCA_POSITION.length,
     },
-    positionTokenAccount: {},
-    tokenOwnerAccountA: { writable: true },
-    tokenOwnerAccountB: { writable: true },
+    /**
+     * Read for its owner field, the position's real holder (`feesGoToThePositionHolder`). Could be
+     * Token- or Token-2022-owned, so its owning program is not pinned; Whirlpools' own mint and
+     * amount checks on this account make that read trustworthy without one.
+     */
+    positionTokenAccount: { unsafeUnpinned: true, minDataLength: TOKEN_ACCOUNT_LENGTH },
+    tokenMintA: {},
+    tokenMintB: {},
+    /** Must belong to the position's holder: see the header (`feesGoToThePositionHolder`). */
+    tokenOwnerAccountA: {
+      writable: true,
+      owner: TOKEN_PROGRAM_ADDRESS_BYTES,
+      minDataLength: TOKEN_ACCOUNT_LENGTH,
+    },
+    tokenOwnerAccountB: {
+      writable: true,
+      owner: TOKEN_PROGRAM_ADDRESS_BYTES,
+      minDataLength: TOKEN_ACCOUNT_LENGTH,
+    },
     tokenVaultA: { writable: true },
     tokenVaultB: { writable: true },
     tickArrayLower: { writable: true },
     tickArrayUpper: { writable: true },
   },
   steps: [
-    // Read the owed fees before collecting, because collecting zeroes them.
+    // Whirlpools' collect_fees checks only the mint of these accounts; nothing stops a run built
+    // by someone other than the position's holder from pointing them elsewhere. The holder is
+    // positionTokenAccount's owner, not positionAuthority, which may only be its delegate.
     step.let(
-      'owedA',
-      expression.accountData(account.fixed('position'), ORCA_POSITION.feeOwedA, 'u64'),
-      'readFeesOwedA',
+      'positionHolder',
+      expression.accountData(account.fixed('positionTokenAccount'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+      'readPositionHolder',
+    ),
+    step.require(
+      expression.and(
+        expression.equal(
+          expression.accountData(account.fixed('tokenOwnerAccountA'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+          expression.variable('positionHolder'),
+        ),
+        expression.equal(
+          expression.accountData(account.fixed('tokenOwnerAccountB'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+          expression.variable('positionHolder'),
+        ),
+      ),
+      'feesGoToThePositionHolder',
     ),
     step.let(
-      'owedB',
-      expression.accountData(account.fixed('position'), ORCA_POSITION.feeOwedB, 'u64'),
-      'readFeesOwedB',
+      'hasLiquidity',
+      expression.greaterThan(
+        expression.accountData(position, ORCA_POSITION.liquidity, 'u128'),
+        expression.u128(0),
+      ),
+      'readLiquidity',
     ),
-
     step.invoke({
       program: account.fixed('whirlpoolProgram'),
       accounts: [
         { account: account.fixed('whirlpool'), signer: false, writable: true },
+        { account: position, signer: false, writable: true },
+        { account: account.fixed('tickArrayLower'), signer: false, writable: false },
+        { account: account.fixed('tickArrayUpper'), signer: false, writable: false },
+      ],
+      data: [data.literal(ORCA_UPDATE_FEES_AND_REWARDS)],
+      when: expression.variable('hasLiquidity'),
+      label: 'updateFees',
+    }),
+    // Read after the update, which makes them current, and before the collect, which zeroes them.
+    step.let('owedA', expression.accountData(position, ORCA_POSITION.feeOwedA, 'u64'), 'readFeesOwedA'),
+    step.let('owedB', expression.accountData(position, ORCA_POSITION.feeOwedB, 'u64'), 'readFeesOwedB'),
+    step.let(
+      'earnedA',
+      expression.greaterThan(expression.variable('owedA'), expression.input('dustFloor')),
+    ),
+    step.let(
+      'earnedB',
+      expression.greaterThan(expression.variable('owedB'), expression.input('dustFloor')),
+    ),
+    step.invoke({
+      program: account.fixed('whirlpoolProgram'),
+      accounts: [
+        { account: account.fixed('whirlpool'), signer: false, writable: false },
         { account: account.fixed('positionAuthority'), signer: true, writable: false },
-        { account: account.fixed('position'), signer: false, writable: true },
+        { account: position, signer: false, writable: true },
         { account: account.fixed('positionTokenAccount'), signer: false, writable: false },
         { account: account.fixed('tokenOwnerAccountA'), signer: false, writable: true },
         { account: account.fixed('tokenVaultA'), signer: false, writable: true },
@@ -83,19 +197,22 @@ export const orcaCompoundFees = defineTemplate({
         { account: account.fixed('tokenProgram'), signer: false, writable: false },
       ],
       data: [data.literal(ORCA_COLLECT_FEES)],
-      // Nothing earned, nothing to do, and no reason to fail the crank.
-      when: expression.greaterThan(expression.variable('owedA'), expression.input('dustFloor')),
+      // Either fee is worth collecting.
+      when: expression.or(expression.variable('earnedA'), expression.variable('earnedB')),
       label: 'collectFees',
     }),
-
     step.invoke({
       program: account.fixed('whirlpoolProgram'),
       accounts: [
         { account: account.fixed('whirlpool'), signer: false, writable: true },
         { account: account.fixed('tokenProgram'), signer: false, writable: false },
+        { account: account.fixed('tokenProgram'), signer: false, writable: false },
+        { account: account.fixed('memoProgram'), signer: false, writable: false },
         { account: account.fixed('positionAuthority'), signer: true, writable: false },
-        { account: account.fixed('position'), signer: false, writable: true },
+        { account: position, signer: false, writable: true },
         { account: account.fixed('positionTokenAccount'), signer: false, writable: false },
+        { account: account.fixed('tokenMintA'), signer: false, writable: false },
+        { account: account.fixed('tokenMintB'), signer: false, writable: false },
         { account: account.fixed('tokenOwnerAccountA'), signer: false, writable: true },
         { account: account.fixed('tokenOwnerAccountB'), signer: false, writable: true },
         { account: account.fixed('tokenVaultA'), signer: false, writable: true },
@@ -104,13 +221,19 @@ export const orcaCompoundFees = defineTemplate({
         { account: account.fixed('tickArrayUpper'), signer: false, writable: true },
       ],
       data: [
-        data.literal(ORCA_INCREASE_LIQUIDITY),
-        data.encode('u128', expression.input('liquidityAmount')),
-        // The caps are the fees that were actually owed, so the top-up is exact.
+        data.literal(ORCA_INCREASE_LIQUIDITY_BY_TOKEN_AMOUNTS_V2),
+        data.literal(ORCA_BY_TOKEN_AMOUNTS),
         data.encode('u64', expression.variable('owedA')),
         data.encode('u64', expression.variable('owedB')),
+        data.encode('u128', expression.input('minSqrtPrice')),
+        data.encode('u128', expression.input('maxSqrtPrice')),
+        data.literal(OPTION_NONE),
       ],
-      when: expression.greaterThan(expression.variable('owedA'), expression.input('dustFloor')),
+      // In range, liquidity needs both tokens; an emptied position stays empty.
+      when: expression.and(
+        expression.variable('hasLiquidity'),
+        expression.and(expression.variable('earnedA'), expression.variable('earnedB')),
+      ),
       label: 'compoundFees',
     }),
   ],

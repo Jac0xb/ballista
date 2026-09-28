@@ -27,6 +27,7 @@ cargo test --manifest-path tests/protocols/Cargo.toml
 | `snapshot/routes.json` | Each Jupiter route's quote and instructions, by name |
 | `snapshot/programs/*.so` | Program binaries, in Git LFS |
 | `snapshot-lending/` | The Kamino and marginfi templates' snapshot, from `manifests/lending.json`, in the same four parts |
+| `snapshot-orca/` | The same files for the Orca tests: both SOL/USDC Whirlpools, their vaults and tick arrays, and five programs |
 
 `scripts/snapshot/manifests/` says what to take: programs, accounts and the swaps to quote. To
 refresh (Node 22 or later), from the repository root:
@@ -34,9 +35,12 @@ refresh (Node 22 or later), from the repository root:
 ```bash
 node scripts/snapshot/snapshot.mjs scripts/snapshot/manifests/milestone-1.json tests/protocols/snapshot
 node scripts/snapshot/snapshot.mjs scripts/snapshot/manifests/lending.json tests/protocols/snapshot-lending
+node scripts/snapshot/snapshot.mjs scripts/snapshot/manifests/orca.json tests/protocols/snapshot-orca
 ```
 
-Each run replaces its snapshot directory whole and prints what changed.
+Each run replaces its snapshot directory whole and prints what changed. When `tests/orca_snapshot.rs`
+fails after a refresh, the price has left the tick arrays `orca.json` lists: list the ones its
+message names, and refresh again.
 
 - `SOLANA_RPC_URL`: a mainnet RPC. Defaults to the public `https://api.mainnet.solana.com`.
 - `JUPITER_API_KEY`: query `api.jup.ag` with this key. Defaults to the keyless `lite-api.jup.ag`.

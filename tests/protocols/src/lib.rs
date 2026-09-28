@@ -5,6 +5,8 @@
 //!   LiteSVM from it with Ballista built from source.
 //! - [`wallet`] funds test wallets and writes their token balances.
 //! - [`oracle`] moves a Pyth or a Scope price.
+//! - [`orca`] opens Orca positions, adds liquidity and swaps through Orca's own instructions, and
+//!   quotes fees with Orca's own math.
 //! - [`template`] uploads a template with Ballista's own instructions and builds runs by the
 //!   account and input names recorded in `fixtures/protocol-examples.json`.
 //! - [`tx`] signs and sends, checks the wire size, and names the program that failed.
@@ -20,6 +22,7 @@ pub mod kamino;
 pub mod lending;
 pub mod marginfi;
 pub mod oracle;
+pub mod orca;
 pub mod snapshot;
 pub mod template;
 pub mod tx;

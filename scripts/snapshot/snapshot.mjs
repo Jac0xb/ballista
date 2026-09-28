@@ -289,8 +289,8 @@ async function main() {
   const wallet = walletAddress(plan.seed);
   console.error(`wallet ${wallet} (seed "${plan.seed}"); RPC ${RPC_HOST}; Jupiter ${JUPITER_API}`);
 
-  // 1. Routes, from Jupiter.
-  const labels = await dexPrograms();
+  // 1. Routes, from Jupiter. A snapshot without routes asks Jupiter nothing.
+  const labels = plan.routes.size > 0 ? await dexPrograms() : new Map();
   const labelOf = new Map([...labels].map(([label, program]) => [program, label]));
   const dexesUsed = new Map();
   for (const route of plan.routes.values()) {
@@ -347,7 +347,9 @@ async function main() {
     skipped.set(address, reason);
     roles.delete(address);
   }
-  const minContextSlot = Math.max(...allLegs.map((leg) => Number(leg.quote.contextSlot)));
+  // No older than any quote; without quotes, any slot.
+  const minContextSlot =
+    allLegs.length > 0 ? Math.max(...allLegs.map((leg) => Number(leg.quote.contextSlot))) : undefined;
   const { slot, clock, accounts } = await getAccountsAtOneSlot([...roles.keys()], { minContextSlot });
   console.error(`read ${accounts.size} accounts at slot ${group(slot)}`);
 

@@ -35,6 +35,8 @@ export const ORCA_WHIRLPOOL = 'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc' as c
 export const MARGINFI_V2 = 'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA' as const;
 /** Pyth Solana receiver, the non-`pro-compatible` build. */
 export const PYTH_RECEIVER = 'rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ' as const;
+/** SPL Memo. Orca's v2 instructions take it, for Token-2022 transfers that require a memo. */
+export const MEMO_PROGRAM = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr' as const;
 /** The instructions sysvar. Every Kamino v2 lending instruction takes it as an account. */
 export const SYSVAR_INSTRUCTIONS = 'Sysvar1nstructions1111111111111111111111111' as const;
 /** Kamino Farms, which Kamino Lend invokes whenever a lending instruction touches a reserve with a farm. */
@@ -183,8 +185,26 @@ export const KAMINO_REFRESH_OBLIGATION = anchorDiscriminator('refresh_obligation
 export const KAMINO_LIQUIDATE = anchorDiscriminator('liquidate_obligation_and_redeem_reserve_collateral_v2');
 /** `collect_fees()`. */
 export const ORCA_COLLECT_FEES = anchorDiscriminator('collect_fees');
-/** `increase_liquidity(liquidity_amount: u128, token_max_a: u64, token_max_b: u64)`. */
-export const ORCA_INCREASE_LIQUIDITY = anchorDiscriminator('increase_liquidity');
+/**
+ * `update_fees_and_rewards()`: folds the pool's fee growth into a position's `fee_owed_*`. Needs
+ * no signature; fails with `LiquidityZero` (6012) on a position without liquidity.
+ */
+export const ORCA_UPDATE_FEES_AND_REWARDS = anchorDiscriminator('update_fees_and_rewards');
+/**
+ * `increase_liquidity_by_token_amounts_v2(method: IncreaseLiquidityMethod, remaining_accounts_info:
+ * Option<RemainingAccountsInfo>)`. It takes `increase_liquidity_v2`'s accounts: whirlpool,
+ * token_program_a, token_program_b, memo_program, position_authority, position,
+ * position_token_account, token_mint_a, token_mint_b, token_owner_account_a,
+ * token_owner_account_b, token_vault_a, token_vault_b, tick_array_lower, tick_array_upper.
+ */
+export const ORCA_INCREASE_LIQUIDITY_BY_TOKEN_AMOUNTS_V2 = anchorDiscriminator(
+  'increase_liquidity_by_token_amounts_v2',
+);
+/**
+ * `IncreaseLiquidityMethod::ByTokenAmounts { token_max_a: u64, token_max_b: u64, min_sqrt_price:
+ * u128, max_sqrt_price: u128 }`, the enum's only variant, as its one-byte Borsh tag.
+ */
+export const ORCA_BY_TOKEN_AMOUNTS = Uint8Array.of(0);
 /** `lending_account_withdraw(amount: u64, withdraw_all: Option<bool>)`. */
 export const MARGINFI_WITHDRAW = anchorDiscriminator('lending_account_withdraw');
 /** `lending_account_deposit(amount: u64, ...)`. */

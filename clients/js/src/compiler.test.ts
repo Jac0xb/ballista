@@ -948,6 +948,35 @@ describe('data segments', () => {
       { kind: 7, register: 4 },
     ]);
   });
+
+  test('an output part that derives a PDA leaves the output its own segments', () => {
+    for (const output of [step.emit, step.setReturnData]) {
+      const compiled = compileTemplate(
+        defineTemplate({
+          accounts: { program: { executable: true, address: address(9) }, owner: {} },
+          steps: [
+            output([
+              data.literal(Uint8Array.of(1)),
+              data.encode(
+                'pubkey',
+                expression.pda(account.fixed('program'), [expression.accountField(account.fixed('owner'), 'key')]),
+              ),
+            ]),
+          ],
+        }),
+      );
+      const [record] = records(compiled).filter(
+        (candidate) => candidate[0] === opcode.emit || candidate[0] === opcode.setReturnData,
+      );
+      const range = new DataView(record!.buffer, record!.byteOffset);
+      const [start, length] = [range.getUint32(6, true), range.getUint32(10, true)];
+      // Register 0 is the owner's key, the PDA's only seed; register 1 is the derived address.
+      expect(segmentTables(compiled).segments.slice(start, start + length)).toEqual([
+        { kind: 0, register: 0xff },
+        { kind: 7, register: 1 },
+      ]);
+    }
+  });
 });
 
 describe('output steps', () => {

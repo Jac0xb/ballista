@@ -679,7 +679,7 @@ class Compiler {
     if (maxLength > MAX_RETURN_DATA_LENGTH) {
       throw new RangeError(`${current.kind} can encode ${maxLength} bytes; maximum is ${MAX_RETURN_DATA_LENGTH}`);
     }
-    const operation = current.kind === 'emit' ? opcode.emit : opcode.setReturnData;
+    const operation = opcode[current.kind];
     this.pushInstruction(
       instructionRecord(operation, NO_INDEX, NO_INDEX, NO_INDEX, NO_INDEX, rangeImmediate(segmentStart, current.parts.length)),
     );

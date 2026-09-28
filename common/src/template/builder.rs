@@ -705,7 +705,10 @@ mod tests {
         assert_eq!(emit.blob_range(), (0, 2), "segments 0 and 1");
         let set = &program.instructions[returned];
         assert_eq!(set.opcode, OP_SET_RETURN_DATA);
-        assert_eq!(set.dst, NO_INDEX);
+        assert_eq!(
+            [set.dst, set.a, set.b, set.c, set.flags],
+            [NO_INDEX, NO_INDEX, NO_INDEX, NO_INDEX, 0]
+        );
         assert_eq!(set.blob_range(), (2, 1), "segment 2");
         let kinds: Vec<(u8, u8)> = program
             .data_segments

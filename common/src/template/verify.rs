@@ -4068,6 +4068,14 @@ mod tests {
             assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)), "{entry} {payer} {system}");
         }
 
+        // The System program account must be pinned to it; declaring it executable is not enough.
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(ACCOUNT_EXECUTABLE, None, None, 0);
+        let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let pc = builder.open_registry(entry, None, payer, 0, 8, system);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)), "system program unpinned");
+
         // A destination, or a spare immediate byte.
         let (mut builder, _, _, _, pc) = registry_program();
         builder.instructions_mut()[pc].dst = 0;
@@ -4085,6 +4093,15 @@ mod tests {
         let mut pc = 0;
         builder.repeat(count, 1, 0, |body| pc = body.open_registry(entry, None, payer, 0, 8, system));
         assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)));
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(0, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
+        let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let mut pc = 0;
+        builder.for_each(0, |body| pc = body.open_registry(entry, None, payer, 0, 8, system));
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)), "in a FOREACH body");
 
         // Each entry account once; one size per registry index; two entries of one registry.
         let (mut builder, system, entry, payer, _) = registry_program();
@@ -4126,6 +4143,7 @@ mod tests {
             ("read the last byte", false, 15, OP_READ_U8, false, true),
             ("read an account never opened", true, 0, OP_READ_U64, false, false),
             ("read with a selector that is not a read", false, 0, OP_ADD, false, false),
+            ("write an account never opened", true, 0, OP_READ_U64, true, false),
             ("write a u8", false, 0, OP_READ_U8, true, false),
             ("write a u64", false, 8, OP_READ_U64, true, true),
             ("write an i64 from a u64", false, 8, OP_READ_I64, true, false),

@@ -2,7 +2,8 @@
 
 use ballista_common::template::{
     generate::any_program, InstructionRecord, ProgramView, TemplateAccount, TemplateAccountHeader,
-    OP_EMIT, OP_FOREACH, OP_REPEAT, OP_SET_RETURN_DATA,
+    OP_EMIT, OP_FOREACH, OP_OPEN_REGISTRY, OP_READ_REGISTRY, OP_REPEAT, OP_SET_RETURN_DATA,
+    OP_WRITE_REGISTRY,
 };
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
@@ -72,12 +73,12 @@ fn loops(instructions: &[InstructionRecord]) -> Vec<(u8, &[InstructionRecord])> 
     loops
 }
 
-/// The generator reaches what the loop and output rules allow, so the properties cover it: count
-/// loops, more than one loop, a count loop before a FOREACH, logs at the root and in loop bodies,
-/// and return data.
+/// The generator reaches what the loop, output and registry rules allow, so the properties cover
+/// it: count loops, more than one loop, a count loop before a FOREACH, logs at the root and in loop
+/// bodies, return data, and registry opens, field reads and writes, in loop bodies too.
 #[test]
-fn generated_programs_reach_every_loop_and_output_shape() {
-    let shapes: [(&str, usize, fn(&[InstructionRecord]) -> bool); 6] = [
+fn generated_programs_reach_every_loop_output_and_registry_shape() {
+    let shapes: [(&str, usize, fn(&[InstructionRecord]) -> bool); 10] = [
         ("hold a count loop", 32, |program| {
             loops(program).iter().any(|(opcode, _)| *opcode == OP_REPEAT)
         }),
@@ -99,9 +100,24 @@ fn generated_programs_reach_every_loop_and_output_shape() {
         ("set return data", 96, |program| {
             program.iter().any(|record| record.opcode == OP_SET_RETURN_DATA)
         }),
+        ("open a registry entry", 32, |program| {
+            program.iter().any(|record| record.opcode == OP_OPEN_REGISTRY)
+        }),
+        ("read a registry field", 8, |program| {
+            program.iter().any(|record| record.opcode == OP_READ_REGISTRY)
+        }),
+        ("write a registry field", 3, |program| {
+            program.iter().any(|record| record.opcode == OP_WRITE_REGISTRY)
+        }),
+        ("read or write a registry field in a loop body", 3, |program| {
+            loops(program).iter().any(|(_, body)| {
+                body.iter()
+                    .any(|record| matches!(record.opcode, OP_READ_REGISTRY | OP_WRITE_REGISTRY))
+            })
+        }),
     ];
     let mut runner = TestRunner::deterministic();
-    let mut seen = [0usize; 6];
+    let mut seen = [0usize; 10];
     for _ in 0..256 {
         let program = any_program().new_tree(&mut runner).unwrap().current();
         let parsed = ProgramView::parse(&program.bytes).unwrap();

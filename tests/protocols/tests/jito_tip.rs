@@ -83,8 +83,8 @@ fn round_trip(route: &Route) -> Instruction {
         first.input_mint == WSOL_MINT && second.output_mint == WSOL_MINT,
         "{ROUTE} does not start and end in SOL"
     );
-    // The loader does not check this: only that a leg's instruction is Jupiter's, not that it is
-    // `route` specifically.
+    // Neither the snapshot loader nor anything else checks that a leg's swap instruction is a
+    // Jupiter `route`: it checks neither the program nor the discriminator. Only this does.
     let route_discriminator = anchor_discriminator("route");
     for leg in [first, second] {
         assert_eq!(
@@ -252,6 +252,8 @@ struct Realised {
     wrapped_sol: i128,
     /// The change in the searcher's lamports while the route ran, its fee aside.
     lamports: i128,
+    /// The round trip's own transaction: its compute units and wire size.
+    outcome: Outcome,
 }
 
 /// Sends the round trip to Jupiter directly. The SOL is wrapped in a transaction of its own first,
@@ -273,7 +275,19 @@ fn realised(svm: &mut LiteSVM, route: &Route) -> Realised {
         wrapped_sol: i128::from(token_balance(svm, &wsol)) - i128::from(wsol_before),
         lamports: i128::from(balance(svm, &searcher.pubkey())) + i128::from(outcome.fee)
             - i128::from(lamports_before),
+        outcome,
     }
+}
+
+/// `profit - EDGE`, panicking with a message naming `WHALE_SALE` rather than underflowing if a
+/// snapshot refresh has shrunk the profit below it.
+fn profit_less_edge(profit: u64) -> u64 {
+    profit.checked_sub(EDGE).unwrap_or_else(|| {
+        panic!(
+            "a profit of {profit} cannot cover EDGE ({EDGE}); WHALE_SALE may need resizing after \
+             a snapshot refresh"
+        )
+    })
 }
 
 /// The profit the backrun realises after a whale sells `whale_sale` lamports of SOL, measured in
@@ -498,12 +512,7 @@ fn a_backrun_pays_the_tip_out_of_its_profit() {
     let example = &examples[EXAMPLE];
     let accounts = Accounts::of(&snapshot);
     let profit = backrun_profit(&snapshot, WHALE_SALE);
-    let tip = profit.checked_sub(EDGE).unwrap_or_else(|| {
-        panic!(
-            "a profit of {profit} cannot cover EDGE ({EDGE}); WHALE_SALE may need resizing after \
-             a snapshot refresh"
-        )
-    });
+    let tip = profit_less_edge(profit);
     assert!(tip >= MINIMUM_TIP, "a profit of {profit} cannot pay a tip");
 
     let mut svm = market(&snapshot, Some(WHALE_SALE));
@@ -555,12 +564,7 @@ fn a_tip_above_the_profit_fails_at_the_requirement() {
     let example = &examples[EXAMPLE];
     let accounts = Accounts::of(&snapshot);
     let profit = backrun_profit(&snapshot, WHALE_SALE);
-    let tip = profit.checked_sub(EDGE).unwrap_or_else(|| {
-        panic!(
-            "a profit of {profit} cannot cover EDGE ({EDGE}); WHALE_SALE may need resizing after \
-             a snapshot refresh"
-        )
-    }) + 1;
+    let tip = profit_less_edge(profit) + 1;
 
     let mut svm = market(&snapshot, Some(WHALE_SALE));
     let template = upload_template(&mut svm, example);
@@ -668,9 +672,10 @@ fn the_measured_account_and_the_tip_account_are_checked() {
 }
 
 /// Setting the round trip's own `quoted_out_amount` to `in_amount` at zero slippage bps makes
-/// Jupiter's slippage check enforce "no loss" on the net change of the account. The round trip
-/// loses to the pools' fees, so it fails there with Jupiter's own code, not the template's label
-/// (`findings/jito-tip.md`).
+/// Jupiter's slippage check require the last step's gross output to reach `in_amount`, which for
+/// this round trip, whose source is its destination, comes down to requiring no loss. The round
+/// trip loses to the pools' fees, so it fails there with Jupiter's own code, not the template's
+/// label (`findings/jito-tip.md`).
 #[test]
 fn jupiters_own_slippage_check_can_reject_a_loss() {
     let snapshot = Snapshot::load(SNAPSHOT_DIR);
@@ -697,31 +702,12 @@ fn jupiters_own_slippage_check_can_reject_a_loss() {
 fn measure_the_findings_numbers() {
     let snapshot = Snapshot::load(SNAPSHOT_DIR);
     let route = snapshot.route(ROUTE);
-    let searcher = wallet::wallet();
 
     // "Alone (compute budget and `route`), it costs 88,457 CU and 710 bytes."
-    let mut svm = market(&snapshot, None);
-    tx::send(
-        &mut svm,
-        &searcher,
-        &[],
-        &route.legs[0].instructions.setup,
-        &[],
-    )
-    .unwrap_or_else(|failure| panic!("wrapping the SOL failed: {failure:?}"));
-    let mut instructions = route.legs[0].instructions.compute_budget.clone();
-    instructions.push(round_trip(route));
-    let outcome = tx::send(
-        &mut svm,
-        &searcher,
-        &[],
-        &instructions,
-        &route.lookup_tables(),
-    )
-    .unwrap_or_else(|failure| panic!("the round trip failed: {failure:?}"));
+    let realised = realised(&mut market(&snapshot, None), route);
     println!(
         "the round trip alone costs {} CU and {} bytes",
-        outcome.compute_units, outcome.size
+        realised.outcome.compute_units, realised.outcome.size
     );
 
     // "A 500 SOL sale costs 165,219 CU."

@@ -55,7 +55,8 @@ all three required runs behave as specified against the real programs.
      unit short fails with 6024. Exactly `in_amount` lands, including another wallet's USDC account.
    - **The destination (position 3)** must hold `destination_mint`. Another mint fails with 6019.
      So does a `destination_mint` that differs from the destination account's.
-   - Neither code is in Jupiter's published IDL, which stops at 6017.
+   - Neither code is in Jupiter's published IDL (`jup-ag/jupiter-cpi` v6.0.0), whose 18 errors stop
+     at 6017, `ExactOutAmountNotMatched`.
    - Accounts that pass are left untouched. With another wallet's wrapped-SOL account in both
      positions, the route runs and moves the searcher's own accounts, the ones in its steps.
 

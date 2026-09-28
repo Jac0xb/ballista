@@ -1,4 +1,4 @@
-//! The twelve live-protocol templates, authored in Rust with `ProgramBuilder`.
+//! The eleven live-protocol templates, authored in Rust with `ProgramBuilder`.
 //!
 //! Each function builds the same bytes the TypeScript compiler produces for the file of the same
 //! name in `clients/js/examples/protocols/`; `tests/protocol_templates.rs` checks every one
@@ -10,7 +10,9 @@
 //!
 //! The builder does what the TypeScript compiler does, in the same order: it loads each input the
 //! steps use, then each distinct constant, then emits the steps. Registers are numbered in the
-//! order they are written, so the calls below follow that order too.
+//! order they are written, so the calls below follow that order too. The compiler also records a
+//! constant pubkey before any account's address or owner, so a template that compares against
+//! one interns it before declaring its accounts.
 
 use ballista_sdk::{
     ballista_common::template::*, template_hash, ProgramBuilder, Segment, SYSTEM_PROGRAM_ID,
@@ -29,14 +31,24 @@ const JUPITER_V6: Pubkey = pubkey!("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
 const KAMINO_LEND: Pubkey = pubkey!("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");
 const ORCA_WHIRLPOOL: Pubkey = pubkey!("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc");
 const MARGINFI_V2: Pubkey = pubkey!("MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA");
-const DRIFT_V2: Pubkey = pubkey!("dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH");
 const PYTH_RECEIVER: Pubkey = pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
+/// Owns all eight Jito tip accounts.
+const JITO_TIP_PAYMENT: Pubkey = pubkey!("T1pyyaTNZsKv2WcRAB8oVnk93mLJw2XzjtVYqCsaHqt");
+/// Every Kamino v2 lending instruction takes the instructions sysvar.
+const SYSVAR_INSTRUCTIONS: Pubkey = pubkey!("Sysvar1nstructions1111111111111111111111111");
+const WRAPPED_SOL_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 
 // Layouts.
 const TOKEN_ACCOUNT_LEN: u32 = 165;
+const TOKEN_MINT: u64 = 0;
+const TOKEN_OWNER: u64 = 32;
 const TOKEN_AMOUNT: u64 = 64;
+const MINT_LEN: u32 = 82;
+const MINT_DECIMALS: u64 = 44;
 const PYTH_LEN: u32 = 134;
+// A `Full` price update's offsets; `Partial` shifts each by one, so templates pin the level first.
 const PYTH_VERIFICATION_LEVEL: u64 = 40;
+const PYTH_FEED_ID: u64 = 41;
 const PYTH_PRICE: u64 = 73;
 const PYTH_CONFIDENCE: u64 = 81;
 const PYTH_EXPONENT: u64 = 89;
@@ -45,8 +57,11 @@ const ORCA_POSITION_LEN: u32 = 216;
 const ORCA_FEE_OWED_A: u64 = 112;
 const ORCA_FEE_OWED_B: u64 = 136;
 
-/// Jupiter `route`'s arguments after its discriminator: at most 512 bytes.
+/// Jupiter `route`'s arguments after its discriminator, or its `route_plan`: at most 512 bytes.
 const ROUTE_ARGS_MAX: u16 = 512;
+/// What follows the plan in `route`'s data: `in_amount`, `quoted_out_amount` (u64 each),
+/// `slippage_bps` (u16) and `platform_fee_bps` (u8).
+const ROUTE_TAIL_LEN: u16 = 8 + 8 + 2 + 1;
 
 /// An Anchor instruction discriminator: the first eight bytes of `sha256("global:<handler>")`.
 fn anchor(handler: &str) -> [u8; 8] {
@@ -62,13 +77,38 @@ fn token_account(builder: &mut ProgramBuilder) -> u8 {
     builder.account(WRITE, None, Some(TOKEN_PROGRAM_ID.to_bytes()), TOKEN_ACCOUNT_LEN)
 }
 
+fn mint(builder: &mut ProgramBuilder) -> u8 {
+    builder.account(READ, None, Some(TOKEN_PROGRAM_ID.to_bytes()), MINT_LEN)
+}
+
+/// Requires the pubkey at `offset` in `account`'s data to be the address of account `expected`.
+fn require_key_at(builder: &mut ProgramBuilder, account: u8, offset: u64, expected: u8) {
+    let stored = builder.read(OP_READ_PUBKEY, account, offset);
+    let expected = builder.account_key(expected);
+    let same = builder.binary(OP_EQ, stored, expected);
+    builder.require(same);
+}
+
+/// Requires an SPL token account to belong to `owner`.
+fn require_owner(builder: &mut ProgramBuilder, token_account: u8, owner: u8) {
+    require_key_at(builder, token_account, TOKEN_OWNER, owner);
+}
+
+/// Requires an SPL token account to hold `mint`.
+fn require_mint(builder: &mut ProgramBuilder, token_account: u8, mint: u8) {
+    require_key_at(builder, token_account, TOKEN_MINT, mint);
+}
+
 // #region jupiter-deposit
 /// Swap on Jupiter, then deposit exactly what the swap produced into Kamino.
+///
+/// Send it after Kamino's `refresh_reserve`s and `refresh_obligation`, in the same transaction.
 pub fn jupiter_deposit_exact_output() -> Vec<u8> {
     let mut b = ProgramBuilder::new();
     let jupiter = program(&mut b, JUPITER_V6);
     let kamino = program(&mut b, KAMINO_LEND);
     let token_program = program(&mut b, TOKEN_PROGRAM_ID);
+    let instructions_sysvar = b.account(READ, Some(SYSVAR_INSTRUCTIONS.to_bytes()), None, 0);
     let owner = b.account(SIGN | WRITE, None, None, 0);
     let source_ata = b.account(WRITE, None, None, 0);
     let destination_ata = token_account(&mut b);
@@ -76,10 +116,11 @@ pub fn jupiter_deposit_exact_output() -> Vec<u8> {
     let lending_market = b.account(READ, None, None, 0);
     let lending_market_authority = b.account(READ, None, None, 0);
     let reserve = b.account(WRITE, None, None, 0);
+    let reserve_liquidity_mint = b.account(READ, None, None, 0);
     let reserve_liquidity_supply = b.account(WRITE, None, None, 0);
     let reserve_collateral_mint = b.account(WRITE, None, None, 0);
     let reserve_destination_collateral = b.account(WRITE, None, None, 0);
-    b.account_groups(1); // routeAccounts
+    b.account_groups(2); // routeAccounts, farmAccounts
     let route_args = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
     let minimum_out = b.input(VALUE_U64, 0);
 
@@ -107,8 +148,9 @@ pub fn jupiter_deposit_exact_output() -> Vec<u8> {
     let met_floor = b.binary(OP_GTE, received, minimum_out);
     b.require(met_floor);
 
+    // Kamino's v2 deposit: these 14 accounts, then farmAccounts.
     let deposit = b.blob(&anchor("deposit_reserve_liquidity_and_obligation_collateral_v2"));
-    let deposit = b.cpi(
+    let deposit = b.cpi_with_group(
         kamino,
         &[
             (owner, SIGN | WRITE),
@@ -116,13 +158,18 @@ pub fn jupiter_deposit_exact_output() -> Vec<u8> {
             (lending_market, READ),
             (lending_market_authority, READ),
             (reserve, WRITE),
+            (reserve_liquidity_mint, READ),
             (reserve_liquidity_supply, WRITE),
             (reserve_collateral_mint, WRITE),
             (reserve_destination_collateral, WRITE),
             (destination_ata, WRITE),
-            (token_program, READ),
+            (kamino, READ), // placeholder_user_destination_collateral: Kamino's ID means "none"
+            (token_program, READ), // collateral_token_program
+            (token_program, READ), // liquidity_token_program
+            (instructions_sysvar, READ),
         ],
         &[Segment::Literal(deposit), Segment::Register(DATA_REG_U64, received)],
+        1,
     );
     b.invoke(deposit, None);
     b.build().unwrap()
@@ -130,7 +177,7 @@ pub fn jupiter_deposit_exact_output() -> Vec<u8> {
 // #endregion jupiter-deposit
 
 // #region jupiter-oracle-swap
-/// Swap on Jupiter and require the fill to beat the Pyth price, less a tolerance.
+/// Swap on Jupiter and require the fill to beat a Pyth price, less a tolerance.
 pub fn jupiter_oracle_checked_swap() -> Vec<u8> {
     let mut b = ProgramBuilder::new();
     let jupiter = program(&mut b, JUPITER_V6);
@@ -139,19 +186,26 @@ pub fn jupiter_oracle_checked_swap() -> Vec<u8> {
     let trader = b.account(SIGN | WRITE, None, None, 0);
     let source_ata = token_account(&mut b);
     let destination_ata = token_account(&mut b);
+    let source_mint = mint(&mut b);
+    let destination_mint = mint(&mut b);
     b.account_groups(1); // routeAccounts
-    let route_args = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
-    let price_exponent = b.input(VALUE_I64, 0);
-    let scale_divisor = b.input(VALUE_U128, 0);
+    let feed_id = b.input(VALUE_PUBKEY, 0);
+    let route_plan = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
+    let in_amount = b.input(VALUE_U64, 0);
+    let quoted_out_amount = b.input(VALUE_U64, 0);
+    let slippage_bps = b.input(VALUE_U64, 0);
+    let platform_fee_bps = b.input(VALUE_U64, 0);
     let tolerance_bps = b.input(VALUE_U64, 0);
 
-    let route_args = b.load_input(route_args);
-    let price_exponent = b.load_input(price_exponent);
-    let scale_divisor = b.load_input(scale_divisor);
+    let feed_id = b.load_input(feed_id);
+    let route_plan = b.load_input(route_plan);
+    let in_amount = b.load_input(in_amount);
+    let quoted_out_amount = b.load_input(quoted_out_amount);
+    let slippage_bps = b.load_input(slippage_bps);
+    let platform_fee_bps = b.load_input(platform_fee_bps);
     let tolerance_bps = b.load_input(tolerance_bps);
     let full = b.const_u64(1);
     let sixty = b.const_i64(60);
-    let two_pow_32 = b.const_i64(1 << 32);
     let zero = b.const_i64(0);
     let bps = b.const_u64(10_000);
     let bps_wide = b.const_u128(10_000);
@@ -161,18 +215,31 @@ pub fn jupiter_oracle_checked_swap() -> Vec<u8> {
     let is_full = b.binary(OP_EQ, level, full);
     b.require(is_full);
 
+    // The receiver owns every feed's account alike: only the feed id says which price this is.
+    let feed = b.read(OP_READ_PUBKEY, price_update, PYTH_FEED_ID);
+    let expected_feed = b.binary(OP_EQ, feed, feed_id);
+    b.require(expected_feed);
+
     let now = b.clock_timestamp();
     let published = b.read(OP_READ_I64, price_update, PYTH_PUBLISH_TIME);
     let age = b.binary(OP_SUB, now, published);
     let fresh = b.binary(OP_LTE, age, sixty);
     b.require(fresh);
 
-    // The i32 exponent's bits, compared with 2^32 + the exponent the divisor assumes.
-    let exponent_bits = b.read(OP_READ_U32, price_update, PYTH_EXPONENT);
-    let expected = b.binary(OP_ADD, two_pow_32, price_exponent);
-    let expected = b.cast(OP_CAST_U64, expected);
-    let same_exponent = b.binary(OP_EQ, exponent_bits, expected);
-    b.require(same_exponent);
+    // The decimals below are read from these mints, and both accounts are the trader's.
+    require_mint(&mut b, source_ata, source_mint);
+    require_mint(&mut b, destination_ata, destination_mint);
+    require_owner(&mut b, source_ata, trader);
+    require_owner(&mut b, destination_ata, trader);
+
+    // scale = destination decimals + the price's exponent − source decimals.
+    let destination_decimals = b.read(OP_READ_U8, destination_mint, MINT_DECIMALS);
+    let destination_decimals = b.cast(OP_CAST_I64, destination_decimals);
+    let exponent = b.read(OP_READ_I32, price_update, PYTH_EXPONENT);
+    let scale = b.binary(OP_ADD, destination_decimals, exponent);
+    let source_decimals = b.read(OP_READ_U8, source_mint, MINT_DECIMALS);
+    let source_decimals = b.cast(OP_CAST_I64, source_decimals);
+    let scale = b.binary(OP_SUB, scale, source_decimals);
 
     let oracle_price = b.read(OP_READ_I64, price_update, PYTH_PRICE);
     let positive = b.binary(OP_GT, oracle_price, zero);
@@ -190,24 +257,39 @@ pub fn jupiter_oracle_checked_swap() -> Vec<u8> {
             (source_ata, WRITE),
             (destination_ata, WRITE),
         ],
-        &[Segment::Literal(route), Segment::Register(DATA_REG_BYTES, route_args)],
+        &[
+            Segment::Literal(route),
+            Segment::Register(DATA_REG_BYTES, route_plan),
+            Segment::Register(DATA_REG_U64, in_amount),
+            Segment::Register(DATA_REG_U64, quoted_out_amount),
+            Segment::Register(DATA_REG_U16, slippage_bps),
+            Segment::Register(DATA_REG_U8, platform_fee_bps),
+        ],
         0,
     );
-    b.set_cpi_max_data_len(swap, 8 + ROUTE_ARGS_MAX);
+    b.set_cpi_max_data_len(swap, 8 + ROUTE_ARGS_MAX + ROUTE_TAIL_LEN);
     b.invoke(swap, None);
 
     let source_after = b.read(OP_READ_U64, source_ata, TOKEN_AMOUNT);
     let sold = b.binary(OP_SUB, source_before, source_after);
+    let sold_the_input = b.binary(OP_EQ, sold, in_amount);
+    b.require(sold_the_input);
 
-    // fairOut = sold × price / divisor × (10,000 − tolerance) / 10,000, in u128.
+    // fairOut = sold × price × 10^max(scale, 0) ÷ 10^max(−scale, 0), less the tolerance.
     let sold_wide = b.cast(OP_CAST_U128, sold);
     let price_wide = b.cast(OP_CAST_U128, oracle_price);
     let value = b.binary(OP_MUL, sold_wide, price_wide);
-    let at_oracle = b.binary(OP_DIV, value, scale_divisor);
+    let up = b.binary(OP_MAX, scale, zero);
+    let up = b.cast(OP_CAST_U64, up);
+    let up = b.pow10(up);
+    let down = b.binary(OP_SUB, zero, scale);
+    let down = b.binary(OP_MAX, down, zero);
+    let down = b.cast(OP_CAST_U64, down);
+    let down = b.pow10(down);
+    let at_oracle = b.mul_div(value, up, down);
     let kept_bps = b.binary(OP_SUB, bps, tolerance_bps);
     let kept_bps = b.cast(OP_CAST_U128, kept_bps);
-    let scaled = b.binary(OP_MUL, at_oracle, kept_bps);
-    let fair_out = b.binary(OP_DIV, scaled, bps_wide);
+    let fair_out = b.mul_div(at_oracle, kept_bps, bps_wide);
     let fair_out = b.cast(OP_CAST_U64, fair_out);
 
     let balance_after = b.read(OP_READ_U64, destination_ata, TOKEN_AMOUNT);
@@ -244,6 +326,10 @@ pub fn token_sweep_into_swap() -> Vec<u8> {
     let bps = b.const_u64(10_000);
     let bps_wide = b.const_u128(10_000);
 
+    // Both ends of the sale are the seller's.
+    require_owner(&mut b, source_ata, seller);
+    require_owner(&mut b, destination_ata, seller);
+
     let available = b.read(OP_READ_U64, source_ata, TOKEN_AMOUNT);
     let worth_selling = b.binary(OP_GT, available, dust_floor);
     b.require(worth_selling);
@@ -277,7 +363,7 @@ pub fn token_sweep_into_swap() -> Vec<u8> {
         ],
         0,
     );
-    b.set_cpi_max_data_len(sell, 8 + ROUTE_ARGS_MAX + 8 + 8 + 2 + 1);
+    b.set_cpi_max_data_len(sell, 8 + ROUTE_ARGS_MAX + ROUTE_TAIL_LEN);
     b.invoke(sell, None);
 
     let proceeds_after = b.read(OP_READ_U64, destination_ata, TOKEN_AMOUNT);
@@ -299,14 +385,18 @@ pub fn token_sweep_into_swap() -> Vec<u8> {
 // #endregion token-sweep
 
 // #region jito-tip
-/// Run a Jupiter strategy, then pay a Jito tip only if the searcher's lamports grew enough.
+/// Run a Jupiter round trip from the searcher's wrapped SOL back to it, then pay a Jito tip only
+/// if that balance grew by the tip plus a minimum edge.
 pub fn jito_profit_guarded_tip() -> Vec<u8> {
     let mut b = ProgramBuilder::new();
+    // The compiler records a constant pubkey before the accounts' addresses.
+    b.pubkey(WRAPPED_SOL_MINT.to_bytes());
     let system_program = program(&mut b, SYSTEM_PROGRAM_ID);
     let strategy_program = program(&mut b, JUPITER_V6);
     let token_program = program(&mut b, TOKEN_PROGRAM_ID);
     let searcher = b.account(SIGN | WRITE, None, None, 0);
-    let jito_tip = b.account(WRITE, None, None, 0);
+    let wsol_account = token_account(&mut b);
+    let jito_tip = b.account(WRITE, None, Some(JITO_TIP_PAYMENT.to_bytes()), 0);
     b.account_groups(1); // strategyAccounts
     let strategy_data = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
     let tip_lamports = b.input(VALUE_U64, 0);
@@ -315,22 +405,36 @@ pub fn jito_profit_guarded_tip() -> Vec<u8> {
     let strategy_data = b.load_input(strategy_data);
     let tip_lamports = b.load_input(tip_lamports);
     let minimum_edge = b.load_input(minimum_edge);
+    let wrapped_sol = b.const_pubkey(WRAPPED_SOL_MINT.to_bytes());
 
-    let lamports_before = b.account_lamports(searcher);
+    // Wrapped SOL counts in lamports, so the profit is in the tip's own unit.
+    let held = b.read(OP_READ_PUBKEY, wsol_account, TOKEN_MINT);
+    let holds_wsol = b.binary(OP_EQ, held, wrapped_sol);
+    b.require(holds_wsol);
+    // Only profit that reaches the searcher, who pays the tip, may cover it.
+    require_owner(&mut b, wsol_account, searcher);
+
+    let balance_before = b.read(OP_READ_U64, wsol_account, TOKEN_AMOUNT);
     let route = b.blob(&anchor("route"));
     let strategy = b.cpi_with_group(
         strategy_program,
-        &[(token_program, READ), (searcher, SIGN)],
+        &[
+            (token_program, READ),
+            (searcher, SIGN),
+            (wsol_account, WRITE), // the round trip's source
+            (wsol_account, WRITE), // and its destination
+        ],
         &[Segment::Literal(route), Segment::Register(DATA_REG_BYTES, strategy_data)],
         0,
     );
     b.set_cpi_max_data_len(strategy, 8 + ROUTE_ARGS_MAX);
     b.invoke(strategy, None);
 
-    let lamports_after = b.account_lamports(searcher);
-    let profit = b.binary(OP_SUB, lamports_after, lamports_before);
-    let needed = b.binary(OP_ADD, tip_lamports, minimum_edge);
-    let covers_tip = b.binary(OP_GTE, profit, needed);
+    // balanceAfter ≥ balanceBefore + tip + edge: a loss fails here instead of underflowing.
+    let balance_after = b.read(OP_READ_U64, wsol_account, TOKEN_AMOUNT);
+    let needed = b.binary(OP_ADD, balance_before, tip_lamports);
+    let needed = b.binary(OP_ADD, needed, minimum_edge);
+    let covers_tip = b.binary(OP_GTE, balance_after, needed);
     b.require(covers_tip);
 
     let transfer = b.blob(&[2, 0, 0, 0]); // SystemInstruction::Transfer
@@ -345,7 +449,8 @@ pub fn jito_profit_guarded_tip() -> Vec<u8> {
 // #endregion jito-tip
 
 // #region pyth-gate
-/// Call Jupiter only while a Pyth price is fully verified, fresh, precise and inside a band.
+/// Call Jupiter only while a Pyth price is the expected feed at the expected exponent, fully
+/// verified, fresh, precise and inside a band.
 pub fn pyth_fresh_price_gate() -> Vec<u8> {
     let mut b = ProgramBuilder::new();
     let price_update = b.account(READ, None, Some(PYTH_RECEIVER.to_bytes()), PYTH_LEN);
@@ -353,12 +458,16 @@ pub fn pyth_fresh_price_gate() -> Vec<u8> {
     let token_program = program(&mut b, TOKEN_PROGRAM_ID);
     let actor = b.account(SIGN | WRITE, None, None, 0);
     b.account_groups(1); // actionAccounts
+    let feed_id = b.input(VALUE_PUBKEY, 0);
+    let exponent = b.input(VALUE_I64, 0);
     let maximum_age = b.input(VALUE_I64, 0);
     let maximum_confidence = b.input(VALUE_U64, 0);
     let floor_price = b.input(VALUE_I64, 0);
     let ceiling_price = b.input(VALUE_I64, 0);
     let action_data = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
 
+    let feed_id = b.load_input(feed_id);
+    let exponent = b.load_input(exponent);
     let maximum_age = b.load_input(maximum_age);
     let maximum_confidence = b.load_input(maximum_confidence);
     let floor_price = b.load_input(floor_price);
@@ -369,6 +478,15 @@ pub fn pyth_fresh_price_gate() -> Vec<u8> {
     let level = b.read(OP_READ_U8, price_update, PYTH_VERIFICATION_LEVEL);
     let is_full = b.binary(OP_EQ, level, full);
     b.require(is_full);
+
+    let feed = b.read(OP_READ_PUBKEY, price_update, PYTH_FEED_ID);
+    let expected_feed = b.binary(OP_EQ, feed, feed_id);
+    b.require(expected_feed);
+
+    // The bounds are raw integers at this exponent; at another, each is off by a power of ten.
+    let stored_exponent = b.read(OP_READ_I32, price_update, PYTH_EXPONENT);
+    let expected_exponent = b.binary(OP_EQ, stored_exponent, exponent);
+    b.require(expected_exponent);
 
     let now = b.clock_timestamp();
     let published = b.read(OP_READ_I64, price_update, PYTH_PUBLISH_TIME);
@@ -522,25 +640,31 @@ pub fn orca_harvest_many_positions() -> Vec<u8> {
 
 // #region kamino-repay
 /// Swap collateral into the borrowed asset on Jupiter, then repay exactly what the swap produced.
+///
+/// Send it after Kamino's `refresh_reserve`s and `refresh_obligation`, in the same transaction.
 pub fn kamino_repay_swap_output() -> Vec<u8> {
     let mut b = ProgramBuilder::new();
     let jupiter = program(&mut b, JUPITER_V6);
     let kamino = program(&mut b, KAMINO_LEND);
     let token_program = program(&mut b, TOKEN_PROGRAM_ID);
-    let borrower = b.account(SIGN | WRITE, None, None, 0);
+    let instructions_sysvar = b.account(READ, Some(SYSVAR_INSTRUCTIONS.to_bytes()), None, 0);
+    let borrower = b.account(SIGN, None, None, 0);
     let collateral_ata = b.account(WRITE, None, None, 0);
     let borrowed_asset_ata = token_account(&mut b);
     let obligation = b.account(WRITE, None, None, 0);
     let lending_market = b.account(READ, None, None, 0);
     let repay_reserve = b.account(WRITE, None, None, 0);
+    let reserve_liquidity_mint = b.account(READ, None, None, 0);
     let reserve_liquidity_supply = b.account(WRITE, None, None, 0);
-    let reserve_price_feed = b.account(READ, None, None, 0);
-    b.account_groups(1); // routeAccounts
+    b.account_groups(2); // routeAccounts, farmAccounts
     let route_args = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
     let minimum_repayment = b.input(VALUE_U64, 0);
 
     let route_args = b.load_input(route_args);
     let minimum_repayment = b.load_input(minimum_repayment);
+
+    // Kamino repays from any account the borrower may spend, so the swap must pay the borrower.
+    require_owner(&mut b, borrowed_asset_ata, borrower);
 
     let balance_before = b.read(OP_READ_U64, borrowed_asset_ata, TOKEN_AMOUNT);
     let route = b.blob(&anchor("route"));
@@ -563,31 +687,23 @@ pub fn kamino_repay_swap_output() -> Vec<u8> {
     let worth_repaying = b.binary(OP_GTE, swapped, minimum_repayment);
     b.require(worth_repaying);
 
-    let refresh = b.blob(&anchor("refresh_reserve"));
-    let refresh = b.cpi(
-        kamino,
-        &[
-            (repay_reserve, WRITE),
-            (lending_market, READ),
-            (reserve_price_feed, READ),
-        ],
-        &[Segment::Literal(refresh)],
-    );
-    b.invoke(refresh, None);
-
+    // Kamino's v2 repayment: these 9 accounts, then farmAccounts.
     let repay = b.blob(&anchor("repay_obligation_liquidity_v2"));
-    let repay = b.cpi(
+    let repay = b.cpi_with_group(
         kamino,
         &[
-            (borrower, SIGN | WRITE),
+            (borrower, SIGN),
             (obligation, WRITE),
             (lending_market, READ),
             (repay_reserve, WRITE),
+            (reserve_liquidity_mint, READ),
             (reserve_liquidity_supply, WRITE),
             (borrowed_asset_ata, WRITE),
             (token_program, READ),
+            (instructions_sysvar, READ),
         ],
         &[Segment::Literal(repay), Segment::Register(DATA_REG_U64, swapped)],
+        1,
     );
     b.invoke(repay, None);
     b.build().unwrap()
@@ -595,23 +711,32 @@ pub fn kamino_repay_swap_output() -> Vec<u8> {
 // #endregion kamino-repay
 
 // #region kamino-liquidate
-/// Refresh, liquidate on Kamino, and require the liquidator to net a minimum in collateral.
+/// Liquidate on Kamino and require the liquidator to net a minimum in the collateral's
+/// underlying token.
+///
+/// Send it after Kamino's `refresh_reserve`s and `refresh_obligation`, in the same transaction.
 pub fn kamino_liquidate_with_proof() -> Vec<u8> {
     let mut b = ProgramBuilder::new();
     let kamino = program(&mut b, KAMINO_LEND);
     let token_program = program(&mut b, TOKEN_PROGRAM_ID);
-    let liquidator = b.account(SIGN | WRITE, None, None, 0);
+    let instructions_sysvar = b.account(READ, Some(SYSVAR_INSTRUCTIONS.to_bytes()), None, 0);
+    let liquidator = b.account(SIGN, None, None, 0);
     let obligation = b.account(WRITE, None, None, 0);
     let lending_market = b.account(READ, None, None, 0);
     let lending_market_authority = b.account(READ, None, None, 0);
     let repay_reserve = b.account(WRITE, None, None, 0);
+    let repay_reserve_liquidity_mint = b.account(READ, None, None, 0);
     let repay_reserve_liquidity_supply = b.account(WRITE, None, None, 0);
     let withdraw_reserve = b.account(WRITE, None, None, 0);
+    let withdraw_reserve_liquidity_mint = b.account(READ, None, None, 0);
     let withdraw_reserve_collateral_mint = b.account(WRITE, None, None, 0);
+    let withdraw_reserve_collateral_supply = b.account(WRITE, None, None, 0);
     let withdraw_reserve_liquidity_supply = b.account(WRITE, None, None, 0);
-    let reserve_price_feed = b.account(READ, None, None, 0);
+    let withdraw_reserve_fee_receiver = b.account(WRITE, None, None, 0);
     let user_source_liquidity = b.account(WRITE, None, None, 0);
     let user_destination_collateral = token_account(&mut b);
+    let user_destination_liquidity = token_account(&mut b);
+    b.account_groups(1); // farmAccounts
     let liquidity_amount = b.input(VALUE_U64, 0);
     let min_acceptable_received = b.input(VALUE_U64, 0);
     let minimum_bounty = b.input(VALUE_U64, 0);
@@ -621,43 +746,36 @@ pub fn kamino_liquidate_with_proof() -> Vec<u8> {
     let minimum_bounty = b.load_input(minimum_bounty);
     let zero = b.const_u64(0);
 
-    let refresh_reserve = b.blob(&anchor("refresh_reserve"));
-    let refresh_reserve = b.cpi(
-        kamino,
-        &[
-            (withdraw_reserve, WRITE),
-            (lending_market, READ),
-            (reserve_price_feed, READ),
-        ],
-        &[Segment::Literal(refresh_reserve)],
-    );
-    b.invoke(refresh_reserve, None);
+    // Kamino checks the mints of the accounts it pays, not whose they are.
+    require_owner(&mut b, user_destination_liquidity, liquidator);
+    require_owner(&mut b, user_destination_collateral, liquidator);
 
-    let refresh_obligation = b.blob(&anchor("refresh_obligation"));
-    let refresh_obligation = b.cpi(
-        kamino,
-        &[(lending_market, READ), (obligation, WRITE)],
-        &[Segment::Literal(refresh_obligation)],
-    );
-    b.invoke(refresh_obligation, None);
-
-    let collateral_before = b.read(OP_READ_U64, user_destination_collateral, TOKEN_AMOUNT);
+    let payout_before = b.read(OP_READ_U64, user_destination_liquidity, TOKEN_AMOUNT);
+    // Kamino's v2 liquidation: these 20 accounts, then farmAccounts.
     let liquidate = b.blob(&anchor("liquidate_obligation_and_redeem_reserve_collateral_v2"));
-    let liquidate = b.cpi(
+    let liquidate = b.cpi_with_group(
         kamino,
         &[
-            (liquidator, SIGN | WRITE),
+            (liquidator, SIGN),
             (obligation, WRITE),
             (lending_market, READ),
             (lending_market_authority, READ),
             (repay_reserve, WRITE),
+            (repay_reserve_liquidity_mint, READ),
             (repay_reserve_liquidity_supply, WRITE),
             (withdraw_reserve, WRITE),
+            (withdraw_reserve_liquidity_mint, READ),
             (withdraw_reserve_collateral_mint, WRITE),
+            (withdraw_reserve_collateral_supply, WRITE),
             (withdraw_reserve_liquidity_supply, WRITE),
+            (withdraw_reserve_fee_receiver, WRITE),
             (user_source_liquidity, WRITE),
             (user_destination_collateral, WRITE),
-            (token_program, READ),
+            (user_destination_liquidity, WRITE),
+            (token_program, READ), // collateral_token_program
+            (token_program, READ), // repay_liquidity_token_program
+            (token_program, READ), // withdraw_liquidity_token_program
+            (instructions_sysvar, READ),
         ],
         &[
             Segment::Literal(liquidate),
@@ -665,11 +783,13 @@ pub fn kamino_liquidate_with_proof() -> Vec<u8> {
             Segment::Register(DATA_REG_U64, min_acceptable_received),
             Segment::Register(DATA_REG_U64, zero), // no LTV override
         ],
+        0,
     );
     b.invoke(liquidate, None);
 
-    let collateral_after = b.read(OP_READ_U64, user_destination_collateral, TOKEN_AMOUNT);
-    let bounty = b.binary(OP_SUB, collateral_after, collateral_before);
+    // The seized collateral, redeemed: what the liquidator actually received.
+    let payout_after = b.read(OP_READ_U64, user_destination_liquidity, TOKEN_AMOUNT);
+    let bounty = b.binary(OP_SUB, payout_after, payout_before);
     let paid = b.binary(OP_GTE, bounty, minimum_bounty);
     b.require(paid);
     b.build().unwrap()
@@ -687,18 +807,24 @@ pub fn marginfi_withdraw_all_with_floor() -> Vec<u8> {
     let authority = b.account(SIGN, None, None, 0);
     let bank = b.account(WRITE, None, None, 0);
     let bank_liquidity_vault = b.account(WRITE, None, None, 0);
-    let bank_liquidity_vault_authority = b.account(WRITE, None, None, 0);
+    let bank_liquidity_vault_authority = b.account(READ, None, None, 0);
     let destination_ata = token_account(&mut b);
     let treasury_ata = token_account(&mut b);
+    b.account_groups(1); // healthAccounts
     let minimum_withdrawn = b.input(VALUE_U64, 0);
 
     let minimum_withdrawn = b.load_input(minimum_withdrawn);
     let zero = b.const_u64(0);
 
+    // marginfi pays whichever account it is given, and the sweep pays whichever treasury the
+    // run names: both must be the authority's.
+    require_owner(&mut b, destination_ata, authority);
+    require_owner(&mut b, treasury_ata, authority);
+
     let balance_before = b.read(OP_READ_U64, destination_ata, TOKEN_AMOUNT);
     let withdraw = b.blob(&anchor("lending_account_withdraw"));
     let withdraw_all = b.blob(&[1, 1]); // Option::Some(true)
-    let withdraw = b.cpi(
+    let withdraw = b.cpi_with_group(
         marginfi,
         &[
             (marginfi_group, READ),
@@ -706,7 +832,7 @@ pub fn marginfi_withdraw_all_with_floor() -> Vec<u8> {
             (authority, SIGN),
             (bank, WRITE),
             (destination_ata, WRITE),
-            (bank_liquidity_vault_authority, WRITE),
+            (bank_liquidity_vault_authority, READ),
             (bank_liquidity_vault, WRITE),
             (token_program, READ),
         ],
@@ -715,6 +841,7 @@ pub fn marginfi_withdraw_all_with_floor() -> Vec<u8> {
             Segment::Register(DATA_REG_U64, zero), // ignored when withdraw_all is set
             Segment::Literal(withdraw_all),
         ],
+        0,
     );
     b.invoke(withdraw, None);
 
@@ -734,24 +861,32 @@ pub fn marginfi_withdraw_all_with_floor() -> Vec<u8> {
 }
 // #endregion marginfi-withdraw
 
-// #region drift-rebalance
-/// Withdraw everything from marginfi and deposit exactly what came out into Drift.
-pub fn drift_rebalance_exact() -> Vec<u8> {
+// #region marginfi-to-kamino
+/// Withdraw everything from marginfi and deposit exactly what came out into Kamino.
+///
+/// Send it after Kamino's `refresh_reserve`s and `refresh_obligation`, in the same transaction.
+pub fn marginfi_to_kamino_rebalance() -> Vec<u8> {
     let mut b = ProgramBuilder::new();
     let marginfi = program(&mut b, MARGINFI_V2);
-    let drift = program(&mut b, DRIFT_V2);
+    let kamino = program(&mut b, KAMINO_LEND);
     let token_program = program(&mut b, TOKEN_PROGRAM_ID);
+    let instructions_sysvar = b.account(READ, Some(SYSVAR_INSTRUCTIONS.to_bytes()), None, 0);
     let owner = b.account(SIGN | WRITE, None, None, 0);
     let wallet_ata = token_account(&mut b);
     let marginfi_group = b.account(READ, None, None, 0);
     let marginfi_account = b.account(WRITE, None, None, 0);
     let marginfi_bank = b.account(WRITE, None, None, 0);
     let marginfi_vault = b.account(WRITE, None, None, 0);
-    let marginfi_vault_authority = b.account(WRITE, None, None, 0);
-    let drift_state = b.account(READ, None, None, 0);
-    let drift_user = b.account(WRITE, None, None, 0);
-    let drift_user_stats = b.account(WRITE, None, None, 0);
-    let drift_spot_market_vault = b.account(WRITE, None, None, 0);
+    let marginfi_vault_authority = b.account(READ, None, None, 0);
+    let obligation = b.account(WRITE, None, None, 0);
+    let lending_market = b.account(READ, None, None, 0);
+    let lending_market_authority = b.account(READ, None, None, 0);
+    let reserve = b.account(WRITE, None, None, 0);
+    let reserve_liquidity_mint = b.account(READ, None, None, 0);
+    let reserve_liquidity_supply = b.account(WRITE, None, None, 0);
+    let reserve_collateral_mint = b.account(WRITE, None, None, 0);
+    let reserve_destination_collateral = b.account(WRITE, None, None, 0);
+    b.account_groups(2); // healthAccounts, farmAccounts
     let minimum_moved = b.input(VALUE_U64, 0);
 
     let minimum_moved = b.load_input(minimum_moved);
@@ -760,7 +895,7 @@ pub fn drift_rebalance_exact() -> Vec<u8> {
     let wallet_before = b.read(OP_READ_U64, wallet_ata, TOKEN_AMOUNT);
     let withdraw = b.blob(&anchor("lending_account_withdraw"));
     let withdraw_all = b.blob(&[1, 1]); // Option::Some(true)
-    let withdraw = b.cpi(
+    let withdraw = b.cpi_with_group(
         marginfi,
         &[
             (marginfi_group, READ),
@@ -768,15 +903,16 @@ pub fn drift_rebalance_exact() -> Vec<u8> {
             (owner, SIGN),
             (marginfi_bank, WRITE),
             (wallet_ata, WRITE),
-            (marginfi_vault_authority, WRITE),
+            (marginfi_vault_authority, READ),
             (marginfi_vault, WRITE),
             (token_program, READ),
         ],
         &[
             Segment::Literal(withdraw),
-            Segment::Register(DATA_REG_U64, zero),
+            Segment::Register(DATA_REG_U64, zero), // ignored when withdraw_all is set
             Segment::Literal(withdraw_all),
         ],
+        0,
     );
     b.invoke(withdraw, None);
 
@@ -785,108 +921,42 @@ pub fn drift_rebalance_exact() -> Vec<u8> {
     let worth_it = b.binary(OP_GTE, moved, minimum_moved);
     b.require(worth_it);
 
-    let deposit = b.blob(&anchor("deposit"));
-    let market_index = b.blob(&0u16.to_le_bytes()); // spot market 0, USDC on mainnet
-    let reduce_only = b.blob(&[0]); // false
-    let deposit = b.cpi(
-        drift,
+    // Kamino's v2 deposit: these 14 accounts, then farmAccounts.
+    let deposit = b.blob(&anchor("deposit_reserve_liquidity_and_obligation_collateral_v2"));
+    let deposit = b.cpi_with_group(
+        kamino,
         &[
-            (drift_state, READ),
-            (drift_user, WRITE),
-            (drift_user_stats, WRITE),
-            (owner, SIGN),
-            (drift_spot_market_vault, WRITE),
+            (owner, SIGN | WRITE),
+            (obligation, WRITE),
+            (lending_market, READ),
+            (lending_market_authority, READ),
+            (reserve, WRITE),
+            (reserve_liquidity_mint, READ),
+            (reserve_liquidity_supply, WRITE),
+            (reserve_collateral_mint, WRITE),
+            (reserve_destination_collateral, WRITE),
             (wallet_ata, WRITE),
-            (token_program, READ),
+            (kamino, READ), // placeholder_user_destination_collateral: Kamino's ID means "none"
+            (token_program, READ), // collateral_token_program
+            (token_program, READ), // liquidity_token_program
+            (instructions_sysvar, READ),
         ],
-        &[
-            Segment::Literal(deposit),
-            Segment::Literal(market_index),
-            Segment::Register(DATA_REG_U64, moved),
-            Segment::Literal(reduce_only),
-        ],
+        &[Segment::Literal(deposit), Segment::Register(DATA_REG_U64, moved)],
+        1,
     );
     b.invoke(deposit, None);
     b.build().unwrap()
 }
-// #endregion drift-rebalance
-
-// #region drift-settle
-/// Settle a Drift perp position's PnL, then withdraw it with `reduce_only` set.
-pub fn drift_settle_when_profitable() -> Vec<u8> {
-    let mut b = ProgramBuilder::new();
-    let drift = program(&mut b, DRIFT_V2);
-    let token_program = program(&mut b, TOKEN_PROGRAM_ID);
-    let owner = b.account(SIGN | WRITE, None, None, 0);
-    let drift_state = b.account(READ, None, None, 0);
-    let drift_user = b.account(WRITE, None, None, 0);
-    let drift_user_stats = b.account(WRITE, None, None, 0);
-    let drift_spot_market_vault = b.account(WRITE, None, None, 0);
-    let drift_signer = b.account(READ, None, None, 0);
-    let perp_market = b.account(WRITE, None, None, 0);
-    let spot_market = b.account(WRITE, None, None, 0);
-    let destination_ata = token_account(&mut b);
-    let minimum_settled = b.input(VALUE_U64, 0);
-
-    let minimum_settled = b.load_input(minimum_settled);
-
-    let balance_before = b.read(OP_READ_U64, destination_ata, TOKEN_AMOUNT);
-    let settle = b.blob(&anchor("settle_pnl"));
-    let perp_market_index = b.blob(&0u16.to_le_bytes());
-    let settle = b.cpi(
-        drift,
-        &[
-            (drift_state, READ),
-            (owner, SIGN),
-            (drift_user, WRITE),
-            (spot_market, WRITE),
-            (perp_market, WRITE),
-        ],
-        &[Segment::Literal(settle), Segment::Literal(perp_market_index)],
-    );
-    b.invoke(settle, None);
-
-    let withdraw = b.blob(&anchor("withdraw"));
-    let spot_market_index = b.blob(&0u16.to_le_bytes());
-    let reduce_only = b.blob(&[1]); // true: draw down a deposit, never open a borrow
-    let withdraw = b.cpi(
-        drift,
-        &[
-            (drift_state, READ),
-            (drift_user, WRITE),
-            (drift_user_stats, WRITE),
-            (owner, SIGN),
-            (drift_spot_market_vault, WRITE),
-            (drift_signer, READ),
-            (destination_ata, WRITE),
-            (token_program, READ),
-        ],
-        &[
-            Segment::Literal(withdraw),
-            Segment::Literal(spot_market_index),
-            Segment::Register(DATA_REG_U64, minimum_settled),
-            Segment::Literal(reduce_only),
-        ],
-    );
-    b.invoke(withdraw, None);
-
-    let balance_after = b.read(OP_READ_U64, destination_ata, TOKEN_AMOUNT);
-    let settled = b.binary(OP_SUB, balance_after, balance_before);
-    let landed = b.binary(OP_GTE, settled, minimum_settled);
-    b.require(landed);
-    b.build().unwrap()
-}
-// #endregion drift-settle
+// #endregion marginfi-to-kamino
 
 /// Every template, under the name `fixtures/protocol-examples.json` records it by.
-pub const TEMPLATES: [(&str, fn() -> Vec<u8>); 12] = [
-    ("driftRebalanceExact", drift_rebalance_exact),
-    ("driftSettleWhenProfitable", drift_settle_when_profitable),
+pub const TEMPLATES: [(&str, fn() -> Vec<u8>); 11] = [
     ("jitoProfitGuardedTip", jito_profit_guarded_tip),
     ("jupiterDepositExactOutput", jupiter_deposit_exact_output),
     ("jupiterOracleCheckedSwap", jupiter_oracle_checked_swap),
     ("kaminoLiquidateWithProof", kamino_liquidate_with_proof),
     ("kaminoRepaySwapOutput", kamino_repay_swap_output),
+    ("marginfiToKaminoRebalance", marginfi_to_kamino_rebalance),
     ("marginfiWithdrawAllWithFloor", marginfi_withdraw_all_with_floor),
     ("orcaCompoundFees", orca_compound_fees),
     ("orcaHarvestManyPositions", orca_harvest_many_positions),

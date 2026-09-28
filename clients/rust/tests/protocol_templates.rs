@@ -10,15 +10,22 @@ use ballista_sdk::ballista_common::template::*;
 
 const FIXTURE: &str = include_str!("../../../fixtures/protocol-examples.json");
 
-/// `{ "name": "hex", ... }`, without pulling in a JSON parser.
+/// Each entry's name and payload from `{ "name": { "payload": "hex", ... }, ... }`, without
+/// pulling in a JSON parser. The file is pretty-printed: an entry opens with its name at two
+/// spaces of indentation, and its payload follows.
 fn fixture() -> Vec<(String, Vec<u8>)> {
-    FIXTURE
-        .split('"')
-        .collect::<Vec<_>>()
-        .chunks(4)
-        .filter(|chunk| chunk.len() == 4)
-        .map(|chunk| (chunk[1].to_string(), decode_hex(chunk[3])))
-        .collect()
+    let mut entries = Vec::new();
+    let mut name = None;
+    for line in FIXTURE.lines() {
+        if let Some(entry) = line.strip_prefix("  \"").and_then(|rest| rest.strip_suffix("\": {")) {
+            name = Some(entry.to_string());
+        } else if let Some(hex) = line.trim_start().strip_prefix("\"payload\": \"") {
+            let hex = hex.trim_end_matches(',').trim_end_matches('"');
+            let name = name.take().expect("a payload follows its entry's name");
+            entries.push((name, decode_hex(hex)));
+        }
+    }
+    entries
 }
 
 fn decode_hex(text: &str) -> Vec<u8> {
@@ -88,11 +95,15 @@ fn rust_templates_match_the_typescript_fixture_byte_for_byte() {
 
 /// Each Rust run passes the template account, then one meta per declared account with the
 /// declared signer and writable flags, then the group members; and encodes one value per
-/// declared input, after one length byte per group.
+/// declared input, after one length byte per group. A template that calls Kamino runs right
+/// after Kamino's refreshes, and any other runs alone.
 #[test]
 fn rust_runs_match_the_accounts_and_inputs_each_template_declares() {
+    let kamino = solana_program::pubkey!("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");
+    let refresh_obligation = solana_sha256_hasher::hash(b"global:refresh_obligation").to_bytes();
+    let refresh_obligation = &refresh_obligation[..8];
     assert_eq!(runs::RUNS.len(), templates::TEMPLATES.len(), "one run per template");
-    for (name, run) in runs::RUNS {
+    for (name, transaction) in runs::RUNS {
         let build = templates::TEMPLATES
             .iter()
             .find(|(template, _)| *template == name)
@@ -101,7 +112,25 @@ fn rust_runs_match_the_accounts_and_inputs_each_template_declares() {
         let payload = build();
         let program = ProgramView::parse(&payload).unwrap();
         let header = program.header;
-        let instruction = run();
+        let transaction = transaction();
+        let (instruction, before) =
+            transaction.split_last().unwrap_or_else(|| panic!("{name}: no instructions"));
+
+        // klend's v2 deposit, repayment and liquidation need the obligation refreshed in the same
+        // slot, and no template refreshes it.
+        if program.pubkeys.iter().any(|key| key.bytes == kamino.to_bytes()) {
+            assert!(
+                before.iter().all(|refresh| refresh.program_id == kamino),
+                "{name}: only Kamino's refreshes precede the run"
+            );
+            assert_eq!(
+                before.last().map(|refresh| &refresh.data[..]),
+                Some(refresh_obligation),
+                "{name}: refresh_obligation comes right before the run"
+            );
+        } else {
+            assert!(before.is_empty(), "{name}: the run needs nothing before it");
+        }
         let groups = header.account_group_count();
         let group_lengths: Vec<usize> =
             instruction.data[1..1 + groups].iter().map(|&len| len as usize).collect();

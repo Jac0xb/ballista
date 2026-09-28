@@ -13,7 +13,9 @@ use {
         snapshot::{Leg, Snapshot, SNAPSHOT_DIR},
         template::{examples, upload, Example, Run},
         tx::{self, Failure, Outcome},
-        wallet::{self, fund, keypair, token_account, token_balance, SOL},
+        wallet::{
+            self, associated_token_address, fund, keypair, token_account, token_balance, SOL,
+        },
     },
     ballista_sdk::TOKEN_PROGRAM_ID,
     litesvm::LiteSVM,
@@ -45,9 +47,40 @@ struct Sweep<'a> {
 }
 
 impl<'a> Sweep<'a> {
+    /// # Panics
+    ///
+    /// If the route is not the one these tests were written for: `route`, selling from the
+    /// seller's USDC account, through Raydium CLMM.
     fn new(snapshot: &'a Snapshot, example: &'a Example) -> Self {
-        let mut svm = snapshot.svm();
+        let leg = &snapshot.route(ROUTE).legs[0];
         let seller = wallet::wallet();
+        let usdc = snapshot.named("usdcMint");
+        assert_eq!(
+            leg.source_token_account,
+            associated_token_address(&seller.pubkey(), &usdc),
+            "route {ROUTE} does not sell from the seller's USDC account"
+        );
+        let swap = &leg.instructions.swap;
+        let head: Vec<Address> = swap.accounts[..4].iter().map(|meta| meta.pubkey).collect();
+        assert_eq!(
+            head,
+            [
+                TOKEN_PROGRAM_ID,
+                seller.pubkey(),
+                leg.source_token_account,
+                leg.destination_token_account
+            ],
+            "route {ROUTE} does not start with the four accounts the template passes itself"
+        );
+        let raydium = snapshot.named("raydiumClmm");
+        assert!(
+            swap.accounts.iter().any(|meta| meta.pubkey == raydium),
+            "route {ROUTE} no longer goes through Raydium CLMM: a snapshot refresh moved it, so \
+             a_balance_past_the_routes_tick_arrays_fails_in_raydium and the figures in \
+             findings/token-sweep.md need revisiting"
+        );
+
+        let mut svm = snapshot.svm();
         let creator = keypair(b"ballista-protocol-tests-creator1");
         for key in [seller.pubkey(), creator.pubkey()] {
             fund(&mut svm, &key, 10 * SOL);
@@ -55,9 +88,9 @@ impl<'a> Sweep<'a> {
         let template = upload(&mut svm, &creator, TEMPLATE_ID, &example.payload);
         Sweep {
             example,
-            leg: &snapshot.route(ROUTE).legs[0],
+            leg,
             jupiter: snapshot.named("jupiter"),
-            usdc: snapshot.named("usdcMint"),
+            usdc,
             svm,
             seller,
             template,
@@ -89,20 +122,9 @@ impl<'a> Sweep<'a> {
     ) -> Result<Outcome, Failure> {
         let leg = self.leg;
         let seller = self.seller.pubkey();
-        let source = token_account(&mut self.svm, &seller, &self.usdc, balance);
-        assert_eq!(source, leg.source_token_account);
-        let swap = &leg.instructions.swap;
+        token_account(&mut self.svm, &seller, &self.usdc, balance);
         // The template passes `route`'s first four accounts itself; the rest are the group.
-        let head: Vec<Address> = swap.accounts[..4].iter().map(|meta| meta.pubkey).collect();
-        assert_eq!(
-            head,
-            [
-                TOKEN_PROGRAM_ID,
-                seller,
-                leg.source_token_account,
-                leg.destination_token_account
-            ]
-        );
+        let swap = &leg.instructions.swap;
         let run = Run::new(self.template, self.example)
             .account("jupiter", self.jupiter, false, false)
             .account("tokenProgram", TOKEN_PROGRAM_ID, false, false)
@@ -132,16 +154,23 @@ impl<'a> Sweep<'a> {
 
     /// After a failed sale: the transaction reverted whole. The seller still holds `balance`, the
     /// setup's wrapped SOL account is gone with it, and only the fee was paid.
+    #[track_caller]
     fn assert_nothing_sold(&self, balance: u64, lamports_before: u64, failure: &Failure) {
         assert_eq!(
             token_balance(&self.svm, &self.leg.source_token_account),
-            balance
+            balance,
+            "the failed sale of {balance} moved some of it"
         );
         assert_eq!(
             self.svm.get_account(&self.leg.destination_token_account),
-            None
+            None,
+            "the failed sale of {balance} left the setup's wrapped SOL account behind"
         );
-        assert_eq!(self.lamports(), lamports_before - failure.fee);
+        assert_eq!(
+            self.lamports(),
+            lamports_before - failure.fee,
+            "the failed sale of {balance} cost the seller more or less than the fee"
+        );
     }
 }
 
@@ -179,13 +208,15 @@ fn sells_a_balance_other_than_the_quoted_one() {
         // All of it was `in_amount`, so nothing is left, let alone more than the dust floor.
         assert_eq!(
             token_balance(&sweep.svm, &sweep.leg.source_token_account),
-            0
+            0,
+            "selling {balance} left some of it behind"
         );
         // The cleanup closed the wrapped SOL account, paying the seller the proceeds and the rent
         // the setup had taken.
         assert_eq!(
             sweep.svm.get_account(&sweep.leg.destination_token_account),
-            None
+            None,
+            "selling {balance} left the wrapped SOL account open"
         );
         let proceeds = sweep.lamports() + outcome.fee - before;
         let least = least_proceeds(sweep.leg, balance);
@@ -217,10 +248,9 @@ fn a_balance_at_the_dust_floor_is_not_worth_selling() {
     sweep.assert_nothing_sold(DUST_FLOOR, before, &failure);
 }
 
-/// The route, not the template, bounds how far above the quote a balance may go. Ten thousand
-/// times the quote would carry the price past the tick arrays the route's accounts include, so
-/// Raydium refuses inside the run, and the seller keeps the balance. The measurement below finds
-/// where the bounds lie.
+/// Past the tick arrays the route's accounts include, Raydium refuses inside the run, and the
+/// seller keeps the balance. Ten thousand times the quote is far past them. The measurements
+/// below find where they end, and where the quote's slippage stops a sale before that.
 #[test]
 fn a_balance_past_the_routes_tick_arrays_fails_in_raydium() {
     let snapshot = Snapshot::load(SNAPSHOT_DIR);
@@ -254,9 +284,16 @@ fn a_balance_past_the_routes_tick_arrays_fails_in_raydium() {
 /// Who refused a sale: `Jupiter 6001`, `Raydium CLMM 6023 NotEnoughTickArrayAccount` (an Anchor
 /// program logs its error's name), or `Ballista RequirementFailed in saleMetTheQuote`.
 fn refusal(snapshot: &Snapshot, example: &Example, failure: &Failure) -> String {
-    if let Some((kind, pc)) = tx::ballista_error(failure) {
-        let step = example.label_at(pc).unwrap_or("an unlabelled step");
-        return format!("Ballista {kind} in {step}");
+    if let Some((kind, context)) = tx::ballista_error(failure) {
+        // Only some failures' context is a program counter, which names a step; a requirement's
+        // is. Any other failure prints its context as it is.
+        return match kind {
+            "RequirementFailed" => format!(
+                "Ballista {kind} in {}",
+                example.label_at(context).unwrap_or("an unlabelled step")
+            ),
+            _ => format!("Ballista {kind} ({context})"),
+        };
     }
     let program = [("Jupiter", "jupiter"), ("Raydium CLMM", "raydiumClmm")]
         .into_iter()

@@ -3,14 +3,22 @@
 Tests: [`tests/token_sweep.rs`](../tests/token_sweep.rs). Snapshot: slot 451,100,151
 (2026-09-27 20:09:42 UTC).
 
-Every figure here comes from those tests at that slot, unless it is marked as a one-off. The
-checks print the passing sales. Three ignored measurements print the rest:
+Every measured figure here comes from those tests at that slot. The checks print the passing
+sales, and three ignored measurements print the rest:
 
 - `measure_compute_units`;
 - `measure_how_far_above_the_quote_a_balance_may_go`;
 - `measure_the_smallest_balance_the_route_can_sell`.
 
-After refreshing the snapshot, rerun them all and update this file:
+Three statements come from elsewhere:
+
+- **The route.** Its description below comes from `routes.json`, except the ticks, which are a
+  one-off decoded by hand.
+- **`SlippageToleranceExceeded`.** The name of Jupiter's 6001 comes from Jupiter's IDL: Jupiter
+  logs only the code. Raydium logs its errors' names, and the tests print them.
+- **`pnpm fixtures`.** That it leaves the payload as it was comes from one run.
+
+After refreshing the snapshot, rerun the tests and update this file:
 
 ```bash
 cargo test --manifest-path tests/protocols/Cargo.toml --test token_sweep -- --include-ignored --nocapture
@@ -39,7 +47,9 @@ USDC balance is written directly, under write rule 1.
 ## Passed as written
 
 The template ran unchanged against Jupiter v6, Raydium CLMM and mainnet's Token program. Nothing
-in its logic needed fixing, and `pnpm fixtures` leaves its payload as it was.
+in its logic needed fixing. Its doc comment did: it said only the pools and tick arrays bound the
+drift, and it now names both bounds. The docs page embeds that comment. No compiled bytes changed,
+and `pnpm fixtures` leaves the payload as it was.
 
 | Balance (USDC units) | Against the quote | Proceeds (lamports) | Least allowed | CU | Bytes |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -129,26 +139,16 @@ At the slippage edge, Raydium's swap completes and Jupiter's check on its output
   - the sizes it samples beyond the scan also land: 10,001 units, just above the tests' dust
     floor, then 100,000, 1,000,000, a tenth of the quote and half of it.
 
-These numbers belong to this pool at this slot. On a shallow pool the slippage bound can be a few
-percent.
+These numbers belong to this pool at this slot. On a shallower pool the extra size's price
+impact reaches the slippage sooner, so less drift works. That follows from the first bound;
+nothing here measured it.
 
-## Other observations
+## `saleMetTheQuote` never failed on its own
 
-- **`saleMetTheQuote` never failed on its own.** It repeats Jupiter's slippage check against the
-  same rescaled quote: `quote × (10,000 − slippageBps) / 10,000`, rounded down. Every sale the
-  measurements saw refused was refused by Jupiter or Raydium. The drift search prints a count of
-  each, and the small-balance scan names the refuser for every size. The requirement is a second
-  check, made on the balances.
-- **A failed sale sells nothing.** Both failures the checks make revert the whole transaction, and
-  the seller loses only the fee. A transaction is atomic, so any other failure reverts the same
-  way.
-
-## What changed in the template
-
-- **Its logic.** Nothing.
-- **Its doc comment.** The comment said only the pools and tick arrays bound the drift. It now
-  names both bounds. The comment is part of the source that the docs page embeds, and no compiled
-  bytes changed.
+It repeats Jupiter's slippage check against the same rescaled quote:
+`quote × (10,000 − slippageBps) / 10,000`, rounded down. Every sale the measurements saw refused
+was refused by Jupiter or Raydium. The drift search prints a count of each, and the small-balance
+scan names the refuser for every size. The requirement is a second check, made on the balances.
 
 ## Notes for the docs session
 
@@ -160,16 +160,16 @@ percent.
   roughly the balance you expect. The measurements above give a scale: about 1,787 times the quote
   on this pool at 50 bps.
 - **Failures outside the template.** A balance too large or too small for the route fails inside
-  the route, with Jupiter's 6001 or the AMM's own error, rather than at a template label. Nothing
-  is sold.
+  the route, with Jupiter's 6001 or the AMM's own error, rather than at a template label.
 - **Choosing the dust floor.** Set it at the rounding floor or above: 194 units at 50 bps on this
   pool. Every balance above it that the scan tried then lands, and a smaller one fails at
   `worthSelling` instead of inside the route.
-- **Cost.** The whole transaction took 71,200 CU and 700 bytes, about 7,000 CU and 52 bytes more
-  than Jupiter's own. Here Jupiter's compute budget set the limit to 1,400,000 CU. A client that
-  sets a tighter limit from a simulation of Jupiter's own transaction needs to add the run's cost.
-- **A worked run for the Rust tab.** The tab shows the Jupiter deposit's run. `Sweep::sell` in
-  `tests/protocols/tests/token_sweep.rs` builds this template's own run by name:
+- **Cost.** At the quoted size the whole transaction took 71,194 CU and 700 bytes, about 7,000 CU
+  and 52 bytes more than Jupiter's own 64,188 CU and 648 bytes. Here Jupiter's compute budget set
+  the limit to 1,400,000 CU. A client that sets a tighter limit from a simulation of Jupiter's own
+  transaction needs to add the run's cost.
+- **A worked run for the Rust tab.** The tab shows the Jupiter deposit's run. `Sweep::sell_with`
+  in `tests/protocols/tests/token_sweep.rs` builds this template's own run by name:
   - the accounts `jupiter`, `tokenProgram`, `seller`, `sourceAta` and `destinationAta`;
   - the inputs `routePlan`, `quotedInAmount`, `quotedOutAmount`, `slippageBps`, `platformFeeBps`
     and `dustFloor`;

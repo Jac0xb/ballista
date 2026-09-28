@@ -270,6 +270,28 @@ describe('the oracle-checked swap', () => {
     expect(labels.indexOf('soldTheRouteInput')).toBe(labels.indexOf('measureAmountSold') + 1);
     expect(labels.indexOf('soldTheRouteInput')).toBeLessThan(labels.indexOf('fillBeatTheOracle'));
   });
+
+  // Jupiter checks `route`'s destination by its mint alone, and a step pays whichever account it
+  // names. On the real programs an attacker's USDC account, there and as the step's output, took
+  // the whole fill and cleared the fill check (tests/protocols/findings/oracle-swap.md).
+  test('requires the trader to own both token accounts, with the mint checks and before the swap', () => {
+    expect(TOKEN_ACCOUNT_OWNER_OFFSET).toBe(32);
+    for (const [label, name] of [
+      ['sellsTheTradersOwnTokens', 'sourceAta'],
+      ['proceedsGoToTheTrader', 'destinationAta'],
+    ] as const) {
+      expect(requireLabeled(jupiterOracleCheckedSwap, label).condition).toEqual(
+        expression.equal(
+          expression.accountData(account.fixed(name), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+          expression.accountField(account.fixed('trader'), 'key'),
+        ),
+      );
+    }
+    const labels = jupiterOracleCheckedSwap.steps.map((step) => step.label);
+    expect(labels.indexOf('sellsTheTradersOwnTokens')).toBe(labels.indexOf('destinationHoldsTheDestinationMint') + 1);
+    expect(labels.indexOf('proceedsGoToTheTrader')).toBe(labels.indexOf('sellsTheTradersOwnTokens') + 1);
+    expect(labels.indexOf('proceedsGoToTheTrader')).toBeLessThan(labels.indexOf('swap'));
+  });
 });
 
 /**

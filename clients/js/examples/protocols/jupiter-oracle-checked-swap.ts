@@ -23,10 +23,14 @@
  *
  * Jupiter does not tie `route`'s source and destination accounts to the accounts its steps move.
  * It asks only that the source hold at least `in_amount` and the destination hold the destination
- * mint. Put other accounts there, and both measured balances stay where they were: nothing sold,
- * a floor of nothing, and a fill check that passes at any price. So the caller hands over the
- * route in parts, as `splitJupiterRoute` splits the Swap API's data. The template writes
- * `in_amount` into the instruction itself and requires exactly that much to have left `sourceAta`.
+ * mint, and never who owns either. Put other accounts there, and both measured balances stay where
+ * they were: nothing sold, a floor of nothing, and a fill check that passes at any price. So the
+ * caller hands over the route in parts, as `splitJupiterRoute` splits the Swap API's data. The
+ * template writes `in_amount` into the instruction itself and requires exactly that much to have
+ * left `sourceAta`. A step also pays whichever account it names: a route that paid the fill into
+ * someone else's account of the destination mint, measured there, would clear the fill check with
+ * the trader's tokens. So the template requires the trader to own both token accounts.
+ *
  * That does not cover everything: the signer authorizes every step of the route, so a route's steps
  * can also spend other token accounts the signer owns, which neither balance shows.
  *
@@ -51,6 +55,7 @@ import {
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_LENGTH,
   TOKEN_ACCOUNT_MINT_OFFSET,
+  TOKEN_ACCOUNT_OWNER_OFFSET,
   addressBytes,
 } from './shared.js';
 
@@ -140,6 +145,23 @@ export const jupiterOracleCheckedSwap = defineTemplate({
         expression.accountField(account.fixed('destinationMint'), 'key'),
       ),
       'destinationHoldsTheDestinationMint',
+    ),
+
+    // Both ends of the swap are the trader's: the step that pays the fill can name any account of
+    // the destination mint, so the one measured must be the trader's.
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('sourceAta'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('trader'), 'key'),
+      ),
+      'sellsTheTradersOwnTokens',
+    ),
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('destinationAta'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('trader'), 'key'),
+      ),
+      'proceedsGoToTheTrader',
     ),
 
     // price × 10^exponent is per whole token. In base units the fill is worth

@@ -19,34 +19,44 @@ comes next, then Jupiter's cleanup, which closes the wrapped SOL account.
 | --- | --- |
 | `toleranceBps` 100 | Lands. The fill is 123,106,283, and the on-chain floor is 121,857,149 |
 | The oracle at the highest price the fill clears, 12,434,978,199 | Lands. The floor equals the fill exactly |
-| One unit higher, 12,434,978,200 | Fails at `fillBeatTheOracle` (pc 66). The floor is one unit over the fill |
-| The oracle 5% above the market (write rule 2) | Fails at `fillBeatTheOracle` (pc 66) |
-| The same oracle, with decoy token accounts where the template measures (write rule 1) | Fails at `soldTheRouteInput` (pc 47) after 49,406 CU, once the route has run. It landed before the fix |
-| USDC/USD's price account passed as the oracle, with `feedId` SOL/USD | Fails at `priceIsTheExpectedFeed` (pc 17) after 2,935 CU, before anything else reads the account |
+| One unit higher, 12,434,978,200 | Fails at `fillBeatTheOracle` (pc 74). The floor is one unit over the fill |
+| The oracle 5% above the market (write rule 2) | Fails at `fillBeatTheOracle` (pc 74) |
+| The same oracle, with the trader's own second token accounts where the template measures | Fails at `soldTheRouteInput` (pc 55) after 49,984 CU, once the route has run. Another wallet's decoys landed before `soldTheRouteInput` existed |
+| Another wallet's wrapped SOL at `sourceAta` (write rule 1) | Fails at `sellsTheTradersOwnTokens` (pc 34) after 4,210 CU, before the route |
+| An attacker's USDC account at `destinationAta` and as the step's output (write rule 1), the oracle at the market | Fails at `proceedsGoToTheTrader` (pc 38) after 4,482 CU, before the route. It landed before the fix |
+| The attacker's account as the step's output only, the trader's at `destinationAta` | Fails at `fillBeatTheOracle` (pc 74): nothing arrived where the template measures |
+| USDC/USD's price account passed as the oracle, with `feedId` SOL/USD | Fails at `priceIsTheExpectedFeed` (pc 17) after 2,959 CU, before anything else reads the account |
 | The same account, with `feedId` USDC/USD | Lands (a control). No other check tells the two feeds apart |
 
 In the 5%-above run, Jupiter's `route` returned and the requirement failed after it. The runtime
 then unwound the swap and the setup's wrap and account creation, so the trader paid only the fee.
 
+The program counters and the compute units at each failure are one-off readings of the failures'
+logs, not printed by the tests.
+
 ## Compute units and size
 
 |  | The run | Jupiter's own transaction |
 | --- | --- | --- |
-| Transaction | 83,003 CU | 73,084 CU |
+| Transaction | 83,581 CU | 73,084 CU |
 | Jupiter's `route` | 40,985 CU | 40,985 CU |
-| Ballista's own work (its run less `route`) | 9,919 CU | none |
+| Ballista's own work (its run less `route`) | 10,497 CU | none |
 | Wire size | 848 bytes | 698 bytes |
 
 - **The fill.** The run fills exactly as Jupiter's own transaction does: 123,106,283 units, with the
   same `route` compute units. The template changes what is checked, not what is traded.
+- **The owner checks' cost.** They cost 578 CU: the transaction took 83,003 CU before them, and
+  Ballista's run 50,904. They add 128 bytes to the template and none to the transaction, which
+  already passes the trader's key.
 - **The route-input check's cost.** It costs 609 CU and 13 bytes: the run took 82,394 CU and 835
   bytes before it. The four numbers after the plan travel as 8-byte inputs, 32 bytes where `route`
   packs them into 19.
 - **The feed pin's cost.** It cost 318 CU (the run took 49,977 CU before the pin) and 32 bytes, the
   `feedId` input (803 bytes before).
-- **The template's size.** It is 1,376 bytes: 1,164 before the feed pin, and 1,232 before the
-  route-input check. Each is too large for one `create_template` transaction, so the harness
-  uploads it in four: `begin_template`, two chunk writes, and `finalize_template`.
+- **The template's size.** It is 1,504 bytes: 1,376 before the owner checks, 1,232 before the
+  route-input check, and 1,164 before the feed pin. Each is too large for one `create_template`
+  transaction, so the harness uploads it in four: `begin_template`, two chunk writes, and
+  `finalize_template`.
 - **Call depth.** Ballista runs at stack height 1, Jupiter at 2, Meteora at 3, and Meteora's
   Token transfers and event call at 4. Wrapping adds one level. This route stays within the limit
   of 5 that the tests run under: LiteSVM uses mainnet's feature set, in which SIMD-0268's raise to
@@ -68,11 +78,11 @@ checks there (finding 4 of `findings/jito-tip.md` on `claude/pt-jito`, 0df3202):
 
 So accounts the route never touches could sit where the template measures.
 
-**What it allowed.** `decoys_where_the_template_measures_fail_at_sold_the_route_input` makes two
-decoys under write rule 1: another wallet's wrapped SOL account, holding `in_amount` (1 SOL), and
-its empty USDC account. It puts them at `sourceAta` and `destinationAta`, leaves the route's step
-accounts as the Swap API built them, and moves the oracle 5% above the market. Against the unfixed
-template the transaction **landed** (82,410 CU, 899 bytes):
+**What it allowed.** The test made two decoys under write rule 1: another wallet's wrapped SOL
+account, holding `in_amount` (1 SOL), and its empty USDC account. It put them at `sourceAta` and
+`destinationAta`, left the route's step accounts as the Swap API built them, and moved the oracle 5%
+above the market. Against the template before this fix the transaction **landed** (82,410 CU,
+899 bytes):
 - the decoys still held 1,000,000,000 and 0;
 - the trader's wrapped SOL account was emptied and closed, and its USDC account took the fill,
   123,106,283;
@@ -88,29 +98,94 @@ template the transaction **landed** (82,410 CU, 899 bytes):
 - **The requirement.** `soldTheRouteInput` requires `sold == inAmount`, right after
   `measureAmountSold` and before the floor is computed.
 
+**The test now uses the trader's own decoys.** Since the owner checks below, another wallet's
+decoys fail at `sellsTheTradersOwnTokens` before the route runs.
+`decoys_where_the_template_measures_fail_at_sold_the_route_input` now makes the decoys the trader's
+own second wrapped SOL and USDC accounts, created through the System and Token programs' own
+instructions rather than written. They pass the owner checks, and `soldTheRouteInput` still stops
+them after the route (pc 55, 49,984 CU; pc 47 and 49,406 CU before the owner checks).
+
 **`==` held.** On the real route exactly `in_amount`, 1,000,000,000, left the trader's wrapped SOL,
-and every other run lands or fails as before. Every route in the snapshot is one step at 100%, so a
-split route's rounding is untested. If a split ever sold less than `in_amount`, `==` would refuse
-the route.
+and every other run lands or fails as before. Split routes and platform fees take exactly
+`in_amount` too: see "Splits and platform fees take exactly `in_amount`" below.
 
-### Open: the route can still spend the signer's other token accounts
+### P1, fixed: a hostile route could pay the fill to another wallet
 
-The fix ties the measured source to the route's input. It does not stop the route from moving other
-accounts:
+**The problem.** The template checked both token accounts' program owner (SPL Token), size and
+mint, but never whose they were. Jupiter checks `route`'s destination position by its mint alone,
+and a step pays whichever account it names. So a route could pay the fill into another wallet's
+account of the destination mint, and put that account at `destinationAta`, where the fill check
+would find it. A reviewer first showed this on chain.
+
+**What it allowed.** `an_attackers_destination_fails_at_proceeds_go_to_the_trader` writes an
+attacker's empty USDC account under write rule 1. It puts the account at `destinationAta`, and in
+the trader's place as the Meteora step's `user_token_out`, position 15 of `route`'s accounts. The
+oracle is at the market. Against the template before this fix (1,376 bytes), the transaction
+**landed** (83,003 CU, 880 bytes):
+- the attacker's USDC account went from 0 to 123,106,283, the whole fill;
+- the trader's wrapped SOL account was emptied and closed, and its USDC account held 0;
+- the trader's lamports fell by 1,002,144,280: the 1 SOL sold, the 2,039,280 rent of the USDC
+  account the setup created, and the 105,000 fee.
+
+Every check passed. Exactly `inAmount` left the trader's source, and the fill, measured in the
+attacker's account, cleared the floor of 121,857,149.
+
+**The fix.** Two requirements right after the mint checks, before anything is measured:
+- `sellsTheTradersOwnTokens` requires `accountData(sourceAta, 32, 'pubkey')` to equal the trader's
+  key;
+- `proceedsGoToTheTrader` requires the same of `destinationAta`.
+
+Offset 32 is the SPL Token account's `owner` (`TOKEN_ACCOUNT_OWNER_OFFSET` in `shared.ts`).
+`jitoProfitGuardedTip` makes the same check in `searcherOwnsTheWsolAccount`. The source's check
+stops no attack found here. It makes the template state that both ends of the swap are the
+trader's.
+
+**Now:**
+- **The attack** fails at `proceedsGoToTheTrader` before Jupiter is called. The attacker's account
+  still holds 0, and the trader pays only the fee.
+- **The attacker's account as the step's output only**, with the trader's own at
+  `destinationAta`: the fill check sees nothing arrive and fails at `fillBeatTheOracle`.
+- **Another wallet's wrapped SOL at `sourceAta`** fails at `sellsTheTradersOwnTokens`. Before the
+  fix it failed at `soldTheRouteInput` (pc 47), after the route had run.
+
+### Open: the signer's authority over its other token accounts
+
+Both ends of the swap are now the trader's, and exactly `inAmount` must leave the source. What
+remains open is the rest of what the trader's signature authorizes:
 - **Why.** The trader signs `route` as `user_transfer_authority`, and Jupiter passes that authority
-  to every step. A step can debit any token account the trader owns, not only `sourceAta`.
+  to every step. A step can debit any token account the trader owns, not only `sourceAta`, and pay
+  any account.
 - **An example.** A two-step route sells `inAmount` of SOL from `sourceAta` for USDT, and pays the
-  USDT into someone else's account. Its second step debits the trader's own USDT account instead,
-  and swaps that into `destinationAta`. The template sees `inAmount` sold and a fair fill, and
-  passes. But the trader paid for the fill with its own USDT, and the SOL's proceeds went to someone
-  else. This is inferred from the finding above; no test runs it.
-- **What would see it.** An authority that can spend only what the template allows. For example,
-  approve a delegate on `sourceAta` for exactly `inAmount`, pass it to `route` in the trader's
-  place, and revoke it afterwards. The route could then spend nothing else the trader owns.
+  USDT to an attacker. Its second step debits the trader's own USDT account instead, and swaps that
+  into `destinationAta`. The template sees `inAmount` sold from the trader's source and a fair fill
+  in the trader's destination, and passes. But the trader paid for the fill with its own USDT, and
+  the SOL's proceeds went to the attacker. This is inferred from the findings above; no test runs
+  it.
+- **What would close it.** A delegate approved only on the source: approve it on `sourceAta` for
+  exactly `inAmount`, pass it to `route` in the trader's place, and revoke it afterwards. The route
+  could then spend nothing else the trader owns.
 - **Why it stays open.** Template CPIs carry no signer seeds today, so the delegate would be a
   keypair that signs the transaction, or would need a new capability. And a multi-hop route passes
   its intermediate amounts through token accounts that its authority must control. This is a design
   question, left open here.
+
+### Open: the tolerance is a budget a hostile route can spend
+
+`route`'s `platform_fee_account` (position 6) is chosen by whoever builds the run, as are
+`platformFeeBps` and `slippageBps`. Nothing checks who owns it. The fill check bounds what it can
+take, but only to `toleranceBps`.
+
+A one-off probe at the snapshot's slot, not a committed test, ran the fixed template at the market
+with `toleranceBps` 100 and an attacker's USDC account as the platform fee account:
+- **A fee of 100 bps, `slippageBps` 50:** Jupiter's own slippage check refused it (6001).
+- **100 bps with `slippageBps` 200:** the run **landed**. The attacker took 1,231,062 units, and
+  the trader's 121,875,221 cleared the floor of 121,857,149.
+- **150 bps with `slippageBps` 200:** it failed at `fillBeatTheOracle`.
+
+So a trader should set `toleranceBps` to what it will accept losing to the builder, not only to
+the market. Venues' own fee accounts, such as Meteora's `host_fee_in`, sit in the same place: in
+the route's accounts, without an owner check. Nothing here tested them; the fill check would bound
+them the same way.
 
 ### P1, fixed: the price account's feed was never checked
 
@@ -146,6 +221,25 @@ Pyth's SDK makes the same check: `get_price_no_older_than` fails with `Mismatche
   `priceUpdate`'s address to the sponsored feed would be stricter, but would tie the template to
   one feed.
 
+### Splits and platform fees take exactly `in_amount`
+
+`soldTheRouteInput` requires exactly `in_amount` to leave the source. A split route or a platform
+fee could, in principle, leave some of it behind or take more. Every route in the snapshot is one
+step at 100%, so `jupiter_takes_exactly_in_amount_through_a_split_or_a_platform_fee` sends
+Jupiter's `route` on its own, with a quoted output of 1 so that its slippage check never refuses:
+- **Splits.** The route's step split in two over the same pool, each half with its own copy of the
+  step's accounts, selling an odd 999,999,999 lamports. At [50, 50] and at [33, 67] exactly that
+  much left the trader's wrapped SOL, for 123,106,282 USDC units, so the last step takes the
+  remainder. A [50, 100] plan is refused with Jupiter 6010.
+- **A 100 bps platform fee** also takes exactly `in_amount`. The fee account's mint decides where
+  the fee comes from:
+  - **wrapped SOL:** out of `in_amount`, 10,000,000 lamports, and the pool swaps the rest;
+  - **USDC:** out of the fill, 1,231,062 of the 123,106,283 units.
+- **Untested:** venues that leave some of their input unspent. `==` refuses such a route, so it
+  fails closed.
+
+A reviewer's probe first made these runs; the test repeats them.
+
 ### The floor is exact on chain
 
 The template reads SOL's 9 decimals, USDC's 6 and the feed's exponent of −8, and scales by
@@ -165,17 +259,32 @@ assert both the revert and the fee.
 
 ## Stale docs
 
-`docs/` was out of bounds for this change. `docs/examples/protocols/jupiter-oracle-swap.md` still
-says these things, none of them true now:
-- The template requires the feed's exponent to equal `priceExponent`, and the caller computes
-  `scaleDivisor`. Neither input exists: the template reads the exponent and both mints' decimals
-  on chain.
-- Because the template passes `route`'s first four accounts itself, "the balances it measures are
-  the ones Jupiter moves". Jupiter moves the accounts its steps name.
-- `routeArgs` is Jupiter's instruction data after the discriminator. The route now arrives as
-  `routePlan` and four numbers.
-- Its run has the same form as the Jupiter deposit's, which the page's Rust tab shows. Their
-  inputs now differ.
-- No test calls Jupiter. `docs/examples/protocols/index.md` says the same of every template.
+`docs/` was out of bounds for this change. These claims in it are no longer true.
 
-The page's step list also lacks the feed pin, the two mint checks and `soldTheRouteInput`.
+`docs/examples/protocols/jupiter-oracle-swap.md`:
+- **6–9.** It says an independent price catches "a route built by someone other than the signer".
+  The price alone did not: it cleared a fill paid to an attacker. The owner checks and
+  `soldTheRouteInput` now do that part. A hostile route can still take up to `toleranceBps` through
+  its own fee account, and can spend the signer's other token accounts.
+- **11–21.** The step list lacks the feed pin (`priceIsTheExpectedFeed`), the two mint checks, the
+  two owner checks (`sellsTheTradersOwnTokens`, `proceedsGoToTheTrader`) and `soldTheRouteInput`.
+- **16, 23–27.** The template does not require the feed's exponent to equal `priceExponent`, and the
+  caller does not compute `scaleDivisor`. Neither input exists: the template reads the exponent and
+  both mints' decimals on chain.
+- **29–31.** Because the template passes `route`'s first four accounts itself, "the balances it
+  measures are the ones Jupiter moves". Jupiter moves the accounts its steps name. The template now
+  requires both token accounts to be the signer's, and exactly `inAmount` to leave the source.
+- **32–33.** `routeArgs` is Jupiter's instruction data after the discriminator. The route now
+  arrives as `routePlan` and four numbers.
+- **49–51.** Its run has the same form as the Jupiter deposit's, which the page's Rust tab shows.
+  Their inputs now differ.
+- **53–55.** "Not yet run against Jupiter", and "No test calls Jupiter".
+
+`docs/examples/protocols/index.md`:
+- **8–9, 31–33, 45–46 and 117.** Each says no template has been run against the real protocols, or
+  has measured costs. This one has, against Jupiter v6, Meteora DLMM and Pyth at the slot above.
+- **68–78.** The offsets table gives only the SPL Token account's `amount` (64). The templates now
+  also read its `mint` (0) and `owner` (32).
+- **90–92.** "Require an owner and a minimum data length for every account a template reads" means
+  the program that owns the account. A template that measures a token account should also require
+  that account's `owner` field to be the signer.

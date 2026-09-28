@@ -2,14 +2,16 @@
 
 <p class="protocol-line">Ed25519 · Instructions sysvar · SPL Token</p>
 
-**Status:** Run as transactions in Mollusk, a harness that runs Solana programs without a
-validator. The Ed25519 precompile verifies a real signature, and the SPL Token program moves the
-tokens. Not yet run on devnet or mainnet.
+**Status:** Run as real transactions against mainnet's Token program, the real USDC and wrapped SOL
+mints and Solana's Ed25519 precompile, copied from mainnet at one slot into LiteSVM, a local Solana
+runtime. Also run in Mollusk, a harness that runs Solana programs without a validator. Not yet run
+on devnet or mainnet itself.
 
 ## What it does
 
 Settles a trade at a price a maker signed off chain. The taker pays the signed price, the maker
-delivers, and neither can stretch the trade past what the maker signed.
+delivers, and no single settlement can go past what the maker signed: the price, the size, the
+taker, the tokens and the expiry.
 
 The maker, who quotes, signs a quote off chain and sends it to the taker, who accepts it. Settling
 moves the maker's tokens, so the maker signs the transaction too. Because the template holds the
@@ -53,8 +55,10 @@ the taker.
 
 ::: warning A quote can settle more than once
 This template keeps no state, so it can't count settlements. Until a quote expires, it can settle
-again unless the maker's co-signer refuses a second settlement of the same quote. A template that
-must refuse replays itself can keep a per-maker nonce in a [registry entry](/guide/registries).
+again unless the maker's co-signer refuses a second settlement of the same quote. `maxAmount` caps
+each settlement, not the quote as a whole: in a test, settling the same quote twice delivered 3 SOL
+against a `maxAmount` of 2 SOL. A template that must refuse replays itself can keep a per-maker
+nonce in a [registry entry](/guide/registries).
 :::
 
 ## Template
@@ -108,7 +112,16 @@ fails at `quoteIsEd25519`.
 
 ## What has been tested
 
-- **End to end.** `tests/ballista/src/lib.rs` (`signed_quote_settles_only_as_the_maker_signed`)
+- **Against the real programs.** `tests/protocols/tests/signed_quote.rs` runs it as real transactions
+  in LiteSVM, against mainnet's Token program, the real USDC and wrapped SOL mints and the Ed25519
+  precompile. Selling 1.5 SOL and a lamport pays 225,375,001 USDC units, rounded up. Settling at
+  exactly `expiry` lands and one second later fails; exactly `maxAmount` lands and one lamport more
+  fails; USDC named as the base mint fails at `deliversTheQuotedMint`. The same quote settled twice
+  in its window lands both times, 3 SOL against a `maxAmount` of 2 SOL. No failed run moves any
+  balance. A settlement costs 8,892 compute units, and the transaction is 783 bytes with a 15,000
+  lamport fee. The precompile uses no compute units: it adds one signature to the fee and 276 of the
+  783 bytes.
+- **End to end in Mollusk.** `tests/ballista/src/lib.rs` (`signed_quote_settles_only_as_the_maker_signed`)
   uploads the template as the TypeScript SDK compiles it and runs it in Mollusk after a real
   Ed25519 instruction. At a price of 2,500,000 (2.5 quote units per base unit), taking 3,000,001
   base units pays the maker 7,500,003, rounded up from 7,500,002.5, and delivers 3,000,001 to the
@@ -123,10 +136,9 @@ fails at `quoteIsEd25519`.
   (`quoteHasNotExpired`); another taker (`quoteIsForThisTaker`); one base unit over `maxAmount`
   (`withinTheQuotedSize`); a quote for another quote mint (`paysInTheQuotedMint`); a payment
   account the taker owns (`paymentReachesTheMaker`).
-- **Not tested.** Devnet and mainnet, a failure at `deliversTheQuotedMint`, a settlement at exactly
-  `expiry`, and settling one quote twice. The end-to-end test builds its own Ed25519 instruction
-  and run, in the same layout, so no test runs the Run tabs against the program. The TypeScript run
-  is only type-checked.
+- **Not tested.** Devnet and mainnet. Both suites build their own Ed25519 instruction and run, in
+  the same layout as the Run tabs (the LiteSVM test checks its copy against Solana's own builder),
+  so no test runs the Run tabs' code against the program. The TypeScript run is only type-checked.
 - A test reads the template and checks that the signature must come from the Ed25519 program and
   be by `maker`, that `maker` must sign, that the tag is `BLSTQT01`, that each check reads the
   signed field it names, and which accounts each transfer uses and what it moves

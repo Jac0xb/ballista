@@ -37,9 +37,10 @@ points, and check them against the protocols' current programs before you use th
 - **Running against the protocols.** The twelve protocol templates run as real signed transactions
   against the protocols' own programs in [LiteSVM](https://github.com/LiteSVM/litesvm), a local
   Solana runtime. The programs and accounts are copied from mainnet at a single slot, so the tests
-  never touch the network (`tests/protocols/`). The signed quote runs in Mollusk, a harness that runs
-  Solana programs without a validator, with the real Ed25519 precompile and token program
-  (`tests/ballista/`). Each page's "What has been tested" says what its runs showed.
+  never touch the network (`tests/protocols/`). The signed quote runs the same way against mainnet's
+  Token program and the real Ed25519 precompile, and also in Mollusk, a harness that runs Solana
+  programs without a validator (`tests/ballista/`). Each page's "What has been tested" says what its
+  runs showed.
 - **Account offsets.** The Orca, Pyth and SPL Token offsets are also checked against real devnet
   accounts by an opt-in test; see [reading offsets](#reading-offsets-from-an-account). The Kamino
   and marginfi templates don't read those protocols' accounts. They read SPL token accounts: their

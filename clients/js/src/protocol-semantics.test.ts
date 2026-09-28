@@ -40,6 +40,7 @@ import {
 } from '../examples/protocols/index.js';
 import { QUOTE, QUOTE_TAG, signedQuote } from '../examples/protocols/signed-quote-settlement.js';
 import { buildJupiterDepositRun } from '../examples/protocols/run-jupiter-deposit.js';
+import { buildDailyCapRun } from '../examples/protocols/run/jupiter-daily-cap.js';
 import {
   buildOrcaHarvestRun,
   describeFailure,
@@ -67,6 +68,7 @@ import {
   addressBytes,
   anchorDiscriminator,
 } from '../examples/protocols/shared.js';
+import { findRegistryEntryAddress } from './kit.js';
 
 type Invoke = Extract<Step, { kind: 'invoke' }>;
 type Require = Extract<Step, { kind: 'require' }>;
@@ -421,6 +423,21 @@ describe('the daily cap', () => {
       payer: 'actor',
     });
     expect(jupiterDailyCapSwap.accounts.actor).toMatchObject({ signer: true, writable: true });
+  });
+
+  test("the runner passes the actor's own entry, writable, where the template opens it", async () => {
+    const decoder = getAddressDecoder();
+    const key = (byte: number): Address => decoder.decode(new Uint8Array(32).fill(byte));
+    const [templateAddress, actor] = [key(1), key(2)];
+    // A `route` with an empty plan: the discriminator, a u32 zero, then the 19-byte tail.
+    const routeData = Uint8Array.from([...JUPITER_ROUTE, 0, 0, 0, 0, ...new Uint8Array(19)]);
+    const instruction = await buildDailyCapRun({ templateAddress, actor, routeData, actionAccounts: [] });
+    const [entry] = await findRegistryEntryAddress(templateAddress, 0, actor);
+    expect(instruction.accounts?.slice(3, 6)).toEqual([
+      { address: actor, role: AccountRole.WRITABLE_SIGNER },
+      { address: entry, role: AccountRole.WRITABLE },
+      { address: address('11111111111111111111111111111111'), role: AccountRole.READONLY },
+    ]);
   });
 });
 

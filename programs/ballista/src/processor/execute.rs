@@ -10,7 +10,7 @@ use pinocchio::{
 };
 use solana_address::Address;
 
-use super::math;
+use super::{introspect, math};
 use crate::error::{vm_error, BallistaError};
 use crate::utils::pda;
 
@@ -1047,9 +1047,10 @@ fn step<'data>(
     Ok(())
 }
 
-/// Runs every opcode from `OP_MUL_DIV` up out of line; any other opcode it sees is one the executor
-/// does not run, and fails. As arms of the dispatch loop, the math opcodes cost every run compute
-/// units whether it used them or not; behind this call they cost only the templates that use them.
+/// Runs every opcode from `OP_MUL_DIV` up out of line, the introspection and byte opcodes among
+/// them; any other opcode it sees is one the executor does not run, and fails. As arms of the
+/// dispatch loop, the math opcodes cost every run compute units whether it used them or not; behind
+/// this call they cost only the templates that use them.
 ///
 /// It returns `RunResult<()>` and writes the destination register itself. Returning the value
 /// instead would give the dispatch loop a return slot of its own for this call, and LLVM hoists
@@ -1087,6 +1088,28 @@ fn extended_instruction<'data>(
             instruction,
             loop_context,
         ),
+        // Introspection names a fixed account, so it resolves without the loop context. The count
+        // and the index are two bytes at either end of the sysvar and need no parsing.
+        OP_INSTRUCTION_COUNT | OP_INSTRUCTION_INDEX => {
+            let sysvar = resolve(machine.program, machine.accounts, instruction.a, None)?;
+            let value = introspect::count_or_index(instruction.opcode, sysvar)?;
+            set(registers, dst, RuntimeValue::U64(value))
+        }
+        // Parsing the sysvar and reading byte ranges run in their own frames. Each helper takes
+        // four words, all passed in registers: one that took the loop context as well would take
+        // words from the stack, and their loads would run on entry here, for every opcode.
+        OP_INSTRUCTION_PROGRAM..=OP_READ_INSTRUCTION_BYTES => {
+            let sysvar = resolve(machine.program, machine.accounts, instruction.a, None)?;
+            introspect::read_instruction(sysvar, registers, instruction)
+        }
+        OP_READ_ACCOUNT_BYTES => {
+            let account = resolve(machine.program, machine.accounts, instruction.a, loop_context)?;
+            introspect::read_account_bytes(account, registers, instruction)
+        }
+        OP_BYTES_LEN => {
+            let length = introspect::bytes_len(operand(registers, instruction.a)?)?;
+            set(registers, dst, RuntimeValue::U64(length))
+        }
         _ => write_output(machine, instruction),
     }
 }
@@ -2642,9 +2665,10 @@ mod tests {
         let program = ProgramView::parse(&bytes).unwrap();
         let mut scratch = Scratch::new(&program);
         let mut registers = vec![U64(7)];
-        // 39 is unassigned, and so is every number from 75 up, which no runtime extension takes.
-        // FOREACH and REPEAT reach the executor only from inside a loop body.
-        for opcode in [0, 39, OP_FOREACH, OP_REPEAT, 75, 0xfe, u8::MAX] {
+        // 39 is unassigned, and so is every number after `OP_BYTES_LEN`, 74, the last opcode the
+        // runtime extensions take. FOREACH and REPEAT reach the executor only from inside a loop
+        // body.
+        for opcode in [0, 39, OP_FOREACH, OP_REPEAT, OP_BYTES_LEN + 1, 0xfe, u8::MAX] {
             for dst in [0, 9] {
                 assert_eq!(
                     execute_instruction(

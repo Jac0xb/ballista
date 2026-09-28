@@ -198,8 +198,8 @@ Only uploading templates can be cancelled. Finalized bytes are immutable and can
 The 80-byte account header records creator, ID, upload state, lengths, bump, and SHA-256 payload
 hash. The payload is a canonical series of fixed-size Zerocopy record tables followed by constant
 pubkeys and literal bytes. See [the scope and limits](docs/scope.md) and the
-[examples](docs/examples/index.md). Transaction sizes, compute, and heap use are in
-[What a run costs](docs/benchmarks.md).
+[examples](docs/examples/index.md). Transaction sizes and compute are in
+[Limits](docs/reference/limits.md#transaction-ceilings).
 
 ## Repository layout
 

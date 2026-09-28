@@ -505,7 +505,15 @@ impl ProgramView<'_> {
             }
             OP_READ_ACCOUNT_BYTES => {
                 self.refuse_entry_data(instruction, instruction_index)?;
-                self.require_account(instruction.a, in_row_loop)?;
+                let account = self
+                    .account_constraint(instruction.a, in_row_loop)
+                    .ok_or(TemplateError::InvalidAccountConstraint(instruction.a as usize))?;
+                // The run refuses a byte read of an account its instruction can write. A fixed
+                // account declared writable is writable in every run, so such a read could never
+                // succeed; a row account is left to that run-time check.
+                if instruction.a & ITERATION_ACCOUNT_BIT == 0 && account.flags & ACCOUNT_WRITABLE != 0 {
+                    return Err(TemplateError::InvalidInstruction(instruction_index));
+                }
                 self.require_type(registers, instruction.b, VALUE_U64)?;
                 let len = byte_read_len(instruction, instruction_index)?;
                 self.write_register(registers, instruction.dst, RegisterInfo::bytes(len))?;
@@ -1955,7 +1963,7 @@ mod tests {
     }
 
     #[test]
-    fn account_byte_reads_take_any_declared_account_and_a_u64_offset() {
+    fn account_byte_reads_take_a_declared_account_and_a_u64_offset() {
         let mut builder = ProgramBuilder::new();
         let account = builder.account(0, None, None, 0);
         let offset = builder.const_u64(0);
@@ -1981,6 +1989,37 @@ mod tests {
         let offset = builder.const_i64(0);
         builder.read_account_bytes(account, offset, 8);
         assert_eq!(verify_builder(&builder), Err(TemplateError::TypeMismatch));
+    }
+
+    /// The run refuses a byte read of an account its instruction can write, so a byte read of a
+    /// fixed account declared writable, which every run passes writable, could never succeed and
+    /// is refused as `InvalidInstruction`, the error of a bad byte-read length. A row account is
+    /// left to the run.
+    #[test]
+    fn account_byte_reads_refuse_a_fixed_account_declared_writable() {
+        for flags in [ACCOUNT_WRITABLE, ACCOUNT_SIGNER | ACCOUNT_WRITABLE] {
+            let mut builder = ProgramBuilder::new();
+            let account = builder.account(flags, None, None, 0);
+            let offset = builder.const_u64(0);
+            let pc = builder.instructions_mut().len();
+            builder.read_account_bytes(account, offset, 8);
+            assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidInstruction(pc)), "{flags}");
+        }
+
+        let mut builder = ProgramBuilder::new();
+        let signer = builder.account(ACCOUNT_SIGNER, None, None, 0);
+        let offset = builder.const_u64(0);
+        builder.read_account_bytes(signer, offset, 8);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()), "a read-only signer");
+
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
+        builder.batch(2, 0);
+        let offset = builder.const_u64(0);
+        builder.for_each(0, |body| {
+            body.read_account_bytes(row, offset, 8);
+        });
+        assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()), "a writable row account");
     }
 
     #[test]

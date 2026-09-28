@@ -3951,6 +3951,14 @@ mod tests {
             context.mollusk.sysvars.clock.unix_timestamp -= 5;
             let result = pay(&context, 1);
             assert_eq!(labeled(&result, "rate-limited-transfer"), (REQUIREMENT_FAILED, "withinRateLimit".into()));
+
+            // A long gap refills more than was spent: the refill stops at nothing spent, so the
+            // whole cap lands again and one lamport more does not.
+            context.mollusk.sysvars.clock.unix_timestamp += 1_000_000;
+            let result = pay(&context, 1_000_000);
+            assert!(result.program_result.is_ok(), "{result:#?}");
+            let result = pay(&context, 1);
+            assert_eq!(labeled(&result, "rate-limited-transfer"), (REQUIREMENT_FAILED, "withinRateLimit".into()));
         }
     }
 }

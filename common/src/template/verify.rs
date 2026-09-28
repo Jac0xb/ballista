@@ -665,6 +665,10 @@ impl ProgramView<'_> {
     /// Checks one data segment of a PDA seed or an output and returns the most bytes it can
     /// encode: a literal's length, a register kind's width, or a `bytes` register's maximum
     /// length. Invocation data applies the same widths in `verify_cpi`.
+    ///
+    /// Inlined into both callers. With the outputs as a second caller, the compiler kept it out of
+    /// line, and creating a cookbook template that derives a PDA cost about 80 compute units more.
+    #[inline(always)]
     fn verify_segment(
         &self,
         index: usize,

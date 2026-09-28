@@ -18,6 +18,9 @@ cargo build-sbf --manifest-path programs/ballista/Cargo.toml
 cargo test --manifest-path tests/protocols/Cargo.toml
 ```
 
+The suite loads LiteSVM's precompiles, for the signed quote's Ed25519 instruction. Building them
+compiles OpenSSL from source, which needs perl, make and a C compiler.
+
 ## The snapshot
 
 | File | Holds |

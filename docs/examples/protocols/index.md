@@ -1,12 +1,13 @@
 # Protocol templates
 
-Twelve example templates that work with real Solana protocols: Jupiter, Kamino, marginfi, Drift,
-Orca, Pyth and Jito. Each one works with a value that only exists while the transaction runs, such as
-what a swap returned or what a position has earned. The source files are in
+Eleven example templates that work with real Solana protocols: Jupiter, Kamino, marginfi, Orca,
+Pyth and Jito. Each one works with a value that only exists while the transaction runs, such as what
+a swap returned or what a position has earned. The source files are in
 `clients/js/examples/protocols/`.
 
-Treat them as starting points, not tested integrations. None has been run against the real
-protocols. [What has been tested](#what-has-been-tested) lists what has been checked.
+All eleven have been run as real transactions against the protocols' own programs, copied from
+mainnet. [What has been tested](#what-has-been-tested) has the details. Treat them as starting
+points, and check them against the protocols' current programs before you use them.
 
 | Template | Protocol | Decided during the run |
 | --- | --- | --- |
@@ -20,8 +21,7 @@ protocols. [What has been tested](#what-has-been-tested) lists what has been che
 | [Repay what the swap produced](/examples/protocols/kamino-repay) | Jupiter → Kamino | How much the swap produced |
 | [Liquidate with a minimum payout](/examples/protocols/kamino-liquidate) | Kamino | How much collateral the liquidator received |
 | [Withdraw everything, with a minimum](/examples/protocols/marginfi-withdraw) | marginfi | How much the withdrawal returned |
-| [Move funds from marginfi to Drift](/examples/protocols/drift-rebalance) | marginfi → Drift | How much marginfi released, to deposit in Drift |
-| [Settle PnL, then withdraw](/examples/protocols/drift-settle) | Drift | Whether the withdrawal reached the wallet |
+| [Move a marginfi position into Kamino](/examples/protocols/marginfi-to-kamino) | marginfi → Kamino | How much marginfi released, to deposit in Kamino |
 
 ## What has been tested
 
@@ -30,13 +30,14 @@ protocols. [What has been tested](#what-has-been-tested) lists what has been che
   Ballista program runs before it stores a template (`common/src/template/verify.rs`).
 - **Rust.** Each Rust template is byte-identical to the TypeScript one, and each Rust run passes
   the accounts, flags and inputs its template declares (`clients/rust/tests/protocol_templates.rs`).
-- **Running against the protocols.** No test runs any of these templates against the real
-  protocols. Their account lists and instruction arguments have not been checked against the
-  deployed programs.
-- **Account offsets.** The Orca, Pyth and SPL Token offsets are checked against real devnet
-  accounts by an opt-in test; see [reading offsets](#reading-offsets-from-an-account). The Kamino,
-  Drift and marginfi templates don't read those protocols' accounts. They compare SPL token
-  balances before and after each call.
+- **Running against the protocols.** Every template runs as real signed transactions against the
+  protocols' own programs in [LiteSVM](https://github.com/LiteSVM/litesvm), a local Solana runtime.
+  The programs and accounts are copied from mainnet at a single slot, so the tests never touch the
+  network (`tests/protocols/`). Each page's "What has been tested" says what its runs showed.
+- **Account offsets.** The Orca, Pyth and SPL Token offsets are also checked against real devnet
+  accounts by an opt-in test; see [reading offsets](#reading-offsets-from-an-account). The Kamino
+  and marginfi templates don't read those protocols' accounts. They read SPL token accounts: their
+  balances before and after each call and, where it matters, who owns them.
 - **Jupiter calls.** Six templates call Jupiter's `route` instruction:
   [deposit](/examples/protocols/jupiter-deposit), [oracle swap](/examples/protocols/jupiter-oracle-swap),
   [sell](/examples/protocols/token-sweep), [repay](/examples/protocols/kamino-repay),
@@ -45,8 +46,8 @@ protocols. [What has been tested](#what-has-been-tested) lists what has been che
   Jupiter's published interface lists them: the token program, the signer and, where the template
   measures them, the source and destination token accounts. The rest of the route's accounts
   arrive as an account group. A test that reads the templates checks this
-  (`clients/js/src/protocol-semantics.test.ts`), but none has been run against a real route.
-  Request routes from Jupiter's Swap API with `useSharedAccounts: false`; the default,
+  (`clients/js/src/protocol-semantics.test.ts`), and the protocol tests send real routes, recorded
+  from Jupiter's API, through Jupiter's own program. Request routes from Jupiter's Swap API with `useSharedAccounts: false`; the default,
   `shared_accounts_route`, is a different instruction with its accounts in a different order.
 
 ## Reading offsets from an account
@@ -70,6 +71,7 @@ is also the stronger guarantee: the update carries all the required signatures, 
 | Layout | Field | Offset |
 | --- | --- | ---: |
 | Pyth `PriceUpdateV2`, `Full` | `verification_level` `u8` | 40 |
+| | `feed_id` (32 bytes) | 41 |
 | | `price` `i64` | 73 |
 | | `conf` `u64` | 81 |
 | | `exponent` `i32` | 89 |
@@ -77,7 +79,9 @@ is also the stronger guarantee: the update carries all the required signatures, 
 | Orca `Position` | `liquidity` `u128` | 72 |
 | | `fee_owed_a` `u64` | 112 |
 | | `fee_owed_b` `u64` | 136 |
-| SPL Token account | `amount` `u64` | 64 |
+| SPL Token account | `mint` | 0 |
+| | `owner` | 32 |
+| | `amount` `u64` | 64 |
 
 Pyth and Orca are Anchor programs (Anchor is the most common Solana program framework). Anchor
 starts each account's data with an eight-byte discriminator, a tag that identifies the account
@@ -87,11 +91,12 @@ bytes of `sha256("global:<handler>")` for an instruction and of `sha256("account
 account.
 
 ::: warning Check before you upload
-The tests cover the Ballista side only. They can't tell you whether a protocol has changed since.
-Before you upload one of these templates, check each call's accounts, arguments and offsets
-against the protocol's current IDL (its published interface description). Require an owner and a
-minimum data length for every account a template reads, and prefer fields the protocol documents
-as public.
+The tests use a copy of mainnet from one slot. They can't tell you whether a protocol has changed
+since. Before you upload one of these templates, check each call's accounts, arguments and offsets
+against the protocol's current IDL (its published interface description). Require every account a
+template reads to be owned by the program you expect and long enough for the fields you read. If a
+template measures a token account, also require that account's `owner` field to be the signer.
+Prefer fields the protocol documents as public.
 :::
 
 ## Running them

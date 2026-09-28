@@ -2,7 +2,8 @@
 
 <p class="protocol-line">Kamino · Jupiter</p>
 
-**Status:** Compiles and passes the verifier; not yet run against Jupiter or Kamino.
+**Status:** Run as real transactions against Jupiter, a Meteora pool and Kamino, copied from
+mainnet at one slot into LiteSVM, a local Solana runtime. Not yet run on mainnet itself.
 
 ## What it does
 
@@ -14,10 +15,18 @@ unknown when you sign: how much the swap returns, and how much you owe by the ti
 runs. Interest keeps accruing, so a debt figure fetched by the client is already out of date when
 the transaction lands.
 
-The template handles the first number. It swaps, measures how much of the borrowed token arrived,
-and requires at least `minimumRepayment`. It then refreshes the Kamino reserve, because a repayment
-is priced against a freshly refreshed reserve, and repays the amount the swap produced. It does not
-read the debt.
+The template handles the first number. It:
+
+- requires `borrowedAssetAta`, where the swap pays out, to belong to the borrower
+  (`swapPaysTheBorrower`). Kamino repays from any account the borrower may spend, so without this
+  a run could leave the rest of the swap in someone else's account;
+- swaps, measures how much of the borrowed token arrived, and requires at least
+  `minimumRepayment` (`swapWorthRepaying`);
+- repays exactly that amount against the borrower's obligation, Kamino's account of their deposits
+  and debts, with `repay_obligation_liquidity_v2`.
+
+It does not read the debt. Kamino repays at most what is owed, and the rest stays in
+`borrowedAssetAta`.
 
 ## Template
 
@@ -35,14 +44,28 @@ read the debt.
 
 ## Run it
 
-Jupiter's `route` starts its account list with the token program, the signer, and the signer's
-source and destination token accounts: here the collateral account and the borrowed-token account.
-The template passes those four itself; the rest of the route's accounts arrive as the
-`routeAccounts` [account group](/guide/account-groups).
+`route` starts its account list with the token program, the signer, and the signer's source and
+destination token accounts: here `collateralAta` and `borrowedAssetAta`. The template passes those
+four itself; the rest of the route's accounts arrive as the `routeAccounts`
+[account group](/guide/account-groups).
 
-The Run tabs pass the 11 declared accounts in order, then the inputs `routeArgs` and
-`minimumRepayment`, then the group. `routeArgs` is Jupiter's instruction data without its
+Kamino's v2 repayment takes 13 accounts: 9 the template passes, then a second group,
+`farmAccounts`, of four. They are the obligation's user state in the reserve's debt farm, that
+farm, the lending market authority and Kamino's Farms program. A reserve is Kamino's pool for one
+token, and a farm is a Kamino Farms rewards pool attached to it. For a reserve without a debt farm,
+as on the main market's SOL and USDC reserves, both farm slots hold the Kamino program, read-only.
+
+The Run tabs pass the 12 declared accounts in order (`jupiter`, `kamino`, `tokenProgram`,
+`instructionsSysvar`, `borrower`, `collateralAta`, `borrowedAssetAta`, then Kamino's five from
+`obligation` to `reserveLiquiditySupply`), then the inputs `routeArgs` and `minimumRepayment`,
+then `routeAccounts` and `farmAccounts`. `routeArgs` is Jupiter's instruction data without its
 eight-byte discriminator; the template adds the `route` discriminator itself.
+
+Before the run, **refresh Kamino in the same transaction:** `refresh_reserve` for each reserve the
+obligation holds, then `refresh_obligation`. A refresh brings a reserve's interest and price, or an
+obligation's values, up to date. Kamino repays only against a reserve and an obligation refreshed
+in the same slot, and the template doesn't refresh. `buildKaminoRefreshes` (TypeScript) and
+`kamino_refreshes` (Rust), next to the runs, build them.
 
 ::: tip Requesting the route
 Ask Jupiter's Swap API for `useSharedAccounts: false`. The template always sends Jupiter's `route`
@@ -52,11 +75,22 @@ are in a different order.
 
 ## What has been tested
 
-- The template compiles and passes Ballista's verifier.
-- A test checks that it calls `route` with its accounts in `route`'s order, and that it repays
-  exactly what the swap produced (`clients/js/src/protocol-semantics.test.ts`).
+- **Against the real programs.** `tests/protocols/tests/kamino_repay_swap_output.rs` sells 1 SOL
+  through Jupiter and a Meteora pool, behind Kamino's refreshes, for a borrower owing three times
+  the route's quote. The debt falls by exactly what the swap produced. The whole transaction took
+  141,280 compute units (Solana's measure of execution cost) and 993 bytes, using the route's
+  lookup table.
+- **Failures.** A `minimumRepayment` one unit above the output fails at `swapWorthRepaying`, swap
+  included. An attacker's account, approved for the borrower, as `borrowedAssetAta` fails at
+  `swapPaysTheBorrower`, before Jupiter is called.
+- **Not tested.** Mainnet itself, a reserve with a debt farm, and Token-2022 tokens: the template
+  accepts SPL Token accounts only. Only `borrowedAssetAta` is tied to the borrower; the route's
+  accounts and the inputs are the run builder's choice.
+- A test reads the template and checks that it calls `route` with its accounts in `route`'s order,
+  and repays through Kamino's v2 handler exactly what the swap produced, with `farmAccounts` as its
+  group (`clients/js/src/protocol-semantics.test.ts`).
 - The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
-- No test calls Jupiter or Kamino.
+  and inputs the template declares, right after Kamino's refreshes
+  (`clients/rust/tests/protocol_templates.rs`).
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

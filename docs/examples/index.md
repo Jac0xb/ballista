@@ -23,9 +23,9 @@ result without Ballista:
 
 ## Protocol templates {#live-protocols}
 
-Templates that work with Jupiter, Kamino, marginfi, Drift, Orca, Pyth and Jito. They use the real
-program addresses and instruction names, but none has been run against the protocols themselves.
-See [what has been tested](/examples/protocols/#what-has-been-tested).
+Templates that work with Jupiter, Kamino, marginfi, Orca, Pyth and Jito. All of them have been run
+as real transactions against the protocols' own programs, copied from mainnet. See
+[what has been tested](/examples/protocols/#what-has-been-tested).
 
 | Recipe | Protocol | Decided during the run |
 | --- | --- | --- |
@@ -35,8 +35,7 @@ See [what has been tested](/examples/protocols/#what-has-been-tested).
 | [Repay from swap](/examples/protocols/kamino-repay) | Jupiter → Kamino | How much the swap produced |
 | [Liquidate](/examples/protocols/kamino-liquidate) | Kamino | How much collateral the liquidator received |
 | [Withdraw](/examples/protocols/marginfi-withdraw) | marginfi | How much the withdrawal returned |
-| [Rebalance](/examples/protocols/drift-rebalance) | marginfi → Drift | How much marginfi released |
-| [Settle and withdraw](/examples/protocols/drift-settle) | Drift | Whether the withdrawal reached the wallet |
+| [Rebalance](/examples/protocols/marginfi-to-kamino) | marginfi → Kamino | How much marginfi released |
 | [Compound fees](/examples/protocols/orca-compound) | Orca | How much the position had earned |
 | [Harvest](/examples/protocols/orca-harvest) | Orca | Which positions have earned enough to collect |
 | [Price gate](/examples/protocols/pyth-gate) | Pyth → Jupiter | Whether the price is recent, precise and in range |

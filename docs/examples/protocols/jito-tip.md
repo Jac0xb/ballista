@@ -2,20 +2,30 @@
 
 <p class="protocol-line">Jito · Jupiter</p>
 
-**Status:** Compiles and passes the verifier; not yet run against Jupiter or Jito.
+**Status:** Run as real transactions against Jupiter, a Meteora pool, a Raydium pool and a Jito tip
+account, copied from mainnet at one slot into LiteSVM, a local Solana runtime. Not yet run on
+mainnet itself, or through Jito's tip auction.
 
 ## What it does
 
 Runs a Jupiter trade and pays a Jito tip only if the trade's profit covers it.
 
 Jito recommends putting the tip in the same transaction as the trade, so that a failed trade pays
-no tip. That covers failure, but not the more common case: a trade that succeeds but earns less
-than the tip. A plain transaction can't compare its own profit with its own tip, so it pays the tip
-in full either way.
+no tip. But a trade that succeeds and earns less than the tip still pays it in full: a plain
+transaction can't compare its own profit with its own tip.
 
-The searcher is the account that runs the trade and pays the tip. The template records its balance
-in lamports (the smallest unit of SOL), runs the trade, and requires the profit to cover the tip
-plus `minimumEdge`. If the profit falls short, the run reverts before the tip is paid.
+The trade is a round trip from SOL back to SOL. Jupiter's `route` moves only token accounts, so it
+trades wrapped SOL (wSOL), SOL held in a token account; the Swap API wraps SOL before `route` and
+unwraps it after. A wSOL balance is in lamports (billionths of a SOL), the same unit as the tip.
+The searcher is the wallet that signs, trades and pays the tip. The template:
+
+1. requires `wsolAccount` to hold wSOL and to belong to the searcher;
+2. records its balance, then runs the round trip as one Jupiter `route` from that account back to
+   it;
+3. requires the balance to have grown by at least `tipLamports` plus `minimumEdge`, so a loss or a
+   thin profit reverts before any tip is paid;
+4. pays `tipLamports` from the searcher to `jitoTip`, which must be owned by Jito's Tip Payment
+   program, as Jito's tip accounts are.
 
 ## Template
 
@@ -31,26 +41,27 @@ plus `minimumEdge`. If the profit falls short, the run reverts before the tip is
 
 :::
 
-Profit is measured in lamports, so this suits a trade that ends in SOL. For a trade that ends in a
-token, compare the token account's balance (the `u64` at byte offset 64) instead.
-
-The tip amount is an input, fixed before signing like any ordinary tip. A template could instead
-compute the tip as a share of the profit: a tip is a plain SOL transfer, and Jito accepts one made
-through a CPI (one program calling another). But Jito's block engine, which runs the tip auction,
-is closed source, and public write-ups disagree on whether it ranks a tip computed during execution
-by its simulated value or by an amount read from the instruction. A tip that is paid but ranked as
-zero is worse than no tip, so this template bids a fixed amount and only decides whether to pay it.
+The tip is a fixed input, not a share of the profit computed during the run. Jito's block engine,
+which runs the tip auction, is closed source, and it is unclear whether it ranks a computed tip by
+its simulated value or by an amount read from the instruction. A tip paid but ranked as zero would
+be worse than none, so the template bids a fixed amount and only decides whether to pay it.
 
 ## Run it
 
-The trade is Jupiter's `route` instruction, which starts its account list with the token program
-and the signer. The template passes those two itself; the rest of the route's accounts, including
-its token accounts, arrive as the `strategyAccounts` [account group](/guide/account-groups).
-`strategyData` is Jupiter's instruction data without its eight-byte discriminator; the template
-adds the `route` discriminator itself.
+`route` starts its account list with the token program, the signer, and the source and destination
+token accounts. The template passes those four itself, with `wsolAccount` as both source and
+destination; the rest of the route's accounts arrive as the `strategyAccounts`
+[account group](/guide/account-groups).
 
-The Run tabs pass the five declared accounts in order, then the inputs `strategyData`,
-`tipLamports` and `minimumEdge`, then the group. `jitoTip` is one of Jito's eight tip accounts.
+Jupiter's Swap API won't quote a route from a token back to itself, so quote two legs, SOL to USDC
+and back, and join them into one `route` as the Run tabs' comments describe. Only single-step legs
+can be joined, and the SDK has no helper for it: `round_trip` in `tests/protocols/tests/jito_tip.rs`
+is the only implementation.
+
+The Run tabs pass the six declared accounts, `systemProgram`, `strategyProgram`, `tokenProgram`,
+`searcher`, `wsolAccount` and `jitoTip`, then the inputs `strategyData`, `tipLamports` and
+`minimumEdge`, then the group. `strategyData` is the joined `route` data without its eight-byte
+discriminator; the template adds the `route` discriminator itself.
 
 ::: tip Requesting the route
 Ask Jupiter's Swap API for `useSharedAccounts: false`. The template always sends Jupiter's `route`
@@ -60,11 +71,23 @@ are in a different order.
 
 ## What has been tested
 
-- The template compiles and passes Ballista's verifier.
-- A test checks that it calls `route` with its accounts in `route`'s order
+- **Against the real programs.** `tests/protocols/tests/jito_tip.rs` runs the round trip through
+  Jupiter, 1 SOL to USDC on Meteora and back to SOL on Raydium, with the run in place of `route` in
+  the transaction Jupiter's API built for the first leg. At the copied prices the round trip loses
+  to the pools' fees, so a test wallet first sells 500 SOL into the Raydium pool, and the round trip
+  buys its SOL back cheaper. A tip of that profit less `minimumEdge` is then paid in full.
+- **Failures.** One lamport more fails at `profitCoversTheTip` and pays nothing, and so does a
+  1,000-lamport tip on the losing round trip. A USDC account as `wsolAccount` fails at
+  `wsolAccountHoldsWrappedSol`, another wallet's wSOL at `searcherOwnsTheWsolAccount`, and a plain
+  wallet as `jitoTip` at its owner constraint.
+- **Jupiter's side.** Sent to Jupiter directly, a profitable round trip grows the searcher's wSOL
+  and leaves its lamports alone, apart from the fee.
+- **Not tested.** Jito's block engine isn't part of LiteSVM, so the tests show the tip is paid, not
+  how the auction ranks it.
+- A test reads the template and checks that it calls `route` with the token program, the searcher
+  and `wsolAccount` twice, and that the profit check reads the wSOL balance, not lamports
   (`clients/js/src/protocol-semantics.test.ts`).
 - The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
   and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
-- No test calls Jupiter or Jito.
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

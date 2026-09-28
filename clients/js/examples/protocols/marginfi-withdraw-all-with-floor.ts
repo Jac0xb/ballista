@@ -20,9 +20,10 @@
  * those balances' banks and oracles from the accounts after withdraw's eight. `healthAccounts`
  * carries them: for each remaining balance, its bank and then its oracle, by bank address from
  * highest to lowest. It is empty when the withdrawn balance was the account's only one; without
- * it, any other balance fails the withdrawal (`InvalidBankAccount`). A Token-2022 bank also needs
- * its mint, first in the group. The vault authority is a PDA marginfi signs for, so it is passed
- * read-only.
+ * it, any other balance fails the withdrawal (`InvalidBankAccount`). The vault authority is a PDA
+ * marginfi signs for, so it is passed read-only.
+ *
+ * SPL Token banks only: `tokenProgram` and the token accounts' owner are pinned to SPL Token.
  */
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,

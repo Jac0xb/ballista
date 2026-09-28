@@ -111,7 +111,7 @@ Each rule has a test against the deployed program. Codes are the failing program
   reserves both have one.
 - **Fill `healthAccounts`** for marginfi withdrawals: for each balance the account still holds
   after the withdrawal, its bank then its oracle, by bank address from highest to lowest. Empty
-  when the withdrawn balance was the only one. A Token-2022 bank's mint goes first.
+  when the withdrawn balance was the only one.
 - **Choose `minimumBounty`** in the seized collateral's own units (lamports for SOL collateral),
   for example the repaid amount valued at the oracle price plus the margin worth liquidating for.
 - **Keep the transaction under 1,232 bytes.** The deposit run with its refreshes took 1,072 bytes
@@ -120,8 +120,8 @@ Each rule has a test against the deployed program. Codes are the failing program
 
 ## Limits
 
-- SPL Token only. Every template pins the SPL Token program. Token-2022 reserves and banks are
-  out of scope; marginfi's mint-first rule for them is documented, not tested.
+- SPL Token only. Every template pins the SPL Token program and its token accounts' owner, so
+  Token-2022 reserves and banks cannot run.
 - The liquidation bounty is not netted against the repayment, which is in another mint.
 - marginfi banks priced by multi-account oracles (staked, Kamino, Drift, JupLend) take more
   accounts per bank than `marginfi::health_accounts` builds; it panics on them.

@@ -127,7 +127,7 @@ fn run_paying(
             false,
             false,
         )
-        .account("borrower", scene.borrower.pubkey(), true, true)
+        .account("borrower", scene.borrower.pubkey(), false, true)
         .account("collateralAta", scene.leg.source_token_account, true, false)
         .account("borrowedAssetAta", destination, true, false)
         .account("obligation", scene.obligation, true, false)

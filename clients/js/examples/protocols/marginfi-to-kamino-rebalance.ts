@@ -10,8 +10,7 @@
  * exactly that.
  * - `healthAccounts` is what marginfi's health check reads once the withdrawn balance is gone: for
  *   every balance the account still holds, its bank and then its oracle, by bank address from
- *   highest to lowest. It is empty when the withdrawn balance was the only one. A Token-2022 bank
- *   also needs its mint, first.
+ *   highest to lowest. It is empty when the withdrawn balance was the only one.
  * - `farmAccounts` is the end of Kamino's v2 deposit: the obligation's farm user state and the
  *   reserve's collateral farm, or the Kamino program for each when the reserve has no collateral
  *   farm; then the Farms program. A group carries them so each keeps its own writable flag.
@@ -23,6 +22,9 @@
  *
  * Without a template this takes two transactions, with the funds sitting in the wallet between
  * them, or a custom program.
+ *
+ * SPL Token banks and reserves only: `tokenProgram` and `walletAta`'s owner are pinned to SPL
+ * Token.
  */
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,

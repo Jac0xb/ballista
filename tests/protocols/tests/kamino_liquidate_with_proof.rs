@@ -75,7 +75,7 @@ fn run_paying(
             false,
             false,
         )
-        .account("liquidator", scene.liquidator.pubkey(), true, true)
+        .account("liquidator", scene.liquidator.pubkey(), false, true)
         .account("obligation", obligation, true, false)
         .account("lendingMarket", MARKET, false, false)
         .account(

@@ -65,7 +65,8 @@ export const kaminoLiquidateWithProof = defineTemplate({
     kamino: { executable: true, address: addressBytes(KAMINO_LEND) },
     tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
     instructionsSysvar: { address: addressBytes(SYSVAR_INSTRUCTIONS) },
-    liquidator: { signer: true, writable: true },
+    /** Kamino declares it a bare signer, so it is read-only. */
+    liquidator: { signer: true },
     obligation: { writable: true },
     lendingMarket: {},
     lendingMarketAuthority: {},
@@ -121,7 +122,7 @@ export const kaminoLiquidateWithProof = defineTemplate({
     step.invoke({
       program: account.fixed('kamino'),
       accounts: [
-        { account: account.fixed('liquidator'), signer: true, writable: true },
+        { account: account.fixed('liquidator'), signer: true, writable: false },
         { account: account.fixed('obligation'), signer: false, writable: true },
         { account: account.fixed('lendingMarket'), signer: false, writable: false },
         { account: account.fixed('lendingMarketAuthority'), signer: false, writable: false },

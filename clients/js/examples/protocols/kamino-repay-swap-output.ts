@@ -57,7 +57,8 @@ export const kaminoRepaySwapOutput = defineTemplate({
     kamino: { executable: true, address: addressBytes(KAMINO_LEND) },
     tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
     instructionsSysvar: { address: addressBytes(SYSVAR_INSTRUCTIONS) },
-    borrower: { signer: true, writable: true },
+    /** Signs the swap and the repayment; Kamino declares it a bare signer, so it is read-only. */
+    borrower: { signer: true },
     /** The collateral the route sells. */
     collateralAta: { writable: true },
     /** Receives the swap output and funds the repayment. */
@@ -124,7 +125,7 @@ export const kaminoRepaySwapOutput = defineTemplate({
     step.invoke({
       program: account.fixed('kamino'),
       accounts: [
-        { account: account.fixed('borrower'), signer: true, writable: true },
+        { account: account.fixed('borrower'), signer: true, writable: false },
         { account: account.fixed('obligation'), signer: false, writable: true },
         { account: account.fixed('lendingMarket'), signer: false, writable: false },
         { account: account.fixed('repayReserve'), signer: false, writable: true },

@@ -1,10 +1,12 @@
-//! Pyth prices. Write rule 2 lets tests move an oracle price directly, in the account's real
-//! layout; nothing else about the account is written. [`copy_pyth_feed`] writes a second price
-//! account, for another feed, under the same rule.
+//! Pyth and Scope prices. Write rule 2 lets tests move an oracle price directly, in the account's
+//! real layout; nothing else about the account is written. [`copy_pyth_feed`] writes a second
+//! price account, for another feed, under the same rule.
 //!
 //! A push-oracle `PriceUpdateV2` (owner: the Pyth receiver, 134 bytes) is always fully verified,
 //! and its offsets below assume that: a partially verified account has an extra byte at 41 and
-//! every later field one byte further on.
+//! every later field one byte further on. The type is `pyth-solana-receiver-sdk`'s, at the
+//! revision marginfi builds with (`0dotxyz/pyth-crosschain@f170d205e4`), and marginfi loads it by
+//! discriminator (`mrgnlabs/marginfi-v2@33c67987a6`, `programs/marginfi/src/state/price.rs:2184-2198`).
 
 use {litesvm::LiteSVM, solana_account::Account, solana_address::Address};
 
@@ -23,8 +25,9 @@ pub const USDC_USD_FEED_ID: Address =
     hex_feed_id("eaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a");
 /// `PriceUpdateV2::LEN`.
 pub const PRICE_UPDATE_LEN: usize = 134;
-/// Anchor's `account:PriceUpdateV2` discriminator.
-const DISCRIMINATOR: [u8; 8] = [0x22, 0xf1, 0x23, 0x63, 0x9d, 0x7e, 0xf4, 0xcd];
+/// Anchor's discriminator of the `PriceUpdateV2` account, `sha256("account:PriceUpdateV2")[..8]`,
+/// which `crate::tests` derives.
+pub(crate) const DISCRIMINATOR: [u8; 8] = [0x22, 0xf1, 0x23, 0x63, 0x9d, 0x7e, 0xf4, 0xcd];
 /// `write_authority`: for a push-oracle feed, the feed's own address.
 const WRITE_AUTHORITY: usize = 8;
 /// `verification_level`, a Borsh enum tag: `Partial` is 0, `Full` is 1.
@@ -170,6 +173,94 @@ fn field<const N: usize>(data: &[u8], offset: usize) -> [u8; N] {
     data[offset..offset + N].try_into().unwrap()
 }
 
+/// Scope, whose `OraclePrices` accounts Kamino's reserves price from. klend reads them and never
+/// invokes Scope, so the program is not in the snapshot.
+pub const SCOPE: Address = Address::from_str_const("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ");
+/// `OraclePrices` (`scope-types`, `Kamino-Finance/scope@2fb674083e`, the revision klend builds
+/// with): discriminator, `oracle_mappings`, then 512 `DatedPrice` entries of 56 bytes. klend checks
+/// the discriminator, then casts the rest with `bytemuck::from_bytes`, so the length must never
+/// change (`Kamino-Finance/klend@a08760976f`, `programs/klend/src/utils/prices/scope.rs:55-73`).
+pub const SCOPE_PRICES_LEN: usize = 28_712;
+/// How many `DatedPrice` entries an `OraclePrices` account holds.
+pub const SCOPE_ENTRIES: usize = 512;
+/// `sha256("account:OraclePrices")[..8]`, which `crate::tests` derives.
+pub(crate) const SCOPE_DISCRIMINATOR: [u8; 8] = [0x59, 0x80, 0x76, 0xdd, 0x06, 0x48, 0xb4, 0x92];
+const SCOPE_FIRST_ENTRY: usize = 40;
+const SCOPE_ENTRY_LEN: usize = 56;
+/// Within an entry, each a little-endian u64: `price.value`, `price.exp`, `last_updated_slot`
+/// (klend ignores it) and `unix_timestamp` (klend measures a price's age from it).
+const SCOPE_VALUE: usize = 0;
+const SCOPE_EXP: usize = 8;
+const SCOPE_SLOT: usize = 16;
+const SCOPE_TIMESTAMP: usize = 24;
+const _: () = assert!(SCOPE_FIRST_ENTRY + SCOPE_ENTRIES * SCOPE_ENTRY_LEN == SCOPE_PRICES_LEN);
+
+/// One Scope entry: the price is `value / 10^exp` dollars.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScopePrice {
+    pub value: u64,
+    pub exp: u64,
+    pub slot: u64,
+    pub unix_timestamp: u64,
+}
+
+/// Entry `index` of the `OraclePrices` account at `prices`.
+///
+/// # Panics
+///
+/// If `prices` is not a Scope `OraclePrices` account.
+pub fn scope_price(svm: &LiteSVM, prices: &Address, index: usize) -> ScopePrice {
+    let data = scope_prices(svm, prices).data;
+    let at = SCOPE_FIRST_ENTRY + SCOPE_ENTRY_LEN * index;
+    let read = |offset: usize| u64::from_le_bytes(field(&data, at + offset));
+    ScopePrice {
+        value: read(SCOPE_VALUE),
+        exp: read(SCOPE_EXP),
+        slot: read(SCOPE_SLOT),
+        unix_timestamp: read(SCOPE_TIMESTAMP),
+    }
+}
+
+/// Writes entry `index`'s value, slot and time (write rule 2). Its exponent and every other byte
+/// stay as they were.
+///
+/// # Panics
+///
+/// If `prices` is not a Scope `OraclePrices` account.
+pub fn set_scope_price(
+    svm: &mut LiteSVM,
+    prices: &Address,
+    index: usize,
+    value: u64,
+    slot: u64,
+    unix_timestamp: u64,
+) {
+    let mut account = scope_prices(svm, prices);
+    let at = SCOPE_FIRST_ENTRY + SCOPE_ENTRY_LEN * index;
+    for (offset, word) in [
+        (SCOPE_VALUE, value),
+        (SCOPE_SLOT, slot),
+        (SCOPE_TIMESTAMP, unix_timestamp),
+    ] {
+        account.data[at + offset..at + offset + 8].copy_from_slice(&word.to_le_bytes());
+    }
+    svm.set_account(*prices, account)
+        .unwrap_or_else(|error| panic!("writing Scope prices {prices} failed: {error:?}"));
+}
+
+fn scope_prices(svm: &LiteSVM, prices: &Address) -> Account {
+    let account = svm
+        .get_account(prices)
+        .unwrap_or_else(|| panic!("Scope prices {prices} are not in the SVM"));
+    assert!(
+        account.owner == SCOPE
+            && account.data.len() == SCOPE_PRICES_LEN
+            && account.data[..8] == SCOPE_DISCRIMINATOR,
+        "{prices} is not a Scope OraclePrices account"
+    );
+    account
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -259,6 +350,77 @@ mod tests {
                 .all(|&at| (PRICE..PUBLISH_TIME + 8).contains(&at)),
             "bytes outside price..publish_time changed: {changed:?}"
         );
+    }
+
+    const SCOPE_PRICES: Address =
+        Address::from_str_const("3t4JZcueEzTbVP6kLxXrL3VpWx45jDer4eqysweBchNH");
+    const USDC_MINT: Address =
+        Address::from_str_const("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+    /// Kamino's SOL spot price.
+    const SOL_SPOT: usize = 3;
+
+    /// The lending snapshot's `address` alone, in a bare SVM.
+    fn lending_account(address: Address) -> (LiteSVM, Account) {
+        let snapshot = Snapshot::load(concat!(env!("CARGO_MANIFEST_DIR"), "/snapshot-lending"));
+        let account = snapshot
+            .account(&address)
+            .unwrap_or_else(|| panic!("the lending snapshot holds {address}"))
+            .clone();
+        let mut svm = LiteSVM::new();
+        svm.set_account(address, account.clone()).unwrap();
+        (svm, account)
+    }
+
+    #[test]
+    fn a_written_scope_price_reads_back_and_nothing_else_changes() {
+        let (mut svm, before) = lending_account(SCOPE_PRICES);
+        let snapshotted = scope_price(&svm, &SCOPE_PRICES, SOL_SPOT);
+        assert_eq!(snapshotted.exp, 8, "{snapshotted:?}");
+        assert!(snapshotted.value > 0, "{snapshotted:?}");
+
+        let (value, slot, unix_timestamp) = (snapshotted.value * 88 / 100, 1_234, 5_678);
+        set_scope_price(
+            &mut svm,
+            &SCOPE_PRICES,
+            SOL_SPOT,
+            value,
+            slot,
+            unix_timestamp,
+        );
+        assert_eq!(
+            scope_price(&svm, &SCOPE_PRICES, SOL_SPOT),
+            ScopePrice {
+                value,
+                exp: 8,
+                slot,
+                unix_timestamp
+            }
+        );
+
+        let after = svm.get_account(&SCOPE_PRICES).unwrap();
+        assert_eq!(
+            (after.owner, after.lamports, after.data.len()),
+            (before.owner, before.lamports, before.data.len())
+        );
+        let entry = SCOPE_FIRST_ENTRY + SCOPE_ENTRY_LEN * SOL_SPOT;
+        let written = [SCOPE_VALUE, SCOPE_SLOT, SCOPE_TIMESTAMP]
+            .map(|field| entry + field..entry + field + 8);
+        let changed: Vec<usize> = (0..SCOPE_PRICES_LEN)
+            .filter(|&at| after.data[at] != before.data[at])
+            .collect();
+        assert!(
+            changed
+                .iter()
+                .all(|at| written.iter().any(|range| range.contains(at))),
+            "bytes outside the entry's value, slot and time changed: {changed:?}"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "is not a Scope OraclePrices account")]
+    fn a_scope_write_refuses_another_account() {
+        let (mut svm, _) = lending_account(USDC_MINT);
+        set_scope_price(&mut svm, &USDC_MINT, SOL_SPOT, 1, 1, 1);
     }
 
     #[test]

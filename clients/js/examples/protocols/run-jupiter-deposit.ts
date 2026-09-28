@@ -3,7 +3,12 @@
  *
  * This is the run side of `jupiter-deposit-exact-output.ts`, and it shows the two parts that are
  * not just account binding: handing Jupiter's `route` arguments through as a `bytes` input, and
- * handing the variable-length tail of Jupiter's account list through as an account group.
+ * handing the variable-length tail of Jupiter's account list, and of Kamino's, through as account
+ * groups.
+ *
+ * Send it after Kamino's refreshes, in the same transaction: `refresh_reserve` for each reserve the
+ * obligation holds, then `refresh_obligation`. See `kamino_refreshes` in
+ * `clients/rust/examples/protocol_runs.rs`.
  *
  * Nothing here needs an RPC connection. Point `SOLANA_RPC_URL` and `BALLISTA_KEYPAIR` at a
  * cluster and feed `swapInstruction` from the Jupiter Swap API to actually send it.
@@ -17,7 +22,9 @@ import {
   JUPITER_ROUTE,
   JUPITER_ROUTE_FIXED_ACCOUNTS,
   JUPITER_V6,
+  KAMINO_FARMS,
   KAMINO_LEND,
+  SYSVAR_INSTRUCTIONS,
   splitJupiterRoute,
 } from './shared.js';
 
@@ -41,9 +48,12 @@ export interface KaminoDepositAccounts {
   lendingMarket: Address;
   lendingMarketAuthority: Address;
   reserve: Address;
+  reserveLiquidityMint: Address;
   reserveLiquiditySupply: Address;
   reserveCollateralMint: Address;
   reserveDestinationDepositCollateral: Address;
+  /** The reserve's collateral farm and the obligation's user state in it, when the reserve has one. */
+  farm?: { reserveFarmState: Address; obligationFarmUserState: Address };
 }
 
 /**
@@ -85,6 +95,15 @@ export async function buildJupiterDepositRun(input: {
   const routeAccounts = input.swap.accounts
     .slice(JUPITER_ROUTE_FIXED_ACCOUNTS)
     .map((entry) => ({ address: address(entry.pubkey), writable: entry.isWritable }));
+  // Kamino's v2 tail: the farm pair, writable, when the reserve has a collateral farm, and the
+  // Kamino program for each when it does not; then the Farms program.
+  const farmAccounts = input.kamino.farm
+    ? [
+        { address: input.kamino.farm.obligationFarmUserState, writable: true },
+        { address: input.kamino.farm.reserveFarmState, writable: true },
+        { address: address(KAMINO_FARMS) },
+      ]
+    : [{ address: address(KAMINO_LEND) }, { address: address(KAMINO_LEND) }, { address: address(KAMINO_FARMS) }];
 
   const [templateAddress] = await getTemplateAddress(input.creator, input.templateId);
   return buildKitRunInstruction({
@@ -96,6 +115,7 @@ export async function buildJupiterDepositRun(input: {
       jupiter: { address: address(JUPITER_V6) },
       kamino: { address: address(KAMINO_LEND) },
       tokenProgram: { address: address(TOKEN_PROGRAM) },
+      instructionsSysvar: { address: address(SYSVAR_INSTRUCTIONS) },
       owner: { address: input.kamino.owner },
       sourceAta: { address: address(source.pubkey) },
       destinationAta: { address: input.kamino.destinationAta },
@@ -103,11 +123,12 @@ export async function buildJupiterDepositRun(input: {
       lendingMarket: { address: input.kamino.lendingMarket },
       lendingMarketAuthority: { address: input.kamino.lendingMarketAuthority },
       reserve: { address: input.kamino.reserve },
+      reserveLiquidityMint: { address: input.kamino.reserveLiquidityMint },
       reserveLiquiditySupply: { address: input.kamino.reserveLiquiditySupply },
       reserveCollateralMint: { address: input.kamino.reserveCollateralMint },
       reserveDestinationDepositCollateral: { address: input.kamino.reserveDestinationDepositCollateral },
     },
-    accountGroups: { routeAccounts },
+    accountGroups: { routeAccounts, farmAccounts },
   });
 }
 
@@ -148,6 +169,7 @@ if (process.argv[1]?.endsWith('run-jupiter-deposit.ts')) {
       reserveLiquiditySupply: placeholder(14),
       reserveCollateralMint: placeholder(15),
       reserveDestinationDepositCollateral: placeholder(16),
+      reserveLiquidityMint: placeholder(18),
     },
     minimumOut: 1_000_000n,
   }).then((instruction) => {

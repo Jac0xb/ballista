@@ -5,7 +5,7 @@
  * directly: which accounts reach Jupiter in which position, and which on-chain reads a guarantee
  * actually depends on. Each one pins a mistake an example once made.
  */
-import { getAddressDecoder, type Address } from '@solana/kit';
+import { getAddressDecoder, isWritableRole, type Address } from '@solana/kit';
 import { describe, expect, test } from 'vitest';
 
 import {
@@ -20,25 +20,32 @@ import {
 } from './index.js';
 import * as protocols from '../examples/protocols/index.js';
 import {
-  driftSettleWhenProfitable,
   jitoProfitGuardedTip,
   jupiterDepositExactOutput,
   jupiterOracleCheckedSwap,
+  kaminoLiquidateWithProof,
   kaminoRepaySwapOutput,
+  marginfiToKaminoRebalance,
+  marginfiWithdrawAllWithFloor,
   pythFreshPriceGate,
   tokenSweepIntoSwap,
 } from '../examples/protocols/index.js';
 import { buildJupiterDepositRun } from '../examples/protocols/run-jupiter-deposit.js';
 import {
-  BORSH_TRUE,
-  DRIFT_WITHDRAW,
   JITO_TIP_PAYMENT,
   JUPITER_ROUTE,
   JUPITER_V6,
+  KAMINO_DEPOSIT,
+  KAMINO_FARMS,
+  KAMINO_LEND,
+  KAMINO_LIQUIDATE,
   KAMINO_REPAY,
+  MARGINFI_V2,
+  MARGINFI_WITHDRAW,
   PYTH,
   PYTH_RECEIVER,
   SPL_MINT,
+  SYSVAR_INSTRUCTIONS,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_MINT_OFFSET,
   TOKEN_ACCOUNT_OWNER_OFFSET,
@@ -472,24 +479,121 @@ describe('the Jito tip', () => {
   });
 });
 
-describe('the Drift settle', () => {
-  test('withdraws with reduce_only set, so it can never open a borrow', () => {
-    const [withdraw] = invokesOf(driftSettleWhenProfitable, 'drift').filter(
-      (call) => call.data[0]?.kind === 'literal' && [...call.data[0].bytes].join() === [...DRIFT_WITHDRAW].join(),
-    );
-    expect(withdraw).toBeDefined();
-    // `withdraw(market_index: u16, amount: u64, reduce_only: bool)`: the flag is the last part.
-    const reduceOnly = withdraw!.data.at(-1);
-    expect(reduceOnly?.kind === 'literal' ? [...reduceOnly.bytes] : []).toEqual([...BORSH_TRUE]);
+/**
+ * Kamino's v1 lending handlers refuse every caller but Kamino itself and a short whitelist
+ * (`CpiDisabled`), so a template calls the `_v2` handler. v2 checks only that the reserves and
+ * the obligation were refreshed in the current slot, so the refreshes go ahead of the run in the
+ * transaction, and no template makes them. v2's list ends in farm accounts that are writable when
+ * the reserve has the farm and the Kamino program when it does not, so a template forwards that
+ * tail as `farmAccounts`, a group, which keeps each account's own writable flag.
+ */
+const kaminoCalls: [string, Template, { discriminator: Uint8Array; declared: number; amount: Expression }][] = [
+  ['jupiterDepositExactOutput', jupiterDepositExactOutput, { discriminator: KAMINO_DEPOSIT, declared: 14, amount: { kind: 'variable', name: 'received' } }],
+  ['kaminoRepaySwapOutput', kaminoRepaySwapOutput, { discriminator: KAMINO_REPAY, declared: 9, amount: { kind: 'variable', name: 'swapped' } }],
+  ['kaminoLiquidateWithProof', kaminoLiquidateWithProof, { discriminator: KAMINO_LIQUIDATE, declared: 20, amount: { kind: 'input', name: 'liquidityAmount' } }],
+  ['marginfiToKaminoRebalance', marginfiToKaminoRebalance, { discriminator: KAMINO_DEPOSIT, declared: 14, amount: { kind: 'variable', name: 'moved' } }],
+];
+const kaminoDeposits: Template[] = [jupiterDepositExactOutput, marginfiToKaminoRebalance];
+
+/** The examples whose `accounts` pin `program`, by name. */
+function pinning(program: string): string[] {
+  const pinned = [...addressBytes(program)].join();
+  return Object.entries(protocols)
+    .filter(([, template]) =>
+      Object.values(template.accounts).some(
+        (constraint) => constraint.address !== undefined && [...constraint.address].join() === pinned,
+      ),
+    )
+    .map(([name]) => name)
+    .sort();
+}
+
+describe('Kamino calls are v2, forward the farm tail as a group, and leave refreshing to the transaction', () => {
+  test('every example that pins Kamino is listed here', () => {
+    expect(pinning(KAMINO_LEND)).toEqual(kaminoCalls.map(([name]) => name).sort());
+  });
+
+  test.each(kaminoCalls)('%s', (_, template, expected) => {
+    const calls = invokesOf(template, 'kamino');
+    expect(calls).toHaveLength(1);
+    const [call] = calls as [Invoke];
+    const [discriminator, amount] = call.data;
+    expect(discriminator?.kind === 'literal' ? [...discriminator.bytes] : []).toEqual([...expected.discriminator]);
+    expect(amount).toEqual({ kind: 'encoded', encoding: 'u64', value: expected.amount });
+    expect(call.accounts).toHaveLength(expected.declared);
+    expect(call.accountGroup).toBe('farmAccounts');
+  });
+
+  test('a deposit passes the liquidity mint, the Kamino program as its unused placeholder, and the instructions sysvar', () => {
+    for (const template of kaminoDeposits) {
+      const [deposit] = invokesOf(template, 'kamino') as [Invoke];
+      const names = deposit.accounts.map((entry) => nameOf(entry.account));
+      expect(names[5]).toBe('reserveLiquidityMint');
+      expect(names[10]).toBe('kamino');
+      expect(deposit.accounts[10]!.writable).toBe(false);
+      expect(names.slice(11)).toEqual(['tokenProgram', 'tokenProgram', 'instructionsSysvar']);
+      expect(template.accounts.instructionsSysvar?.address).toEqual(addressBytes(SYSVAR_INSTRUCTIONS));
+    }
   });
 });
 
-describe('the Kamino repay', () => {
-  test('repays exactly what the swap produced', () => {
-    const [repay] = invokesOf(kaminoRepaySwapOutput, 'kamino').filter(
-      (call) => call.data[0]?.kind === 'literal' && [...call.data[0].bytes].join() === [...KAMINO_REPAY].join(),
-    );
-    expect(repay?.data[1]).toEqual({ kind: 'encoded', encoding: 'u64', value: { kind: 'variable', name: 'swapped' } });
+describe('the Kamino liquidation', () => {
+  test('measures the bounty where Kamino pays the seized collateral', () => {
+    const bindings = bindingsOf(kaminoLiquidateWithProof);
+    const check = requireLabeled(kaminoLiquidateWithProof, 'liquidationPaidTheBounty');
+    expect(dependsOn(check.condition, bindings, reads('userDestinationLiquidity', TOKEN_ACCOUNT_AMOUNT_OFFSET))).toBe(true);
+    expect(dependsOn(check.condition, bindings, reads('userDestinationCollateral', TOKEN_ACCOUNT_AMOUNT_OFFSET))).toBe(false);
+    const [liquidate] = invokesOf(kaminoLiquidateWithProof, 'kamino') as [Invoke];
+    expect(nameOf(liquidate.accounts[15]!.account)).toBe('userDestinationLiquidity');
+  });
+});
+
+/**
+ * The run names every token account these templates pay, and the protocols check those accounts'
+ * mints, not their owners. Each one must belong to the signer, checked before anything moves:
+ * otherwise a hostile run builder names an account of its own, and the template's guarantee is
+ * measured on it.
+ */
+const payouts: [string, string, Template, { account: string; signer: string }][] = [
+  ['kaminoLiquidateWithProof', 'bountyGoesToTheLiquidator', kaminoLiquidateWithProof, { account: 'userDestinationLiquidity', signer: 'liquidator' }],
+  ['kaminoLiquidateWithProof', 'seizedCollateralGoesToTheLiquidator', kaminoLiquidateWithProof, { account: 'userDestinationCollateral', signer: 'liquidator' }],
+  ['kaminoRepaySwapOutput', 'swapPaysTheBorrower', kaminoRepaySwapOutput, { account: 'borrowedAssetAta', signer: 'borrower' }],
+  ['marginfiWithdrawAllWithFloor', 'withdrawalGoesToTheAuthority', marginfiWithdrawAllWithFloor, { account: 'destinationAta', signer: 'authority' }],
+  ['marginfiWithdrawAllWithFloor', 'sweepGoesToTheAuthority', marginfiWithdrawAllWithFloor, { account: 'treasuryAta', signer: 'authority' }],
+];
+
+describe('every token account a lending template pays belongs to its signer', () => {
+  test.each(payouts)('%s: %s', (_, label, template, { account, signer }) => {
+    const check = requireLabeled(template, label);
+    expect(check.condition).toMatchObject({ kind: 'binary', op: 'equal' });
+    const bindings = bindingsOf(template);
+    expect(dependsOn(check.condition, bindings, reads(account, TOKEN_ACCOUNT_OWNER_OFFSET))).toBe(true);
+    expect(dependsOn(check.condition, bindings, accountKey(signer))).toBe(true);
+    expect(template.accounts[account]?.owner).toEqual(TOKEN_PROGRAM_ADDRESS_BYTES);
+    expect(template.accounts[signer]?.signer).toBe(true);
+    const all = steps(template);
+    expect(all.indexOf(check)).toBeLessThan(all.findIndex((step) => step.kind === 'invoke'));
+  });
+});
+
+const marginfiWithdrawals: [string, Template][] = [
+  ['marginfiToKaminoRebalance', marginfiToKaminoRebalance],
+  ['marginfiWithdrawAllWithFloor', marginfiWithdrawAllWithFloor],
+];
+
+describe('marginfi withdrawals', () => {
+  test('every example that pins marginfi is listed here', () => {
+    expect(pinning(MARGINFI_V2)).toEqual(marginfiWithdrawals.map(([name]) => name).sort());
+  });
+
+  test.each(marginfiWithdrawals)("%s forwards the health check's banks and oracles after withdraw's eight accounts", (_, template) => {
+    const [withdraw] = invokesOf(template, 'marginfi') as [Invoke];
+    const [discriminator] = withdraw.data;
+    expect(discriminator?.kind === 'literal' ? [...discriminator.bytes] : []).toEqual([...MARGINFI_WITHDRAW]);
+    expect(withdraw.accounts).toHaveLength(8);
+    expect(withdraw.accountGroup).toBe('healthAccounts');
+    // The vault authority is a PDA marginfi signs for; nothing writes it.
+    expect(withdraw.accounts[5]!.writable).toBe(false);
   });
 });
 
@@ -508,6 +612,7 @@ describe('the Jupiter deposit runner', () => {
     reserveLiquiditySupply: key(14),
     reserveCollateralMint: key(15),
     reserveDestinationDepositCollateral: key(16),
+    reserveLiquidityMint: key(19),
   };
   // A `route` with an empty plan: the discriminator, a u32 zero, then the 19-byte tail.
   const data = Buffer.from([...JUPITER_ROUTE, 0, 0, 0, 0, ...new Uint8Array(19)]).toString('base64');
@@ -529,11 +634,25 @@ describe('the Jupiter deposit runner', () => {
       minimumOut: 1n,
     });
     const addresses = (instruction.accounts ?? []).map((meta) => meta.address);
-    expect(addresses.slice(-2)).toEqual([key(17), key(18)]);
+    // The route group, then Kamino's farm tail for a reserve without a farm.
+    expect(addresses.slice(-5)).toEqual([key(17), key(18), KAMINO_LEND, KAMINO_LEND, KAMINO_FARMS]);
     // The first four reach the template as declared accounts, not again through the group.
     for (const declared of [tokenProgram, key(8), kamino.destinationAta]) {
       expect(addresses.filter((entry) => entry === declared)).toHaveLength(1);
     }
+  });
+
+  test("forwards a reserve's collateral farm, writable, before the Farms program", async () => {
+    const instruction = await buildJupiterDepositRun({
+      creator: owner,
+      templateId: 0,
+      swap: { programId: JUPITER_V6, accounts: routeAccounts, data },
+      kamino: { ...kamino, farm: { reserveFarmState: key(30), obligationFarmUserState: key(31) } },
+      minimumOut: 1n,
+    });
+    const tail = (instruction.accounts ?? []).slice(-3);
+    expect(tail.map((meta) => meta.address)).toEqual([key(31), key(30), KAMINO_FARMS]);
+    expect(tail.map((meta) => isWritableRole(meta.role))).toEqual([true, true, false]);
   });
 
   test('refuses a list that does not start the way `route` does', async () => {

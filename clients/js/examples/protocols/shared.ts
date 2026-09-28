@@ -33,10 +33,12 @@ export const KAMINO_LEND = 'KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD' as cons
 export const ORCA_WHIRLPOOL = 'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc' as const;
 /** marginfi v2. */
 export const MARGINFI_V2 = 'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA' as const;
-/** Drift v2, from `declare_id!` in programs/drift/src/lib.rs. */
-export const DRIFT_V2 = 'dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH' as const;
 /** Pyth Solana receiver, the non-`pro-compatible` build. */
 export const PYTH_RECEIVER = 'rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ' as const;
+/** The instructions sysvar. Every Kamino v2 lending instruction takes it as an account. */
+export const SYSVAR_INSTRUCTIONS = 'Sysvar1nstructions1111111111111111111111111' as const;
+/** Kamino Farms, which Kamino Lend invokes whenever a lending instruction touches a reserve with a farm. */
+export const KAMINO_FARMS = 'FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr' as const;
 
 /**
  * Jito's Tip Payment program. It owns all eight tip accounts, as program addresses holding eight
@@ -187,10 +189,6 @@ export const ORCA_INCREASE_LIQUIDITY = anchorDiscriminator('increase_liquidity')
 export const MARGINFI_WITHDRAW = anchorDiscriminator('lending_account_withdraw');
 /** `lending_account_deposit(amount: u64, ...)`. */
 export const MARGINFI_DEPOSIT = anchorDiscriminator('lending_account_deposit');
-/** `deposit(market_index: u16, amount: u64, reduce_only: bool)`. */
-export const DRIFT_DEPOSIT = anchorDiscriminator('deposit');
-/** `withdraw(market_index: u16, amount: u64, reduce_only: bool)`. */
-export const DRIFT_WITHDRAW = anchorDiscriminator('withdraw');
 
 /** Borsh `Option::None`. */
 export const OPTION_NONE = Uint8Array.of(0);
@@ -198,10 +196,3 @@ export const OPTION_NONE = Uint8Array.of(0);
 export const BORSH_FALSE = Uint8Array.of(0);
 /** Borsh `true`. */
 export const BORSH_TRUE = Uint8Array.of(1);
-
-/** A little-endian u16, for arguments such as Drift's `market_index`. */
-export function u16Bytes(value: number): Uint8Array<ArrayBuffer> {
-  const bytes = new Uint8Array(2);
-  new DataView(bytes.buffer).setUint16(0, value, true);
-  return bytes;
-}

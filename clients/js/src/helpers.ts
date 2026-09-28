@@ -320,9 +320,10 @@ export function ed25519Signature(input: {
  * - The clock can step back between slots. A run then refills nothing, rather than failing, and
  *   leaves `lastSpend` where it was: it never moves back, so no later run refills the same seconds
  *   twice.
- * - `cap`, `refillPerSecond` and `amount` are `u64` expressions. `cap` and `refillPerSecond` are
- *   the template's to choose, not the caller's: pass constants, or inputs only when whoever builds
- *   the transaction may set their own limit.
+ * - `cap`, `refillPerSecond` and `amount` are `u64` expressions. `cap` and `refillPerSecond` must
+ *   not come from the caller: whoever builds the transaction sets every input, so a cap taken from
+ *   an input is a limit the caller picks. Pass literals, such as `expression.u64(1_000_000)`, or
+ *   values the author controls, such as a registry field only an author-only branch writes.
  *
  * `name` prefixes the variables the steps bind, `<name>Last`, `<name>Now`, `<name>Spent`,
  * `<name>Refill` and `<name>Total`, and names the requirement `within<Name>`: `withinRateLimit` by

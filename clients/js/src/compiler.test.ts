@@ -1890,10 +1890,11 @@ describe('registries: compiler', () => {
 });
 
 describe('rateLimit', () => {
-  // The spec's example, verbatim.
+  // The spec's example, verbatim: 1 SOL a caller, refilling over a day. The cap and the rate are
+  // literals; a caller who could pass them would set their own limit.
   const limited = () =>
     defineTemplate({
-      inputs: { dailyCap: { type: 'u64' }, refillPerSecond: { type: 'u64' }, amount: { type: 'u64' } },
+      inputs: { amount: { type: 'u64' } },
       registries: { limits: { spent: 'u64', lastSpend: 'i64' } },
       accounts: {
         caller: { signer: true, writable: true },
@@ -1903,8 +1904,8 @@ describe('rateLimit', () => {
       steps: [
         ...rateLimit({
           registry: 'limits',
-          cap: expression.input('dailyCap'),
-          refillPerSecond: expression.input('refillPerSecond'),
+          cap: expression.u64(1_000_000_000),
+          refillPerSecond: expression.u64(11_574),
           amount: expression.input('amount'),
         }),
       ],
@@ -1932,11 +1933,13 @@ describe('rateLimit', () => {
     expect(steps[3]).toMatchObject({
       value: expression.multiply(
         expression.cast('u128', expression.subtract(now, last)),
-        expression.cast('u128', expression.input('refillPerSecond')),
+        expression.cast('u128', expression.u64(11_574)),
       ),
     });
     expect(steps.at(-1)).toMatchObject({ kind: 'setRegistry', field: 'lastSpend', value: now });
     const compiled = compileTemplate(limited());
+    // The caller supplies the amount alone.
+    expect(compiled.inputOrder).toEqual(['amount']);
     expect(compiled.sourceMap.some((entry) => entry.label === 'withinRateLimit')).toBe(true);
     const kinds = records(compiled).map((record) => record[0]);
     expect(kinds.filter((kind) => kind === opcode.readRegistry)).toHaveLength(2);

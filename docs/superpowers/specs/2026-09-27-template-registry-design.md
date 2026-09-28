@@ -113,6 +113,7 @@ An entry account passed read-only fails earlier, at account validation, with the
 
 ```ts
 defineTemplate({
+  inputs: { amount: { type: 'u64' } },
   registries: { limits: { spent: 'u64', lastSpend: 'i64' } },
   accounts: {
     caller: { signer: true, writable: true },
@@ -120,11 +121,16 @@ defineTemplate({
     systemProgram: account.systemProgram(),
   },
   steps: [
-    ...rateLimit({ registry: 'limits', cap: expression.input('dailyCap'),
-      refillPerSecond: expression.input('refillPerSecond'), amount: expression.input('amount') }),
+    // 1 SOL a caller, refilling over a day.
+    ...rateLimit({ registry: 'limits', cap: expression.u64(1_000_000_000),
+      refillPerSecond: expression.u64(11_574), amount: expression.input('amount') }),
   ],
 });
 ```
+
+The cap and the refill rate are literals. They must not come from the caller: whoever builds the
+transaction sets every input, so a cap taken from an input is a limit the caller picks. Values the
+author controls work too, such as a registry field only an author-only branch writes.
 
 - The compiler places each `OPEN_REGISTRY` at the start of the root and maps field names to offsets.
 - `expression.registry(entryAccount, 'spent')` reads a field and `step.setRegistry(entryAccount,

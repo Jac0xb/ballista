@@ -4,7 +4,7 @@
 use {
     ballista_protocol_tests::{
         kamino,
-        lending::{self, MARKET, SOL_RESERVE, SOL_TO_USDC, USDC_MINT, USDC_RESERVE},
+        lending::{self, JUPITER, MARKET, SOL_RESERVE, SOL_TO_USDC, USDC_MINT, USDC_RESERVE},
         snapshot::Leg,
         template::{self, Run},
         tx::{self, Failure, Outcome},
@@ -19,7 +19,6 @@ use {
 };
 
 const NAME: &str = "kaminoRepaySwapOutput";
-const JUPITER: Address = Address::from_str_const("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
 
 struct Scene {
     borrower: Keypair,
@@ -148,15 +147,12 @@ fn run_paying(
 /// The run in a new slot, behind the refreshes klend needs in it: both reserves the obligation
 /// holds, then the obligation.
 fn send_run(svm: &mut LiteSVM, scene: &Scene, run: Instruction) -> Result<Outcome, Failure> {
-    lending::next_slot(svm);
-    let mut instructions = vec![lending::compute_limit()];
-    instructions.extend(kamino::refreshes(svm, &scene.obligation, &[]));
-    instructions.push(run);
-    tx::send(
+    lending::send_run(
         svm,
-        &scene.borrower,
+        &scene.obligation,
         &[],
-        &instructions,
+        &scene.borrower,
+        run,
         &scene.leg.lookup_tables,
     )
 }

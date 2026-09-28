@@ -457,16 +457,38 @@ mod tests {
         }
     }
 
-    /// pc 18 is in `worthSelling`. Program counters move when the template changes; the message
-    /// then names the step pc 18 moved into.
+    /// A failure at a `worthSelling` pc does not satisfy an assertion that expects
+    /// `saleMetTheQuote`: the message names the step the pc actually belongs to. The pc itself
+    /// comes from the fixture's own labels, since program counters move when the template
+    /// changes.
     #[test]
-    #[should_panic(
-        expected = "expected Ballista's RequirementFailed in \"saleMetTheQuote\", but it failed with RequirementFailed at pc 18, in \"worthSelling\""
-    )]
     fn another_step_s_failure_does_not_match() {
         let examples = examples();
-        let failed = failure(ballista_sdk::ID, encode_error(REQUIREMENT_FAILED, 18));
-        assert_requirement_failed(&failed, &examples["tokenSweepIntoSwap"], "saleMetTheQuote");
+        let sweep = &examples["tokenSweepIntoSwap"];
+        let pc = sweep
+            .labels
+            .iter()
+            .find_map(|(&pc, label)| (label == "worthSelling").then_some(pc))
+            .expect("tokenSweepIntoSwap has a worthSelling step");
+        let label = sweep.label_at(pc).expect("pc is labelled");
+        let failed = failure(ballista_sdk::ID, encode_error(REQUIREMENT_FAILED, pc));
+        let expected = format!(
+            "expected Ballista's RequirementFailed in \"saleMetTheQuote\", but it failed with \
+             RequirementFailed at pc {pc}, in {label:?}"
+        );
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert_requirement_failed(&failed, sweep, "saleMetTheQuote");
+        }))
+        .expect_err("assert_requirement_failed should have panicked");
+        let message = panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| panic.downcast_ref::<&str>().map(|text| text.to_string()))
+            .unwrap_or_else(|| panic!("the panic payload is not a string"));
+        assert!(
+            message.contains(&expected),
+            "the panic message {message:?} does not contain {expected:?}"
+        );
     }
 
     #[test]

@@ -14,12 +14,15 @@ use {
             copy_pyth_feed, pyth_price, set_pyth_price, PythPrice, SOL_USD_FEED_ID,
             USDC_USD_FEED_ID,
         },
-        snapshot::{Leg, Snapshot, SNAPSHOT_DIR},
+        snapshot::{
+            fee_at, jupiter_ran, Leg, Routing, Snapshot, PLATFORM_FEE_ACCOUNT, ROUTE_HEAD,
+            SNAPSHOT_DIR,
+        },
         template::{examples, upload, Example, Run},
         tx::{self, assert_requirement_failed, Failure, Outcome},
         wallet::{
-            self, associated_token_address, fund, keypair, token_account, token_balance, SOL,
-            TOKEN_ACCOUNT_LEN, WSOL_MINT,
+            self, associated_token_address, fund, holding, keypair, token_account, token_balance,
+            SOL, TOKEN_ACCOUNT_LEN, WSOL_MINT,
         },
     },
     ballista_sdk::{SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID},
@@ -35,17 +38,29 @@ const ROUTE: &str = "solToUsdc";
 const TEMPLATE_ID: u16 = 5;
 /// 1%: how far below the oracle's valuation the fill may land.
 const TOLERANCE_BPS: u64 = 100;
-/// The accounts at the head of `route`'s list that the template passes itself: the token program,
-/// the trader, and the two token accounts it measures. The rest arrive as `routeAccounts`.
-const ROUTE_HEAD: usize = 4;
 /// SPL Token `Mint`: `decimals` is the byte at 44.
 const MINT_DECIMALS: usize = 44;
 /// `route`'s own accounts, before the steps': the four the template passes, then the destination
 /// token account, the destination mint, the platform fee account, the event authority and the
 /// program.
 const ROUTE_FIXED_ACCOUNTS: usize = 9;
-/// Of those, the platform fee account: Jupiter's own address when the route takes no fee.
-const PLATFORM_FEE_ACCOUNT: usize = 6;
+/// 1%: the platform fee `jupiter_takes_exactly_in_amount_through_a_split_or_a_platform_fee` sends
+/// `route` with directly.
+const PLATFORM_FEE_BPS: u8 = 100;
+/// 1.5%: a platform fee that still fits `HOSTILE_SLIPPAGE_BPS` but not `TOLERANCE_BPS`; see
+/// `a_hostile_platform_fee_fits_inside_the_tolerance_it_also_sets`.
+const EXCESSIVE_FEE_BPS: u8 = 150;
+/// 2%: `slippageBps` loose enough that neither `PLATFORM_FEE_BPS` nor `EXCESSIVE_FEE_BPS` trips
+/// Jupiter's own slippage check, only Ballista's tolerance.
+const HOSTILE_SLIPPAGE_BPS: u16 = 200;
+
+/// A run's `toleranceBps`, and `route`'s own `slippageBps` and `platformFeeBps`: bundled so
+/// [`Swap::run_priced`] takes one argument for the three instead of three.
+struct Fees {
+    tolerance_bps: u64,
+    slippage_bps: u64,
+    platform_fee_bps: u64,
+}
 
 /// A fresh SVM with the template uploaded and the trader holding SOL, which Jupiter's setup wraps.
 struct Swap {
@@ -117,6 +132,29 @@ impl Swap {
         tolerance_bps: u64,
         routing: Routing,
     ) -> Instruction {
+        self.run_priced(
+            example,
+            price_update,
+            feed_id,
+            Fees {
+                tolerance_bps,
+                slippage_bps: u64::from(self.leg.route.slippage_bps),
+                platform_fee_bps: u64::from(self.leg.route.platform_fee_bps),
+            },
+            routing,
+        )
+    }
+
+    /// [`Swap::run_routed`] with `fees` in place of `tolerance_bps` and the quote's own
+    /// `slippageBps` and `platformFeeBps`.
+    fn run_priced(
+        &self,
+        example: &Example,
+        price_update: Address,
+        feed_id: Address,
+        fees: Fees,
+        routing: Routing,
+    ) -> Instruction {
         let leg = &self.leg;
         Run::new(self.template, example)
             .account("jupiter", self.jupiter, false, false)
@@ -131,9 +169,9 @@ impl Swap {
             .input_bytes("routePlan", &leg.route.route_plan)
             .input_u64("inAmount", leg.route.in_amount)
             .input_u64("quotedOutAmount", leg.route.quoted_out_amount)
-            .input_u64("slippageBps", u64::from(leg.route.slippage_bps))
-            .input_u64("platformFeeBps", u64::from(leg.route.platform_fee_bps))
-            .input_u64("toleranceBps", tolerance_bps)
+            .input_u64("slippageBps", fees.slippage_bps)
+            .input_u64("platformFeeBps", fees.platform_fee_bps)
+            .input_u64("toleranceBps", fees.tolerance_bps)
             .group("routeAccounts", routing.steps)
             .build()
     }
@@ -154,11 +192,26 @@ impl Swap {
         )
     }
 
-    /// Whether Jupiter was called at all in a failed run: a requirement before the swap stops the
-    /// run before it.
-    fn jupiter_ran(&self, failure: &Failure) -> bool {
-        let invoked = format!("Program {} invoke", self.jupiter);
-        failure.logs.iter().any(|line| line.starts_with(&invoked))
+    /// [`Swap::sol_usd_run_routed`] with `slippage_bps` and `platform_fee_bps` in place of the
+    /// quote's own.
+    fn sol_usd_run_priced(
+        &self,
+        example: &Example,
+        slippage_bps: u64,
+        platform_fee_bps: u64,
+        routing: Routing,
+    ) -> Instruction {
+        self.run_priced(
+            example,
+            self.sol_usd,
+            SOL_USD_FEED_ID,
+            Fees {
+                tolerance_bps: TOLERANCE_BPS,
+                slippage_bps,
+                platform_fee_bps,
+            },
+            routing,
+        )
     }
 
     /// Sends `run` in `route`'s place, between Jupiter's own setup and cleanup.
@@ -186,48 +239,6 @@ impl Swap {
             |mint: &Address| i32::from(self.svm.get_account(mint).unwrap().data[MINT_DECIMALS]);
         decimals(&self.leg.output_mint) + pyth_price(&self.svm, price_update).exponent
             - decimals(&self.leg.input_mint)
-    }
-}
-
-/// Where a run's route sells from and pays to.
-struct Routing {
-    /// At `sourceAta`: the account the template measures as sold from.
-    source: Address,
-    /// At `destinationAta`: the account the template measures the fill in.
-    destination: Address,
-    /// `route`'s accounts after the fourth, forwarded as `routeAccounts`. They name the accounts
-    /// each step moves, which Jupiter does not tie to the two above.
-    steps: Vec<AccountMeta>,
-}
-
-impl Routing {
-    /// The route as the Swap API built it: the trader's own accounts throughout.
-    fn of(leg: &Leg) -> Routing {
-        Routing {
-            source: leg.source_token_account,
-            destination: leg.destination_token_account,
-            steps: leg.instructions.swap.accounts[ROUTE_HEAD..].to_vec(),
-        }
-    }
-
-    /// The route with its step paying `account` in place of the trader's USDC account: Meteora's
-    /// `user_token_out`, the one place the steps name it.
-    fn paying(leg: &Leg, account: Address) -> Routing {
-        let mut routing = Routing::of(leg);
-        let outputs: Vec<&mut AccountMeta> = routing
-            .steps
-            .iter_mut()
-            .filter(|meta| meta.pubkey == leg.destination_token_account)
-            .collect();
-        assert_eq!(
-            outputs.len(),
-            1,
-            "route {ROUTE}'s one step should name the trader's USDC account once, as its output"
-        );
-        for output in outputs {
-            output.pubkey = account;
-        }
-        routing
     }
 }
 
@@ -314,14 +325,6 @@ fn route_alone(
     instructions.push(route);
     let result = tx::send(&mut svm, &trader, &[], &instructions, &leg.lookup_tables);
     (svm, result)
-}
-
-/// A token account's balance, or how it ended if it no longer exists.
-fn holding(svm: &LiteSVM, account: &Address) -> String {
-    match svm.get_account(account) {
-        None => "emptied and closed".to_string(),
-        Some(_) => format!("holding {}", token_balance(svm, account)),
-    }
 }
 
 /// The template's floor: `sold × price × 10^scale`, less `tolerance_bps`, rounded down at each
@@ -619,14 +622,20 @@ fn jupiter_takes_exactly_in_amount_through_a_split_or_a_platform_fee() {
 
     // An odd amount, so that no split divides it evenly.
     let odd = SOL - 1;
+    // Two swaps through the same pool that together sell `odd` buy the same total regardless of
+    // how the shares split it: the first split's fill is the reference the rest must match.
+    let mut split_fill = None;
     for (first, second) in [(50, 50), (33, 67)] {
         let (svm, result) = route_alone(&snapshot, &split(first, second), odd, 0, twice);
         result.unwrap_or_else(|failure| panic!("[{first}, {second}]: {failure:?}"));
         assert_eq!(sold(&svm), odd, "[{first}, {second}]");
-        println!(
-            "[{first}, {second}] sold {odd} for {} USDC units",
-            bought(&svm)
+        let usdc = bought(&svm);
+        assert_eq!(
+            usdc,
+            *split_fill.get_or_insert(usdc),
+            "[{first}, {second}] bought a different amount than the first split"
         );
+        println!("[{first}, {second}] sold {odd} for {usdc} USDC units");
     }
     let (_, result) = route_alone(&snapshot, &split(50, 100), odd, 0, twice);
     let failure = result.expect_err("a plan whose shares pass 100% must fail");
@@ -636,14 +645,14 @@ fn jupiter_takes_exactly_in_amount_through_a_split_or_a_platform_fee() {
         "{failure:?}"
     );
 
-    // A platform fee of 1%, into the platform's account of either mint.
+    // A platform fee, into the platform's account of either mint.
     let (svm, result) = route_alone(&snapshot, plan, SOL, 0, |_, _| {});
     result.unwrap_or_else(|failure| panic!("no fee: {failure:?}"));
     let unfeed = bought(&svm);
     let platform = keypair(b"ballista-protocol-tests-platform").pubkey();
     for mint in [leg.input_mint, leg.output_mint] {
         let fee_account = associated_token_address(&platform, &mint);
-        let (svm, result) = route_alone(&snapshot, plan, SOL, 100, |svm, accounts| {
+        let (svm, result) = route_alone(&snapshot, plan, SOL, PLATFORM_FEE_BPS, |svm, accounts| {
             token_account(svm, &platform, &mint, 0);
             accounts[PLATFORM_FEE_ACCOUNT] = AccountMeta::new(fee_account, false);
         });
@@ -652,17 +661,88 @@ fn jupiter_takes_exactly_in_amount_through_a_split_or_a_platform_fee() {
         let fee = token_balance(&svm, &fee_account);
         if mint == leg.input_mint {
             // Out of `in_amount`: the pool swaps the rest.
-            assert_eq!(fee, SOL / 100);
+            assert_eq!(fee, fee_at(SOL, u64::from(PLATFORM_FEE_BPS)));
         } else {
             // Out of the fill.
-            assert_eq!(fee, unfeed / 100);
+            assert_eq!(fee, fee_at(unfeed, u64::from(PLATFORM_FEE_BPS)));
             assert_eq!(bought(&svm) + fee, unfeed);
         }
         println!(
-            "a 1% fee in {mint}: sold {SOL} for {} USDC units, and the fee was {fee}",
+            "a {PLATFORM_FEE_BPS} bps fee in {mint}: sold {SOL} for {} USDC units, and the fee \
+             was {fee}",
             bought(&svm)
         );
     }
+}
+
+/// A fresh run at the market, `platform_fee_bps` and `HOSTILE_SLIPPAGE_BPS` in place of the
+/// quote's own, its platform fee paid to a fresh attacker's USDC account: nothing ties `route`'s
+/// platform fee account to the trader. Returns the swap, the attacker's account, and the result.
+fn hostile_fee_run(
+    snapshot: &Snapshot,
+    example: &Example,
+    platform_fee_bps: u64,
+) -> (Swap, Address, Result<Outcome, Failure>) {
+    let mut swap = Swap::new(snapshot, example);
+    let leg = swap.leg.clone();
+    let attacker = keypair(b"ballista-protocol-tests-attacker").pubkey();
+    let attacker_usdc = token_account(&mut swap.svm, &attacker, &leg.output_mint, 0);
+    let run = swap.sol_usd_run_priced(
+        example,
+        u64::from(HOSTILE_SLIPPAGE_BPS),
+        platform_fee_bps,
+        Routing::platform_fee_to(&leg, attacker_usdc),
+    );
+    let result = swap.send(run);
+    (swap, attacker_usdc, result)
+}
+
+/// The tolerance is a budget a hostile route can spend, not only the market moving: a platform fee
+/// the trader never agreed to, paid to an attacker's account, still clears `fillBeatTheOracle` at
+/// `PLATFORM_FEE_BPS` once `slippageBps` is relaxed to `HOSTILE_SLIPPAGE_BPS`, wide enough that
+/// Jupiter's own check never refuses it either. `findings/oracle-swap.md`, "Open: the tolerance is
+/// a budget a hostile route can spend".
+#[test]
+fn a_hostile_platform_fee_inside_the_tolerance_lands() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+
+    // No fee, at the market: the on-chain fill a fee comes out of.
+    let mut baseline = Swap::new(&snapshot, example);
+    let run = baseline.sol_usd_run(example);
+    baseline
+        .send(run)
+        .unwrap_or_else(|failure| panic!("no fee: {failure:?}"));
+    let unfeed = baseline.usdc();
+
+    let (swap, attacker_usdc, result) =
+        hostile_fee_run(&snapshot, example, u64::from(PLATFORM_FEE_BPS));
+    result.unwrap_or_else(|failure| panic!("{failure:?}"));
+    let fee = token_balance(&swap.svm, &attacker_usdc);
+    assert_eq!(fee, fee_at(unfeed, u64::from(PLATFORM_FEE_BPS)));
+    assert_eq!(swap.usdc(), unfeed - fee);
+    println!(
+        "{PLATFORM_FEE_BPS} bps fee at {HOSTILE_SLIPPAGE_BPS} bps slippage: the attacker took \
+         {fee}, the trader {}",
+        swap.usdc()
+    );
+}
+
+/// [`a_hostile_platform_fee_inside_the_tolerance_lands`], larger: `EXCESSIVE_FEE_BPS` still fits
+/// under `HOSTILE_SLIPPAGE_BPS`, wide enough that Jupiter's own check does not catch it, but not
+/// under `TOLERANCE_BPS`, and fails at `fillBeatTheOracle`.
+#[test]
+fn a_larger_hostile_platform_fee_fails_at_fill_beat_the_oracle() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+
+    let (swap, attacker_usdc, result) =
+        hostile_fee_run(&snapshot, example, u64::from(EXCESSIVE_FEE_BPS));
+    let failure = result.expect_err("a fee this large should fail the fill check");
+    assert_requirement_failed(&failure, example, "fillBeatTheOracle");
+    assert_eq!(token_balance(&swap.svm, &attacker_usdc), 0);
 }
 
 /// Another wallet's wrapped SOL, holding `in_amount` (write rule 1), at `sourceAta`, while the
@@ -687,7 +767,7 @@ fn another_wallets_source_fails_at_sells_the_traders_own_tokens() {
     );
     let failure = swap.send(run).unwrap_err();
     assert_requirement_failed(&failure, example, "sellsTheTradersOwnTokens");
-    assert!(!swap.jupiter_ran(&failure), "{failure:?}");
+    assert!(!jupiter_ran(&swap.jupiter, &failure), "{failure:?}");
     assert_eq!(token_balance(&swap.svm, &theirs), leg.in_amount);
 }
 
@@ -734,7 +814,7 @@ fn an_attackers_destination_fails_at_proceeds_go_to_the_trader() {
         ),
     };
     assert_requirement_failed(&failure, example, "proceedsGoToTheTrader");
-    assert!(!swap.jupiter_ran(&failure), "{failure:?}");
+    assert!(!jupiter_ran(&swap.jupiter, &failure), "{failure:?}");
     assert_eq!(token_balance(&swap.svm, &attacker_usdc), 0);
     assert_eq!(
         swap.svm.get_balance(&trader),

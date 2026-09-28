@@ -378,6 +378,43 @@ fn run_units(logs: &[String]) -> u64 {
         .expect("Ballista logs the units it consumed")
 }
 
+/// What [`run_tip`] returns: the SVM after the backrun, the tip account's and the searcher's
+/// balances just before it, and the backrun's own result.
+struct TipRun {
+    svm: LiteSVM,
+    tip_before: u64,
+    searcher_before: u64,
+    result: Result<Outcome, Failure>,
+}
+
+/// The market, upload, `tip_run` and `send_backrun` sequence most of this file's tests repeat:
+/// builds the market (with a whale's sale first when `whale_sale` is some), uploads the template,
+/// runs `setup` on the SVM (for a test that needs another account in place before the run), then
+/// builds and sends the backrun.
+fn run_tip(
+    snapshot: &Snapshot,
+    example: &Example,
+    whale_sale: Option<u64>,
+    setup: impl FnOnce(&mut LiteSVM),
+    accounts: &Accounts,
+    tip: u64,
+    edge: u64,
+) -> TipRun {
+    let mut svm = market(snapshot, whale_sale);
+    let template = upload_template(&mut svm, example);
+    setup(&mut svm);
+    let tip_before = balance(&svm, &accounts.tip);
+    let searcher_before = balance(&svm, &accounts.searcher);
+    let run = tip_run(snapshot, template, example, accounts, tip, edge);
+    let result = send_backrun(&mut svm, snapshot, run);
+    TipRun {
+        svm,
+        tip_before,
+        searcher_before,
+        result,
+    }
+}
+
 /// Why the template measures wrapped SOL: `route` moves token accounts only. Sent to Jupiter on
 /// its own, a profitable round trip grows the searcher's wrapped SOL and leaves its lamports alone
 /// but for the fee, so a template that read the lamports around the route would see no profit.
@@ -419,26 +456,24 @@ fn send_edited_round_trip(
     (svm, wsol_before, result)
 }
 
-/// Jupiter does not check that `route`'s source and destination are the accounts its steps move.
-/// It requires only that the source hold at least `in_amount`, of any mint, and that the
-/// destination hold the destination mint; accounts that pass are left untouched while the steps
-/// move the searcher's own. So those two positions prove nothing about what moved; the template
-/// measures the account itself.
+/// Jupiter does not check that `route`'s source and destination are the accounts its steps move:
+/// only that the source holds at least `in_amount`, of any mint, and the destination holds the
+/// destination mint. Another wallet's wrapped SOL, holding exactly `in_amount`, at both positions:
+/// the route runs and moves the searcher's own wrapped SOL, not the decoy, which is left
+/// untouched. So the two positions prove nothing about what moved; the template measures the
+/// account itself.
 #[test]
-fn jupiter_does_not_tie_the_route_s_source_and_destination_to_its_steps() {
+fn a_decoy_at_the_source_and_destination_is_left_untouched() {
     let snapshot = Snapshot::load(SNAPSHOT_DIR);
     let route = snapshot.route(ROUTE);
-    let jupiter = snapshot.named("jupiter");
     let first = &route.legs[0];
-    let (in_amount, usdc_mint) = (first.route.in_amount, first.output_mint);
+    let in_amount = first.route.in_amount;
     let searcher_wsol = first.source_token_account;
     let other = keypair(b"ballista-protocol-tests-other-01").pubkey();
-    // What the round trip does to the searcher's own wsol with no decoy in place, so the decoyed
-    // runs below can assert the exact change rather than merely that some change happened.
+    // What the round trip does to the searcher's own wsol with no decoy in place, so this can
+    // assert the exact change rather than merely that some change happened.
     let undecoyed_change = realised(&mut market(&snapshot, None), route).wrapped_sol;
 
-    // Another wallet's wrapped SOL, holding exactly `in_amount`, as both source and destination:
-    // the route runs and moves the searcher's wrapped SOL, not the decoy.
     let decoy = associated_token_address(&other, &WSOL_MINT);
     let (svm, wsol_before, result) = send_edited_round_trip(&snapshot, |svm, round_trip| {
         token_account(svm, &other, &WSOL_MINT, in_amount);
@@ -456,8 +491,20 @@ fn jupiter_does_not_tie_the_route_s_source_and_destination_to_its_steps() {
         undecoyed_change,
         "the decoy must not change what the round trip does to the searcher's own wsol"
     );
+}
 
-    // The source's mint is not checked: another wallet's USDC does as well, if there is enough.
+/// The source's mint is not checked either: another wallet's USDC account, holding `in_amount`,
+/// does as well as wrapped SOL, if there is enough.
+#[test]
+fn the_source_s_mint_is_not_checked() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let route = snapshot.route(ROUTE);
+    let first = &route.legs[0];
+    let (in_amount, usdc_mint) = (first.route.in_amount, first.output_mint);
+    let searcher_wsol = first.source_token_account;
+    let other = keypair(b"ballista-protocol-tests-other-01").pubkey();
+    let undecoyed_change = realised(&mut market(&snapshot, None), route).wrapped_sol;
+
     let usdc_decoy = associated_token_address(&other, &usdc_mint);
     let (svm, wsol_before, result) = send_edited_round_trip(&snapshot, |svm, round_trip| {
         token_account(svm, &other, &usdc_mint, in_amount);
@@ -474,32 +521,52 @@ fn jupiter_does_not_tie_the_route_s_source_and_destination_to_its_steps() {
         undecoyed_change,
         "the decoy must not change what the round trip does to the searcher's own wsol"
     );
+}
 
-    // Its balance is: one unit short of `in_amount` is refused. The codes here are not in Jupiter's
-    // published IDL.
+/// The source's balance is checked: one unit short of `in_amount` is refused. The code is not in
+/// Jupiter's published IDL.
+#[test]
+fn a_source_one_unit_short_of_in_amount_fails() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let jupiter = snapshot.named("jupiter");
+    let in_amount = snapshot.route(ROUTE).legs[0].route.in_amount;
+    let other = keypair(b"ballista-protocol-tests-other-01").pubkey();
+
     let (_, _, result) = send_edited_round_trip(&snapshot, |svm, round_trip| {
         round_trip.accounts[SOURCE].pubkey = token_account(svm, &other, &WSOL_MINT, in_amount - 1);
     });
     let failure = result.expect_err("a source one unit short of in_amount must fail");
     assert_eq!((failure.program, failure.code), (jupiter, Some(6024)));
+}
 
-    // A destination that does not hold the destination mint is refused, and so is a destination
-    // mint that is not the destination's: the searcher's USDC account at DESTINATION, then the
-    // USDC mint at DESTINATION_MINT.
-    for (position, address) in [
-        (DESTINATION, first.destination_token_account),
-        (DESTINATION_MINT, usdc_mint),
-    ] {
-        let (_, _, result) = send_edited_round_trip(&snapshot, |_, round_trip| {
-            round_trip.accounts[position].pubkey = address;
-        });
-        let failure = result.expect_err(&format!("position {position} must fail"));
-        assert_eq!(
-            (failure.program, failure.code),
-            (jupiter, Some(6019)),
-            "position {position}"
-        );
-    }
+/// A destination that does not hold the destination mint is refused: the searcher's own USDC
+/// account there instead.
+#[test]
+fn a_destination_not_holding_the_destination_mint_fails() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let jupiter = snapshot.named("jupiter");
+    let first = &snapshot.route(ROUTE).legs[0];
+
+    let (_, _, result) = send_edited_round_trip(&snapshot, |_, round_trip| {
+        round_trip.accounts[DESTINATION].pubkey = first.destination_token_account;
+    });
+    let failure = result.expect_err("a destination not holding the destination mint must fail");
+    assert_eq!((failure.program, failure.code), (jupiter, Some(6019)));
+}
+
+/// So is a destination mint that is not the destination's: the USDC mint, with wrapped SOL still
+/// at `destinationAta`.
+#[test]
+fn a_destination_mint_that_does_not_match_the_destination_fails() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let jupiter = snapshot.named("jupiter");
+    let usdc_mint = snapshot.route(ROUTE).legs[0].output_mint;
+
+    let (_, _, result) = send_edited_round_trip(&snapshot, |_, round_trip| {
+        round_trip.accounts[DESTINATION_MINT].pubkey = usdc_mint;
+    });
+    let failure = result.expect_err("a mismatched destination mint must fail");
+    assert_eq!((failure.program, failure.code), (jupiter, Some(6019)));
 }
 
 /// The required pass: a whale's sale leaves the Raydium pool cheap, the searcher's round trip
@@ -515,12 +582,17 @@ fn a_backrun_pays_the_tip_out_of_its_profit() {
     let tip = profit_less_edge(profit);
     assert!(tip >= MINIMUM_TIP, "a profit of {profit} cannot pay a tip");
 
-    let mut svm = market(&snapshot, Some(WHALE_SALE));
-    let template = upload_template(&mut svm, example);
-    let tip_before = balance(&svm, &accounts.tip);
-    let searcher_before = balance(&svm, &accounts.searcher);
-    let run = tip_run(&snapshot, template, example, &accounts, tip, EDGE);
-    let outcome = send_backrun(&mut svm, &snapshot, run)
+    let backrun = run_tip(
+        &snapshot,
+        example,
+        Some(WHALE_SALE),
+        |_| {},
+        &accounts,
+        tip,
+        EDGE,
+    );
+    let outcome = backrun
+        .result
         .unwrap_or_else(|failure| panic!("the backrun failed: {failure:?}"));
     println!(
         "paid a {tip}-lamport tip: {} CU in all, {} in the run; {} bytes",
@@ -530,26 +602,26 @@ fn a_backrun_pays_the_tip_out_of_its_profit() {
     );
 
     assert_eq!(
-        balance(&svm, &accounts.tip),
-        tip_before + tip,
+        balance(&backrun.svm, &accounts.tip),
+        backrun.tip_before + tip,
         "the tip account must receive exactly the tip"
     );
     // The cleanup closed the wrapped SOL account into the searcher's lamports, profit included:
     // the searcher kept the edge, less the fee.
     assert_eq!(
-        svm.get_account(&accounts.wsol),
+        backrun.svm.get_account(&accounts.wsol),
         None,
         "the cleanup must close the wrapped SOL account"
     );
     assert_eq!(
-        balance(&svm, &accounts.searcher) + outcome.fee,
-        searcher_before + EDGE,
+        balance(&backrun.svm, &accounts.searcher) + outcome.fee,
+        backrun.searcher_before + EDGE,
         "the searcher must keep exactly the edge, less the fee"
     );
     // The route spent all the USDC it bought.
     let usdc = snapshot.route(ROUTE).legs[0].destination_token_account;
     assert_eq!(
-        token_balance(&svm, &usdc),
+        token_balance(&backrun.svm, &usdc),
         0,
         "the route must spend all the USDC it bought"
     );
@@ -566,12 +638,17 @@ fn a_tip_above_the_profit_fails_at_the_requirement() {
     let profit = backrun_profit(&snapshot, WHALE_SALE);
     let tip = profit_less_edge(profit) + 1;
 
-    let mut svm = market(&snapshot, Some(WHALE_SALE));
-    let template = upload_template(&mut svm, example);
-    let tip_before = balance(&svm, &accounts.tip);
-    let searcher_before = balance(&svm, &accounts.searcher);
-    let run = tip_run(&snapshot, template, example, &accounts, tip, EDGE);
-    let failure = send_backrun(&mut svm, &snapshot, run)
+    let backrun = run_tip(
+        &snapshot,
+        example,
+        Some(WHALE_SALE),
+        |_| {},
+        &accounts,
+        tip,
+        EDGE,
+    );
+    let failure = backrun
+        .result
         .expect_err("a tip one lamport above the profit must fail at profitCoversTheTip");
     println!(
         "refused a {tip}-lamport tip after {} CU in the run",
@@ -579,10 +656,10 @@ fn a_tip_above_the_profit_fails_at_the_requirement() {
     );
 
     tx::assert_requirement_failed(&failure, example, "profitCoversTheTip");
-    assert_eq!(balance(&svm, &accounts.tip), tip_before);
+    assert_eq!(balance(&backrun.svm, &accounts.tip), backrun.tip_before);
     assert_eq!(
-        balance(&svm, &accounts.searcher),
-        searcher_before - failure.fee
+        balance(&backrun.svm, &accounts.searcher),
+        backrun.searcher_before - failure.fee
     );
 }
 
@@ -599,11 +676,9 @@ fn a_losing_round_trip_fails_at_the_requirement_rather_than_underflowing() {
     println!("{ROUTE} at the snapshot's prices realises {loss} lamports");
     assert!(loss < 0, "{loss}");
 
-    let mut svm = market(&snapshot, None);
-    let template = upload_template(&mut svm, example);
-    let tip_before = balance(&svm, &accounts.tip);
-    let run = tip_run(&snapshot, template, example, &accounts, MINIMUM_TIP, 0);
-    let failure = send_backrun(&mut svm, &snapshot, run)
+    let backrun = run_tip(&snapshot, example, None, |_| {}, &accounts, MINIMUM_TIP, 0);
+    let failure = backrun
+        .result
         .expect_err("a losing round trip must fail at profitCoversTheTip, not underflow");
     println!(
         "refused a {MINIMUM_TIP}-lamport tip on a loss after {} CU in the run",
@@ -611,53 +686,83 @@ fn a_losing_round_trip_fails_at_the_requirement_rather_than_underflowing() {
     );
 
     tx::assert_requirement_failed(&failure, example, "profitCoversTheTip");
-    assert_eq!(balance(&svm, &accounts.tip), tip_before);
+    assert_eq!(balance(&backrun.svm, &accounts.tip), backrun.tip_before);
 }
 
-/// The measured account must be the searcher's wrapped SOL, and the tip must go to an account of
-/// Jito's Tip Payment program. Each check fails before the route runs.
+/// The measured account must be the searcher's wrapped SOL: the searcher's own USDC account there
+/// instead fails before the route runs, so the profit would never have been in lamports.
 #[test]
-fn the_measured_account_and_the_tip_account_are_checked() {
+fn the_wsol_account_must_hold_wrapped_sol() {
     let snapshot = Snapshot::load(SNAPSHOT_DIR);
     let examples = examples();
     let example = &examples[EXAMPLE];
     let route = snapshot.route(ROUTE);
-    let other = keypair(b"ballista-protocol-tests-other-01").pubkey();
-
-    // The searcher's USDC: another mint, so the profit would not be in lamports.
-    let mut svm = market(&snapshot, None);
-    let template = upload_template(&mut svm, example);
     let usdc = Accounts {
         wsol: route.legs[0].destination_token_account,
         ..Accounts::of(&snapshot)
     };
-    let run = tip_run(&snapshot, template, example, &usdc, MINIMUM_TIP, 0);
-    let failure = send_backrun(&mut svm, &snapshot, run)
+
+    let backrun = run_tip(&snapshot, example, None, |_| {}, &usdc, MINIMUM_TIP, 0);
+    let failure = backrun
+        .result
         .expect_err("a USDC account as wsolAccount must fail wsolAccountHoldsWrappedSol");
     tx::assert_requirement_failed(&failure, example, "wsolAccountHoldsWrappedSol");
+}
 
-    // Another wallet's wrapped SOL: its profit would not reach the searcher, who pays the tip.
-    let mut svm = market(&snapshot, None);
-    let template = upload_template(&mut svm, example);
+/// The measured account must be the searcher's own: another wallet's wrapped SOL fails before the
+/// route runs, so its profit would never reach the searcher, who pays the tip.
+#[test]
+fn the_wsol_account_must_be_the_searcher_s() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[EXAMPLE];
+    let other = keypair(b"ballista-protocol-tests-other-01").pubkey();
     let theirs = Accounts {
-        wsol: token_account(&mut svm, &other, &WSOL_MINT, SOL),
+        wsol: associated_token_address(&other, &WSOL_MINT),
         ..Accounts::of(&snapshot)
     };
-    let run = tip_run(&snapshot, template, example, &theirs, MINIMUM_TIP, 0);
-    let failure = send_backrun(&mut svm, &snapshot, run)
+
+    let backrun = run_tip(
+        &snapshot,
+        example,
+        None,
+        |svm| {
+            token_account(svm, &other, &WSOL_MINT, SOL);
+        },
+        &theirs,
+        MINIMUM_TIP,
+        0,
+    );
+    let failure = backrun
+        .result
         .expect_err("another wallet's wrapped SOL must fail searcherOwnsTheWsolAccount");
     tx::assert_requirement_failed(&failure, example, "searcherOwnsTheWsolAccount");
+}
 
-    // A wallet in place of the tip account: the constraint on its owner refuses it.
-    let mut svm = market(&snapshot, None);
-    let template = upload_template(&mut svm, example);
-    fund(&mut svm, &other, SOL);
+/// The tip must go to an account of Jito's Tip Payment program: a wallet in its place fails its
+/// owner constraint before the route runs.
+#[test]
+fn the_tip_account_must_belong_to_the_tip_payment_program() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[EXAMPLE];
+    let other = keypair(b"ballista-protocol-tests-other-01").pubkey();
     let wallet_tip = Accounts {
         tip: other,
         ..Accounts::of(&snapshot)
     };
-    let run = tip_run(&snapshot, template, example, &wallet_tip, MINIMUM_TIP, 0);
-    let failure = send_backrun(&mut svm, &snapshot, run)
+
+    let backrun = run_tip(
+        &snapshot,
+        example,
+        None,
+        |svm| fund(svm, &other, SOL),
+        &wallet_tip,
+        MINIMUM_TIP,
+        0,
+    );
+    let failure = backrun
+        .result
         .expect_err("a wallet as the tip account must fail its owner constraint");
     let tip_index = example
         .fixed_accounts

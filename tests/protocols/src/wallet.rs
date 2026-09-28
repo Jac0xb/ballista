@@ -220,6 +220,14 @@ pub fn token_balance(svm: &LiteSVM, account: &Address) -> u64 {
     u64::from_le_bytes(account_data.data[64..72].try_into().unwrap())
 }
 
+/// A token account's balance, or how it ended if it no longer exists.
+pub fn holding(svm: &LiteSVM, account: &Address) -> String {
+    match svm.get_account(account) {
+        None => "emptied and closed".to_string(),
+        Some(_) => format!("holding {}", token_balance(svm, account)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {

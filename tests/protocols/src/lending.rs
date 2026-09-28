@@ -12,7 +12,7 @@ use {
         kamino, marginfi, oracle,
         snapshot::{self, Leg, Snapshot},
         template::{self, Example},
-        tx::{self, Outcome},
+        tx::{self, Failure, Outcome},
         wallet::{self, SOL},
     },
     litesvm::LiteSVM,
@@ -21,6 +21,7 @@ use {
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
+    solana_message::AddressLookupTableAccount,
     solana_signer::Signer,
     std::sync::OnceLock,
 };
@@ -49,6 +50,7 @@ pub const SOL_BANK: Address =
     Address::from_str_const("CCKtUs6Cgwo4aaQUmBPmyoApH2gUDErxNZCAntD6LYGh");
 /// Both swap templates' route: 1 SOL for USDC, built for [`wallet::wallet`].
 pub const SOL_TO_USDC: &str = "solToUsdc";
+pub const JUPITER: Address = Address::from_str_const("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
 /// Uploads every template, as template 1.
 pub const CREATOR_SEED: &[u8; 32] = b"ballista-protocol-tests-creator1";
 /// `route`'s leading accounts, which a template passes itself (`JUPITER_ROUTE_FIXED_ACCOUNTS`).
@@ -122,6 +124,23 @@ pub fn setup(
     all.extend(instructions);
     tx::send(svm, payer, signers, &all, &[])
         .unwrap_or_else(|failure| panic!("setup failed: {failure:?}"))
+}
+
+/// Sends a template's run in a new slot, behind the refreshes klend needs for `obligation` and
+/// `also` (see [`kamino::refreshes`]), signed by `signer`, with `lookup_tables`.
+pub fn send_run(
+    svm: &mut LiteSVM,
+    obligation: &Address,
+    also: &[Address],
+    signer: &Keypair,
+    run: Instruction,
+    lookup_tables: &[AddressLookupTableAccount],
+) -> Result<Outcome, Failure> {
+    next_slot(svm);
+    let mut instructions = vec![compute_limit()];
+    instructions.extend(kamino::refreshes(svm, obligation, also));
+    instructions.push(run);
+    tx::send(svm, signer, &[], &instructions, lookup_tables)
 }
 
 /// Uploads `example` as the tests' creator's template 1.
@@ -242,6 +261,26 @@ pub fn marginfi_account(
     }
     setup(svm, authority, &[account], instructions);
     account.pubkey()
+}
+
+/// A marginfi account (seed `ballista-protocol-tests-mfi-acct`) for an authority (seed
+/// `ballista-protocol-tests-mfi-auth`) holding `deposit` USDC and, with `with_sol`, 1 SOL,
+/// deposited from the authority's own token accounts (write rule 1). Returns the SVM, the
+/// authority, the account, and the authority's USDC account, the one the deposit came from.
+pub fn marginfi_scene(with_sol: bool, deposit: u64) -> (LiteSVM, Keypair, Address, Address) {
+    let mut svm = svm();
+    let authority = wallet::keypair(b"ballista-protocol-tests-mfi-auth");
+    let account = wallet::keypair(b"ballista-protocol-tests-mfi-acct");
+    let a = authority.pubkey();
+    wallet::fund(&mut svm, &a, 10 * SOL);
+    let usdc = wallet::token_account(&mut svm, &a, &USDC_MINT, deposit);
+    let mut deposits = vec![(USDC_BANK, usdc, deposit)];
+    if with_sol {
+        let wsol = wallet::token_account(&mut svm, &a, &wallet::WSOL_MINT, SOL);
+        deposits.push((SOL_BANK, wsol, SOL));
+    }
+    let account = marginfi_account(&mut svm, &authority, &account, &deposits);
+    (svm, authority, account, usdc)
 }
 
 /// An obligation klend will liquidate:

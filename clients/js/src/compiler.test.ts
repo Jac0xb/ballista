@@ -15,6 +15,7 @@ import {
   decodeTemplateAccount,
   defineTemplate,
   ed25519Signature,
+  rateLimit,
   encodeRun,
   ensureAssociatedTokenAccount,
   expression,
@@ -1864,5 +1865,66 @@ describe('registries: compiler', () => {
       ]),
       /mine is a registry entry: a CPI that passes it writable fails with RegistryReentry/,
     );
+  });
+});
+
+describe('rateLimit', () => {
+  // The spec's example, verbatim.
+  const limited = () =>
+    defineTemplate({
+      inputs: { dailyCap: { type: 'u64' }, refillPerSecond: { type: 'u64' }, amount: { type: 'u64' } },
+      registries: { limits: { spent: 'u64', lastSpend: 'i64' } },
+      accounts: {
+        caller: { signer: true, writable: true },
+        limits: account.registry('limits', { key: expression.accountKey('caller'), payer: 'caller' }),
+        systemProgram: account.systemProgram(),
+      },
+      steps: [
+        ...rateLimit({
+          registry: 'limits',
+          cap: expression.input('dailyCap'),
+          refillPerSecond: expression.input('refillPerSecond'),
+          amount: expression.input('amount'),
+        }),
+      ],
+    });
+
+  test('refills in u128, requires withinRateLimit, and writes both fields back', () => {
+    const steps = limited().steps;
+    expect(steps.map((item) => (item.kind === 'let' ? `let ${item.name}` : item.kind))).toEqual([
+      'let rateLimitNow',
+      'let rateLimitSpent',
+      'let rateLimitRefill',
+      'let rateLimitTotal',
+      'require',
+      'setRegistry',
+      'setRegistry',
+    ]);
+    const compiled = compileTemplate(limited());
+    expect(compiled.sourceMap.some((entry) => entry.label === 'withinRateLimit')).toBe(true);
+    const kinds = records(compiled).map((record) => record[0]);
+    expect(kinds.filter((kind) => kind === opcode.readRegistry)).toHaveLength(2);
+    expect(kinds.filter((kind) => kind === opcode.writeRegistry)).toHaveLength(2);
+    // Four u128 casts: the elapsed time, the rate, the spent amount and the new amount, and the cap.
+    expect(kinds.filter((kind) => kind === opcode.castU128).length).toBeGreaterThanOrEqual(4);
+    expect(compiled.stats.maxExpandedCpis).toBe(3);
+  });
+
+  test('names its variables and requirement after `name`, and takes other field names', () => {
+    const steps = rateLimit({
+      registry: 'limits',
+      cap: expression.u64(10),
+      refillPerSecond: expression.u64(1),
+      amount: expression.u64(1),
+      spent: 'used',
+      lastSpend: 'at',
+      name: 'daily',
+    });
+    expect(steps[0]).toMatchObject({ kind: 'let', name: 'dailyNow' });
+    expect(steps.find((item) => item.kind === 'require')).toMatchObject({ label: 'withinDaily' });
+    expect(steps.filter((item) => item.kind === 'setRegistry').map((item) => (item as { field: string }).field)).toEqual([
+      'used',
+      'at',
+    ]);
   });
 });

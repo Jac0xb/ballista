@@ -304,3 +304,62 @@ export function ed25519Signature(input: {
     },
   };
 }
+
+/**
+ * Steps that spend `amount` from a limit that refills over time, kept in the registry entry in
+ * fixed account `registry` (declared with `account.registry`).
+ *
+ * The entry's `spent` field (a `u64`) is what has been spent and not yet refilled, and its
+ * `lastSpend` field (an `i64`) the Unix time of the last spend. Each run refills `spent` by
+ * `(now − lastSpend) × refillPerSecond`, never below zero, adds `amount`, requires the total to be
+ * at most `cap`, and writes both fields back.
+ *
+ * - The refill is computed in `u128`: the elapsed seconds are below 2^63 and the rate below 2^64,
+ *   so no gap between runs can overflow it. A fresh entry's `lastSpend` of 0 refills fully.
+ * - A clock that reads earlier than `lastSpend` refills nothing rather than failing the run.
+ * - `cap`, `refillPerSecond` and `amount` are `u64` expressions. `cap` and `refillPerSecond` are
+ *   the template's to choose, not the caller's: pass constants, or inputs only when whoever builds
+ *   the transaction may set their own limit.
+ *
+ * `name` prefixes the variables the steps bind, `<name>Now`, `<name>Spent`, `<name>Refill` and
+ * `<name>Total`, and names the requirement `within<Name>`: `withinRateLimit` by default.
+ */
+export function rateLimit(input: {
+  registry: string;
+  cap: Expression;
+  refillPerSecond: Expression;
+  amount: Expression;
+  /** The entry's `u64` field of what has been spent. Default `spent`. */
+  spent?: string;
+  /** The entry's `i64` field of when it was last spent. Default `lastSpend`. */
+  lastSpend?: string;
+  name?: string;
+}): Step[] {
+  const name = input.name ?? 'rateLimit';
+  const spentField = input.spent ?? 'spent';
+  const lastSpendField = input.lastSpend ?? 'lastSpend';
+  const u128 = (value: Expression) => expression.cast('u128', value);
+  const now = expression.variable(`${name}Now`);
+  const spent = expression.variable(`${name}Spent`);
+  const refill = expression.variable(`${name}Refill`);
+  const total = expression.variable(`${name}Total`);
+  const elapsed = expression.max(
+    expression.subtract(now, expression.registry(input.registry, lastSpendField)),
+    expression.i64(0),
+  );
+  return [
+    step.let(`${name}Now`, expression.clockUnixTimestamp()),
+    step.let(`${name}Spent`, u128(expression.registry(input.registry, spentField))),
+    step.let(`${name}Refill`, expression.multiply(u128(elapsed), u128(input.refillPerSecond))),
+    step.let(
+      `${name}Total`,
+      expression.add(expression.subtract(spent, expression.min(spent, refill)), u128(input.amount)),
+    ),
+    step.require(
+      expression.lessThanOrEqual(total, u128(input.cap)),
+      `within${name.charAt(0).toUpperCase()}${name.slice(1)}`,
+    ),
+    step.setRegistry(input.registry, spentField, expression.cast('u64', total)),
+    step.setRegistry(input.registry, lastSpendField, now),
+  ];
+}

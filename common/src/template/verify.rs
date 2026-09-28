@@ -3623,7 +3623,7 @@ mod tests {
     /// Every compiler fixture must parse and verify; the TypeScript suite keeps the files current.
     #[test]
     fn every_shared_fixture_parses_and_verifies() {
-        let fixtures: [(&str, &str); 17] = [
+        let fixtures: [(&str, &str); 18] = [
             ("system-transfer", include_str!("../../../fixtures/system-transfer.hex")),
             ("batch-transfer-30", include_str!("../../../fixtures/batch-transfer-30.hex")),
             ("ensure-ata", include_str!("../../../fixtures/ensure-ata.hex")),
@@ -3647,6 +3647,7 @@ mod tests {
             ("math-ops", include_str!("../../../fixtures/math-ops.hex")),
             ("output", include_str!("../../../fixtures/output.hex")),
             ("loops", include_str!("../../../fixtures/loops.hex")),
+            ("introspection", include_str!("../../../fixtures/introspection.hex")),
         ];
         for (name, hex) in fixtures {
             let bytes = decode_hex(hex);

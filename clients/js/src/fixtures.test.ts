@@ -13,6 +13,7 @@ import { afterAll, describe, expect, test } from 'vitest';
 
 import {
   ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES,
+  INSTRUCTIONS_SYSVAR_ADDRESS_BYTES,
   RUNTIME_ERROR_NAMES,
   SYSTEM_PROGRAM_ADDRESS_BYTES,
   TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -35,6 +36,12 @@ const UPDATE = process.env.UPDATE_FIXTURES === '1';
 
 const hex = (bytes: Uint8Array) => [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 const fill = (byte: number) => new Uint8Array(32).fill(byte);
+
+/** `MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr`, the SPL Memo program the Mollusk suite loads. */
+const MEMO_PROGRAM_ADDRESS_BYTES = Uint8Array.of(
+  5, 74, 83, 90, 153, 41, 33, 6, 77, 36, 232, 113, 96, 218, 56, 124, 124, 53, 181, 221, 188, 146, 187, 129,
+  228, 31, 168, 64, 65, 5, 68, 141,
+);
 
 const systemPrograms = {
   systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
@@ -511,6 +518,59 @@ export const fixtures: Record<string, () => Template> = {
         }),
       ],
     }),
+
+  // Run by the Mollusk suite as the second of three instructions, between two memos: "before",
+  // signed by `memoSigner`, and "after", with no accounts. The inputs point it at the first memo.
+  introspection: () => {
+    const sysvar = account.fixed('instructions');
+    const neighbour = expression.input('neighbour');
+    const position = expression.input('position');
+    return defineTemplate({
+      inputs: { neighbour: { type: 'u64' }, position: { type: 'u64' }, dataOffset: { type: 'u64' } },
+      accounts: {
+        instructions: { address: INSTRUCTIONS_SYSVAR_ADDRESS_BYTES },
+        memoSigner: { signer: true },
+        mint: { owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: 82 },
+      },
+      steps: [
+        step.require(expression.equal(expression.instructionCount(sysvar), expression.u64(3)), 'threeInstructions'),
+        step.require(expression.equal(expression.currentInstructionIndex(sysvar), expression.u64(1)), 'runsSecond'),
+        step.require(
+          expression.equal(expression.instructionProgram(sysvar, neighbour), expression.pubkey(MEMO_PROGRAM_ADDRESS_BYTES)),
+          'neighbourIsMemo',
+        ),
+        step.require(expression.equal(expression.instructionAccountCount(sysvar, neighbour), expression.u64(1)), 'oneAccount'),
+        step.require(
+          expression.equal(
+            expression.instructionAccount(sysvar, neighbour, position),
+            expression.accountField(account.fixed('memoSigner'), 'key'),
+          ),
+          'memoNamesItsSigner',
+        ),
+        step.require(expression.instructionAccountIsSigner(sysvar, neighbour, position), 'memoIsSigned'),
+        step.require(expression.not(expression.instructionAccountIsWritable(sysvar, neighbour, position)), 'signerIsReadOnly'),
+        step.require(expression.equal(expression.instructionDataLength(sysvar, neighbour), expression.u64(6)), 'memoIsSixBytes'),
+        // "before" starts 62 65 66 6f: "befo" as a little-endian u32.
+        step.require(
+          expression.equal(expression.instructionData(sysvar, neighbour, 0, 'u32'), expression.u64(0x6f66_6562)),
+          'memoSaysBefore',
+        ),
+        step.let('after', expression.instructionDataBytes(sysvar, 2, 0, 5)),
+        step.require(
+          expression.equal(expression.variable('after'), expression.bytes(new TextEncoder().encode('after'))),
+          'lastMemoSaysAfter',
+        ),
+        step.require(expression.equal(expression.bytesLength(expression.variable('after')), expression.u64(5)), 'fiveBytes'),
+        step.require(
+          expression.equal(
+            expression.accountDataBytes(account.fixed('mint'), expression.input('dataOffset'), 1),
+            expression.bytes(Uint8Array.of(6)),
+          ),
+          'mintHasSixDecimals',
+        ),
+      ],
+    });
+  },
 
   'pinned-mint-read': () =>
     defineTemplate({

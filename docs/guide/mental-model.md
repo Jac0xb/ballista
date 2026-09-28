@@ -77,8 +77,11 @@ the caller, passed along to one call without being read.
 | `step.require(condition)` | Fails the whole run if the condition is false |
 | `step.invoke({ ... })` | Calls another program (a CPI). Helpers such as `systemTransfer` build one for you |
 | `when: condition` on an invoke | Skips that one call when the condition is false, and carries on |
-| `step.forEach(steps)` | Runs its steps once per batch row. At most one, not nested |
-| `step.assign(name, value)` | Updates a value carried from row to row, inside `forEach` only |
+| `step.forEach(steps)` | Runs its steps once per batch row |
+| `step.repeat(count, steps, { max })` | Runs its steps `count` times, never more than `max` (at most 255). A template can have up to eight loops of either kind, and loops never nest |
+| `step.assign(name, value)` | Updates a value a loop carries from one pass to the next, inside `forEach` or `repeat` only |
+| `step.emit(parts)` | Logs event data for indexers. It must start with a tag of at least four bytes |
+| `step.setReturnData(parts)` | Sets the run's return data: once, outside every loop, with no call after it |
 
 ## Expressions
 
@@ -87,10 +90,14 @@ Steps compute with expressions. An expression can read:
 - an input (`expression.input`, `expression.rowInput`);
 - an account's address, owner, lamports or data length (`expression.accountField`);
 - a number or address at a byte offset in an account's data (`expression.accountData`);
-- the clock, a derived PDA, or data returned by the last call.
+- the clock, a derived PDA, or data returned by the last call;
+- the other instructions in the transaction, through the Instructions sysvar
+  (`expression.instructionCount`, `expression.instructionData` and others);
+- a byte range of a read-only account, without copying it.
 
-It can combine them with checked arithmetic (`add`, `subtract`, `multiply`, `divide`, `min`, `max`),
-comparisons, `and`/`or`/`not`, and `select`. Overflow fails the run instead of wrapping.
+It can combine them with checked arithmetic (`add`, `subtract`, `multiply`, `divide`, `remainder`,
+`min`, `max`), exact `multiplyDivide` that rounds down or up, `powerOfTen`, shifts and bitwise
+operations, comparisons, `and`/`or`/`not`, and `select`. Overflow fails the run instead of wrapping.
 [Inputs and expressions](/guide/expressions) has the full list.
 
 ## Upload: checked, then locked

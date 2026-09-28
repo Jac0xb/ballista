@@ -51,10 +51,10 @@ or permission rules, prevent replays, or loop in ways that cannot be bounded in 
 | --- | --- | --- |
 | Reusable, fixed sequence of CPIs | Excellent fit | Works, but more code |
 | Checks on accounts and the clock during execution | Built in | Custom implementation |
-| One loop over a bounded list of rows | Built in | Custom implementation |
+| Bounded loops, over a list of rows or a counted number of passes | Built in | Custom implementation |
 | Protocol-owned state machine | No | Yes |
 | Sign as a program PDA | No | Yes |
-| Unbounded or dynamic loops | No | Possible, within compute limits |
+| Unbounded loops | No | Possible, within compute limits |
 
 ## Where the boundary sits
 
@@ -65,8 +65,8 @@ or permission rules, prevent replays, or loop in ways that cannot be bounded in 
   template calls.
 - A template never runs on its own, holds assets, or signs as a PDA. Automation that runs without a
   user signing needs a delegate or authority model from another program.
-- A template has at most one loop, with a fixed maximum number of rows, so the work a run can do is
-  always bounded.
+- A template has at most eight loops, never nested, each with a fixed maximum number of passes, so
+  the work a run can do is always bounded.
 
 ## The security bargain
 

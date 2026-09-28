@@ -21,7 +21,8 @@ The Ballista program enforces these for every template, whichever SDK built it.
   [Account-group](/guide/account-groups) members are the exception: they have no declaration and
   are passed with the transaction's own writable flag, never as signers;
 - a program that is called is declared `executable`;
-- at most one loop, with a fixed maximum, and at most 64 calls even in the worst case;
+- at most eight loops, never nested, each with a fixed maximum, and at most 64 calls even in the
+  worst case;
 - fixed-offset reads stay within the account's declared minimum length.
 
 **At every run:**
@@ -57,8 +58,9 @@ type safety, are written but blocked by prover limitations, so they are not prov
   it.
 - **Flat heap.** A run allocates its buffers once and reuses them for every call, so memory use does
   not grow with the number of calls.
-- **Few `unsafe` blocks.** The release program uses `unsafe` only in three short wrappers around
-  Solana system calls (logging, event data and return data).
+- **Few `unsafe` blocks.** The release program uses `unsafe` only around Solana system calls (logs,
+  return data, hashing and the CPI itself), to fill a CPI's account list in place, and to read the
+  Instructions sysvar and read-only accounts without copying them.
 - **No authority of its own.** Ballista never signs as a PDA, holds no funds, and keeps no state
   between runs. A template can only do what the transaction's own signers could do directly.
 - **Immutable templates.** A finalized template cannot be changed, so what you reviewed is what

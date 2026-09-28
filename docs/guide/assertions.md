@@ -24,8 +24,8 @@ values, called bindings, follow a few rules:
 
 - A name can be used only by the steps after it, and a name defined inside a loop body cannot be
   read after the loop ends.
-- A binding cannot be changed, with one exception: inside a batch loop, `step.assign` can update a
-  variable that the loop carries from row to row, as shown in
+- A binding cannot be changed, with one exception: inside a loop, `step.assign` can update a
+  variable that the loop carries from one pass to the next, as shown in
   [Batch execution](/guide/batching#carry-a-total-across-rows).
 - Bindings create no accounts, cost no rent, and do not outlast the transaction. The compiler turns
   each name into a numbered slot for the run's working values, and the name itself never goes on

@@ -22,7 +22,7 @@ Terms such as register, CPI and PDA are defined in the [Glossary](/reference/glo
 | Choice | Instead of | Why |
 | --- | --- | --- |
 | Flat tables of fixed-size records | A nested tree of commands | The program reads records in place and can check exact size bounds |
-| One loop over the rows the caller supplies, with a maximum set by the template | Nested or unbounded loops | Batches stay possible, and every run is known to finish |
+| Up to eight loops, over the rows the caller supplies or a counted number of passes, each with a maximum set by the template | Nested or unbounded loops | Batches and repeated steps stay possible, and every run is known to finish |
 | Registers that exist only during one run | State stored between runs | Templates stay immutable and each run starts fresh |
 | SDK helpers that compile to ordinary CPIs | Protocol-specific logic in the program | The program does not depend on any particular protocol |
 | Only the signatures the transaction already carries | Ballista signing as its own PDA | Ballista never holds funds or authority of its own |
@@ -31,7 +31,7 @@ Terms such as register, CPI and PDA are defined in the [Glossary](/reference/glo
 
 Named bindings (`let` and `snapshot`) are names for registers, not stored variables. They make
 before-and-after checks around a CPI readable without adding state. A carried binding keeps its
-value from one row of the loop to the next, so a batch can enforce a total, but it never outlives
+value from one pass of a loop to the next, so a batch can enforce a total, but it never outlives
 the transaction.
 
 `assertPda` and `assertAta` derive addresses on chain from at most 15 seeds of up to 32 bytes each.

@@ -27,9 +27,10 @@ affect the program's own build. `certora/README.md` covers installation.
 Ballista runs each template on a small interpreter inside the program. When a template is
 finalized, the program checks every instruction in it once: each operation is known, each value
 is set before it is read, and each operation receives values of the type it expects. A template
-has at most one loop, with a fixed maximum number of rows. The program has no recursion, and in the
-release build Ballista's own code uses `unsafe` only in three short wrappers around Solana system
-calls.
+has at most eight loops, never nested, each with a fixed maximum number of passes. The program has
+no recursion. In the release build, Ballista's own code uses `unsafe` only around Solana system
+calls, to fill a CPI's account list in place, and to read the Instructions sysvar and read-only
+accounts without copying them.
 
 The most important property is one that tests cannot fully establish: whatever the finalize-time
 check accepts, the interpreter runs without an error caused by the template's structure, such as a

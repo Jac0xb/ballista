@@ -25,7 +25,7 @@ Terms such as register, CPI and PDA are defined in the [Glossary](/reference/glo
 | Up to eight loops, over the rows the caller supplies or a counted number of passes, each with a maximum set by the template | Nested or unbounded loops | Batches and repeated steps stay possible, and every run is known to finish |
 | Registers that exist only during one run, plus the registry entries a template declares | Arbitrary state, or storage shared between templates | Templates stay immutable, and state that outlives a run is limited to entries only its own template can change |
 | SDK helpers that compile to ordinary CPIs | Protocol-specific logic in the program | The program does not depend on any particular protocol |
-| Only the signatures the transaction already carries | Ballista signing a template's calls as its own PDA | Ballista never holds funds or authority of its own. It signs only to create a registry entry's account |
+| Only the signatures the transaction already carries | Ballista signing a template's calls as its own PDA | Ballista holds no authority of its own, and no funds beyond the lamports locked in registry entries. It signs only to create its own accounts: a template's account at upload, and registry entries during runs |
 | No scheduler or keeper rules | Built-in automation | Deciding who may run a template, and preventing repeat runs, are left to the programs it calls, or to the template itself through a registry: an allowlist, a counter or a nonce |
 | Templates checked by the SDK as you write them, plus shared encoders and decoders | Generated clients as the main API | Named inputs and accounts, and clear errors before a transaction is built |
 

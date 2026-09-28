@@ -11,7 +11,7 @@ caller supplies, so its checks protect you only if you know which parts the call
 | Template author | The template, which cannot change once finalized (checked and locked on chain): account declarations, inputs, steps | What can happen, in what order, and under which conditions |
 | Caller | Every account, every input value, every signature | Which actual accounts and values the template works with |
 | Called programs | Their own instruction behavior and errors | What each call does with the accounts it receives |
-| Ballista | Checks at finalization, execution at run time, passing on signatures and write access, and the registry entries templates declare | Nothing else: it never signs a template's calls, holds no funds beyond each entry's rent, and keeps no state outside those entries |
+| Ballista | Checks at finalization, execution at run time, passing on signatures and write access, and the registry entries templates declare | Nothing else: it never signs a template's calls, holds no funds except the lamports locked in entry accounts, which nothing ever withdraws, and keeps no state outside those entries |
 
 Ballista never signs a template's calls. A CPI (a call from the template to another program) can pass a declared
 account as a signer (an account that signed the transaction) or as writable (allowed to change)

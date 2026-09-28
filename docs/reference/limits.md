@@ -22,7 +22,7 @@ The Ballista program enforces these, whichever SDK built the template.
 
 | Limit | Maximum |
 | --- | ---: |
-| CPIs per run, counting every time a loop body runs | 64 |
+| CPIs per run, counting every time a loop body runs and 3 for each registry open | 64 |
 | Instruction data per CPI | 4,096 bytes |
 | Readable CPI return data | 1,024 bytes |
 
@@ -52,6 +52,26 @@ The Ballista program enforces these, whichever SDK built the template.
 | One byte read from account or instruction data | 1,024 bytes (minimum 1) |
 
 An `emit` must also start with a literal tag of at least 4 bytes that does not start with `BEV`.
+
+### Registries
+
+| Limit | Maximum |
+| --- | ---: |
+| Registries per template | 8 |
+| Entries a template opens | 8 |
+| Field bytes per registry | 512 (minimum 1) |
+| Entry account: 72-byte header plus fields | 584 bytes |
+| CPIs each open counts toward the 64 per run | 3 |
+
+There is no separate limit on fields. Their widths (`bool` 1 byte, `u64` and `i64` 8, `u128` 16,
+`pubkey` 32) must total 1 to 512 bytes. Entries open only at the top level, never in a loop, so a
+template cannot open one per batch row.
+
+Creating an entry costs rent: the lamports Solana requires an account to hold for its size. The
+payer, a signing account the template names, pays it once, the first time a run opens the entry,
+and pays only the shortfall if the address already holds lamports. Later runs pay nothing. Entries
+are never closed, so the rent is never returned. An entry with 16 bytes of fields, 88 bytes in all,
+needs 1,503,360 lamports.
 
 ### Sizes and bytecode
 
@@ -100,9 +120,10 @@ See [Transaction v1](/guide/transaction-v1) for how to build one.
 
 - A v1 transaction can be up to 4,096 bytes. The account and compute limits usually run out first.
 - Compute cost depends on the template: PDA bump searches, account reads, loop passes, logs, CPIs
-  and the programs they call all add to it. Solana's log call alone charges an `emit` 200 compute
-  units plus 1 per byte. Simulate the exact transaction and set the compute-unit limit from the
-  measurement plus a margin. The TypeScript SDK's `createComputeUnitProvider` does this.
+  and the programs they call all add to it. So does creating a registry entry, which derives the
+  entry's address and calls the System program. Solana's log call alone charges an `emit` 200
+  compute units plus 1 per byte. Simulate the exact transaction and set the compute-unit limit
+  from the measurement plus a margin. The TypeScript SDK's `createComputeUnitProvider` does this.
 
 ## When each limit is checked {#static-versus-runtime}
 
@@ -110,13 +131,14 @@ See [Transaction v1](/guide/transaction-v1) for how to build one.
 template that could exceed a limit in its worst case: register, instruction, and loop counts,
 inputs and account groups, runtime accounts at the maximum rows, CPIs with every loop at its
 maximum, accounts listed per CPI, PDA seeds, the largest instruction data each CPI could build, the
-largest log or return data each output could build, byte-read lengths, and fixed-offset reads past
-an account's declared minimum length.
+largest log or return data each output could build, byte-read lengths, fixed-offset reads past an
+account's declared minimum length, and registry indexes, sizes, opens, and field ranges.
 
 **On every run**, `Run` checks what the caller supplies: the run data and each input value, the
 number of runtime accounts, the row count (it must divide evenly and fall between the minimum and
 maximum), account group sizes, each fixed and row account against its declaration, each count
-loop's count against its maximum, and each CPI's accounts plus its forwarded group against 64.
+loop's count against its maximum, each CPI's accounts plus its forwarded group against 64, and each
+registry entry against its template, registry, and key.
 
 ## Heap
 

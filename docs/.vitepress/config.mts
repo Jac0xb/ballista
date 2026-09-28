@@ -26,6 +26,7 @@ const guideSidebar = [
       { text: 'Amounts read at run time', link: '/guide/runtime-values' },
       { text: 'Conditional calls', link: '/guide/conditional' },
       { text: 'Loops over rows and counts', link: '/guide/loops' },
+      { text: 'Remember state between runs', link: '/guide/registries' },
       { text: 'Safety guardrails', link: '/guide/guardrails' },
     ],
   },

@@ -17,7 +17,7 @@ privileges are fixed when the template is written and checked again at finalizat
 check that locks the template on chain, so the declarations tell you the most any run can do.
 Ballista passes on only the signatures the outer transaction already carries, and it never signs a
 template's calls as a PDA (program-derived address: an address a program controls, with no private
-key) of its own. Its one signature creates a [registry entry](/guide/registries)'s own account and never reaches
+key) of its own. Within a run, its only signature creates a [registry entry](/guide/registries)'s own account and never reaches
 a template's calls, so a template cannot create authority the transaction did not already have.
 
 ## Protocol helper

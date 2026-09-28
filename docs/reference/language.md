@@ -1,15 +1,16 @@
 # Template language
 
-Everything a template can contain: the types of values it works with, the inputs
-and accounts it declares, the expressions it can compute, and the steps it runs. Function names are
+Everything a template can contain: the types of values it works with, the inputs, accounts, and
+registries it declares, the expressions it can compute, and the steps it runs. Function names are
 from the TypeScript SDK. The Rust `ProgramBuilder` produces the same bytecode at a lower level; see
 [Rust SDK](/reference/rust).
 
-A template declares typed inputs, the accounts it expects, an optional batch of repeated rows, and
-an ordered list of steps. The compiler turns it into bytecode: a list of fixed-size instructions,
-each identified by a number called its opcode. Instructions keep intermediate values in registers,
-numbered slots that each hold one value for the length of a run. The names you give inputs,
-accounts, and bindings are replaced by numbers and are not stored on chain.
+A template declares typed inputs, the accounts it expects, an optional batch of repeated rows,
+optional registries that keep state between runs, and an ordered list of steps. The compiler turns
+it into bytecode: a list of fixed-size instructions, each identified by a number called its opcode.
+Instructions keep intermediate values in registers, numbered slots that each hold one value for the
+length of a run. The names you give inputs, accounts, bindings, registries, and fields are replaced
+by numbers and are not stored on chain.
 
 When a template is finalized (made permanent and runnable), the Ballista program's verifier checks
 its bytecode once. It confirms that the template always finishes, never reads a register before
@@ -62,18 +63,18 @@ inputs times the maximum row count, may not exceed 256.
 
 ## Accounts
 
-The account schema lists, by name, the accounts a template uses. Each entry states the most a run
-may do with that account, and the program rejects a run whose account does not satisfy it. An
-entry can require the account to be a signer (the transaction carries its signature), writable
+The account schema lists, by name, the accounts a template uses. Each declaration states the most a
+run may do with that account, and the program rejects a run whose account does not satisfy it. A
+declaration can require the account to be a signer (the transaction carries its signature), writable
 (the transaction allows programs to modify it), or executable (a program). It can also pin the
 account's address or its owner program, and require a minimum data length. To pin a value is to
 fix it in the template, so that a run fails if the caller passes anything else.
 
-A CPI in the template may ask for the same privileges as the account's schema entry or fewer,
-never more. Reading a finalized template's schema therefore tells you the most any run of it can
-do with the accounts it declares. Ballista passes on signatures the transaction already carries
-and never signs as its own PDA, so a template cannot gain authority the transaction did not
-already have.
+A CPI in the template may ask for the same privileges as the account's declaration or fewer, never
+more. Reading a finalized template's schema therefore tells you the most any run of it can do with
+the accounts it declares. Ballista passes on signatures the transaction already carries. In a run,
+it signs as its own PDA only to create a [registry entry](#registries)'s account, never in a
+template's CPIs, so a template cannot gain authority the transaction did not already have.
 
 The compiler enforces two pinning rules:
 
@@ -178,6 +179,8 @@ returns 1 to 1,024 bytes, used in place rather than copied. The
 | `expression.pubkey(v)` | `pubkey` | Literal, 32 bytes |
 | `expression.bytes(v)` | `bytes` | Literal, up to 1,024 bytes |
 | `expression.accountField(account, field)` | See the field table below | Any schema account |
+| `expression.accountKey(name)` | `pubkey` | A fixed account; shorthand for `accountField(account.fixed(name), 'key')` |
+| `expression.registry(entry, field)` | The field's declared type | `entry` names a fixed account declared with `account.registry`; see [Registries](#registries) |
 | `expression.accountData(account, offset, type)` | See the read-type table below | The account must pin its owner or address |
 | `expression.accountDataBytes(account, offset, length)` | `bytes`, exactly `length` long | The account must pin its owner or address and be read-only; `length` is 1 to 1,024 |
 | `expression.returnData(type, offset?)` | See the read-type table below | Only as the value of a `let` directly after an unguarded invoke; `offset` defaults to 0 |
@@ -358,13 +361,15 @@ or an account that must sign.
 
 ## Steps and control flow
 
-A template has up to 128 top-level steps, run in order. There are six kinds:
+A template has up to 128 top-level steps, run in order. There are seven kinds:
 
 - A **requirement** (`step.require`) fails the whole transaction if its condition is false.
 - A **binding** (`step.let` or `step.snapshot`) names a value.
 - An **assignment** (`step.assign`) updates a carried binding inside a loop.
 - An **invocation** (`step.invoke`) performs a CPI.
 - An **output** (`step.emit` or `step.setReturnData`) logs bytes or hands them back to the caller.
+- A **registry write** (`step.setRegistry`) writes a field of a registry entry. See
+  [Registries](#registries).
 - A **loop** (`step.forEach` or `step.repeat`) runs its steps several times. See [Loops](#loops).
 
 An invocation calls a program whose address the template pins. It lists up to 64 accounts, each
@@ -411,10 +416,11 @@ worst case:
 | `step.invoke({ program, accounts, data, when?, accountGroup?, programAddress?, label? })` | Perform a CPI, optionally guarded by `when` |
 | `step.emit(parts, label?)` | Log the encoded parts as one `Program data:` line; the first part is a literal tag |
 | `step.setReturnData(parts, label?)` | Set the encoded parts as the run's return data; once, outside loops, after the last invoke |
+| `step.setRegistry(entry, field, value, label?)` | Write the value into a field of a registry entry; the value must have the field's type |
 | `step.forEach(steps, { carry?, label? })` | Run the steps once per batch row; top level only |
 | `step.repeat(count, steps, { max, carry?, label? })` | Run the steps `count` times, at most `max` (1 to 255); top level only |
 
-Each entry in an invocation's `accounts` is `{ account, signer?, writable? }`. `programAddress`
+Each item in an invocation's `accounts` is `{ account, signer?, writable? }`. `programAddress`
 states which program the step is written for; compilation fails if the `program` account pins a
 different address.
 
@@ -426,7 +432,11 @@ Instruction data, logs, and return data are built from two part constructors.
 | `data.encode(encoding, value)` | A value encoded as `u8`, `u16`, `u32`, `u64`, `i64`, `u128`, `pubkey`, `bool`, or `bytes` |
 
 Accounts are named with `account.fixed(name)` for an account in the schema and
-`account.iteration(name)` for an account in the current batch row, inside a `forEach` loop.
+`account.iteration(name)` for an account in the current batch row, inside a `forEach` loop. Two
+more `account` functions build declarations for the schema rather than names:
+`account.registry(registry, { key, payer })` declares a registry entry, and
+`account.systemProgram()` declares the System program, pinned by address. See
+[Registries](#registries).
 
 ## Loops
 
@@ -475,10 +485,130 @@ after the loop. This is how a template keeps a running total, which a requiremen
 can then check. A binding created inside the body without being carried is recreated on every pass
 and cannot be read after the loop.
 
+## Registries
+
+A registry keeps state between runs, such as a spending cap, a counter, or an allowlist. The
+template declares each registry's fields. The values live in entries: accounts that Ballista owns,
+one for each template, registry, and key. Only runs of the template can write its entries, and
+anyone can read them. For a walkthrough, see [Registries](/guide/registries).
+
+```ts
+defineTemplate({
+  inputs: { amount: { type: 'u64' } },
+  registries: { limits: { spent: 'u64', lastSpend: 'i64' } },
+  accounts: {
+    caller: { signer: true, writable: true },
+    limits: account.registry('limits', { key: expression.accountKey('caller'), payer: 'caller' }),
+    systemProgram: account.systemProgram(),
+  },
+  steps: [
+    step.setRegistry(
+      'limits',
+      'spent',
+      expression.add(expression.registry('limits', 'spent'), expression.input('amount')),
+    ),
+    step.setRegistry('limits', 'lastSpend', expression.clockUnixTimestamp()),
+  ],
+});
+```
+
+Each caller gets one entry. Every run adds `amount` to the caller's `spent` and records the time.
+
+### Declaring registries
+
+`registries` maps each registry's name to its fields, in order.
+
+- A field is a `bool`, `u64`, `i64`, `u128`, or `pubkey` (1, 8, 8, 16, or 32 bytes). Fields are
+  packed in declaration order with no padding, and take 1 to 512 bytes in all.
+- A template declares up to 8 registries. A registry's position in `registries` is its index,
+  which is part of each entry's address.
+
+`account.registry(registry, { key, payer })` declares a fixed account that holds one entry:
+
+- `key` is a `pubkey` expression that picks the entry, computed before the first step. Use a
+  signer's address, such as `expression.accountKey('caller')`, for one entry per caller. Leave
+  `key` out for the one template-wide entry, whose key is 32 zero bytes. A key the caller chooses,
+  such as an input, lets the caller pick any entry, including a fresh one.
+- A key can read the fields of entries whose accounts come earlier in `accounts`, but not its own
+  entry's or later ones.
+- `payer` names a fixed account declared signer and writable. The first time a run opens the
+  entry, the payer pays its rent: the lamports Solana requires an account to hold for its size.
+- `account.registry` declares the account writable and nothing else. Adding a signer or executable
+  flag, a pinned address or owner, or a minimum data length is refused. It must be a fixed account,
+  not a batch-row account.
+
+A template with registry accounts also declares `account.systemProgram()`, which creating an entry
+calls.
+
+### Opening an entry
+
+Every run opens each entry before the first step, in the order the accounts are declared:
+
+- **An existing entry** must be an account Ballista owns, of the registry's size, whose header
+  names this template, this registry, and this key. Anything else fails the run with
+  `InvalidRegistryEntry` (6025). This stops a caller from passing another caller's entry, or
+  another template's.
+- **A missing entry** is created. The account must hold no data, be owned by the System program,
+  and sit at the entry's address, or the run fails with `InvalidRegistryEntry`. The payer pays the
+  rent, or only the part still missing if the address already holds lamports. Ballista signs for
+  the entry's address to create the account, then writes its header. The fields start at zero.
+- **An entry account passed read-only** fails before the first step, with
+  `AccountConstraintFailed` (6020).
+
+A client derives an entry's address with `findRegistryEntryAddress(template, registryIndex, key)`
+from `@jac0xb/ballista/kit`, or `find_registry_entry_address` in the Rust SDK, and passes it as the
+account. `registryIndex(compiled, name)` gives a registry's index. The address is a PDA of the
+Ballista program; its seeds are on [Wire format](/reference/wire-format#registry-entries).
+
+### Reading and writing fields
+
+- `expression.registry(entry, field)` reads a field, typed as declared.
+- `step.setRegistry(entry, field, value)` writes one. The value must have the field's type.
+- `entry` names the account, not the registry, so two entries of one registry, such as a sender's
+  and a receiver's, stay separate.
+- Both work anywhere in the steps, loops included.
+- A write lands at once. If the run fails later, Solana undoes it with the rest of the transaction.
+
+`rateLimit({ registry, cap, refillPerSecond, amount })` returns the steps for a spending limit that
+refills over time. It uses the entry's `u64` field `spent` and `i64` field `lastSpend`, and a run
+that would spend past `cap` fails at the requirement `withinRateLimit`.
+
+- `cap` and `refillPerSecond` must be template constants, built from literals and arithmetic. The
+  helper refuses an input, a variable, and reads of accounts or of the transaction, since the
+  caller may control them.
+- It also accepts a registry field, but cannot tell who wrote it. If any caller's run can write
+  that field, every caller can set the cap.
+- It cannot see the entry's key. Key the entry by a signer's address, or leave the key out for one
+  template-wide limit. A key from an input lets a caller open a fresh entry on every run.
+
+### What a template can and cannot do with an entry
+
+A template can:
+
+- read and write the fields it declares, anywhere in its steps;
+- read the entry account's `key`, `owner`, `lamports`, `dataLength`, and `isEmpty`, as for any
+  account;
+- pass the entry account to a CPI read-only.
+
+A template cannot:
+
+- write another template's entries. Each entry's header names its template, so the same template
+  published at a new address starts with fresh entries.
+- read an entry it opens except through its fields. `accountData` and `accountDataBytes` of an
+  entry are refused.
+- pass an entry account writable to a CPI. The compiler and the verifier refuse it. If a batch-row
+  account or account group member that a CPI passes writable turns out to be an open entry, the
+  CPI fails with `RegistryReentry` (6026). So no other run can change an entry between this run's
+  read and its write.
+- open more than 8 entries, or one per batch row: registry accounts are fixed accounts, opened once
+  before the first step.
+- close an entry. Its rent stays locked for good.
+
 ## Bounds
 
-Every maximum, such as 64 registers, 64 CPIs per run, 8 loops, and 120 runtime accounts, is on
-[Limits](/reference/limits). The TypeScript SDK adds a few of its own, such as 60 batch rows.
+Every maximum, such as 64 registers, 64 CPIs per run, 8 loops, 8 registry entries, and 120 runtime
+accounts, is on [Limits](/reference/limits). The TypeScript SDK adds a few of its own, such as 60
+batch rows.
 
 ## What the language excludes
 
@@ -492,11 +622,17 @@ The language leaves these out on purpose:
   with. Reading another instruction gives an account's address as a value to compare, not access
   to the account. Everything a template checks is fixed in the stored template, where anyone can
   review it.
-- No state survives a transaction. What a run does depends only on its inputs, its accounts, the
-  chain state it reads, and, if it reads them, the transaction's other instructions.
+- There is no hidden state. A template keeps state of its own only in its
+  [registry entries](#registries), accounts anyone can read. What a run does depends only on its
+  inputs, its accounts, the chain state it reads, and, if it reads them, the transaction's other
+  instructions.
 
-Ballista also leaves out several things it could do in principle. It never signs as its own PDA,
-never takes custody of funds, never schedules its own runs, does not stop a template from being run
-again with the same inputs (replay protection), and does not pay keepers (bots that submit
-transactions for a fee). A workflow that needs any of these needs its own program.
+Ballista also leaves out several things it could do in principle. It never signs a template's CPIs,
+never takes custody of funds, never schedules its own runs, and does not pay keepers (bots that
+submit transactions for a fee). A workflow that needs any of these needs its own program. In a run,
+Ballista signs only to create a registry entry's account, and outside the template's own CPIs the
+only lamports it moves are that entry's rent, from the payer.
+
+Ballista does not stop a template from being run again with the same inputs (replay protection).
+A template that must refuse repeats can keep a counter or nonce in a registry entry.
 [Why Ballista?](/guide/why-ballista) explains where that line falls.

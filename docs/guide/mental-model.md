@@ -123,7 +123,7 @@ steps in order. If any check or call fails, the whole Solana transaction is undo
 that had already succeeded.
 
 A template has no authority of its own. It passes on only the signatures the transaction already
-carries, holds no funds, and keeps nothing between runs except in the
-[registry entries](/guide/registries) it declares. See [Trust model](/guide/trust-model).
+carries, and keeps nothing between runs except in the [registry entries](/guide/registries) it
+declares. See [Trust model](/guide/trust-model).
 
 For how a template is stored as bytes, see [Wire format](/reference/wire-format).

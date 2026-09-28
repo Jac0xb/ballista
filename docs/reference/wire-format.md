@@ -1,14 +1,14 @@
 # Wire format
 
-The bytes of a compiled template, and of the data a caller sends to run it. This is bytecode
-version 1, the only version the program accepts. The Rust definitions in
-`common/src/template/wire.rs` are the source of truth.
+The bytes of a compiled template, of the data a caller sends to run it, and of the registry entries
+a template keeps between runs. This is bytecode version 1, the only version the program accepts.
+The Rust definitions in `common/src/template/wire.rs` are the source of truth.
 
 Terms used on this page:
 
 - **Payload:** the compiled template. The program stores it in the template account, after the
   account's own header.
-- **Record:** one fixed-size entry in a table.
+- **Record:** one fixed-size item in a table.
 - **Register:** a numbered slot that holds one value during a run. A template uses at most 64.
 - **Opcode:** the number that says what an instruction does.
 - **Blob:** the literal bytes at the end of the payload, such as instruction discriminators (the
@@ -17,9 +17,9 @@ Terms used on this page:
 - **Verifier:** the part of the Ballista program that checks a payload, once, when the template is
   created in one step or finalized after a chunked upload.
 - **CPI:** cross-program invocation, a call from the template to another program.
-- **PDA:** program-derived address, an address computed from a program ID and a list of seeds.
-  The bump is one extra seed byte that makes the result a valid program address; the canonical
-  bump is the highest value that does.
+- **PDA:** program-derived address, an address computed from a program ID and a list of seeds,
+  the byte strings it is derived from. The bump is one extra seed byte that makes the result a
+  valid program address; the canonical bump is the highest value that does.
 - **Runtime accounts:** the accounts passed to a run after the template account. Fixed accounts
   are passed once. Batch rows are sets of accounts, one set per row, that `FOREACH` loops run over.
   An account group is a list of accounts, sized by the caller, that a CPI forwards without the
@@ -28,6 +28,9 @@ Terms used on this page:
   pass is one run of the body.
 - **Instructions sysvar:** the read-only account at `Sysvar1nstructions1111111111111111111111111`
   in which Solana lists the transaction's instructions. Opcodes 64 to 72 read it.
+- **Registry entry:** an account Ballista owns that keeps one template's state between runs, one
+  per template, registry, and key. Opcodes 75 to 77 open, read, and write it. See
+  [Registry entries](#registry-entries).
 
 ## Template account {#template-account}
 
@@ -83,6 +86,9 @@ blob bytes
 | Pubkeys | 32 bytes | Pubkey count |
 | Blob | 1 byte | Blob length |
 
+Registries add no section. A registry's index and size, and a field's offset and type, travel in
+the immediates of the registry opcodes; see [Registries](#registries).
+
 ## Design rules
 
 - Multi-byte integers are little-endian.
@@ -92,7 +98,7 @@ blob bytes
 - The header's counts determine where every section starts and ends.
 - Parsing rejects a payload that is truncated, has bytes left over, sets an unknown header flag,
   or uses the reserved header byte. The verifier rejects non-zero reserved bytes in records.
-- Instructions refer to registers, accounts, and table entries by index, and the verifier checks
+- Instructions refer to registers, accounts, and table records by index, and the verifier checks
   that every index is in range.
 - Literal data is stored once in the blob and referred to by offset and length.
 - The verifier checks the whole payload once. A run parses the structure again but relies on that
@@ -169,7 +175,7 @@ Every instruction is 16 bytes:
 | 1 | 1 | destination | The register that receives the result, or `0xff` for none |
 | 2 | 3 | a, b, c | Operands: registers, account references, table indices, or counts, depending on the opcode |
 | 5 | 1 | flags | Bit 0 on read opcodes: the offset comes from register `b`. Zero for every other opcode |
-| 6 | 8 | immediate | A constant, a packed range, a length, a read opcode, or a loop's carry mask |
+| 6 | 8 | immediate | A constant, a packed range, a length, a read opcode, a loop's carry mask, or a packed registry open or field |
 | 14 | 2 | reserved | Must be zero |
 
 A packed range holds a start (a blob offset or a first table index) in its low 32 bits and a length
@@ -177,9 +183,9 @@ in its high 32 bits.
 
 ### Opcodes
 
-`REQUIRE`, `INVOKE`, `FOREACH`, `REPEAT`, `EMIT`, and `SET_RETURN_DATA` produce no value, and the
-last three must set the destination to `0xff`. Every other instruction writes its result to the
-destination register.
+`REQUIRE`, `INVOKE`, `FOREACH`, `REPEAT`, `EMIT`, `SET_RETURN_DATA`, `OPEN_REGISTRY`, and
+`WRITE_REGISTRY` produce no value. All but the first three must set the destination to `0xff`.
+Every other instruction writes its result to the destination register.
 
 | Opcode | Name | Operands | Result |
 | ---: | --- | --- | --- |
@@ -256,8 +262,11 @@ destination register.
 | 72 | `READ_INSTRUCTION_BYTES` | as `READ_INSTRUCTION_DATA`, but the immediate is a length, 1 to 1,024 | `bytes` of exactly that length |
 | 73 | `READ_ACCOUNT_BYTES` | `a`: account reference; `b`: a `u64` register, the byte offset; immediate: a length, 1 to 1,024 | `bytes` of exactly that length; fails with `WritableAccountBytesRead` if the account is writable |
 | 74 | `BYTES_LEN` | `a`: a `bytes` register | `u64`, its length |
+| 75 | `OPEN_REGISTRY` | `a`: the entry account; `b`: a `pubkey` register holding the key, or `0xff` for the zero key; `c`: the payer account; immediate: a packed registry open | none; checks the entry or creates it, then keeps it open for the rest of the run |
+| 76 | `READ_REGISTRY` | `a`: an entry account opened earlier; immediate: a packed field | The field, with the type its read opcode gives |
+| 77 | `WRITE_REGISTRY` | `a`: the value register; `b`: an entry account opened earlier; immediate: a packed field | none; writes the value into the field |
 
-Opcodes 0 and 39 are unassigned, as is every number above 74.
+Opcodes 0 and 39 are unassigned, as is every number above 77.
 
 Read opcodes (13 to 16, 43 to 46, and 60) with the dynamic-offset flag take their offset from the
 `u64` register in `b`, and must have a zero immediate. Without the flag, the immediate offset plus
@@ -273,8 +282,8 @@ the read width must fit inside the account's declared minimum data length.
   cannot name a row account or row input. The verifier rejects a `REPEAT` that breaks these rules,
   or a ninth loop, with `InvalidLoop`.
 - The worst-case CPI count adds, for each loop, the `INVOKE`s in its body times its maximum (the
-  header's maximum batch rows for `FOREACH`, `c` for `REPEAT`), plus the `INVOKE`s outside loops.
-  It must be at most 64.
+  header's maximum batch rows for `FOREACH`, `c` for `REPEAT`), plus the `INVOKE`s outside loops,
+  plus 3 for each `OPEN_REGISTRY`. It must be at most 64.
 
 #### Outputs
 
@@ -297,6 +306,62 @@ the read width must fit inside the account's declared minimum data length.
   but only one that is read-only in this instruction.
 - Byte reads return slices of the sysvar's or the account's data rather than copies. Neither can
   change while the instruction runs.
+
+#### Registries
+
+An `OPEN_REGISTRY` immediate packs the registry it opens:
+
+| Offset | Bytes | Field |
+| ---: | ---: | --- |
+| 0 | 1 | Registry index, below 8 |
+| 1 | 2 | Size of the registry's fields, 1 to 512 bytes |
+| 3 | 1 | The fixed account pinned to the System program, which creating an entry calls |
+| 4 | 4 | Zero |
+
+A `READ_REGISTRY` or `WRITE_REGISTRY` immediate packs one field:
+
+| Offset | Bytes | Field |
+| ---: | ---: | --- |
+| 0 | 2 | Field offset, counted from the end of the entry's 72-byte header |
+| 2 | 1 | A read opcode (13 to 16, 43 to 46, or 60) that sets the field's width and type |
+| 3 | 5 | Zero |
+
+The verifier checks:
+
+- `OPEN_REGISTRY` sits at the top level, never in a loop body, and never after a
+  `SET_RETURN_DATA`. A template holds at most 8, opens each entry account once, and gives every
+  open of one registry index the same size.
+- The entry account is a fixed account declared writable and nothing else: no signer or executable
+  flag, no address or owner pin, and a minimum data length of 0. The payer is a fixed account
+  declared signer and writable. The System program account is a fixed account pinned to the System
+  program's address.
+- `b` is a set `pubkey` register, or `0xff` for the zero key of 32 zero bytes.
+- No CPI account record lists an entry account writable, whether its `INVOKE` comes before the
+  open, after it, or never.
+- `READ_REGISTRY` and `WRITE_REGISTRY` name an account opened by an `OPEN_REGISTRY` at a lower
+  index, and a field that fits inside that registry's size. A read's `b` and `c`, and a write's
+  destination and `c`, are `0xff`.
+- A read takes any read opcode. A write takes only `READ_BOOL`, `READ_U64`, `READ_I64`,
+  `READ_U128`, or `READ_PUBKEY`, whose width holds every value of its type, and its value register
+  must have that type.
+- No read opcode (13 to 16, 43 to 46, or 60) and no `READ_ACCOUNT_BYTES` names an entry account,
+  wherever either sits: fields are read only with `READ_REGISTRY`. The entry's key, owner,
+  lamports, data length, and emptiness stay readable.
+
+The verifier rejects a template that breaks these rules with `InvalidRegistry` (6132). It also
+counts each open as 3 CPIs toward the limit of 64, since creating an entry whose address already
+holds lamports takes a transfer, an allocate, and an assign.
+
+At run time:
+
+- An entry account passed read-only fails before the first instruction, at account validation,
+  with `AccountConstraintFailed` (6020).
+- An open checks the entry, or creates it, as described under
+  [Registry entries](#registry-entries). An account that is not the entry fails with
+  `InvalidRegistryEntry` (6025).
+- An open entry stays marked as borrowed for the rest of the run. A CPI that passes it writable,
+  which only a batch-row account or group member can still do, fails with `RegistryReentry`
+  (6026).
 
 ## CPI descriptors
 
@@ -364,6 +429,48 @@ account group members, group by group in declaration order. The number of rows i
 `(accounts − fixed − Σ group lengths) / stride`. The division must be exact, and the result must lie
 between the batch's minimum and maximum.
 
+## Registry entries {#registry-entries}
+
+A registry entry is an account Ballista owns: a 72-byte header, then the registry's fields.
+
+| Offset | Bytes | Field |
+| ---: | ---: | --- |
+| 0 | 4 | Magic bytes `BREG` |
+| 4 | 1 | Entry version, `1` |
+| 5 | 1 | Registry index |
+| 6 | 2 | Reserved, zero |
+| 8 | 32 | Template address |
+| 40 | 32 | Key |
+| 72 | Registry size | Fields, zero when the entry is created |
+
+The account is exactly 72 bytes plus the registry's size, so at most 584 bytes. A field offset in
+`READ_REGISTRY` or `WRITE_REGISTRY` counts from byte 72. A written `bool` is one byte, 0 or 1.
+
+The entry's address is a PDA of the Ballista program, with the canonical bump and these seeds:
+
+```text
+"registry" | template address (32 bytes) | registry index (1 byte) | key (32 bytes)
+```
+
+The key is the 32 bytes the template computes: an address such as the caller's, or all zeros for
+a template-wide entry. `findRegistryEntryAddress` (TypeScript, from `@jac0xb/ballista/kit`) and
+`find_registry_entry_address` (Rust) return the address and bump.
+
+An open handles two cases:
+
+- **The account is owned by Ballista.** Its size and header must match the running template, the
+  open's registry index and size, and the key. The address is not derived again: only Ballista
+  writes an entry's header, and only at the address that header derives.
+- **The account has no data and is owned by the System program.** It must be at the derived
+  address. With no lamports there, the System program's `CreateAccount` makes it, funded by the
+  payer with the rent-exempt minimum for its size (the balance an account needs to stay on chain).
+  If the address already holds lamports, the payer transfers only what is missing, then `Allocate`
+  and `Assign` make the account Ballista's. Ballista then writes the header.
+
+Anything else fails with `InvalidRegistryEntry`. Ballista signs `CreateAccount`, `Allocate`, and
+`Assign` with the entry's seeds. No other call in a run carries a Ballista signature, and nothing
+closes an entry, so its rent stays locked.
+
 ## Error codes
 
 A custom error code is `kind | (context << 16)`. Runtime kinds start at 6000 (`0x1770`) and verifier
@@ -403,4 +510,5 @@ read, not an execution engine that never allocates.
 
 The example payloads in `fixtures/` are produced by the TypeScript compiler. The Rust tests verify
 them and run them against the program, and check that the Rust builder reproduces
-`system-transfer.hex` byte for byte.
+`system-transfer.hex` byte for byte. Both SDKs derive entry addresses against
+`fixtures/registry-entry-addresses.txt`, vectors the program's own derivation produces.

@@ -4,7 +4,7 @@
 
 use {
     ballista_protocol_tests::{
-        orca::{self, Nft, Pool, Position, TokenWallet, SOL_USDC, USDC, WHIRLPOOL},
+        orca::{self, Nft, Pool, Position, TokenWallet, SOL_USDC, USDC},
         tx,
         wallet::{keypair, token_balance, SOL},
     },
@@ -18,18 +18,7 @@ use {
 fn funded_position(label: &str) -> (LiteSVM, Pool, TokenWallet, TokenWallet, Position) {
     let mut svm = orca::svm();
     let pool = orca::pool(&svm, SOL_USDC);
-    let owner = orca::token_wallet(
-        &mut svm,
-        &orca::seed(&format!("{label} owner")),
-        10_000 * SOL,
-        2_000_000 * USDC,
-    );
-    let trader = orca::token_wallet(
-        &mut svm,
-        &orca::seed(&format!("{label} trader")),
-        100_000 * SOL,
-        20_000_000 * USDC,
-    );
+    let (owner, trader) = orca::owner_and_trader(&mut svm, label);
     let mint = keypair(&orca::seed(&format!("{label} position")));
     let range = orca::range(&svm, &pool, -60, 60);
     let position = orca::open_position(&mut svm, &pool, &owner, &mint, range, Nft::Token);
@@ -94,11 +83,7 @@ fn a_position_without_liquidity_cannot_be_updated() {
     let position = orca::open_position(&mut svm, &pool, &owner, &mint, range, Nft::Token);
 
     let failure = orca::update_fees(&mut svm, &pool, &owner.keypair, &position).unwrap_err();
-    assert_eq!(
-        (failure.program, failure.code),
-        (WHIRLPOOL, Some(6012)),
-        "LiquidityZero: {failure:?}"
-    );
+    orca::assert_whirlpool_error(&failure, oc::WhirlpoolError::LiquidityZero);
 }
 
 /// The root of M4: inside its range, a position takes liquidity only in both tokens. With one cap
@@ -126,11 +111,7 @@ fn in_range_liquidity_needs_both_tokens() {
         token_max_b: 0,
     });
     let failure = tx::send(&mut svm, &owner.keypair, &[], &[by_liquidity], &[]).unwrap_err();
-    assert_eq!(
-        (failure.program, failure.code),
-        (WHIRLPOOL, Some(6017)),
-        "TokenMaxExceeded: {failure:?}"
-    );
+    orca::assert_whirlpool_error(&failure, oc::WhirlpoolError::TokenMaxExceeded);
 
     let by_amounts = oc::IncreaseLiquidityByTokenAmountsV2 {
         whirlpool: pool.address,
@@ -159,9 +140,5 @@ fn in_range_liquidity_needs_both_tokens() {
         remaining_accounts_info: None,
     });
     let failure = tx::send(&mut svm, &owner.keypair, &[], &[by_amounts], &[]).unwrap_err();
-    assert_eq!(
-        (failure.program, failure.code),
-        (WHIRLPOOL, Some(6012)),
-        "LiquidityZero: {failure:?}"
-    );
+    orca::assert_whirlpool_error(&failure, oc::WhirlpoolError::LiquidityZero);
 }

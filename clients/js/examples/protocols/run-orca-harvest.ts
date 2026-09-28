@@ -122,8 +122,16 @@ export function failedProgram(logs: readonly string[]): string | undefined {
  * refused: 6019 is Whirlpools' `MissingOrInvalidDelegate` and Ballista's `ReturnDataMismatch`. The
  * logs can. A failing CPI logs `Program <id> failed` first and every caller repeats the code after
  * it, so the first such line names the program the code belongs to.
+ *
+ * Nothing is logged past the runtime's log-byte cap (`tests/protocols/src/tx.rs`'s
+ * `Failure::new` refuses these outright, for the same reason): a run with enough rows can lose the
+ * `failed` line to truncation, and `failedProgram` would then find none. That is not the same as no
+ * program failing, so it is called out instead of being reported as one.
  */
 export function describeFailure(code: number, logs: readonly string[]): string {
+  if (logs.some((line) => line === 'Log truncated')) {
+    return `code ${code}; the logs were truncated, so they cannot say which program failed`;
+  }
   const program = failedProgram(logs);
   if (program === undefined) return `code ${code}; the logs name no program that failed`;
   if (program !== BALLISTA_ADDRESS) {

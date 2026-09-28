@@ -30,6 +30,9 @@ serde_json = "1"
 base64 = "0.22"
 sha2 = "0.10"                 # verify manifest hashes
 # Orca's own client and math, for setup: instruction builders, PDAs, account decoders, quotes.
+# orca_whirlpools_client 8.0.0, the latest release, requires solana-program ^3, so the tree below
+# carries v3 Solana crates beside the v4 ones the rest of this file pins; cargo unifies each only
+# where both sides tolerate the same version.
 orca_whirlpools_client = "=8.0.0"
 orca_whirlpools_core = "=2.1.1"
 # litesvm features = ["precompiles"] only if a scenario signs Ed25519/secp256k1 (builds OpenSSL)

@@ -112,9 +112,6 @@ pub fn run_jupiter_deposit(
 // #endregion group
 
 // #region rows
-/// Shape three: batch rows. The iteration count comes from how many rows are passed, so there is
-/// no count in the instruction data to get wrong.
-///
 /// This is `orca-harvest-many-positions`. Its row is a position, the token account holding the
 /// position's NFT, and the tick arrays holding the position's lower and upper ticks.
 pub struct HarvestRow {
@@ -124,6 +121,8 @@ pub struct HarvestRow {
     pub tick_array_upper: Pubkey,
 }
 
+/// Shape three: batch rows. The iteration count comes from how many rows are passed, so there is
+/// no count in the instruction data to get wrong.
 pub fn run_orca_harvest(
     template: Pubkey,
     authority: Pubkey,

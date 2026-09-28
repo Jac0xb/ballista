@@ -13,11 +13,13 @@ use {
     },
     ballista_sdk::{decode_ballista_error, TOKEN_PROGRAM_ID},
     litesvm::LiteSVM,
+    orca_whirlpools_client as oc,
     solana_address::Address,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_instruction::Instruction,
     solana_keypair::Keypair,
     solana_signer::Signer,
+    solana_transaction::{InstructionError, TransactionError},
 };
 
 const EXAMPLE: &str = "orcaHarvestManyPositions";
@@ -36,18 +38,7 @@ struct Setup {
 fn setup(example: &Example) -> Setup {
     let mut svm = orca::svm();
     let pool = orca::pool(&svm, SOL_USDC_THIN);
-    let owner = orca::token_wallet(
-        &mut svm,
-        &orca::seed("harvest owner"),
-        10_000 * SOL,
-        2_000_000 * USDC,
-    );
-    let trader = orca::token_wallet(
-        &mut svm,
-        &orca::seed("harvest trader"),
-        100_000 * SOL,
-        20_000_000 * USDC,
-    );
+    let (owner, trader) = orca::owner_and_trader(&mut svm, "harvest");
     let creator = keypair(b"ballista-protocol-tests-creator1");
     fund(&mut svm, &creator.pubkey(), 10 * SOL);
     let template = upload(&mut svm, &creator, 1, &example.payload);
@@ -315,11 +306,7 @@ fn a_stranger_cannot_collect_and_whirlpools_says_so() {
     );
     let failure = send(&mut setup, &stranger.keypair, &[run]).unwrap_err();
 
-    assert_eq!(
-        (failure.program, failure.code),
-        (WHIRLPOOL, Some(6019)),
-        "MissingOrInvalidDelegate: {failure:?}"
-    );
+    orca::assert_whirlpool_error(&failure, oc::WhirlpoolError::MissingOrInvalidDelegate);
     assert_eq!(ballista_error(&failure), None);
     // The same number, read as Ballista's, names an unrelated failure.
     assert_eq!(
@@ -369,7 +356,7 @@ fn a_row_from_another_pool_reverts_the_whole_harvest() {
     // Anchor's ConstraintHasOne: the position's whirlpool is not the run's.
     assert_eq!(
         (failure.program, failure.code),
-        (WHIRLPOOL, Some(2001)),
+        (WHIRLPOOL, Some(orca::ANCHOR_CONSTRAINT_HAS_ONE)),
         "{failure:?}"
     );
     assert_eq!(
@@ -462,4 +449,65 @@ fn fees_must_go_to_the_owner_not_a_strangers_accounts() {
     let failure = send(&mut setup, &owner, &[run]).unwrap_err();
 
     tx::assert_requirement_failed(&failure, example, "feesGoToTheOwner");
+}
+
+/// Eight earning rows land under the default 200,000-CU limit with no compute-budget instruction;
+/// a ninth exhausts it mid-CPI. That is not a custom program error, so it carries no code.
+#[test]
+fn eight_rows_fit_the_default_compute_limit() {
+    let examples = examples();
+    let example = &examples[EXAMPLE];
+    let mut setup = setup(example);
+    let spacing = i32::from(setup.pool.tick_spacing);
+    let around = orca::range(&setup.svm, &setup.pool, -10 * spacing, 10 * spacing);
+    let liquidity = setup.pool_liquidity;
+    let positions: Vec<Position> = (0..9)
+        .map(|index| {
+            setup.position(
+                &format!("harvest limit {index}"),
+                around,
+                Nft::Token,
+                liquidity,
+            )
+        })
+        .collect();
+    orca::swap(&mut setup.svm, &setup.pool, &setup.trader, 20 * SOL, true);
+    orca::swap(
+        &mut setup.svm,
+        &setup.pool,
+        &setup.trader,
+        2_000 * USDC,
+        false,
+    );
+    let pool = setup.pool;
+    let owner = setup.owner.keypair.insecure_clone();
+    let rows: Vec<(&Position, &Pool)> =
+        positions.iter().map(|position| (position, &pool)).collect();
+
+    // Nine rows, unbudgeted: a failed transaction changes no account, so the same positions are
+    // still fresh for the eight-row attempt below.
+    let nine = harvest(&setup, example, &owner, &rows, 0);
+    let failure = send(&mut setup, &owner, &[nine]).unwrap_err();
+    assert_eq!(
+        (failure.program, failure.code),
+        (WHIRLPOOL, None),
+        "compute exhaustion mid-CPI carries no custom code: {failure:?}"
+    );
+    assert_eq!(
+        failure.err,
+        TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
+        "expected the ninth row to exhaust the default compute limit: {failure:?}"
+    );
+
+    let eight = harvest(&setup, example, &owner, &rows[..8], 0);
+    let outcome =
+        send(&mut setup, &owner, &[eight]).unwrap_or_else(|failure| panic!("{failure:?}"));
+    assert_eq!(
+        orca::whirlpool_calls(&outcome.logs),
+        [UPDATE_FEES, COLLECT_FEES].repeat(8)
+    );
+    println!(
+        "eight rows, no budget: {} CU, {} bytes",
+        outcome.compute_units, outcome.size
+    );
 }

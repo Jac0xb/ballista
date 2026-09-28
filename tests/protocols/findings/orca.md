@@ -2,20 +2,22 @@
 
 Milestone 2 of the real-protocol tests ran `orcaCompoundFees` and `orcaHarvestManyPositions` as
 signed transactions against mainnet's Whirlpool program in LiteSVM. Neither worked as written, and
-both are fixed. Every fix except M5's, a rewritten header, landed with a test that failed before
-it; the findings table says what shows each one. Plan:
+both are fixed. A later security pass found a second problem shared by both (M7). Every fix except
+M5's, a rewritten header, landed with a test that failed before it; the findings table says what
+shows each one. Plan:
 [2026-09-27-protocol-orca](../../../docs/superpowers/plans/2026-09-27-protocol-orca.md).
 
-- **Snapshot:** `tests/protocols/snapshot-orca/`, slot 451,137,027 (2026-09-27 22:54:57 UTC).
+- **Snapshot:** `tests/protocols/snapshot-orca/`, slot 451,137,027 (2026-09-27 22:54:57 UTC). Every
+  CU and byte figure below was measured against this snapshot; a later one could shift them.
   - Pools: SOL/USDC `Czfq…` (tick spacing 4) for the compounder, and SOL/USDC `HJPj…` (tick
-    spacing 64) for the harvest. Both were near tick −21,090, about 121 USDC per SOL.
+    spacing 64) for the harvest. Both were near tick βˆ’21,090, about 121 USDC per SOL.
   - Programs, all from mainnet: Whirlpool, Token, Token-2022, Associated Token, Memo.
 - **Tests:**
   - `orca_snapshot.rs`: the pools and their tick arrays are in the snapshot.
   - `orca_setup.rs`: the Orca behaviors the fixes rest on, called without Ballista.
   - `orca_cpis.rs`: every Whirlpool call against Orca's own client.
-  - `orca_compound_fees.rs`: 11 tests, three of them with a real `dustFloor`.
-  - `orca_harvest_many_positions.rs`: 5 tests, one with a real `dustFloor`.
+  - `orca_compound_fees.rs`: 12 tests, four of them with a real `dustFloor`.
+  - `orca_harvest_many_positions.rs`: 7 tests, one with a real `dustFloor`.
   - Each run's Whirlpool calls are asserted in order (`orca::whirlpool_calls`), not counted, so a
     call by the wrong row fails. A collect of nothing moves nothing, so no account would show it.
 - **Setup is real:** positions, deposits, withdrawals, swaps and updates go through Orca's
@@ -32,6 +34,7 @@ it; the findings table says what shows each one. Plan:
 | M4 | `increase_liquidity` with a liquidity fixed at signing fails once the price moves or the fees are one-sided | compound | real runs | yes |
 | M5 | The harvest's `when` was said to prevent reverts; it only saves compute | harvest | a setup test of Orca alone (`orca_setup.rs`) and real refusals | header rewritten |
 | M6 | Whirlpool's error codes collide with Ballista's | both | real refusals, and the runner's unit tests | tests and runner read the logs |
+| M7 | `tokenOwnerAccountA`/`B` were not pinned to the signer; `collect_fees` checks only their mint | both | real runs (`fees_must_go_to_the_owner_not_a_strangers_accounts`) | yes |
 
 ## `orcaCompoundFees`
 
@@ -59,6 +62,7 @@ it; the findings table says what shows each one. Plan:
   - `minSqrtPrice` and `maxSqrtPrice` bound the pool price the deposit accepts. Outside them it
     fails with `PriceSlippageOutOfBounds` (6069), and the whole run reverts.
 - `collect_fees` takes the whirlpool read-only (M1).
+- `tokenOwnerAccountA`/`B` must belong to `positionAuthority` (M7).
 
 **Decided while planning, beyond M1–M6: an emptied position is collected, not refilled.**
 - A position its owner emptied with `decrease_liquidity` still has fees owed. The old template
@@ -78,31 +82,12 @@ it; the findings table says what shows each one. Plan:
   - whirlpool (writable), position (writable), positionTokenAccount, tokenMintA, tokenMintB;
   - tokenOwnerAccountA, tokenOwnerAccountB, tokenVaultA, tokenVaultB, tickArrayLower,
     tickArrayUpper (all writable).
-- Step labels: `readLiquidity`, `updateFees`, `readFeesOwedA`, `readFeesOwedB`, `collectFees`,
-  `compoundFees`.
-- The payload grew from 440 to 714 bytes.
+- Step labels: `feesGoToTheOwner`, `readLiquidity`, `updateFees`, `readFeesOwedA`, `readFeesOwedB`,
+  `collectFees`, `compoundFees`.
+- The payload grew from 440 bytes to 714 (M1–M4) and then 842 (M7 added 128 bytes).
 - `shared.ts` loses `ORCA_INCREASE_LIQUIDITY`. It gains `MEMO_PROGRAM`,
-  `ORCA_UPDATE_FEES_AND_REWARDS`, `ORCA_INCREASE_LIQUIDITY_BY_TOKEN_AMOUNTS_V2` and
-  `ORCA_BY_TOKEN_AMOUNTS`.
-
-**Claims on `docs/examples/protocols/orca-compound.md` that are now false.** These are quoted from
-this branch; the docs session's copy may have moved on.
-- "Orca's `increase_liquidity` takes limits ... Set them too high and it takes the extra from your
-  wallet."
-  - The template no longer calls `increase_liquidity`.
-  - The deposit is the most liquidity the fees buy, and nothing is topped up from the wallet.
-- "The template reads `fee_owed_a` and `fee_owed_b` ... before collecting." Still true, but only
-  after the update. Without it, both read 0.
-- "You choose `liquidityAmount`, the liquidity to add, when you build the run." The run takes
-  `minSqrtPrice` and `maxSqrtPrice` instead.
-- "Both calls have a `when` condition: if token A's fees are not above `dustFloor`, both calls are
-  skipped ... The condition looks only at token A's fees."
-  - There are three calls now.
-  - The update runs while the position has liquidity.
-  - The collect runs when either fee is above the floor.
-  - The deposit runs when both fees are above the floor and the position has liquidity.
-- "Not yet run against Orca ... no test calls Orca." Tests now run it against the real program.
-- The page includes the template's source, so the new header is shown without an edit.
+  `ORCA_UPDATE_FEES_AND_REWARDS`, `ORCA_INCREASE_LIQUIDITY_BY_TOKEN_AMOUNTS_V2`,
+  `ORCA_BY_TOKEN_AMOUNTS`, `TOKEN_ACCOUNT_LENGTH` and `TOKEN_ACCOUNT_OWNER_OFFSET`.
 
 **Remaining limits.**
 - **SPL Token pools only.** `collect_fees` and the pinned token program are SPL Token's, so both
@@ -118,7 +103,8 @@ this branch; the docs session's copy may have moved on.
   - by Orca's own quote at this price, 1 or 2 lamports buy no full-range liquidity, and 3 buy 1.
 
   So a floor of a few base units covers SOL/USDC. A pool whose token A is worth less per base unit
-  needs more; a few thousand is a safe default.
+  needs more; a few thousand is a safe default. The template's header and its `dustFloor` doc say
+  this now, and that 0 is not a safe choice (below).
 - **One `dustFloor` for two tokens.** It is compared with each fee in that token's own base
   units, and lamports and micro-USDC differ by 1,000 times.
   - `a_floor_between_the_fees_collects_both_and_reinvests_neither` pins what that means. At a
@@ -149,11 +135,14 @@ this branch; the docs session's copy may have moved on.
 - `collect_fees` takes the whirlpool read-only (M1). The schema keeps `whirlpool` writable because
   each row's update writes it, so M1 changes no locks. A run cannot observe it, so its test reads
   the compiled templates (`orca_cpis.rs`).
-- The payload grew from 298 to 478 bytes.
-- Step labels: `updateIfLiquid`, `collectIfWorthIt`, `everyPosition`.
+- `tokenOwnerAccountA`/`B` must belong to `positionAuthority`, checked once for the whole batch
+  rather than once per row, since both accounts are fixed (M7).
+- The payload grew from 298 bytes to 478 (M1–M3) and then 606 (M7 added 128 bytes).
+- Step labels: `feesGoToTheOwner`, `updateIfLiquid`, `collectIfWorthIt`, `everyPosition`.
 
 **M5, for the docs: what the guard is for.**
-- The guard saves compute, about 11,000 CU per skipped collect, and leaves dust alone.
+- The guard saves compute, about 13,300 CU per skipped collect β€” `orca_compound_fees.rs`'s
+  one-sided runs minus its no-fees run, 25,814 or 25,821 minus 12,494 β€” and leaves dust alone.
 - It never prevented a revert: `collect_fees` with nothing owed succeeds and moves nothing
   (`orca_setup.rs`).
 - What reverts the whole harvest is a row Whirlpools refuses:
@@ -168,36 +157,26 @@ this branch; the docs session's copy may have moved on.
   - new: `getOrcaTickArrayAddress(whirlpool, tickIndex, tickSpacing)`, which derives
     `["tick_array", whirlpool, start]`;
   - new: `failedProgram(logs)`;
-  - changed: `describeFailure(code, logs)` now takes the failed transaction's logs (M6).
+  - changed: `describeFailure(code, logs)` now takes the failed transaction's logs (M6), and calls
+    out truncated logs by name instead of reporting that no program failed.
 - `clients/rust/examples/protocol_runs.rs`:
   - The `#rows` region, which the harvest page includes, has a new `HarvestRow` struct, and
     `run_orca_harvest` takes `rows: &[HarvestRow]`.
   - `cargo run -p ballista-sdk --example protocol_runs` prints 29 accounts for 5 rows (was 19).
 
-**Claims on `docs/examples/protocols/orca-harvest.md` that are now false.**
-- "Sending one `collect_fees` per position fails the whole transaction at the first position Orca
-  refuses." This is given as the reason for the `when`, but the `when` does not stop a refusal
-  (M5).
-- "the template reads `fee_owed_a` from the position account during the run and calls
-  `collect_fees` only if it is above `dustFloor`." It now updates first, and either fee counts.
-- "each position is one row of two accounts, the position and its position token account." A row
-  is four accounts now.
-- "Not yet run against Orca ... no test calls Orca."
-
-**Limits, measured.**
+**Limits, measured at this snapshot (M7 included; see there for its own cost).**
 - **Ballista's own limits hold with room.**
   - A stride of 4 row accounts (limit 8).
-  - 8 fixed accounts plus 4 × 12 rows = 56 runtime accounts (limit 120).
-  - 2 calls × 12 rows = 24 CPIs (limit 64).
+  - 8 fixed accounts plus 4 Γ— 12 rows = 56 runtime accounts (limit 120).
+  - 2 calls Γ— 12 rows = 24 CPIs (limit 64).
 - **Compute:** about 23,600 CU per earning row.
-  - Eight earning rows land under the default 200,000 with no budget instruction: 190,283 CU.
-  - Nine exhaust it.
+  - `eight_rows_fit_the_default_compute_limit`: eight land under the default 200,000 with no
+    compute-budget instruction, 190,931 CU; a ninth exhausts it, failing mid-CPI with no custom
+    code (`InstructionError::ProgramFailedToComplete`, not a Whirlpools or Ballista error number).
 - **Size:** 68 bytes per earning row when rows share tick arrays. Each extra distinct tick array
   costs 32 bytes more.
-  - Ten earning rows fit a legacy transaction with a compute-budget instruction: 1,195 bytes.
-  - Eleven are 1,263 bytes, and need a lookup table. So does twelve, the template's limit.
-- **The old two-account row never reached its limit either.** Eleven rows were 1,169 bytes and
-  twelve were 1,235 bytes, so the declared maximum of 12 never fit a legacy transaction.
+  - `ten_rows_fit_one_legacy_transaction`: ten fit a legacy transaction with a compute-budget
+    instruction, 1,195 bytes; eleven do not, and need a lookup table.
 
 ## M6: which program refused
 
@@ -206,12 +185,55 @@ this branch; the docs session's copy may have moved on.
   - 6017 (`TokenMaxExceeded`) is `InvalidPdaDerivation`;
   - 6019 (`MissingOrInvalidDelegate`) is `ReturnDataMismatch`.
 - The tests assert the failing program from the logs (`Failure.program`), never by the code
-  alone.
+  alone. `orca::assert_whirlpool_error` names Whirlpools' own errors so a test reads
+  `LiquidityZero`, not `6012`.
 - `run-orca-harvest.ts::describeFailure` takes the logs, and names Whirlpools for its own codes.
 - The plan left one item to the program's owner, the doc comment on `RunError` in
   `programs/ballista/src/processor/execute.rs`, which said invoked programs' codes are "never
   confused with Ballista's". Runtime phase 1 (1efbd24) has since rewritten it to say a code alone
   does not name its program. Nothing is left to do there.
+
+## M7: fees must go to the owner
+
+Both templates named `tokenOwnerAccountA`/`tokenOwnerAccountB` as the fee destinations without
+pinning who holds them. Whirlpools' `collect_fees` checks only their mint against its vaults, never
+their owner (confirmed by reading the accounts Orca's own client builds for it, in
+`orca_cpis.rs`'s `orca_accounts`), so a run assembled by an untrusted builder β€” a frontend, a bot,
+anything the true owner merely signs β€” could point them at the builder's own accounts and collect
+the position's real fees there. The owner's signature over `positionAuthority` authorizes the
+collect; it said nothing about where the proceeds went.
+
+- **compound** was exposed on its collect-only path: a `dustFloor` between the two fees collects
+  both without reinvesting. When it does reinvest, the deposit draws from the same accounts with
+  the owner's authority and fails closed against a stranger's, so only the collect-only path paid
+  out.
+- **harvest** was exposed on any earning row, since every row shares the same fixed
+  `tokenOwnerAccountA`/`B`.
+
+**Fixed.** Both templates require `tokenOwnerAccountA`/`B`'s owner field (SPL Token account offset
+32) to equal `positionAuthority`'s key, labelled `feesGoToTheOwner`. Harvest checks it once before
+the batch, not once per row. Both accounts now also pin `owner: TOKEN_PROGRAM_ADDRESS_BYTES` and a
+165-byte `minDataLength`, so the read is of a real token account, not an `unsafeUnpinned` guess.
+
+`fees_must_go_to_the_owner_not_a_strangers_accounts` (both test files) is the regression test: an
+attacker's own token accounts of the right mints stand in for the fee destinations, on a run that
+otherwise lands (a floor between the fees for compound, one earning row for harvest), and it
+asserts `RequirementFailed` at `feesGoToTheOwner`. Before this fix, neither template's schema
+constrained these accounts at all beyond `writable: true`, and nothing else in either template
+read them β€” so the same run would have landed and paid the stranger. That was not re-confirmed by
+reverting the fix and rerunning, since doing so means running the vulnerable templates again to
+prove a point already settled by inspection: Orca's own account list for `collect_fees`
+(`orca_cpis.rs`'s `orca_accounts`) constrains neither account's owner either.
+
+**Cost, measured at this snapshot.** Two account reads and two comparisons, paid once per
+transaction regardless of row count, and the run's own account list and inputs are unchanged, so
+its wire size does not move:
+- compound: +612 CU on every path (11,882 β†’ 12,494 CU with no fees; every other case in the
+  Measurements table moved the same 612). 706 bytes, unchanged.
+- harvest: +648 CU (59,610 β†’ 60,258 CU on the four-row test; 237,622 β†’ 238,270 on the ten-row
+  test). 747 and 1,195 bytes, unchanged.
+- Both templates' uploaded payload grew 128 bytes (compound 714 β†’ 842, harvest 478 β†’ 606); that
+  is a one-time upload cost, not a per-run one.
 
 ## CI
 
@@ -225,24 +247,27 @@ this branch; the docs session's copy may have moved on.
 
 ## Measurements
 
-From `cargo test --manifest-path tests/protocols/Cargo.toml -- --nocapture --test-threads=1`. The
-rows the tests do not print were measured with the same setups in a scratch crate. Compute units
-include Ballista's own work; sizes are the signed transaction on the wire.
+From `cargo test --manifest-path tests/protocols/Cargo.toml -- --nocapture --test-threads=1`, at
+this snapshot, with M7's check included. Compute units include Ballista's own work; sizes are the
+signed transaction on the wire.
 
 | Run | Compute units | Bytes | Whirlpool calls |
 | --- | --- | --- | --- |
-| compound, fees in both tokens | 43,382 | 706 | 3 |
-| compound, fees in one token | 25,202–25,209 | 706 | 2 |
-| compound, no fees | 11,882 | 706 | 1 |
-| compound, no liquidity | 2,546 | 706 | 0 |
-| compound, emptied position | 15,655 | 706 | 1 |
-| harvest, the four rows | 59,610 | 747 | 5 |
-| harvest, ten earning rows | 237,622 | 1,195 (budget instruction included) | 20 |
-| harvest, per earning row | 23,592–23,595 | 68 | 2 |
+| compound, fees in both tokens | 43,994 | 706 | 3 |
+| compound, fees in one token | 25,814–25,821 | 706 | 2 |
+| compound, no fees | 12,494 | 706 | 1 |
+| compound, no liquidity | 3,158 | 706 | 0 |
+| compound, emptied position | 16,267 | 706 | 1 |
+| harvest, the four rows | 60,258 | 747 | 5 |
+| harvest, eight earning rows, no budget instruction | 190,931 | 1,019 | 16 |
+| harvest, ten earning rows | 238,270 | 1,195 (budget instruction included) | 20 |
 | Orca: `update_fees_and_rewards` | 7,687–8,184 | | |
 | Orca: `collect_fees`, fees owed | 11,346–11,390 | | |
 | Orca: `collect_fees`, nothing owed | 11,375 | | |
 | Orca: `increase_liquidity_by_token_amounts_v2` | 15,281 | | |
+
+The four Orca rows above call Orca's instructions directly, without a Ballista template, so M7
+does not touch them.
 
 - The planning run (slot 451,125,511) measured the two-sided compound at 42,991 CU and 674 bytes.
 - The 32 bytes are one tick array. At this snapshot the price sits 30 ticks above its array's first
@@ -254,112 +279,62 @@ include Ballista's own work; sizes are the signed transaction on the wire.
 
 ## Evidence
 
-The tests written before each fix, failing as run at this snapshot. M5 has none: its fix is the
-header.
+One line per finding: the test written before its fix, failing as run at this snapshot. M5 has no
+row, since its fix is the header; M7's is in its own section above, since nothing captured its
+pre-fix run.
 
-M1, `orca_cpis.rs`, before the flag fix:
+| Finding | Test | Failed as |
+| --- | --- | --- |
+| M1 | `orca_cpis.rs::every_whirlpool_call_passes_the_accounts_orcas_client_does` | "`collect_fees`: whirlpool is writable here and read-only in Orca's client" (both templates) |
+| M2 (compound) | `orca_compound_fees.rs::two_sided_fees_are_collected_and_compounded` | "liquidity added left: 0, right: 1599965546" |
+| M2 (harvest) | `orca_harvest_many_positions.rs::only_the_rows_that_earned_collect` | "left: (0, 0), right: (47454547, 4971430)" |
+| M3 | `orca_harvest_many_positions.rs::only_the_rows_that_earned_collect`, after M2's fix | "left: (47454547, 2485715), right: (47454547, 4971430)": the B-only row's fee stayed behind |
+| M4 | `orca_compound_fees.rs::fees_in_token_a_alone_are_collected_not_compounded` | "failed with code 6017 (0x1781)" (`TokenMaxExceeded`) |
+| M6 | `run-orca-harvest.ts`'s `describeFailure` unit test | returned `"ReturnDataMismatch at inputs.dustFloor"` instead of naming Whirlpools |
 
-```text
-orcaCompoundFees collect_fees: whirlpool is writable here and read-only in Orca's client
-orcaHarvestManyPositions collect_fees: whirlpool is writable here and read-only in Orca's client
-```
-
-M2, `orca_compound_fees.rs` against the template as written. 7 of 8 fail;
-`a_position_without_liquidity_lands` passes:
-
-```text
-two_sided_fees_are_collected_and_compounded: liquidity added left: 0, right: 1599965546
-fees_in_token_a_alone_are_collected_not_compounded: the whole fee reached the wallet; left: (0, 0), right: (3479999, 0)
-fees_in_token_b_alone_are_collected_not_compounded: the whole fee reached the wallet; left: (0, 0), right: (0, 347999)
-no_fees_lands_without_collecting: the update only; left: 0, right: 1
-a_price_move_inside_the_bounds_still_lands: assertion failed: state(&setup).liquidity > before.liquidity
-a_price_outside_the_bounds_fails_in_whirlpools: `unwrap_err()` on an `Ok` value: landed: 1821 CU, 591 bytes
-an_emptied_position_is_collected_not_refilled: left: PositionState { liquidity: 1599965546, fee_owed_a: 0, fee_owed_b: 0 }, right: PositionState { liquidity: 0, .. }
-```
-
-The update, added without its liquidity guard:
-
-```text
-a_position_without_liquidity_lands: whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc failed with code 6012 (0x177c)
-```
-
-M3 and M4, the update guarded, collect and deposit still guarded on token A:
-
-```text
-fees_in_token_a_alone_are_collected_not_compounded: whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc failed with code 6017 (0x1781)
-fees_in_token_b_alone_are_collected_not_compounded: the whole fee reached the wallet; left: (0, 0), right: (0, 347999)
-```
-
-After M3 (collect on either fee), token A alone still failed with 6017, until M4's
-`increase_liquidity_by_token_amounts_v2`.
-
-M2, `orca_harvest_many_positions.rs` against the template as written. 4 of 4 fail:
-
-```text
-only_the_rows_that_earned_collect: left: (0, 0), right: (47454547, 4971430)
-a_stranger_cannot_collect_and_whirlpools_says_so: `unwrap_err()` on an `Ok` value: landed: 1927 CU, 543 bytes
-a_row_from_another_pool_reverts_the_whole_harvest: `unwrap_err()` on an `Ok` value: landed: 2432 CU, 675 bytes
-ten_rows_fit_one_legacy_transaction: Whirlpool calls left: 0, right: 20
-```
-
-Each row updated, unguarded: the row without liquidity reverted the whole harvest.
-
-```text
-Program log: Instruction: UpdateFeesAndRewards
-Program log: AnchorError occurred. Error Code: LiquidityZero. Error Number: 6012. Error Message: Liquidity amount must be greater than zero.
-Program whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc failed: custom program error: 0x177c
-```
-
-M3, the update guarded, the collect still on token A. The B-only row's fee stayed behind:
-
-```text
-only_the_rows_that_earned_collect: left: (47454547, 2485715), right: (47454547, 4971430)
-```
-
-M6, `describeFailure` before it read the logs:
-
-```text
-blames Whirlpools for its own code, though Ballista uses the same number:
-  Expected: "code 6019 came from Whirlpools, not Ballista"
-  Received: "ReturnDataMismatch at inputs.dustFloor"
-```
-
-A stranger's harvest, as the real program refuses it:
-
-```text
-Program log: Instruction: CollectFees
-Program log: AnchorError occurred. Error Code: MissingOrInvalidDelegate. Error Number: 6019. Error Message: Position token account has a missing or invalid delegate.
-Program whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc failed: custom program error: 0x1783
-Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD failed: custom program error: 0x1783
-```
-
-The floor tests and the ordered calls came after the fixes, so they have no failure from before
-one. A mutation check stands in. With both templates' floor comparisons weakened to `>=`, all four
-floor tests fail. So does `only_the_rows_that_earned_collect`, on its calls alone: the idle rows'
-empty collects left every balance and account as it was.
+The floor and call-order tests, added after the fixes above, have no failure from before one. A
+mutation check stands in: with both templates' floor comparisons weakened to `>=`, all four floor
+tests fail, and so does `only_the_rows_that_earned_collect`, on its call order alone β€” the idle
+rows' empty collects left every balance and account as it was:
 
 ```text
   left: ["UpdateFeesAndRewards", "CollectFees", "UpdateFeesAndRewards", "CollectFees", "UpdateFeesAndRewards", "CollectFees", "CollectFees"]
  right: ["UpdateFeesAndRewards", "CollectFees", "UpdateFeesAndRewards", "CollectFees", "UpdateFeesAndRewards"]
 ```
 
-## Commits
+## Claims in the docs that are now false
 
-On `claude/protocol-orca`, after 461d230:
+Quoted from this branch; the docs session's copy may have moved on. Both pages show the template's
+source directly, so each new header appears there without a docs edit.
 
-| Commit | |
-| --- | --- |
-| a85da56 | Plan the Orca templates' tests against the real Whirlpool program |
-| 16203fd | Add Orca's crates to the protocol tests and keep every snapshot's programs in LFS |
-| c073fdb | Snapshot both SOL/USDC Whirlpools for the Orca tests |
-| c6f0452 | Add the Orca module to the protocol-test harness |
-| d8b8e8b | Pin the Whirlpool behaviors the Orca templates depend on |
-| 603eb4c | Pass the whirlpool read-only to collect_fees, as Orca declares it (M1) |
-| 87ca59b | Update an Orca position's fees before compounding them, and reinvest by token amounts (M2, M3, M4) |
-| 28755bf | Update each Orca position before harvesting it, and collect either fee (M2, M3, M5) |
-| e28e05b | Name the program that refused an Orca harvest from its logs (M6) |
-| 2e7ba70 | Document the Orca snapshot |
-| 11cadf8 | Record what the Orca templates did against the real program |
-| eaa4546 | Pin each Orca run's Whirlpool calls in order, and test a real dustFloor |
+- `docs/examples/protocols/orca-compound.md:6-8` β€” "Orca's `increase_liquidity` takes limits ...
+  Set them too high and it takes the extra from your wallet." The template no longer calls
+  `increase_liquidity`; the deposit is the most liquidity the fees buy, and nothing is topped up
+  from the wallet.
+- `docs/examples/protocols/orca-compound.md:10-12` β€” "The template reads `fee_owed_a` and
+  `fee_owed_b` ... before collecting" is still true, but only after the update; without it both
+  read 0. "You choose `liquidityAmount` ... when you build the run" is not: the run takes
+  `minSqrtPrice` and `maxSqrtPrice` instead.
+- `docs/examples/protocols/orca-compound.md:22-24` β€” "Both calls have a `when` condition ... The
+  condition looks only at token A's fees." There are three calls now: the update runs while the
+  position has liquidity, the collect runs when either fee is above the floor, and the deposit
+  runs when both fees are above the floor and the position has liquidity.
+- `docs/examples/protocols/orca-compound.md:34-35` and
+  `docs/examples/protocols/orca-harvest.md:32-33` β€” "Not yet run against Orca ... no test calls
+  Orca." Tests now run both templates against the real program.
+- `docs/examples/protocols/orca-harvest.md:10-12` β€” "Sending one `collect_fees` per position
+  fails the whole transaction at the first position Orca refuses," given as the reason for the
+  `when`. The `when` does not stop a refusal (M5); what reverts the whole harvest is a row
+  Whirlpools refuses, regardless of order.
+- `docs/examples/protocols/orca-harvest.md:14-15` β€” "the template reads `fee_owed_a` ... and
+  calls `collect_fees` only if it is above `dustFloor`." It now updates first, and either fee
+  counts.
+- `docs/examples/protocols/orca-harvest.md:25` β€” "each position is one row of two accounts, the
+  position and its position token account." A row is four accounts now.
+
+Neither page yet says that `tokenOwnerAccountA`/`B` must belong to the signer (M7) or that
+`dustFloor` is unsafe at 0 (the compound template's "Remaining limits" above): both pages are
+silent on this rather than actively wrong, so they are not listed as false, but a docs pass should
+add both.
 
 This revision of the file is the next commit.

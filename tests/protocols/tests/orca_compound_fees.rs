@@ -13,7 +13,7 @@ use {
     },
     ballista_sdk::TOKEN_PROGRAM_ID,
     litesvm::LiteSVM,
-    orca_whirlpools_core as oq,
+    orca_whirlpools_client as oc, orca_whirlpools_core as oq,
     solana_address::Address,
     solana_signer::Signer,
 };
@@ -70,18 +70,7 @@ fn setup_with(
 ) -> Setup {
     let mut svm = orca::svm();
     let pool = orca::pool(&svm, SOL_USDC);
-    let owner = orca::token_wallet(
-        &mut svm,
-        &orca::seed("compound owner"),
-        10_000 * SOL,
-        2_000_000 * USDC,
-    );
-    let trader = orca::token_wallet(
-        &mut svm,
-        &orca::seed("compound trader"),
-        100_000 * SOL,
-        20_000_000 * USDC,
-    );
+    let (owner, trader) = orca::owner_and_trader(&mut svm, "compound");
     let position = open(&mut svm, &pool, &owner);
     let creator = keypair(b"ballista-protocol-tests-creator1");
     fund(&mut svm, &creator.pubkey(), 10 * SOL);
@@ -217,15 +206,16 @@ fn two_sided_fees_are_collected_and_compounded() {
         "the fees were collected"
     );
     // M4: the program buys the most liquidity both fees allow at the price it runs at.
-    assert_eq!(
-        after.liquidity - before.liquidity,
-        from_a.liquidity_delta.min(from_b.liquidity_delta)
-    );
+    let delta = after.liquidity - before.liquidity;
+    assert_eq!(delta, from_a.liquidity_delta.min(from_b.liquidity_delta));
     let (a1, b1) = balances(&setup);
     let (kept_a, kept_b) = (a1 - a0, b1 - b0);
-    assert!(
-        kept_a < owed_a && kept_b < owed_b,
-        "some of each fee was deposited"
+    // Exactly what the deposit did not spend buying `delta` at the price it ran at.
+    let spent =
+        oq::increase_liquidity_quote(delta, 0, sqrt_price, lower, upper, None, None).unwrap();
+    assert_eq!(
+        (kept_a, kept_b),
+        (owed_a - spent.token_est_a, owed_b - spent.token_est_b)
     );
     assert!(
         kept_a == 0 || kept_b == 0,
@@ -308,7 +298,11 @@ fn a_position_without_liquidity_lands() {
     let outcome =
         compound(&mut setup, example, 0, bounds).unwrap_or_else(|failure| panic!("{failure:?}"));
 
-    assert_eq!(orca::whirlpool_calls(&outcome.logs), [""; 0]);
+    assert!(
+        orca::whirlpool_calls(&outcome.logs).is_empty(),
+        "a position without liquidity makes no Whirlpool calls"
+    );
+    println!("no liquidity: {} CU", outcome.compute_units);
 }
 
 #[test]
@@ -325,6 +319,14 @@ fn a_price_move_inside_the_bounds_still_lands() {
         &setup.trader,
         1_000 * SOL,
         true,
+    );
+    // The swap must move the price without leaving the bounds it was signed with, or this test
+    // would only be exercising `a_price_outside_the_bounds_fails_in_whirlpools` instead.
+    let (min_sqrt_price, max_sqrt_price) = signed_with;
+    let moved = orca::whirlpool(&setup.svm, &SOL_USDC).sqrt_price;
+    assert!(
+        (min_sqrt_price..=max_sqrt_price).contains(&moved),
+        "the swap moved the price outside the bounds it was signed with: {moved}"
     );
     let before = state(&setup);
 
@@ -344,11 +346,7 @@ fn a_price_outside_the_bounds_fails_in_whirlpools() {
 
     let failure = compound(&mut setup, example, 0, (sqrt_price + 1, sqrt_price + 2)).unwrap_err();
 
-    assert_eq!(
-        (failure.program, failure.code),
-        (WHIRLPOOL, Some(6069)),
-        "PriceSlippageOutOfBounds: {failure:?}"
-    );
+    orca::assert_whirlpool_error(&failure, oc::WhirlpoolError::PriceSlippageOutOfBounds);
     assert_eq!(ballista_error(&failure), None);
     // The update and the collect reverted with it.
     assert_eq!((state(&setup), balances(&setup)), before);
@@ -382,6 +380,7 @@ fn an_emptied_position_is_collected_not_refilled() {
     let (a1, b1) = balances(&setup);
     assert_eq!((a1 - a0, b1 - b0), (emptied.fee_owed_a, emptied.fee_owed_b));
     assert_eq!(orca::whirlpool_calls(&outcome.logs), [COLLECT_FEES]);
+    println!("emptied position: {} CU", outcome.compute_units);
 }
 
 /// With both fees at or below `dustFloor`, nothing is collected. The update records them, and they
@@ -393,6 +392,7 @@ fn fees_at_or_below_the_floor_stay_owed() {
     let mut setup = setup(example, true);
     earn_both_fees(&mut setup);
     let owed = orca::fees_owed_now(&setup.svm, &setup.pool, &setup.position);
+    assert!(owed.0 > 0 && owed.1 > 0, "{owed:?}");
     let before = (state(&setup).liquidity, balances(&setup));
 
     let bounds = slippage_bounds(&setup, 100);
@@ -482,11 +482,7 @@ fn dust_that_buys_no_liquidity_fails_the_run_unless_the_floor_skips_it() {
 
     let failure = compound(&mut setup, example, 0, bounds).unwrap_err();
 
-    assert_eq!(
-        (failure.program, failure.code),
-        (WHIRLPOOL, Some(6012)),
-        "LiquidityZero: {failure:?}"
-    );
+    orca::assert_whirlpool_error(&failure, oc::WhirlpoolError::LiquidityZero);
     assert_eq!(ballista_error(&failure), None);
     // The update and the collect reverted with it.
     assert_eq!((state(&setup), balances(&setup)), (before, (a0, b0)));

@@ -46,6 +46,10 @@ pub const TOKEN_2022_PROGRAM: Address =
     Address::from_str_const("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 /// Ticks in one tick array.
 pub const TICKS_PER_ARRAY: i32 = 88;
+/// Anchor's own `ConstraintHasOne`, numbered from its framework-wide error range (100–2999), not a
+/// [`WHIRLPOOL`]-specific one. Whirlpools raises it when an account's `has_one` target does not
+/// match, such as a position passed against a whirlpool it does not belong to.
+pub const ANCHOR_CONSTRAINT_HAS_ONE: u32 = 2001;
 
 /// The NFT metadata authority `open_position_with_token_extensions` names.
 const METADATA_UPDATE_AUTHORITY: Address =
@@ -174,6 +178,25 @@ pub fn token_wallet(svm: &mut LiteSVM, seed: &[u8; 32], sol: u64, usdc: u64) -> 
         token_a,
         token_b,
     }
+}
+
+/// An owner, funded to open and fund positions, and a trader with ten times as much, funded to
+/// move the price without running dry. Seeded from `"{label} owner"` and `"{label} trader"`, so
+/// callers share a label across a test's other fixed seeds.
+pub fn owner_and_trader(svm: &mut LiteSVM, label: &str) -> (TokenWallet, TokenWallet) {
+    let owner = token_wallet(
+        svm,
+        &seed(&format!("{label} owner")),
+        10_000 * SOL,
+        2_000_000 * USDC,
+    );
+    let trader = token_wallet(
+        svm,
+        &seed(&format!("{label} trader")),
+        100_000 * SOL,
+        20_000_000 * USDC,
+    );
+    (owner, trader)
 }
 
 /// The token program that holds a position's NFT.
@@ -405,11 +428,20 @@ pub struct PositionState {
     pub fee_owed_b: u64,
 }
 
-pub fn position_state(svm: &LiteSVM, position: &Position) -> PositionState {
+/// Decodes `position`'s account as a Whirlpool position.
+///
+/// # Panics
+///
+/// If `position` does not exist in the SVM, or is not a Whirlpool position.
+fn decode_position(svm: &LiteSVM, position: &Position) -> oc::Position {
     let account = svm
         .get_account(&position.address)
         .unwrap_or_else(|| panic!("position {} does not exist", position.address));
-    let decoded = oc::Position::from_bytes(&account.data).expect("a Whirlpool position");
+    oc::Position::from_bytes(&account.data).expect("a Whirlpool position")
+}
+
+pub fn position_state(svm: &LiteSVM, position: &Position) -> PositionState {
+    let decoded = decode_position(svm, position);
     PositionState {
         liquidity: decoded.liquidity,
         fee_owed_a: decoded.fee_owed_a,
@@ -431,8 +463,7 @@ pub fn fees_owed_now(svm: &LiteSVM, pool: &Pool, position: &Position) -> (u64, u
             .expect("the tick is in its array");
         array.ticks[offset as usize]
     };
-    let state = oc::Position::from_bytes(&svm.get_account(&position.address).unwrap().data)
-        .expect("a Whirlpool position");
+    let state = decode_position(svm, position);
     let quote = oq::collect_fees_quote(
         whirlpool(svm, &pool.address).into(),
         state.into(),
@@ -470,4 +501,17 @@ pub fn whirlpool_calls(logs: &[String]) -> Vec<&str> {
                 .unwrap_or(UNNAMED)
         })
         .collect()
+}
+
+/// Asserts that Whirlpools itself refused with `error`, naming it instead of its bare code.
+/// Whirlpools numbers its errors from 6000, like Ballista's own (M6), so `failure.program` is what
+/// tells them apart; see [`tx::assert_ballista_failure`] for Ballista's own errors.
+#[track_caller]
+pub fn assert_whirlpool_error(failure: &Failure, error: oc::WhirlpoolError) {
+    let code = error.clone() as u32;
+    assert_eq!(
+        (failure.program, failure.code),
+        (WHIRLPOOL, Some(code)),
+        "expected Whirlpools' {error:?}, but {failure:?}"
+    );
 }

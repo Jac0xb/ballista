@@ -473,4 +473,16 @@ describe('the Orca harvest runner names the program that refused', () => {
   test('does not guess without logs', () => {
     expect(describeFailure(6019, [])).toBe('code 6019; the logs name no program that failed');
   });
+
+  test('calls out truncated logs instead of reporting that no program failed', () => {
+    const logs = [
+      `Program ${BALLISTA} invoke [1]`,
+      `Program ${WHIRLPOOLS} invoke [2]`,
+      'Program log: Instruction: CollectFees',
+      'Log truncated',
+    ];
+    expect(describeFailure(6019, logs)).toBe(
+      'code 6019; the logs were truncated, so they cannot say which program failed',
+    );
+  });
 });

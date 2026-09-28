@@ -143,12 +143,15 @@ this one layout.
       registry, account or field.
     - The spec's example uses two sugars the SDK lacks, `account.systemProgram()` and
       `expression.accountKey(name)`. Both are added, so the example compiles as written.
-11. **`rateLimit`'s arithmetic.** `elapsed = max(now − lastSpend, 0)` in `i64`, which cannot
-    overflow with both in `[0, 2^63)`, and which refills nothing, instead of failing, if the clock
-    ever steps back. Then `refill = u128(elapsed) × u128(refillPerSecond)`, below `2^127`;
-    `total = u128(spent) − min(u128(spent), refill) + u128(amount)`; require `total <=
+11. **`rateLimit`'s arithmetic.** `now = max(clock, lastSpend)` in `i64`: `now` never reads
+    earlier than `lastSpend`, so `now − lastSpend` is never negative without a separate clamp, and
+    the `lastSpend` written back, being `now`, never moves back either — so a clock that steps
+    back and later recovers never refills the same seconds twice. Then `refill = u128(now −
+    lastSpend) × u128(refillPerSecond)`, below `2^127` since both factors stay under `2^63` and
+    `2^64`; `total = u128(spent) − min(u128(spent), refill) + u128(amount)`; require `total <=
     u128(cap)` as `withinRateLimit`; write `spent = u64(total)` and `lastSpend = now`. A fresh
-    entry's `lastSpend` of 0 makes `elapsed` the whole Unix time, a full refill.
+    entry's `lastSpend` of 0 makes `now` the clock and the elapsed time the whole Unix time, a full
+    refill.
 12. **Certora covers the opcodes vacuously, as it does introspection.** Neither spec program
     declares an account pinned to the System program, so the verifier rejects every open there,
     and a read or write at pc 0 has no open before it. The two runtime errors join
@@ -2712,19 +2715,24 @@ Expected: FAIL: `rateLimit` is not exported.
  * fixed account `registry` (declared with `account.registry`).
  *
  * The entry's `spent` field (a `u64`) is what has been spent and not yet refilled, and its
- * `lastSpend` field (an `i64`) the Unix time of the last spend. Each run refills `spent` by
- * `(now − lastSpend) × refillPerSecond`, never below zero, adds `amount`, requires the total to be
- * at most `cap`, and writes both fields back.
+ * `lastSpend` field (an `i64`) the Unix time of the last spend. Each run takes `now` as the clock,
+ * or `lastSpend` if the clock reads earlier, refills `spent` by `(now − lastSpend) ×
+ * refillPerSecond`, never below zero, adds `amount`, requires the total to be at most `cap`, and
+ * writes `spent` and `now` back.
  *
  * - The refill is computed in `u128`: the elapsed seconds are below 2^63 and the rate below 2^64,
  *   so no gap between runs can overflow it. A fresh entry's `lastSpend` of 0 refills fully.
- * - A clock that reads earlier than `lastSpend` refills nothing rather than failing the run.
- * - `cap`, `refillPerSecond` and `amount` are `u64` expressions. `cap` and `refillPerSecond` are
- *   the template's to choose, not the caller's: pass constants, or inputs only when whoever builds
- *   the transaction may set their own limit.
+ * - The clock can step back between slots. A run then refills nothing, rather than failing, and
+ *   leaves `lastSpend` where it was: it never moves back, so no later run refills the same seconds
+ *   twice.
+ * - `cap`, `refillPerSecond` and `amount` are `u64` expressions. `cap` and `refillPerSecond` must
+ *   not come from the caller: whoever builds the transaction sets every input, so a cap taken from
+ *   an input is a limit the caller picks. Pass literals, such as `expression.u64(1_000_000)`, or
+ *   values the author controls, such as a registry field only an author-only branch writes.
  *
- * `name` prefixes the variables the steps bind, `<name>Now`, `<name>Spent`, `<name>Refill` and
- * `<name>Total`, and names the requirement `within<Name>`: `withinRateLimit` by default.
+ * `name` prefixes the variables the steps bind, `<name>Last`, `<name>Now`, `<name>Spent`,
+ * `<name>Refill` and `<name>Total`, and names the requirement `within<Name>`: `withinRateLimit` by
+ * default.
  */
 export function rateLimit(input: {
   registry: string;
@@ -2741,18 +2749,18 @@ export function rateLimit(input: {
   const spentField = input.spent ?? 'spent';
   const lastSpendField = input.lastSpend ?? 'lastSpend';
   const u128 = (value: Expression) => expression.cast('u128', value);
+  const last = expression.variable(`${name}Last`);
   const now = expression.variable(`${name}Now`);
   const spent = expression.variable(`${name}Spent`);
   const refill = expression.variable(`${name}Refill`);
   const total = expression.variable(`${name}Total`);
-  const elapsed = expression.max(
-    expression.subtract(now, expression.registry(input.registry, lastSpendField)),
-    expression.i64(0),
-  );
   return [
-    step.let(`${name}Now`, expression.clockUnixTimestamp()),
+    step.let(`${name}Last`, expression.registry(input.registry, lastSpendField)),
+    // `now` never reads earlier than `lastSpend`, so `now − lastSpend` is never negative, and the
+    // `lastSpend` written back never moves back.
+    step.let(`${name}Now`, expression.max(expression.clockUnixTimestamp(), last)),
     step.let(`${name}Spent`, u128(expression.registry(input.registry, spentField))),
-    step.let(`${name}Refill`, expression.multiply(u128(elapsed), u128(input.refillPerSecond))),
+    step.let(`${name}Refill`, expression.multiply(u128(expression.subtract(now, last)), u128(input.refillPerSecond))),
     step.let(
       `${name}Total`,
       expression.add(expression.subtract(spent, expression.min(spent, refill)), u128(input.amount)),
@@ -3580,19 +3588,21 @@ pub fn jupiter_daily_cap_swap() -> Vec<u8> {
     let quoted_out_amount = b.load_input(quoted_out_amount);
     let slippage_bps = b.load_input(slippage_bps);
     let platform_fee_bps = b.load_input(platform_fee_bps);
-    let zero = b.const_i64(0);
     let refill_per_second = b.const_u64(20_000);
     let cap = b.const_u64(1_728_000_000);
     let key = b.account_key(actor);
     b.open_registry(spend, Some(key), actor, 0, 16, system_program);
 
-    // rateLimit: refill in u128, never below zero, then charge `inAmount` against the cap.
+    // rateLimit: `now` never reads earlier than `lastSpend`, so it, and the `lastSpend` written
+    // back (being `now`), never move backward — a clock step-back refills nothing and never
+    // double-refills once the clock recovers. The refill itself is computed in u128, then charged
+    // against the cap.
+    let last = b.read_registry(spend, 8, OP_READ_I64);
     let now = b.clock_timestamp();
+    let now = b.binary(OP_MAX, now, last);
     let spent = b.read_registry(spend, 0, OP_READ_U64);
     let spent = b.cast(OP_CAST_U128, spent);
-    let last_spend = b.read_registry(spend, 8, OP_READ_I64);
-    let elapsed = b.binary(OP_SUB, now, last_spend);
-    let elapsed = b.binary(OP_MAX, elapsed, zero);
+    let elapsed = b.binary(OP_SUB, now, last);
     let elapsed = b.cast(OP_CAST_U128, elapsed);
     let rate = b.cast(OP_CAST_U128, refill_per_second);
     let refill = b.binary(OP_MUL, elapsed, rate);

@@ -10,18 +10,17 @@
 
 use {
     ballista_protocol_tests::{
-        snapshot::{Leg, Snapshot, SNAPSHOT_DIR},
+        snapshot::{jupiter_ran, Leg, Routing, Snapshot, ROUTE_HEAD, SNAPSHOT_DIR},
         template::{examples, upload, Example, Run},
         tx::{self, Failure, Outcome},
         wallet::{
-            self, associated_token_address, fund, keypair, token_account, token_balance, SOL,
-            WSOL_MINT,
+            self, associated_token_address, fund, holding, keypair, token_account, token_balance,
+            SOL, WSOL_MINT,
         },
     },
     ballista_sdk::TOKEN_PROGRAM_ID,
     litesvm::LiteSVM,
     solana_address::Address,
-    solana_instruction::AccountMeta,
     solana_keypair::Keypair,
     solana_signer::Signer,
     std::collections::BTreeMap,
@@ -63,7 +62,10 @@ impl<'a> Sweep<'a> {
             "route {ROUTE} does not sell from the seller's USDC account"
         );
         let swap = &leg.instructions.swap;
-        let head: Vec<Address> = swap.accounts[..4].iter().map(|meta| meta.pubkey).collect();
+        let head: Vec<Address> = swap.accounts[..ROUTE_HEAD]
+            .iter()
+            .map(|meta| meta.pubkey)
+            .collect();
         assert_eq!(
             head,
             [
@@ -163,13 +165,6 @@ impl<'a> Sweep<'a> {
         self.svm.get_balance(&self.seller.pubkey()).unwrap()
     }
 
-    /// Whether Jupiter was called at all in a failed sale: a requirement before the sale stops the
-    /// run before it.
-    fn jupiter_ran(&self, failure: &Failure) -> bool {
-        let invoked = format!("Program {} invoke", self.jupiter);
-        failure.logs.iter().any(|line| line.starts_with(&invoked))
-    }
-
     /// After a failed sale: the transaction reverted whole. The seller still holds `balance`, the
     /// setup's wrapped SOL account is gone with it, and only the fee was paid.
     #[track_caller]
@@ -189,50 +184,6 @@ impl<'a> Sweep<'a> {
             lamports_before - failure.fee,
             "the failed sale of {balance} cost the seller more or less than the fee"
         );
-    }
-}
-
-/// Where a sale's route sells from and pays to.
-struct Routing {
-    /// At `sourceAta`: the balance the template reads and sells.
-    source: Address,
-    /// At `destinationAta`: the account the template measures the proceeds in.
-    destination: Address,
-    /// `route`'s accounts after the fourth, forwarded as `routeAccounts`. They name the accounts
-    /// each step moves, which Jupiter does not tie to the two above.
-    steps: Vec<AccountMeta>,
-}
-
-impl Routing {
-    /// The route as the Swap API built it: the seller's own accounts throughout. The template
-    /// passes `route`'s first four accounts itself; the rest are the group.
-    fn of(leg: &Leg) -> Routing {
-        Routing {
-            source: leg.source_token_account,
-            destination: leg.destination_token_account,
-            steps: leg.instructions.swap.accounts[4..].to_vec(),
-        }
-    }
-
-    /// The route with its step paying `account` in place of the seller's wrapped SOL account:
-    /// Raydium's `output_token_account`, the one place the steps name it.
-    fn paying(leg: &Leg, account: Address) -> Routing {
-        let mut routing = Routing::of(leg);
-        let outputs: Vec<&mut AccountMeta> = routing
-            .steps
-            .iter_mut()
-            .filter(|meta| meta.pubkey == leg.destination_token_account)
-            .collect();
-        assert_eq!(
-            outputs.len(),
-            1,
-            "route {ROUTE}'s one step should name the seller's wrapped SOL account once, as its \
-             output"
-        );
-        for output in outputs {
-            output.pubkey = account;
-        }
-        routing
     }
 }
 
@@ -371,13 +322,7 @@ fn an_attackers_destination_fails_at_proceeds_go_to_the_seller() {
              lamports changed by {} (the fee {}). {} CU, {} bytes",
             token_balance(&sweep.svm, &attacker_wsol),
             token_balance(&sweep.svm, &leg.source_token_account),
-            match sweep.svm.get_account(&leg.destination_token_account) {
-                None => "was closed".to_string(),
-                Some(_) => format!(
-                    "holds {}",
-                    token_balance(&sweep.svm, &leg.destination_token_account)
-                ),
-            },
+            holding(&sweep.svm, &leg.destination_token_account),
             i128::from(sweep.lamports()) - i128::from(before),
             outcome.fee,
             outcome.compute_units,
@@ -385,7 +330,7 @@ fn an_attackers_destination_fails_at_proceeds_go_to_the_seller() {
         ),
     };
     tx::assert_requirement_failed(&failure, example, "proceedsGoToTheSeller");
-    assert!(!sweep.jupiter_ran(&failure), "{failure:?}");
+    assert!(!jupiter_ran(&sweep.jupiter, &failure), "{failure:?}");
     sweep.assert_nothing_sold(balance, before, &failure);
     assert_eq!(token_balance(&sweep.svm, &attacker_wsol), 0);
 
@@ -429,7 +374,7 @@ fn another_wallets_source_fails_at_sweeps_the_sellers_own_balance() {
         )
         .unwrap_err();
     tx::assert_requirement_failed(&failure, example, "sweepsTheSellersOwnBalance");
-    assert!(!sweep.jupiter_ran(&failure), "{failure:?}");
+    assert!(!jupiter_ran(&sweep.jupiter, &failure), "{failure:?}");
     sweep.assert_nothing_sold(balance, before, &failure);
     assert_eq!(token_balance(&sweep.svm, &theirs), balance);
 }

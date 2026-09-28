@@ -6,7 +6,7 @@
 //! `programs/*.so` (program binaries, in Git LFS). `scripts/snapshot/snapshot.mjs` writes it.
 
 use {
-    crate::{decode_hex, wallet},
+    crate::{decode_hex, tx, wallet},
     base64::{engine::general_purpose::STANDARD as BASE64, Engine},
     litesvm::LiteSVM,
     serde::{de::DeserializeOwned, Deserialize},
@@ -382,6 +382,64 @@ impl LegInstructions {
     pub fn all(&self) -> Vec<Instruction> {
         self.with_swap(self.swap.clone())
     }
+}
+
+/// The accounts at the head of a route's own instruction that a template passes itself: the token
+/// program, the wallet, and the two token accounts it measures. The rest arrive as the run's
+/// `routeAccounts` group.
+pub const ROUTE_HEAD: usize = 4;
+
+/// Where a route sells from and pays to.
+pub struct Routing {
+    /// At `sourceAta`: the account the template reads as sold from.
+    pub source: Address,
+    /// At `destinationAta`: the account the template measures the proceeds or fill in.
+    pub destination: Address,
+    /// The route's accounts after [`ROUTE_HEAD`], forwarded as `routeAccounts`. They name the
+    /// accounts each step moves, which Jupiter does not tie to the two above.
+    pub steps: Vec<AccountMeta>,
+}
+
+impl Routing {
+    /// The route as the Swap API built it: the wallet's own accounts throughout.
+    pub fn of(leg: &Leg) -> Routing {
+        Routing {
+            source: leg.source_token_account,
+            destination: leg.destination_token_account,
+            steps: leg.instructions.swap.accounts[ROUTE_HEAD..].to_vec(),
+        }
+    }
+
+    /// The route with its step paying `account` in place of the wallet's destination account, the
+    /// one place the steps name it.
+    ///
+    /// # Panics
+    ///
+    /// If the route's steps do not name the destination account exactly once.
+    pub fn paying(leg: &Leg, account: Address) -> Routing {
+        let mut routing = Routing::of(leg);
+        let outputs: Vec<&mut AccountMeta> = routing
+            .steps
+            .iter_mut()
+            .filter(|meta| meta.pubkey == leg.destination_token_account)
+            .collect();
+        assert_eq!(
+            outputs.len(),
+            1,
+            "a route's steps should name its destination account exactly once, as its output"
+        );
+        for output in outputs {
+            output.pubkey = account;
+        }
+        routing
+    }
+}
+
+/// Whether `jupiter` was invoked at all in a failed run: a requirement that fires before the route
+/// runs stops the run before this is true.
+pub fn jupiter_ran(jupiter: &Address, failure: &tx::Failure) -> bool {
+    let invoked = format!("Program {jupiter} invoke");
+    failure.logs.iter().any(|line| line.starts_with(&invoked))
 }
 
 /// Loads Ballista, built from source, at its declared ID.

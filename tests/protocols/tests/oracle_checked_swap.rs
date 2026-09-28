@@ -14,12 +14,12 @@ use {
             copy_pyth_feed, pyth_price, set_pyth_price, PythPrice, SOL_USD_FEED_ID,
             USDC_USD_FEED_ID,
         },
-        snapshot::{Leg, Snapshot, SNAPSHOT_DIR},
+        snapshot::{jupiter_ran, Leg, Routing, Snapshot, ROUTE_HEAD, SNAPSHOT_DIR},
         template::{examples, upload, Example, Run},
         tx::{self, assert_requirement_failed, Failure, Outcome},
         wallet::{
-            self, associated_token_address, fund, keypair, token_account, token_balance, SOL,
-            TOKEN_ACCOUNT_LEN, WSOL_MINT,
+            self, associated_token_address, fund, holding, keypair, token_account, token_balance,
+            SOL, TOKEN_ACCOUNT_LEN, WSOL_MINT,
         },
     },
     ballista_sdk::{SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID},
@@ -35,9 +35,6 @@ const ROUTE: &str = "solToUsdc";
 const TEMPLATE_ID: u16 = 5;
 /// 1%: how far below the oracle's valuation the fill may land.
 const TOLERANCE_BPS: u64 = 100;
-/// The accounts at the head of `route`'s list that the template passes itself: the token program,
-/// the trader, and the two token accounts it measures. The rest arrive as `routeAccounts`.
-const ROUTE_HEAD: usize = 4;
 /// SPL Token `Mint`: `decimals` is the byte at 44.
 const MINT_DECIMALS: usize = 44;
 /// `route`'s own accounts, before the steps': the four the template passes, then the destination
@@ -154,13 +151,6 @@ impl Swap {
         )
     }
 
-    /// Whether Jupiter was called at all in a failed run: a requirement before the swap stops the
-    /// run before it.
-    fn jupiter_ran(&self, failure: &Failure) -> bool {
-        let invoked = format!("Program {} invoke", self.jupiter);
-        failure.logs.iter().any(|line| line.starts_with(&invoked))
-    }
-
     /// Sends `run` in `route`'s place, between Jupiter's own setup and cleanup.
     fn send(&mut self, run: Instruction) -> Result<Outcome, Failure> {
         let instructions = self.leg.instructions.with_swap(run);
@@ -186,48 +176,6 @@ impl Swap {
             |mint: &Address| i32::from(self.svm.get_account(mint).unwrap().data[MINT_DECIMALS]);
         decimals(&self.leg.output_mint) + pyth_price(&self.svm, price_update).exponent
             - decimals(&self.leg.input_mint)
-    }
-}
-
-/// Where a run's route sells from and pays to.
-struct Routing {
-    /// At `sourceAta`: the account the template measures as sold from.
-    source: Address,
-    /// At `destinationAta`: the account the template measures the fill in.
-    destination: Address,
-    /// `route`'s accounts after the fourth, forwarded as `routeAccounts`. They name the accounts
-    /// each step moves, which Jupiter does not tie to the two above.
-    steps: Vec<AccountMeta>,
-}
-
-impl Routing {
-    /// The route as the Swap API built it: the trader's own accounts throughout.
-    fn of(leg: &Leg) -> Routing {
-        Routing {
-            source: leg.source_token_account,
-            destination: leg.destination_token_account,
-            steps: leg.instructions.swap.accounts[ROUTE_HEAD..].to_vec(),
-        }
-    }
-
-    /// The route with its step paying `account` in place of the trader's USDC account: Meteora's
-    /// `user_token_out`, the one place the steps name it.
-    fn paying(leg: &Leg, account: Address) -> Routing {
-        let mut routing = Routing::of(leg);
-        let outputs: Vec<&mut AccountMeta> = routing
-            .steps
-            .iter_mut()
-            .filter(|meta| meta.pubkey == leg.destination_token_account)
-            .collect();
-        assert_eq!(
-            outputs.len(),
-            1,
-            "route {ROUTE}'s one step should name the trader's USDC account once, as its output"
-        );
-        for output in outputs {
-            output.pubkey = account;
-        }
-        routing
     }
 }
 
@@ -314,14 +262,6 @@ fn route_alone(
     instructions.push(route);
     let result = tx::send(&mut svm, &trader, &[], &instructions, &leg.lookup_tables);
     (svm, result)
-}
-
-/// A token account's balance, or how it ended if it no longer exists.
-fn holding(svm: &LiteSVM, account: &Address) -> String {
-    match svm.get_account(account) {
-        None => "emptied and closed".to_string(),
-        Some(_) => format!("holding {}", token_balance(svm, account)),
-    }
 }
 
 /// The template's floor: `sold × price × 10^scale`, less `tolerance_bps`, rounded down at each
@@ -687,7 +627,7 @@ fn another_wallets_source_fails_at_sells_the_traders_own_tokens() {
     );
     let failure = swap.send(run).unwrap_err();
     assert_requirement_failed(&failure, example, "sellsTheTradersOwnTokens");
-    assert!(!swap.jupiter_ran(&failure), "{failure:?}");
+    assert!(!jupiter_ran(&swap.jupiter, &failure), "{failure:?}");
     assert_eq!(token_balance(&swap.svm, &theirs), leg.in_amount);
 }
 
@@ -734,7 +674,7 @@ fn an_attackers_destination_fails_at_proceeds_go_to_the_trader() {
         ),
     };
     assert_requirement_failed(&failure, example, "proceedsGoToTheTrader");
-    assert!(!swap.jupiter_ran(&failure), "{failure:?}");
+    assert!(!jupiter_ran(&swap.jupiter, &failure), "{failure:?}");
     assert_eq!(token_balance(&swap.svm, &attacker_usdc), 0);
     assert_eq!(
         swap.svm.get_balance(&trader),

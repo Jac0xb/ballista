@@ -80,7 +80,7 @@ failed run rolls them back with the transaction.
 | --- | --- | --- |
 | 75 `OPEN_REGISTRY` | `a` entry account, `b` key register (`pubkey`, or none for the zero key), `c` payer account; immediate: registry index, registry size, System program account | Checks or creates the entry, then keeps it borrowed for the run |
 | 76 `READ_REGISTRY` | `dst`, `a` entry account; immediate: field offset, a read opcode as the width selector | the field, typed as that read |
-| 77 `WRITE_REGISTRY` | `a` entry account, `b` value register; immediate: field offset, width selector | writes the value (`bool`, `u64`, `i64`, `u128` or `pubkey`); its type must match the width |
+| 77 `WRITE_REGISTRY` | `a` value register, `b` entry account; immediate: field offset, width selector | writes the value (`bool`, `u64`, `i64`, `u128` or `pubkey`); its type must match the width |
 
 Verifier rules, `InvalidRegistry` unless noted:
 - `OPEN_REGISTRY` only at the root, never inside a loop; each entry account opened once; at most

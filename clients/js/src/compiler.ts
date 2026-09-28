@@ -832,15 +832,19 @@ class Compiler {
         requireType(bump, 'u64', 'PDA bump');
         bumpRegister = bump.register;
       }
-      const segmentStart = this.dataSegments.length;
-      for (const seed of current.seeds) {
+      // Every seed compiles before any seed segment is appended. A seed that is itself a `pda`
+      // pushes its own seeds while it compiles, and those must not land inside this derivation's
+      // range, as data parts must not (see `compileDataParts`).
+      const seeds = current.seeds.map((seed) => {
         const value = this.compileExpression(seed, loop, bindings);
         const seedLength = value.type === 'bytes' ? value.maxLength : fixedValueLength(value.type);
         if (seedLength > MAX_PDA_SEED_LENGTH) {
           throw new RangeError(`PDA seed can exceed ${MAX_PDA_SEED_LENGTH} bytes`);
         }
-        this.dataSegments.push(this.compileSeedSegment(value));
-      }
+        return value;
+      });
+      const segmentStart = this.dataSegments.length;
+      for (const value of seeds) this.dataSegments.push(this.compileSeedSegment(value));
       return this.emit(
         current.bump === undefined ? opcode.derivePda : opcode.createPda,
         'pubkey',

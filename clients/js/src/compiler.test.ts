@@ -909,6 +909,45 @@ describe('data segments', () => {
     // Register 0 is the owner's key, the PDA's only seed; register 1 is the derived address.
     expect(segments.slice(cpis[0]!.start, cpis[0]!.start + cpis[0]!.length)).toEqual([{ kind: 7, register: 1 }]);
   });
+
+  test('a PDA seed that derives a PDA leaves the outer derivation its own segments', () => {
+    // The associated token account of a vault PDA: the vault is the account's owner seed.
+    const compiled = compileTemplate(
+      defineTemplate({
+        accounts: {
+          vaultProgram: { executable: true, address: address(9) },
+          tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
+          associatedTokenProgram: { executable: true, address: ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES },
+          authority: {},
+          mint: {},
+          vaultTokens: {},
+        },
+        steps: [
+          step.require(
+            expression.equal(
+              expression.accountField(account.fixed('vaultTokens'), 'key'),
+              expression.pda(account.fixed('associatedTokenProgram'), [
+                expression.pda(account.fixed('vaultProgram'), [expression.accountField(account.fixed('authority'), 'key')]),
+                expression.accountField(account.fixed('tokenProgram'), 'key'),
+                expression.accountField(account.fixed('mint'), 'key'),
+              ]),
+            ),
+          ),
+        ],
+      }),
+    );
+    const [vault, ata] = records(compiled).filter((record) => record[0] === opcode.derivePda);
+    const range = new DataView(ata!.buffer, ata!.byteOffset);
+    const [start, length] = [range.getUint32(6, true), range.getUint32(10, true)];
+    // Register 0 is the token account's key and register 1 the authority's, the vault's only seed.
+    // Register 2 is the vault; registers 3 and 4 are the token program's and the mint's keys.
+    expect(vault![1]).toBe(2);
+    expect(segmentTables(compiled).segments.slice(start, start + length)).toEqual([
+      { kind: 7, register: 2 },
+      { kind: 7, register: 3 },
+      { kind: 7, register: 4 },
+    ]);
+  });
 });
 
 describe('output steps', () => {

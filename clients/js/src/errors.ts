@@ -64,6 +64,7 @@ export const VERIFIER_ERROR_NAMES = [
   'InvalidMinIterations',
   'TooManyAccountGroups',
   'InvalidLoop',
+  'InvalidOutput',
 ] as const;
 
 export type RuntimeErrorName = (typeof RUNTIME_ERROR_NAMES)[number];

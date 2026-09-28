@@ -315,6 +315,7 @@ mod tests {
         assert_eq!(decode_ballista_error(6129).unwrap().name, "InvalidLoop");
         assert!(decode_ballista_error(1).is_none());
         assert!(decode_ballista_error(6023).is_none());
-        assert!(decode_ballista_error(6130).is_none());
+        assert_eq!(decode_ballista_error(6130).unwrap().name, "InvalidOutput");
+        assert!(decode_ballista_error(6131).is_none());
     }
 }

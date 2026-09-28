@@ -54,7 +54,8 @@ describe('error decoding', () => {
     expect(decodeBallistaError(1)).toBeUndefined();
     expect(decodeBallistaError(6023)).toBeUndefined();
     expect(decodeBallistaError(6099)).toBeUndefined();
-    expect(decodeBallistaError(6130)).toBeUndefined();
+    expect(decodeBallistaError((5 << 16) | 6130)).toMatchObject({ name: 'InvalidOutput', context: 5, source: 'verifier' });
+    expect(decodeBallistaError(6131)).toBeUndefined();
     expect(decodeBallistaError(-1)).toBeUndefined();
   });
 

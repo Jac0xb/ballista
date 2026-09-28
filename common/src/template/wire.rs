@@ -666,6 +666,9 @@ pub enum TemplateError {
     /// A `REPEAT` with an empty body, a zero maximum or a destination register, or inside another
     /// loop; a loop past `MAX_LOOPS`; or a row account or row input named inside a `REPEAT` body.
     InvalidLoop(usize),
+    /// An `EMIT` or `SET_RETURN_DATA` can encode more than `MAX_RETURN_DATA_LEN` bytes, or a
+    /// `SET_RETURN_DATA` repeats, sits in a loop, or precedes an invoke.
+    InvalidOutput(usize),
 }
 
 impl TemplateError {
@@ -706,6 +709,7 @@ impl TemplateError {
             TemplateError::InvalidMinIterations => (27, 0),
             TemplateError::TooManyAccountGroups => (28, 0),
             TemplateError::InvalidLoop(index) => (29, clamp(index)),
+            TemplateError::InvalidOutput(index) => (30, clamp(index)),
         };
         (VERIFIER_ERROR_BASE + index, context)
     }
@@ -713,7 +717,7 @@ impl TemplateError {
 
 /// Verifier error names in code order, shared with the SDK through
 /// `fixtures/verifier-error-names.txt`.
-pub const VERIFIER_ERROR_NAMES: [&str; 30] = [
+pub const VERIFIER_ERROR_NAMES: [&str; 31] = [
     "Truncated",
     "PayloadTooLarge",
     "InvalidMagic",
@@ -744,6 +748,7 @@ pub const VERIFIER_ERROR_NAMES: [&str; 30] = [
     "InvalidMinIterations",
     "TooManyAccountGroups",
     "InvalidLoop",
+    "InvalidOutput",
 ];
 
 /// Packs an error kind and a 16-bit context into one custom program error code.
@@ -852,13 +857,14 @@ mod tests {
             TemplateError::InvalidMinIterations,
             TemplateError::TooManyAccountGroups,
             TemplateError::InvalidLoop(15),
+            TemplateError::InvalidOutput(15),
         ];
         let mut codes: Vec<u32> = variants.iter().map(|error| error.code().0).collect();
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(codes.len(), variants.len());
         assert_eq!(codes[0], VERIFIER_ERROR_BASE);
-        assert_eq!(*codes.last().unwrap(), VERIFIER_ERROR_BASE + 29);
+        assert_eq!(*codes.last().unwrap(), VERIFIER_ERROR_BASE + 30);
         for variant in &variants {
             let (code, _) = variant.code();
             let name = format!("{variant:?}");
@@ -875,5 +881,9 @@ mod tests {
         assert_eq!(decode_error(encode_error(kind, context)), (kind, context));
         assert_eq!(TemplateError::InvalidCpi(6).code(), (VERIFIER_ERROR_BASE + 15, 6));
         assert_eq!(TemplateError::InvalidLoop(4).code(), (VERIFIER_ERROR_BASE + 29, 4));
+        assert_eq!(TemplateError::InvalidOutput(9).code(), (VERIFIER_ERROR_BASE + 30, 9));
+        let decoded = decode_ballista_error(encode_error(VERIFIER_ERROR_BASE + 30, 9));
+        assert_eq!(decoded.map(|error| error.name), Some("InvalidOutput"));
+        assert_eq!(decode_ballista_error(VERIFIER_ERROR_BASE + 31), None);
     }
 }

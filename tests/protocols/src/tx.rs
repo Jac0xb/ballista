@@ -443,20 +443,29 @@ mod tests {
     fn a_requirement_is_matched_at_any_pc_of_its_step() {
         let examples = examples();
         let sweep = &examples["tokenSweepIntoSwap"];
-        for pc in [9, 10] {
+        let worth: Vec<u16> = sweep
+            .labels
+            .iter()
+            .filter(|(_, label)| label.as_str() == "worthSelling")
+            .map(|(pc, _)| *pc)
+            .collect();
+        assert!(worth.len() > 1, "{worth:?}");
+        for pc in worth {
             let failed = failure(ballista_sdk::ID, encode_error(REQUIREMENT_FAILED, pc));
             assert_requirement_failed(&failed, sweep, "worthSelling");
             assert_ballista_failure(&failed, sweep, "RequirementFailed", "worthSelling");
         }
     }
 
+    /// pc 18 is in `worthSelling`. Program counters move when the template changes; the message
+    /// then names the step pc 18 moved into.
     #[test]
     #[should_panic(
-        expected = "expected Ballista's RequirementFailed in \"saleMetTheQuote\", but it failed with RequirementFailed at pc 10, in \"worthSelling\""
+        expected = "expected Ballista's RequirementFailed in \"saleMetTheQuote\", but it failed with RequirementFailed at pc 18, in \"worthSelling\""
     )]
     fn another_step_s_failure_does_not_match() {
         let examples = examples();
-        let failed = failure(ballista_sdk::ID, encode_error(REQUIREMENT_FAILED, 10));
+        let failed = failure(ballista_sdk::ID, encode_error(REQUIREMENT_FAILED, 18));
         assert_requirement_failed(&failed, &examples["tokenSweepIntoSwap"], "saleMetTheQuote");
     }
 

@@ -15,8 +15,15 @@
  * within `slippageBps`, and the swap has to stay within the pools and tick arrays the route's
  * accounts cover.
  *
+ * Jupiter checks `route`'s destination by its mint alone, and a step pays whichever account it
+ * names. A route that paid the proceeds into someone else's account of that mint, measured there,
+ * would meet the quote with the seller's whole balance. So the template requires the seller to own
+ * both token accounts: the balance it sells and the account the proceeds reach. The seller still
+ * authorizes every step of the route, so a route's steps can also spend other token accounts the
+ * seller owns, which neither balance shows.
+ *
  * Both token accounts are pinned to the legacy SPL Token program, so a Token-2022 account fails
- * the owner check instead of being read with the wrong layout.
+ * that account constraint instead of being read with the wrong layout.
  */
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -32,6 +39,7 @@ import {
   JUPITER_V6,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_LENGTH,
+  TOKEN_ACCOUNT_OWNER_OFFSET,
   addressBytes,
 } from './shared.js';
 
@@ -70,6 +78,23 @@ export const tokenSweepIntoSwap = defineTemplate({
   },
   accountGroups: ['routeAccounts'],
   steps: [
+    // Both ends of the sale are the seller's: the step that pays the proceeds can name any account
+    // of the output mint, so the one measured must be the seller's.
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('sourceAta'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('seller'), 'key'),
+      ),
+      'sweepsTheSellersOwnBalance',
+    ),
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('destinationAta'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('seller'), 'key'),
+      ),
+      'proceedsGoToTheSeller',
+    ),
+
     step.let('available', balanceOf('sourceAta'), 'readSellableBalance'),
 
     step.require(

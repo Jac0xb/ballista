@@ -386,6 +386,26 @@ describe('the token sweep', () => {
       quotedOut?.kind === 'encoded' && dependsOn(quotedOut.value, bindings, sourceBalance),
     ).toBe(true);
   });
+
+  // Jupiter checks `route`'s destination by its mint alone, and a step pays whichever account it
+  // names. On the real programs an attacker's wrapped SOL account, there and as the step's output,
+  // took the whole sale and met the quote (tests/protocols/findings/token-sweep.md).
+  test('requires the seller to own both token accounts, before reading either', () => {
+    expect(TOKEN_ACCOUNT_OWNER_OFFSET).toBe(32);
+    for (const [label, name] of [
+      ['sweepsTheSellersOwnBalance', 'sourceAta'],
+      ['proceedsGoToTheSeller', 'destinationAta'],
+    ] as const) {
+      expect(requireLabeled(tokenSweepIntoSwap, label).condition).toEqual(
+        expression.equal(
+          expression.accountData(account.fixed(name), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+          expression.accountField(account.fixed('seller'), 'key'),
+        ),
+      );
+    }
+    const labels = tokenSweepIntoSwap.steps.map((step) => step.label);
+    expect(labels.slice(0, 2)).toEqual(['sweepsTheSellersOwnBalance', 'proceedsGoToTheSeller']);
+  });
 });
 
 describe('the Jito tip', () => {

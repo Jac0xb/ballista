@@ -15,11 +15,13 @@ use {
         tx::{self, Failure, Outcome},
         wallet::{
             self, associated_token_address, fund, keypair, token_account, token_balance, SOL,
+            WSOL_MINT,
         },
     },
     ballista_sdk::TOKEN_PROGRAM_ID,
     litesvm::LiteSVM,
     solana_address::Address,
+    solana_instruction::AccountMeta,
     solana_keypair::Keypair,
     solana_signer::Signer,
     std::collections::BTreeMap,
@@ -120,24 +122,33 @@ impl<'a> Sweep<'a> {
         slippage_bps: u16,
         dust_floor: u64,
     ) -> Result<Outcome, Failure> {
+        self.sell_routed(balance, slippage_bps, dust_floor, Routing::of(self.leg))
+    }
+
+    /// [`Sweep::sell_with`] with `routing`'s accounts in place of the route's own.
+    fn sell_routed(
+        &mut self,
+        balance: u64,
+        slippage_bps: u16,
+        dust_floor: u64,
+        routing: Routing,
+    ) -> Result<Outcome, Failure> {
         let leg = self.leg;
         let seller = self.seller.pubkey();
         token_account(&mut self.svm, &seller, &self.usdc, balance);
-        // The template passes `route`'s first four accounts itself; the rest are the group.
-        let swap = &leg.instructions.swap;
         let run = Run::new(self.template, self.example)
             .account("jupiter", self.jupiter, false, false)
             .account("tokenProgram", TOKEN_PROGRAM_ID, false, false)
             .account("seller", seller, true, true)
-            .account("sourceAta", leg.source_token_account, true, false)
-            .account("destinationAta", leg.destination_token_account, true, false)
+            .account("sourceAta", routing.source, true, false)
+            .account("destinationAta", routing.destination, true, false)
             .input_bytes("routePlan", &leg.route.route_plan)
             .input_u64("quotedInAmount", leg.route.in_amount)
             .input_u64("quotedOutAmount", leg.route.quoted_out_amount)
             .input_u64("slippageBps", u64::from(slippage_bps))
             .input_u64("platformFeeBps", u64::from(leg.route.platform_fee_bps))
             .input_u64("dustFloor", dust_floor)
-            .group("routeAccounts", swap.accounts[4..].iter().cloned())
+            .group("routeAccounts", routing.steps)
             .build();
         tx::send(
             &mut self.svm,
@@ -150,6 +161,13 @@ impl<'a> Sweep<'a> {
 
     fn lamports(&self) -> u64 {
         self.svm.get_balance(&self.seller.pubkey()).unwrap()
+    }
+
+    /// Whether Jupiter was called at all in a failed sale: a requirement before the sale stops the
+    /// run before it.
+    fn jupiter_ran(&self, failure: &Failure) -> bool {
+        let invoked = format!("Program {} invoke", self.jupiter);
+        failure.logs.iter().any(|line| line.starts_with(&invoked))
     }
 
     /// After a failed sale: the transaction reverted whole. The seller still holds `balance`, the
@@ -171,6 +189,50 @@ impl<'a> Sweep<'a> {
             lamports_before - failure.fee,
             "the failed sale of {balance} cost the seller more or less than the fee"
         );
+    }
+}
+
+/// Where a sale's route sells from and pays to.
+struct Routing {
+    /// At `sourceAta`: the balance the template reads and sells.
+    source: Address,
+    /// At `destinationAta`: the account the template measures the proceeds in.
+    destination: Address,
+    /// `route`'s accounts after the fourth, forwarded as `routeAccounts`. They name the accounts
+    /// each step moves, which Jupiter does not tie to the two above.
+    steps: Vec<AccountMeta>,
+}
+
+impl Routing {
+    /// The route as the Swap API built it: the seller's own accounts throughout. The template
+    /// passes `route`'s first four accounts itself; the rest are the group.
+    fn of(leg: &Leg) -> Routing {
+        Routing {
+            source: leg.source_token_account,
+            destination: leg.destination_token_account,
+            steps: leg.instructions.swap.accounts[4..].to_vec(),
+        }
+    }
+
+    /// The route with its step paying `account` in place of the seller's wrapped SOL account:
+    /// Raydium's `output_token_account`, the one place the steps name it.
+    fn paying(leg: &Leg, account: Address) -> Routing {
+        let mut routing = Routing::of(leg);
+        let outputs: Vec<&mut AccountMeta> = routing
+            .steps
+            .iter_mut()
+            .filter(|meta| meta.pubkey == leg.destination_token_account)
+            .collect();
+        assert_eq!(
+            outputs.len(),
+            1,
+            "route {ROUTE}'s one step should name the seller's wrapped SOL account once, as its \
+             output"
+        );
+        for output in outputs {
+            output.pubkey = account;
+        }
+        routing
     }
 }
 
@@ -270,6 +332,106 @@ fn a_balance_past_the_routes_tick_arrays_fails_in_raydium() {
         "{failure:?}"
     );
     sweep.assert_nothing_sold(balance, before, &failure);
+}
+
+/// A hostile route's proceeds: an attacker's wrapped SOL account (write rule 1) at
+/// `destinationAta`, and in place of the seller's as the Raydium step's output. Jupiter checks
+/// `route`'s destination by its mint alone, and the step pays the account it names, so the proceeds
+/// reach the attacker, where the template measures them, and meet the quote. The template requires
+/// the seller to own the destination, and fails at `proceedsGoToTheSeller`, before the route runs.
+/// With the seller's own account at `destinationAta` instead, the step still pays the attacker, and
+/// the template sees no proceeds.
+#[test]
+fn an_attackers_destination_fails_at_proceeds_go_to_the_seller() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+    let mut sweep = Sweep::new(&snapshot, example);
+    let leg = sweep.leg;
+    let balance = leg.route.in_amount;
+    let attacker = keypair(b"ballista-protocol-tests-attacker").pubkey();
+    let attacker_wsol = token_account(&mut sweep.svm, &attacker, &WSOL_MINT, 0);
+    let before = sweep.lamports();
+
+    let sale = sweep.sell_routed(
+        balance,
+        leg.route.slippage_bps,
+        DUST_FLOOR,
+        Routing {
+            destination: attacker_wsol,
+            ..Routing::paying(leg, attacker_wsol)
+        },
+    );
+    let failure = match sale {
+        Err(failure) => failure,
+        // What the requirement stops: the seller's whole balance buys SOL for the attacker.
+        Ok(outcome) => panic!(
+            "the sale landed. The attacker's wrapped SOL account holds {}; the seller's USDC \
+             account holds {} of the {balance} it held, its wrapped SOL account {}, and its \
+             lamports changed by {} (the fee {}). {} CU, {} bytes",
+            token_balance(&sweep.svm, &attacker_wsol),
+            token_balance(&sweep.svm, &leg.source_token_account),
+            match sweep.svm.get_account(&leg.destination_token_account) {
+                None => "was closed".to_string(),
+                Some(_) => format!(
+                    "holds {}",
+                    token_balance(&sweep.svm, &leg.destination_token_account)
+                ),
+            },
+            i128::from(sweep.lamports()) - i128::from(before),
+            outcome.fee,
+            outcome.compute_units,
+            outcome.size,
+        ),
+    };
+    tx::assert_requirement_failed(&failure, example, "proceedsGoToTheSeller");
+    assert!(!sweep.jupiter_ran(&failure), "{failure:?}");
+    sweep.assert_nothing_sold(balance, before, &failure);
+    assert_eq!(token_balance(&sweep.svm, &attacker_wsol), 0);
+
+    // The seller's own wrapped SOL account where the template measures, the attacker's still in
+    // the step.
+    let sale = sweep.sell_routed(
+        balance,
+        leg.route.slippage_bps,
+        DUST_FLOOR,
+        Routing::paying(leg, attacker_wsol),
+    );
+    let failure = sale.unwrap_err();
+    tx::assert_requirement_failed(&failure, example, "saleMetTheQuote");
+    assert_eq!(token_balance(&sweep.svm, &attacker_wsol), 0);
+}
+
+/// Another wallet's USDC account (write rule 1) at `sourceAta`, while the route's step still sells
+/// from the seller's own. The template holds both ends of the sale to the seller: it fails at
+/// `sweepsTheSellersOwnBalance`, before the route runs.
+#[test]
+fn another_wallets_source_fails_at_sweeps_the_sellers_own_balance() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+    let mut sweep = Sweep::new(&snapshot, example);
+    let leg = sweep.leg;
+    let balance = leg.route.in_amount;
+    let other = keypair(b"ballista-protocol-tests-other-01").pubkey();
+    let theirs = token_account(&mut sweep.svm, &other, &sweep.usdc, balance);
+    let before = sweep.lamports();
+
+    let failure = sweep
+        .sell_routed(
+            balance,
+            leg.route.slippage_bps,
+            DUST_FLOOR,
+            Routing {
+                source: theirs,
+                ..Routing::of(leg)
+            },
+        )
+        .unwrap_err();
+    tx::assert_requirement_failed(&failure, example, "sweepsTheSellersOwnBalance");
+    assert!(!sweep.jupiter_ran(&failure), "{failure:?}");
+    sweep.assert_nothing_sold(balance, before, &failure);
+    assert_eq!(token_balance(&sweep.svm, &theirs), balance);
 }
 
 // ------------------------------------------------------------------------------ measurements

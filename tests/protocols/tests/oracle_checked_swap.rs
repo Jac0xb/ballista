@@ -43,6 +43,9 @@ const MINT_DECIMALS: usize = 44;
 const ROUTE_FIXED_ACCOUNTS: usize = 9;
 /// Of those, the platform fee account: Jupiter's own address when the route takes no fee.
 const PLATFORM_FEE_ACCOUNT: usize = 6;
+/// 1%: the platform fee `jupiter_takes_exactly_in_amount_through_a_split_or_a_platform_fee` sends
+/// `route` with directly.
+const PLATFORM_FEE_BPS: u8 = 100;
 
 /// A fresh SVM with the template uploaded and the trader holding SOL, which Jupiter's setup wraps.
 struct Swap {
@@ -559,14 +562,20 @@ fn jupiter_takes_exactly_in_amount_through_a_split_or_a_platform_fee() {
 
     // An odd amount, so that no split divides it evenly.
     let odd = SOL - 1;
+    // Two swaps through the same pool that together sell `odd` buy the same total regardless of
+    // how the shares split it: the first split's fill is the reference the rest must match.
+    let mut split_fill = None;
     for (first, second) in [(50, 50), (33, 67)] {
         let (svm, result) = route_alone(&snapshot, &split(first, second), odd, 0, twice);
         result.unwrap_or_else(|failure| panic!("[{first}, {second}]: {failure:?}"));
         assert_eq!(sold(&svm), odd, "[{first}, {second}]");
-        println!(
-            "[{first}, {second}] sold {odd} for {} USDC units",
-            bought(&svm)
+        let usdc = bought(&svm);
+        assert_eq!(
+            usdc,
+            *split_fill.get_or_insert(usdc),
+            "[{first}, {second}] bought a different amount than the first split"
         );
+        println!("[{first}, {second}] sold {odd} for {usdc} USDC units");
     }
     let (_, result) = route_alone(&snapshot, &split(50, 100), odd, 0, twice);
     let failure = result.expect_err("a plan whose shares pass 100% must fail");
@@ -576,14 +585,15 @@ fn jupiter_takes_exactly_in_amount_through_a_split_or_a_platform_fee() {
         "{failure:?}"
     );
 
-    // A platform fee of 1%, into the platform's account of either mint.
+    // A platform fee, into the platform's account of either mint.
+    let fee_of = |amount: u64| amount * u64::from(PLATFORM_FEE_BPS) / 10_000;
     let (svm, result) = route_alone(&snapshot, plan, SOL, 0, |_, _| {});
     result.unwrap_or_else(|failure| panic!("no fee: {failure:?}"));
     let unfeed = bought(&svm);
     let platform = keypair(b"ballista-protocol-tests-platform").pubkey();
     for mint in [leg.input_mint, leg.output_mint] {
         let fee_account = associated_token_address(&platform, &mint);
-        let (svm, result) = route_alone(&snapshot, plan, SOL, 100, |svm, accounts| {
+        let (svm, result) = route_alone(&snapshot, plan, SOL, PLATFORM_FEE_BPS, |svm, accounts| {
             token_account(svm, &platform, &mint, 0);
             accounts[PLATFORM_FEE_ACCOUNT] = AccountMeta::new(fee_account, false);
         });
@@ -592,14 +602,15 @@ fn jupiter_takes_exactly_in_amount_through_a_split_or_a_platform_fee() {
         let fee = token_balance(&svm, &fee_account);
         if mint == leg.input_mint {
             // Out of `in_amount`: the pool swaps the rest.
-            assert_eq!(fee, SOL / 100);
+            assert_eq!(fee, fee_of(SOL));
         } else {
             // Out of the fill.
-            assert_eq!(fee, unfeed / 100);
+            assert_eq!(fee, fee_of(unfeed));
             assert_eq!(bought(&svm) + fee, unfeed);
         }
         println!(
-            "a 1% fee in {mint}: sold {SOL} for {} USDC units, and the fee was {fee}",
+            "a {PLATFORM_FEE_BPS} bps fee in {mint}: sold {SOL} for {} USDC units, and the fee \
+             was {fee}",
             bought(&svm)
         );
     }

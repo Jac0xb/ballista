@@ -11,7 +11,10 @@ ballista-sdk = { path = "../../clients/rust" }       # unchanged SDK; types line
 # LiteSVM master after "chore: bump agave crates to 4.3 (#425)": the first LiteSVM whose pins
 # (solana-instruction ~3.5, solana-address ~2.7, Agave 4.3 = mainnet) agree with solana-program 4.1.0.
 # Move to the crates.io release that contains this commit once it is published.
-litesvm = { git = "https://github.com/LiteSVM/litesvm", rev = "6a550a1000138cf8a285fac98a17c88ba5b2ad5b" }
+# `precompiles` loads the Ed25519, secp256k1 and secp256r1 precompiles, which the signed-quote
+# scenario's Ed25519 instruction needs. Through agave-precompiles and solana-secp256r1-program's
+# `openssl-vendored`, it builds OpenSSL from source: that takes perl, make and a C compiler.
+litesvm = { git = "https://github.com/LiteSVM/litesvm", rev = "6a550a1000138cf8a285fac98a17c88ba5b2ad5b", features = ["precompiles"] }
 # Major-only carets: cargo unifies each with the version litesvm pins. Commit Cargo.lock.
 solana-account = "4"
 solana-address = { version = "2", features = ["copy", "curve25519", "decode"] }  # Copy, PDAs, base58
@@ -44,7 +47,6 @@ solana-instruction-v2 = { package = "solana-instruction", version = "2.1" }
 # where both sides tolerate the same version.
 orca_whirlpools_client = "=8.0.0"
 orca_whirlpools_core = "=2.1.1"
-# litesvm features = ["precompiles"] only if a scenario signs Ed25519/secp256k1 (builds OpenSSL)
 
 # `Snapshot::load` hashes about 25 MB; unoptimized, sha2 spends most of a second on it per load.
 [profile.dev.package.sha2]

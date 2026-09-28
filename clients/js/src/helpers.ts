@@ -231,13 +231,21 @@ export interface Ed25519Signature {
  * comparisons would take a dozen more of the template's 64 registers.
  *
  * `name` prefixes the step labels and the two variables the steps bind, `<name>Instruction` and
- * `<name>Message`, so one template can check more than one signature.
+ * `<name>Message`, so one template can check more than one signature. Every step is labeled, so a
+ * failed run names the step: with no instruction before the run, an `index` of the one before it
+ * underflows at `<name>InstructionIndex`.
  */
 export function ed25519Signature(input: {
   sysvar: AccountReference;
   /** The Ed25519 instruction's index in the transaction, as a `u64`. */
   index: Expression;
-  /** The public key the signature must be by, as a `pubkey`. */
+  /**
+   * The public key the signature must be by, as a `pubkey`. It must be a key the transaction's
+   * builder cannot choose, such as a pinned key or the key of an account that must sign. With an
+   * input, or the key of an account nothing constrains, the builder can sign with a key of their
+   * own and the check proves nothing. This helper refuses an input, but cannot see an account's
+   * constraints: those are the caller's to get right.
+   */
   signer: Expression;
   messageLength: number;
   name?: string;
@@ -245,6 +253,11 @@ export function ed25519Signature(input: {
   const name = input.name ?? 'signature';
   if (!Number.isInteger(input.messageLength) || input.messageLength < 1 || input.messageLength > 0xffff) {
     throw new RangeError('messageLength must be from 1 to 65535 bytes');
+  }
+  if (input.signer.kind === 'input' || input.signer.kind === 'rowInput') {
+    throw new TypeError(
+      `signer must be a key the transaction's builder cannot choose, not the ${input.signer.kind} ${input.signer.name}`,
+    );
   }
   const instruction = expression.variable(`${name}Instruction`);
   const message = expression.variable(`${name}Message`);
@@ -258,7 +271,7 @@ export function ed25519Signature(input: {
   ]);
   return {
     steps: [
-      step.let(`${name}Instruction`, input.index),
+      step.let(`${name}Instruction`, input.index, `${name}InstructionIndex`),
       step.require(
         expression.equal(
           expression.instructionProgram(input.sysvar, instruction),
@@ -280,7 +293,7 @@ export function ed25519Signature(input: {
         ),
         `${name}IsBySigner`,
       ),
-      step.let(`${name}Message`, offsetField(ED25519_HEADER.messageDataOffset)),
+      step.let(`${name}Message`, offsetField(ED25519_HEADER.messageDataOffset), `${name}MessageOffset`),
     ],
     field(offset, type) {
       if (!Number.isInteger(offset) || offset < 0 || offset + readWidth[type] > input.messageLength) {

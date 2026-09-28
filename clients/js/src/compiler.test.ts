@@ -1615,7 +1615,7 @@ describe('ed25519Signature', () => {
   const compileQuote = (steps: Step[]) =>
     compileTemplate(
       defineTemplate({
-        accounts: { instructions: { address: INSTRUCTIONS_SYSVAR_ADDRESS_BYTES }, maker: {} },
+        accounts: { instructions: { address: INSTRUCTIONS_SYSVAR_ADDRESS_BYTES }, maker: { signer: true } },
         steps,
       }),
     );
@@ -1626,7 +1626,13 @@ describe('ed25519Signature', () => {
       step.require(expression.greaterThan(quote.field(0, 'u64'), expression.u64(0)), 'pricePositive'),
     ]);
     const labels = new Set(compiled.sourceMap.map((entry) => entry.label));
-    for (const label of ['quoteIsEd25519', 'quoteIsOneSelfContainedSignature', 'quoteIsBySigner']) {
+    for (const label of [
+      'quoteInstructionIndex',
+      'quoteIsEd25519',
+      'quoteIsOneSelfContainedSignature',
+      'quoteIsBySigner',
+      'quoteMessageOffset',
+    ]) {
       expect(labels.has(label), label).toBe(true);
     }
     // The index is computed once, and every read of the Ed25519 instruction reuses it.
@@ -1662,6 +1668,14 @@ describe('ed25519Signature', () => {
     expect(() => quote.field(33, 'u64')).toThrow(/inside the 40-byte signed message/);
     expect(() => quote.field(9, 'pubkey')).toThrow(/inside/);
     expect(() => quote.field(-1, 'u8')).toThrow(/inside/);
+  });
+
+  test('the signer cannot be an input, which the transaction builder chooses', () => {
+    for (const signer of [expression.input('maker'), expression.rowInput('maker')]) {
+      expect(() => ed25519Signature({ sysvar, index: expression.u64(0), signer, messageLength: 40 })).toThrow(
+        /builder cannot choose/,
+      );
+    }
   });
 
   test('a field read without the steps does not compile', () => {

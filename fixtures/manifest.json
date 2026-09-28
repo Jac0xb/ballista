@@ -1401,11 +1401,13 @@
       },
       {
         "pc": 16,
-        "path": "steps[0]"
+        "path": "steps[0]",
+        "label": "quoteInstructionIndex"
       },
       {
         "pc": 17,
-        "path": "steps[0]"
+        "path": "steps[0]",
+        "label": "quoteInstructionIndex"
       },
       {
         "pc": 18,
@@ -1469,7 +1471,8 @@
       },
       {
         "pc": 30,
-        "path": "steps[4]"
+        "path": "steps[4]",
+        "label": "quoteMessageOffset"
       },
       {
         "pc": 31,

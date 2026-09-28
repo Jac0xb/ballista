@@ -23,8 +23,8 @@ export type ValueType = z.infer<typeof ValueTypeSchema>;
 export const ReadTypeSchema = z.enum(['bool', 'u8', 'u16', 'u32', 'i32', 'u64', 'i64', 'u128', 'pubkey']);
 export type ReadType = z.infer<typeof ReadTypeSchema>;
 
-/** Bytes each read type occupies. */
-export const readWidth: Record<ReadType, number> = {
+/** Bytes each read type occupies. Frozen, because the SDK's bounds checks depend on these widths. */
+export const readWidth: Readonly<Record<ReadType, number>> = Object.freeze({
   bool: 1,
   u8: 1,
   u16: 2,
@@ -34,7 +34,7 @@ export const readWidth: Record<ReadType, number> = {
   i64: 8,
   u128: 16,
   pubkey: 32,
-};
+});
 
 export const InputSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('bool') }).strict(),

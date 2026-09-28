@@ -2237,8 +2237,8 @@ mod tests {
         // underflows.
         let alone = settle(vec![], taker, maker_quote, 1);
         assert_eq!(
-            transaction_code(&alone).map(|(index, code)| (index, code & 0xffff)),
-            Some((0, 6013)),
+            fixture_failure(&alone, "signed-quote-settlement"),
+            Some((0, 6013, "quoteInstructionIndex".to_owned())),
             "{alone:#?}"
         );
 

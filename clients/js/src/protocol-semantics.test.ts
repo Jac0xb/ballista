@@ -400,6 +400,8 @@ describe('the signed-quote settlement', () => {
       dependsOn(requirement('quoteIsEd25519'), bindings, is(expression.pubkey(ED25519_PROGRAM_ADDRESS_BYTES))),
     ).toBe(true);
     expect(dependsOn(requirement('quoteIsBySigner'), bindings, accountKey('maker'))).toBe(true);
+    // The maker signs the transaction as well, so the taker cannot put a key of its own there.
+    expect(signedQuoteSettlement.accounts.maker?.signer).toBe(true);
   });
 
   test('settles only a message that starts with the quote tag', () => {

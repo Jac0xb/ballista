@@ -13,7 +13,8 @@
 //! ```
 
 use ballista_sdk::{
-    run_instruction, RunInputs, ED25519_PROGRAM_ID, SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID,
+    find_registry_entry_address, run_instruction, RunInputs, ED25519_PROGRAM_ID, SYSTEM_PROGRAM_ID,
+    TOKEN_PROGRAM_ID,
 };
 use solana_program::{
     instruction::{AccountMeta, Instruction},
@@ -45,7 +46,8 @@ fn anchor(handler: &str) -> Vec<u8> {
 
 // #region jupiter-route
 /// Jupiter `route` data as the Swap API returns it with `useSharedAccounts: false`, split into
-/// the plan and the four numbers after it. The oracle swap and the sweep take them as inputs.
+/// the plan and the four numbers after it. The oracle swap, the sweep and the daily cap take them
+/// as inputs.
 pub struct RouteQuote<'a> {
     /// `route_plan`, Borsh length prefix included: the bytes between the discriminator and
     /// `in_amount`.
@@ -395,6 +397,41 @@ pub fn run_pyth_gate(
     run_instruction(template, accounts, &inputs)
 }
 // #endregion pyth-gate
+
+// #region jupiter-daily-cap
+/// `jupiterDailyCapSwap`'s one registry, `dailySpend`: the first it declares.
+const DAILY_SPEND: u8 = 0;
+
+/// `route` is the Swap API's `route` data split by [`RouteQuote::split`], and `action_accounts`
+/// its account list from the third account on: the template passes the token program and the
+/// actor itself. The actor's entry is at its registry address for the actor's own key; the
+/// actor's first run creates it, and pays its rent.
+pub fn run_jupiter_daily_cap(
+    template: Pubkey,
+    actor: Pubkey,
+    route: &RouteQuote,
+    action_accounts: Vec<AccountMeta>,
+) -> Instruction {
+    let inputs = RunInputs::new()
+        .groups(&[action_accounts.len() as u8]) // actionAccounts
+        .bytes(route.route_plan)
+        .u64(route.in_amount)
+        .u64(route.quoted_out_amount)
+        .u64(route.slippage_bps.into())
+        .u64(route.platform_fee_bps.into())
+        .finish();
+    let (spend, _) = find_registry_entry_address(&template, DAILY_SPEND, &actor.to_bytes());
+    let mut accounts = vec![
+        pinned(JUPITER_V6),
+        pinned(TOKEN_PROGRAM_ID),
+        AccountMeta::new(actor, true),
+        AccountMeta::new(spend, false),
+        pinned(SYSTEM_PROGRAM_ID),
+    ];
+    accounts.extend(action_accounts);
+    run_instruction(template, accounts, &inputs)
+}
+// #endregion jupiter-daily-cap
 
 // #region orca-compound
 pub struct OrcaCompoundAccounts {
@@ -886,10 +923,15 @@ fn route_data() -> Vec<u8> {
 
 /// A sample transaction for every template, under the name `fixtures/protocol-examples.json`
 /// records it by: its instructions, the run last.
-pub const RUNS: [(&str, fn() -> Vec<Instruction>); 12] = [
+pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
     ("jitoProfitGuardedTip", || {
         let a = JitoTipAccounts { searcher: key(1), wsol_account: key(2), jito_tip: key(3) };
         vec![run_jito_tip(TEMPLATE, &a, &[7; 80], 10_000, 100_000, group(40))]
+    }),
+    ("jupiterDailyCapSwap", || {
+        let data = route_data();
+        let route = RouteQuote::split(&data);
+        vec![run_jupiter_daily_cap(TEMPLATE, key(1), &route, group(20))]
     }),
     ("jupiterDepositExactOutput", || {
         let a = JupiterDepositAccounts {

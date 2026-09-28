@@ -1,4 +1,4 @@
-//! The twelve live-protocol templates, authored in Rust with `ProgramBuilder`.
+//! The thirteen live-protocol templates, authored in Rust with `ProgramBuilder`.
 //!
 //! Each function builds the same bytes the TypeScript compiler produces for the file of the same
 //! name in `clients/js/examples/protocols/`; `tests/protocol_templates.rs` checks every one
@@ -1185,9 +1185,83 @@ pub fn signed_quote_settlement() -> Vec<u8> {
 }
 // #endregion signed-quote
 
+// #region jupiter-daily-cap
+/// A per-caller daily cap on a Jupiter swap: the route's `inAmount` is charged against 1.728 SOL
+/// that refills at 20,000 lamports a second, in a registry entry keyed by the actor.
+pub fn jupiter_daily_cap_swap() -> Vec<u8> {
+    let mut b = ProgramBuilder::new();
+    let action_program = program(&mut b, JUPITER_V6);
+    let token_program = program(&mut b, TOKEN_PROGRAM_ID);
+    let actor = b.account(SIGN | WRITE, None, None, 0);
+    let spend = b.account(WRITE, None, None, 0);
+    let system_program = program(&mut b, SYSTEM_PROGRAM_ID);
+    b.account_groups(1); // actionAccounts
+    let route_plan = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
+    let in_amount = b.input(VALUE_U64, 0);
+    let quoted_out_amount = b.input(VALUE_U64, 0);
+    let slippage_bps = b.input(VALUE_U64, 0);
+    let platform_fee_bps = b.input(VALUE_U64, 0);
+
+    // The TypeScript compiler loads the inputs, then the constants in the order the steps use
+    // them, then opens the entry, all before the first step.
+    let route_plan = b.load_input(route_plan);
+    let in_amount = b.load_input(in_amount);
+    let quoted_out_amount = b.load_input(quoted_out_amount);
+    let slippage_bps = b.load_input(slippage_bps);
+    let platform_fee_bps = b.load_input(platform_fee_bps);
+    let refill_per_second = b.const_u64(20_000);
+    let cap = b.const_u64(1_728_000_000);
+    let key = b.account_key(actor);
+    b.open_registry(spend, Some(key), actor, 0, 16, system_program);
+
+    // rateLimit: `now` never reads earlier than `lastSpend`, so it, and the `lastSpend` written
+    // back (being `now`), never move backward: a clock step-back refills nothing and never
+    // double-refills once the clock recovers. The refill itself is computed in u128, then charged
+    // against the cap.
+    let last = b.read_registry(spend, 8, OP_READ_I64);
+    let now = b.clock_timestamp();
+    let now = b.binary(OP_MAX, now, last);
+    let spent = b.read_registry(spend, 0, OP_READ_U64);
+    let spent = b.cast(OP_CAST_U128, spent);
+    let elapsed = b.binary(OP_SUB, now, last);
+    let elapsed = b.cast(OP_CAST_U128, elapsed);
+    let rate = b.cast(OP_CAST_U128, refill_per_second);
+    let refill = b.binary(OP_MUL, elapsed, rate);
+    let refilled = b.binary(OP_MIN, spent, refill);
+    let kept = b.binary(OP_SUB, spent, refilled);
+    let amount = b.cast(OP_CAST_U128, in_amount);
+    let total = b.binary(OP_ADD, kept, amount);
+    let cap = b.cast(OP_CAST_U128, cap);
+    let within = b.binary(OP_LTE, total, cap);
+    b.require(within);
+    let total = b.cast(OP_CAST_U64, total);
+    b.write_registry(spend, 0, OP_READ_U64, total);
+    b.write_registry(spend, 8, OP_READ_I64, now);
+
+    let route = b.blob(&anchor("route"));
+    let swap = b.cpi_with_group(
+        action_program,
+        &[(token_program, READ), (actor, SIGN)],
+        &[
+            Segment::Literal(route),
+            Segment::Register(DATA_REG_BYTES, route_plan),
+            Segment::Register(DATA_REG_U64, in_amount),
+            Segment::Register(DATA_REG_U64, quoted_out_amount),
+            Segment::Register(DATA_REG_U16, slippage_bps),
+            Segment::Register(DATA_REG_U8, platform_fee_bps),
+        ],
+        0,
+    );
+    b.set_cpi_max_data_len(swap, 8 + ROUTE_ARGS_MAX + ROUTE_TAIL_LEN);
+    b.invoke(swap, None);
+    b.build().unwrap()
+}
+// #endregion jupiter-daily-cap
+
 /// Every template, under the name `fixtures/protocol-examples.json` records it by.
-pub const TEMPLATES: [(&str, fn() -> Vec<u8>); 12] = [
+pub const TEMPLATES: [(&str, fn() -> Vec<u8>); 13] = [
     ("jitoProfitGuardedTip", jito_profit_guarded_tip),
+    ("jupiterDailyCapSwap", jupiter_daily_cap_swap),
     ("jupiterDepositExactOutput", jupiter_deposit_exact_output),
     ("jupiterOracleCheckedSwap", jupiter_oracle_checked_swap),
     ("kaminoLiquidateWithProof", kamino_liquidate_with_proof),

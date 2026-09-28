@@ -25,6 +25,7 @@ import {
 import * as protocols from '../examples/protocols/index.js';
 import {
   jitoProfitGuardedTip,
+  jupiterDailyCapSwap,
   jupiterDepositExactOutput,
   jupiterOracleCheckedSwap,
   kaminoLiquidateWithProof,
@@ -200,6 +201,7 @@ const jupiterCalls: [string, Template, { program: string; accounts: string[] }][
     { program: 'jupiter', accounts: ['tokenProgram', 'seller', 'sourceAta', 'destinationAta'] },
   ],
   ['pythFreshPriceGate', pythFreshPriceGate, { program: 'actionProgram', accounts: ['tokenProgram', 'actor'] }],
+  ['jupiterDailyCapSwap', jupiterDailyCapSwap, { program: 'actionProgram', accounts: ['tokenProgram', 'actor'] }],
   [
     // A round trip: it starts and ends in the one account the template measures.
     'jitoProfitGuardedTip',
@@ -392,6 +394,33 @@ describe('the Pyth gate', () => {
     expect(pythFreshPriceGate.inputs?.exponent).toEqual({ type: 'i64' });
     const labels = pythFreshPriceGate.steps.map((step) => step.label);
     expect(labels.indexOf('priceExponentIsExpected')).toBe(labels.indexOf('priceIsTheExpectedFeed') + 1);
+  });
+});
+
+describe('the daily cap', () => {
+  const bindings = bindingsOf(jupiterDailyCapSwap);
+  const within = requireLabeled(jupiterDailyCapSwap, 'withinRateLimit');
+  const input = (name: string) => (candidate: Expression) => candidate.kind === 'input' && candidate.name === name;
+
+  test('charges the inAmount it forwards to Jupiter, before the swap', () => {
+    const [swap] = invokesOf(jupiterDailyCapSwap, 'actionProgram') as [Invoke];
+    expect(swap.data[2]).toEqual(data.encode('u64', expression.input('inAmount')));
+    expect(dependsOn(within.condition, bindings, input('inAmount'))).toBe(true);
+    // The cap and the rate are literals: no other input reaches the limit.
+    for (const other of ['routePlan', 'quotedOutAmount', 'slippageBps', 'platformFeeBps']) {
+      expect(dependsOn(within.condition, bindings, input(other))).toBe(false);
+    }
+    const all = steps(jupiterDailyCapSwap);
+    expect(all.indexOf(within)).toBeLessThan(all.indexOf(swap));
+  });
+
+  test("keys each caller's entry by the caller's own signing address, and has the caller pay for it", () => {
+    expect(jupiterDailyCapSwap.accounts.spend?.registry).toEqual({
+      name: 'dailySpend',
+      key: expression.accountKey('actor'),
+      payer: 'actor',
+    });
+    expect(jupiterDailyCapSwap.accounts.actor).toMatchObject({ signer: true, writable: true });
   });
 });
 

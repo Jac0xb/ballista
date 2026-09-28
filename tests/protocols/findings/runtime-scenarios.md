@@ -136,8 +136,8 @@ No runtime bug turned up. Every check behaved as `schema.ts` and the verifier de
 test is `#[ignore]`d. What these scenarios did turn up:
 
 - **SDK: registers run out.** The compiler gives every expression node a fresh register and never
-  reuses one, and `jupiterOracleCheckedSwap` already uses all 64. That template's floor reads both
-  mints' decimals and the exponent, and has two power-of-ten branches, about 28 registers. With a
+  reuses one, and `jupiterOracleCheckedSwap` already uses all 64. Its floor reads both mints'
+  decimals and the exponent, and has two power-of-ten branches: 28 registers. With a
   count loop, an event and a payout loop added, compilation failed with "Template uses more than 64
   registers". So the split sell is SOL-for-USDC only: the mints are pinned, the exponent must be
   −8, and the floor is two `multiplyDivide`s on `u64`s (they keep the product exact, so no casts are

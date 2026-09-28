@@ -19,11 +19,11 @@
  * to what each pass actually sold.
  *
  * It sells wrapped SOL for USDC only. The oracle-checked swap reads both mints' decimals and the
- * feed's exponent to scale any pair, which takes all 64 of the VM's registers on its own; a count
- * loop, its event and a payout loop do not fit beside that. Here the mints are pinned, so their
- * decimals are known, and the feed's exponent is required to be SOL/USD's −8. A fill of `sold`
- * lamports is then worth `sold × price ÷ 10^11` USDC base units, and the floor is that less
- * `toleranceBps`, rounded down at each step as the oracle-checked swap rounds it.
+ * feed's exponent to scale any pair, 28 registers of the 64 it uses; beside a count loop, its event
+ * and a payout loop, that does not fit. Here the mints are pinned, so their decimals are known,
+ * and the feed's exponent is required to be SOL/USD's −8. A fill of `sold` lamports is then worth
+ * `sold × price ÷ 10^11` USDC base units, and the floor is that less `toleranceBps`, rounded down at
+ * each step as the oracle-checked swap rounds it.
  */
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,

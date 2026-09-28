@@ -20,6 +20,9 @@ use {
 const NAME: &str = "marginfiWithdrawAllWithFloor";
 /// USDC base units deposited.
 const DEPOSIT: u64 = 100_000_000;
+/// The runs' `minimumWithdrawn`: 99 USDC, clear of marginfi's share rounding, which can keep one
+/// base unit of the deposit.
+const FLOOR: u64 = 99_000_000;
 
 struct Scene {
     authority: Keypair,
@@ -136,7 +139,7 @@ fn assert_swept(svm: &LiteSVM, scene: &Scene) -> u64 {
 fn withdraws_a_sole_position_and_sweeps_it() {
     let (mut svm, scene) = scene(false);
     assert!(marginfi::health_accounts(&svm, &scene.account, &USDC_BANK).is_empty());
-    let run = run(&svm, &scene, 99_000_000);
+    let run = run(&svm, &scene, FLOOR);
     let outcome = send_run(&mut svm, &scene, run).unwrap_or_else(|failure| panic!("{failure:?}"));
     eprintln!(
         "{NAME}: {} CU, {} bytes",
@@ -154,7 +157,7 @@ fn withdraws_one_position_of_two_with_the_health_group() {
         marginfi::health_accounts(&svm, &scene.account, &USDC_BANK).len(),
         2
     );
-    let run = run(&svm, &scene, 99_000_000);
+    let run = run(&svm, &scene, FLOOR);
     let outcome = send_run(&mut svm, &scene, run).unwrap_or_else(|failure| panic!("{failure:?}"));
     eprintln!(
         "{NAME} with a second balance: {} CU, {} bytes",
@@ -188,7 +191,7 @@ fn assert_hostile_run_refused(
     attacker: Address,
     label: &str,
 ) {
-    let run = run_paying(&svm, scene, destination, treasury, 99_000_000);
+    let run = run_paying(&svm, scene, destination, treasury, FLOOR);
     let failure = match send_run(&mut svm, scene, run) {
         Err(failure) => failure,
         Ok(_) => panic!(

@@ -1,7 +1,9 @@
 //! Kamino Lend (klend): instructions for setup and the contract tests, and the account fields the
 //! scenarios read.
 //!
-//! Instructions come from `klend-interface`, pinned to the build deployed on mainnet.
+//! Instructions, account layouts and error codes come from `klend-interface`, pinned to the build
+//! deployed on mainnet (`Kamino-Finance/klend@a08760976f`). What it does not cover is written by
+//! hand below, citing that tree's `programs/klend/src/`.
 //! - It speaks solana 2.x (`solana-pubkey` 2, `solana-instruction` 2), and this crate 3.x/4.x.
 //!   [`address`], [`pubkey`] and [`instruction`] convert field by field; nothing outside this
 //!   module sees a 2.x type.
@@ -12,7 +14,8 @@
 //!   must be present, with klend's own program ID meaning "none". klend-interface does that.
 
 use {
-    klend_interface::{self as klend, state},
+    crate::tx::Failure,
+    klend_interface::{self as klend, state, LendingError},
     litesvm::LiteSVM,
     solana_address::Address,
     solana_instruction::{AccountMeta, Instruction},
@@ -28,13 +31,32 @@ pub const INSTRUCTIONS_SYSVAR: Address =
     Address::from_str_const("Sysvar1nstructions1111111111111111111111111");
 
 /// How many accounts each v2 instruction takes before its farm tail, which the templates forward
-/// as `farmAccounts`.
+/// as `farmAccounts`: the fields of the v1 struct each v2 struct starts with, in
+/// `handlers/handler_deposit_reserve_liquidity_and_obligation_collateral.rs:174-226`,
+/// `handlers/handler_repay_obligation_liquidity.rs:114-156` and
+/// `handlers/handler_liquidate_obligation_and_redeem_reserve_collateral.rs:280-350`.
 pub const DEPOSIT_DECLARED: usize = 14;
 pub const REPAY_DECLARED: usize = 9;
 pub const LIQUIDATE_DECLARED: usize = 20;
 
-/// `deposit_reserve_liquidity_and_obligation_collateral`, v1: its accounts are v2's first 14.
-const DEPOSIT_V1: [u8; 8] = [0x81, 0xc7, 0x04, 0x02, 0xde, 0x27, 0x1a, 0x2e];
+/// Anchor's `ErrorCode::AccountNotEnoughKeys` (anchor-lang 0.29.0, which klend builds with,
+/// `lang/src/error.rs`): an instruction was given fewer accounts than it declares.
+pub const ACCOUNT_NOT_ENOUGH_KEYS: u32 = 3005;
+
+/// The discriminator of `deposit_reserve_liquidity_and_obligation_collateral`, v1
+/// (`lib.rs:297`): `sha256("global:<handler>")[..8]`, which `crate::tests` derives.
+/// klend-interface builds only v2, whose accounts start with v1's 14.
+pub(crate) const DEPOSIT_V1: [u8; 8] = [0x81, 0xc7, 0x04, 0x02, 0xde, 0x27, 0x1a, 0x2e];
+
+/// Asserts that klend itself refused with `error`.
+#[track_caller]
+pub fn refused(failure: &Failure, error: LendingError) {
+    assert_eq!(
+        (failure.program, failure.code),
+        (KLEND, Some(error.error_code())),
+        "expected klend's {error:?}, but {failure:?}"
+    );
+}
 
 // ------------------------------------------------------------------------------- conversion
 

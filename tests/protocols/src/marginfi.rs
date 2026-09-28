@@ -1,15 +1,16 @@
 //! marginfi v2: the instructions setup and the contract tests send, and the account fields the
-//! scenarios read. Everything here is written from the deployed program's source
-//! (`mrgnlabs/marginfi-v2@33c67987a6`, 0.1.11-rc1; research §3.2 and appendix A).
+//! scenarios read. Everything here is written from the deployed program's source,
+//! `mrgnlabs/marginfi-v2@33c67987a6` (0.1.11-rc1); each item cites its file there.
 //!
 //! No crate for it:
 //! - marginfi publishes no current instruction crate.
 //! - Its type crate cannot be a dependency here: at that commit it pins
 //!   `solana-instruction = "=3.4.0"`, and LiteSVM needs `~3.5`.
 //!
-//! The offsets below were printed by `offset_of!` against the type crate.
-//! `the_offsets_read_the_snapshots_banks` checks them against the real accounts, so a layout
-//! change fails there first.
+//! The offsets below were printed by `offset_of!` against the type crate (`Bank` at
+//! `type-crate/src/types/bank.rs:30`, `MarginfiAccount` and `Balance` at
+//! `type-crate/src/types/user_account.rs:27` and `:286`). `the_offsets_read_the_snapshots_banks`
+//! checks them against the real accounts, so a layout change fails there first.
 
 use {
     ballista_sdk::{SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID},
@@ -20,13 +21,19 @@ use {
 
 pub const MARGINFI: Address =
     Address::from_str_const("MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA");
-/// `oracle_setup` of a bank priced by one Pyth `PriceUpdateV2`, `oracle_keys[0]`.
+/// `OracleSetup::PythPushOracle` (`type-crate/src/types/bank.rs:367`): a bank priced by one Pyth
+/// `PriceUpdateV2`, `oracle_keys[0]`.
 pub const PYTH_PUSH_ORACLE: u8 = 3;
+/// `MarginfiError::InvalidBankAccount` (`programs/marginfi/src/errors.rs:21-22`): the health check
+/// was not given a remaining balance's bank.
+pub const INVALID_BANK_ACCOUNT: u32 = 6008;
 
-/// `marginfi_account_initialize`, `lending_account_deposit`, `lending_account_withdraw`.
-const INITIALIZE: [u8; 8] = [0x2b, 0x4e, 0x3d, 0xff, 0x94, 0x34, 0xf9, 0x9a];
-const DEPOSIT: [u8; 8] = [0xab, 0x5e, 0xeb, 0x67, 0x52, 0x40, 0xd4, 0x8c];
-const WITHDRAW: [u8; 8] = [0x24, 0x48, 0x4a, 0x13, 0xd2, 0xd2, 0xc0, 0xc0];
+/// Anchor discriminators, `sha256("global:<handler>")[..8]`, of `marginfi_account_initialize`,
+/// `lending_account_deposit` and `lending_account_withdraw` (`programs/marginfi/src/lib.rs:295`,
+/// `:396`, `:418`). `crate::tests` derives them.
+pub(crate) const INITIALIZE: [u8; 8] = [0x2b, 0x4e, 0x3d, 0xff, 0x94, 0x34, 0xf9, 0x9a];
+pub(crate) const DEPOSIT: [u8; 8] = [0xab, 0x5e, 0xeb, 0x67, 0x52, 0x40, 0xd4, 0x8c];
+pub(crate) const WITHDRAW: [u8; 8] = [0x24, 0x48, 0x4a, 0x13, 0xd2, 0xd2, 0xc0, 0xc0];
 
 /// `Bank`, 1,864 bytes.
 const BANK_LEN: usize = 1_864;
@@ -73,12 +80,15 @@ pub fn active_banks(svm: &LiteSVM, account: &Address) -> Vec<Address> {
         .collect()
 }
 
-/// The PDA that owns `bank`'s liquidity vault: `["liquidity_vault_auth", bank]`.
+/// The PDA that owns `bank`'s liquidity vault: `[LIQUIDITY_VAULT_AUTHORITY_SEED, bank]`
+/// (`type-crate/src/constants.rs:4`), as `LendingAccountWithdraw` derives it
+/// (`programs/marginfi/src/instructions/marginfi_account/withdraw.rs:323-331`).
 pub fn vault_authority(bank: &Address) -> Address {
     Address::find_program_address(&[b"liquidity_vault_auth", bank.as_ref()], &MARGINFI).0
 }
 
-/// `marginfi_account_initialize`: `account` is a new keypair, and signs.
+/// `marginfi_account_initialize`: `account` is a new keypair, and signs. Accounts in the order of
+/// `MarginfiAccountInitialize` (`programs/marginfi/src/instructions/marginfi_account/initialize.rs:43-62`).
 pub fn initialize_account(
     group: &Address,
     account: &Address,
@@ -99,7 +109,8 @@ pub fn initialize_account(
 }
 
 /// `lending_account_deposit(amount, deposit_up_to_limit: None)`. It needs no remaining accounts
-/// and no oracle.
+/// and no oracle. Accounts in the order of `LendingAccountDeposit`
+/// (`programs/marginfi/src/instructions/marginfi_account/deposit.rs:153-197`).
 pub fn deposit(
     svm: &LiteSVM,
     group: &Address,
@@ -127,7 +138,9 @@ pub fn deposit(
     }
 }
 
-/// `lending_account_withdraw(0, withdraw_all: Some(true))`, followed by `remaining`.
+/// `lending_account_withdraw(0, withdraw_all: Some(true))`, followed by `remaining`. Accounts in
+/// the order of `LendingAccountWithdraw`
+/// (`programs/marginfi/src/instructions/marginfi_account/withdraw.rs:268-337`).
 pub fn withdraw_all(
     svm: &LiteSVM,
     group: &Address,
@@ -160,8 +173,8 @@ pub fn withdraw_all(
 
 /// What marginfi's health check reads once `withdrawn` is emptied. For every other balance the
 /// account holds, it takes the bank and then its oracle, by bank address from highest to lowest,
-/// as `sort_balances` leaves them. This is the `healthAccounts` group; it is empty when `withdrawn`
-/// was the only balance.
+/// as `sort_balances` leaves them (`programs/marginfi/src/state/marginfi_account.rs:1725-1728`).
+/// This is the `healthAccounts` group; it is empty when `withdrawn` was the only balance.
 ///
 /// # Panics
 ///

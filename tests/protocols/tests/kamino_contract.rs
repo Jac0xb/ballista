@@ -15,6 +15,7 @@ use {
         },
         run_instruction, ProgramBuilder, RunInputs, Segment,
     },
+    klend_interface::LendingError,
     litesvm::LiteSVM,
     solana_address::Address,
     solana_instruction::{AccountMeta, Instruction},
@@ -64,10 +65,13 @@ fn forward(template: Address, call: &Instruction) -> Instruction {
     run_instruction(template, accounts, &inputs)
 }
 
-fn refused(failure: &Failure, code: u32) {
+/// Asserts that klend's Anchor framework refused: an instruction given fewer accounts than it
+/// declares.
+#[track_caller]
+fn refused_for_too_few_accounts(failure: &Failure) {
     assert_eq!(
         (failure.program, failure.code),
-        (kamino::KLEND, Some(code)),
+        (kamino::KLEND, Some(kamino::ACCOUNT_NOT_ENOUGH_KEYS)),
         "{failure:?}"
     );
 }
@@ -120,7 +124,7 @@ fn v1_handlers_refuse_a_ballista_caller_and_v2_handlers_do_not() {
     let mut instructions = kamino::refreshes(&svm, &user.obligation, &[USDC_RESERVE]);
     instructions.push(forward(template, &v1));
     let failure = send(&mut svm, &user, instructions).unwrap_err();
-    refused(&failure, 6080); // CpiDisabled
+    kamino::refused(&failure, LendingError::CpiDisabled);
     assert_eq!(wallet::token_balance(&svm, &user.usdc), USDC);
 
     let v2 = kamino::deposit(
@@ -156,8 +160,9 @@ fn refresh_reserve_takes_six_accounts_with_scope_last() {
 
     // The templates' old list: the switchboard slots are missing.
     let three = with(vec![reserve.clone(), market.clone(), scope.clone()]);
-    refused(&send(&mut svm, &user, vec![three]).unwrap_err(), 3005); // AccountNotEnoughKeys
-                                                                     // Scope in the Pyth slot: these reserves price by Scope alone.
+    refused_for_too_few_accounts(&send(&mut svm, &user, vec![three]).unwrap_err());
+
+    // Scope in the Pyth slot: these reserves price by Scope alone.
     let scope_as_pyth = with(vec![
         reserve.clone(),
         market.clone(),
@@ -166,11 +171,10 @@ fn refresh_reserve_takes_six_accounts_with_scope_last() {
         none.clone(),
         none.clone(),
     ]);
-    refused(
-        &send(&mut svm, &user, vec![scope_as_pyth]).unwrap_err(),
-        6054,
-    ); // InvalidPythPriceAccount
-       // A missing trailing optional is not "none".
+    let failure = send(&mut svm, &user, vec![scope_as_pyth]).unwrap_err();
+    kamino::refused(&failure, LendingError::InvalidPythPriceAccount);
+
+    // A missing trailing optional is not "none".
     let five = with(vec![
         reserve.clone(),
         market.clone(),
@@ -178,7 +182,7 @@ fn refresh_reserve_takes_six_accounts_with_scope_last() {
         none.clone(),
         none.clone(),
     ]);
-    refused(&send(&mut svm, &user, vec![five]).unwrap_err(), 3005);
+    refused_for_too_few_accounts(&send(&mut svm, &user, vec![five]).unwrap_err());
 
     assert_eq!(
         refresh.accounts,
@@ -224,11 +228,10 @@ fn refresh_obligation_takes_every_reserve_refreshed_in_the_slot() {
 
     let mut without_reserves = refreshes.clone();
     without_reserves.last_mut().unwrap().accounts.truncate(2);
-    refused(&send(&mut svm, &user, without_reserves).unwrap_err(), 6006); // InvalidAccountInput
-    refused(
-        &send(&mut svm, &user, vec![obligation_refresh]).unwrap_err(),
-        6009, // ReserveStale
-    );
+    let failure = send(&mut svm, &user, without_reserves).unwrap_err();
+    kamino::refused(&failure, LendingError::InvalidAccountInput);
+    let failure = send(&mut svm, &user, vec![obligation_refresh]).unwrap_err();
+    kamino::refused(&failure, LendingError::ReserveStale);
     send(&mut svm, &user, refreshes).unwrap_or_else(|failure| panic!("{failure:?}"));
 }
 
@@ -245,12 +248,15 @@ fn a_deposit_into_a_farmed_reserve_needs_the_farm_accounts() {
         &user.usdc,
         DEPOSIT,
     );
-    for slot in [14, 15] {
-        deposit.accounts[slot] = AccountMeta::new_readonly(kamino::KLEND, false);
+    // The farm pair, the first two accounts after the declared ones: klend's ID means "none".
+    let farm_pair = kamino::DEPOSIT_DECLARED..kamino::DEPOSIT_DECLARED + 2;
+    for meta in &mut deposit.accounts[farm_pair] {
+        *meta = AccountMeta::new_readonly(kamino::KLEND, false);
     }
     let mut instructions = kamino::refreshes(&svm, &user.obligation, &[USDC_RESERVE]);
     instructions.push(deposit);
-    refused(&send(&mut svm, &user, instructions).unwrap_err(), 6120); // FarmAccountsMissing
+    let failure = send(&mut svm, &user, instructions).unwrap_err();
+    kamino::refused(&failure, LendingError::FarmAccountsMissing);
 }
 
 #[test]
@@ -266,7 +272,8 @@ fn a_deposit_needs_the_obligation_refreshed_in_its_slot() {
         &user.usdc,
         DEPOSIT,
     );
-    refused(&send(&mut svm, &user, vec![deposit]).unwrap_err(), 6017); // ObligationStale
+    let failure = send(&mut svm, &user, vec![deposit]).unwrap_err();
+    kamino::refused(&failure, LendingError::ObligationStale);
 }
 
 #[test]

@@ -45,7 +45,29 @@ pub fn decode_hex(text: &str) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::decode_hex;
+    use {
+        super::{decode_hex, kamino, marginfi, oracle},
+        sha2::{Digest, Sha256},
+    };
+
+    /// Every discriminator written out by hand in this crate is Anchor's: the first eight bytes of
+    /// `sha256("global:<handler>")` for an instruction, `sha256("account:<Type>")` for an account.
+    #[test]
+    fn every_hand_written_discriminator_is_anchors() {
+        for (preimage, written) in [
+            ("global:marginfi_account_initialize", marginfi::INITIALIZE),
+            ("global:lending_account_deposit", marginfi::DEPOSIT),
+            ("global:lending_account_withdraw", marginfi::WITHDRAW),
+            (
+                "global:deposit_reserve_liquidity_and_obligation_collateral",
+                kamino::DEPOSIT_V1,
+            ),
+            ("account:PriceUpdateV2", oracle::DISCRIMINATOR),
+            ("account:OraclePrices", oracle::SCOPE_DISCRIMINATOR),
+        ] {
+            assert_eq!(Sha256::digest(preimage)[..8], written, "{preimage}");
+        }
+    }
 
     #[test]
     fn hex_decodes_and_ignores_surrounding_whitespace() {

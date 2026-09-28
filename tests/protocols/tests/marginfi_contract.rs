@@ -95,7 +95,7 @@ fn a_withdrawal_that_leaves_a_balance_needs_that_balances_bank() {
     let failure = withdraw_usdc(&mut svm, &scene, vec![]).unwrap_err();
     assert_eq!(
         (failure.program, failure.code),
-        (marginfi::MARGINFI, Some(6008)), // InvalidBankAccount
+        (marginfi::MARGINFI, Some(marginfi::INVALID_BANK_ACCOUNT)),
         "{failure:?}"
     );
     assert_eq!(wallet::token_balance(&svm, &scene.usdc), 0);

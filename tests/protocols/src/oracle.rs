@@ -3,7 +3,9 @@
 //!
 //! A push-oracle `PriceUpdateV2` (owner: the Pyth receiver, 134 bytes) is always fully verified,
 //! and its offsets below assume that: a partially verified account has an extra byte at 41 and
-//! every later field one byte further on.
+//! every later field one byte further on. The type is `pyth-solana-receiver-sdk`'s, at the
+//! revision marginfi builds with (`0dotxyz/pyth-crosschain@f170d205e4`), and marginfi loads it by
+//! discriminator (`mrgnlabs/marginfi-v2@33c67987a6`, `programs/marginfi/src/state/price.rs:2184-2198`).
 
 use {litesvm::LiteSVM, solana_account::Account, solana_address::Address};
 
@@ -12,8 +14,9 @@ pub const PYTH_RECEIVER: Address =
     Address::from_str_const("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
 /// `PriceUpdateV2::LEN`.
 pub const PRICE_UPDATE_LEN: usize = 134;
-/// Anchor's `account:PriceUpdateV2` discriminator.
-const DISCRIMINATOR: [u8; 8] = [0x22, 0xf1, 0x23, 0x63, 0x9d, 0x7e, 0xf4, 0xcd];
+/// Anchor's discriminator of the `PriceUpdateV2` account, `sha256("account:PriceUpdateV2")[..8]`,
+/// which `crate::tests` derives.
+pub(crate) const DISCRIMINATOR: [u8; 8] = [0x22, 0xf1, 0x23, 0x63, 0x9d, 0x7e, 0xf4, 0xcd];
 /// `verification_level`, a Borsh enum tag: `Partial` is 0, `Full` is 1.
 const VERIFICATION_LEVEL: usize = 40;
 const FULL: u8 = 1;
@@ -104,10 +107,13 @@ fn field<const N: usize>(data: &[u8], offset: usize) -> [u8; N] {
 /// Scope, whose `OraclePrices` accounts Kamino's reserves price from. klend reads them and never
 /// invokes Scope, so the program is not in the snapshot.
 pub const SCOPE: Address = Address::from_str_const("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ");
-/// `OraclePrices`: discriminator, `oracle_mappings`, then 512 `DatedPrice` entries of 56 bytes.
-/// klend casts the account with `bytemuck::from_bytes`, so its length must never change.
+/// `OraclePrices` (`scope-types`, `Kamino-Finance/scope@2fb674083e`, the revision klend builds
+/// with): discriminator, `oracle_mappings`, then 512 `DatedPrice` entries of 56 bytes. klend checks
+/// the discriminator, then casts the rest with `bytemuck::from_bytes`, so the length must never
+/// change (`Kamino-Finance/klend@a08760976f`, `programs/klend/src/utils/prices/scope.rs:55-73`).
 pub const SCOPE_PRICES_LEN: usize = 28_712;
-const SCOPE_DISCRIMINATOR: [u8; 8] = [0x59, 0x80, 0x76, 0xdd, 0x06, 0x48, 0xb4, 0x92];
+/// `sha256("account:OraclePrices")[..8]`, which `crate::tests` derives.
+pub(crate) const SCOPE_DISCRIMINATOR: [u8; 8] = [0x59, 0x80, 0x76, 0xdd, 0x06, 0x48, 0xb4, 0x92];
 const SCOPE_FIRST_ENTRY: usize = 40;
 const SCOPE_ENTRY_LEN: usize = 56;
 /// Within an entry, each a little-endian u64: `price.value`, `price.exp`, `last_updated_slot`

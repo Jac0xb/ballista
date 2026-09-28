@@ -11,6 +11,7 @@ use {
         wallet::{self, SOL, WSOL_MINT},
     },
     ballista_sdk::TOKEN_PROGRAM_ID,
+    klend_interface::LendingError,
     litesvm::LiteSVM,
     solana_address::Address,
     solana_instruction::Instruction,
@@ -196,9 +197,5 @@ fn a_setup_refresh_hides_a_missing_refresh_until_the_slot_moves() {
     lending::next_slot(&mut svm);
     let failure =
         tx::send(&mut svm, &scene.owner, &[], &bare, &scene.leg.lookup_tables).unwrap_err();
-    assert_eq!(
-        (failure.program, failure.code),
-        (kamino::KLEND, Some(6017)), // ObligationStale
-        "{failure:?}"
-    );
+    kamino::refused(&failure, LendingError::ObligationStale);
 }

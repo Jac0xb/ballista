@@ -1,8 +1,8 @@
 //! `jupiterDailyCapSwap` against the real programs: route `solToUsdc`, 1 SOL for USDC through
 //! Meteora DLMM, capped per caller at 1.728 SOL that refills at 20,000 lamports a second.
 //!
-//! The cap passes `route` its token program and signer itself and forwards the rest of the
-//! route's accounts as its group. The run takes `route`'s place in Jupiter's own transaction:
+//! The cap passes `route` its token program, signer and source token account itself, and forwards
+//! the rest of the route's accounts as its group. The run takes `route`'s place in Jupiter's own transaction:
 //! Jupiter's setup wraps the SOL before it, and its cleanup closes the wrapped SOL account after.
 //!
 //! Each caller's entry is created inside its first run, at the caller's expense. The snapshot's
@@ -14,7 +14,10 @@ use {
         snapshot::{warp, Leg, LegInstructions, Snapshot, SNAPSHOT_DIR},
         template::{examples, upload, Example, Run},
         tx::{self, assert_requirement_failed, ballista_error, Failure, Outcome},
-        wallet::{self, associated_token_address, fund, keypair, token_balance, SOL},
+        wallet::{
+            self, associated_token_address, fund, keypair, token_account, token_balance, SOL,
+            TOKEN_ACCOUNT_LEN, WSOL_MINT,
+        },
     },
     ballista_sdk::{
         ballista_common::template::{REGISTRY_ENTRY_HEADER_LEN, REGISTRY_ENTRY_MAGIC},
@@ -30,10 +33,12 @@ use {
 
 const TEMPLATE: &str = "jupiterDailyCapSwap";
 const ROUTE: &str = "solToUsdc";
+/// 150 USDC for SOL: a route that sells another mint than the one the cap counts.
+const USDC_ROUTE: &str = "usdcToSol";
 const TEMPLATE_ID: u16 = 13;
-/// The accounts at the head of `route`'s list that the cap passes itself: the token program and
-/// the signer. The rest arrive as `actionAccounts`.
-const ROUTE_HEAD: usize = 2;
+/// The accounts at the head of `route`'s list that the cap passes itself: the token program, the
+/// signer and the source token account. The rest arrive as `actionAccounts`.
+const ROUTE_HEAD: usize = 3;
 /// The template's cap and rate: 1.728 SOL, refilling over a day.
 const DAILY_CAP: u64 = 1_728_000_000;
 const REFILL_PER_SECOND: u64 = 20_000;
@@ -45,6 +50,8 @@ const FIELDS_LEN: usize = 8 + 8;
 const INVALID_REGISTRY_ENTRY: u32 = 6025;
 /// The key of a caller other than the wallet the snapshot's routes were built for.
 const SECOND_CALLER: &[u8; 32] = b"ballista-protocol-tests-caller-2";
+/// The key of a second wrapped-SOL account of the caller's, which the route never touches.
+const DECOY: &[u8; 32] = b"ballista-protocol-tests-decoy-03";
 
 /// A caller: its keypair, the leg built for it, and its entry's address.
 struct Caller {
@@ -82,30 +89,48 @@ impl Cap {
         }
     }
 
-    /// A caller holding 10 SOL, with the leg rebuilt for it (see [`rekeyed`]) and its entry at
-    /// its registry address for its own key.
+    /// A caller holding 10 SOL, on route `solToUsdc`; see [`Cap::caller_on`].
     fn caller(&mut self, keypair: Keypair) -> Caller {
+        let leg = self.leg.clone();
+        self.caller_on(keypair, &leg)
+    }
+
+    /// A caller holding 10 SOL, with `leg` rebuilt for it (see [`rekeyed`]) and its entry at its
+    /// registry address for its own key.
+    fn caller_on(&mut self, keypair: Keypair, leg: &Leg) -> Caller {
         let address = keypair.pubkey();
         fund(&mut self.svm, &address, 10 * SOL);
-        let leg = rekeyed(&self.leg, &address);
+        let leg = rekeyed(leg, &address);
         let head: Vec<Address> = leg.instructions.swap.accounts[..ROUTE_HEAD]
             .iter()
             .map(|meta| meta.pubkey)
             .collect();
-        assert_eq!(head, [TOKEN_PROGRAM_ID, address]);
+        assert_eq!(head, [TOKEN_PROGRAM_ID, address, leg.source_token_account]);
         let (entry, _) =
             find_registry_entry_address(&self.template, DAILY_SPEND, &address.to_bytes());
-        Caller { keypair, leg, entry }
+        Caller {
+            keypair,
+            leg,
+            entry,
+        }
     }
 
-    /// A run of `caller`'s leg, on the route's own terms, with `entry` at `spend`.
-    fn run(&self, example: &Example, caller: &Caller, entry: Address) -> Instruction {
+    /// A run of `caller`'s leg, on the route's own terms, with `source` at `sourceAta` and `entry`
+    /// at `spend`.
+    fn run(
+        &self,
+        example: &Example,
+        caller: &Caller,
+        source: Address,
+        entry: Address,
+    ) -> Instruction {
         let route = &caller.leg.route;
         let swap = &caller.leg.instructions.swap;
         Run::new(self.template, example)
             .account("actionProgram", self.jupiter, false, false)
             .account("tokenProgram", TOKEN_PROGRAM_ID, false, false)
             .account("actor", caller.address(), true, true)
+            .account("sourceAta", source, true, false)
             .account("spend", entry, true, false)
             .account("systemProgram", SYSTEM_PROGRAM_ID, false, false)
             .input_bytes("routePlan", &route.route_plan)
@@ -117,15 +142,16 @@ impl Cap {
             .build()
     }
 
-    /// Sends `caller`'s run with `entry` at `spend`, in `route`'s place between Jupiter's own
-    /// setup and cleanup.
-    fn act_on(
+    /// Sends [`Cap::run`]'s run in `route`'s place, between Jupiter's own setup and cleanup.
+    fn send(
         &mut self,
         example: &Example,
         caller: &Caller,
+        source: Address,
         entry: Address,
     ) -> Result<Outcome, Failure> {
-        let instructions = caller.leg.instructions.with_swap(self.run(example, caller, entry));
+        let run = self.run(example, caller, source, entry);
+        let instructions = caller.leg.instructions.with_swap(run);
         tx::send(
             &mut self.svm,
             &caller.keypair,
@@ -135,9 +161,10 @@ impl Cap {
         )
     }
 
-    /// Sends `caller`'s run on its own entry.
+    /// Sends `caller`'s run from its own source account, on its own entry.
     fn act(&mut self, example: &Example, caller: &Caller) -> Result<Outcome, Failure> {
-        self.act_on(example, caller, caller.entry)
+        let (source, entry) = (caller.leg.source_token_account, caller.entry);
+        self.send(example, caller, source, entry)
     }
 
     /// Moves the clock on by `seconds`, and the slot at mainnet's 400 ms a slot (write rule 3).
@@ -151,7 +178,10 @@ impl Cap {
 
     /// `caller`'s entry's `spent` and `lastSpend`.
     fn entry(&self, caller: &Caller) -> (u64, i64) {
-        let account = self.svm.get_account(&caller.entry).expect("the entry exists");
+        let account = self
+            .svm
+            .get_account(&caller.entry)
+            .expect("the entry exists");
         let fields = &account.data[REGISTRY_ENTRY_HEADER_LEN..];
         (
             u64::from_le_bytes(fields[..8].try_into().unwrap()),
@@ -218,6 +248,49 @@ fn rekeyed(leg: &Leg, owner: &Address) -> Leg {
     }
 }
 
+/// A wrapped-SOL token account of `owner`'s at `account`'s address, holding `amount`, made through
+/// the System and Token programs as a wallet would make it: `CreateAccount` with the rent and
+/// `amount`, then `InitializeAccount3`, which counts a native account's lamports above the rent.
+fn wrapped_sol_account(
+    svm: &mut LiteSVM,
+    owner: &Keypair,
+    account: &Keypair,
+    amount: u64,
+) -> Address {
+    let address = account.pubkey();
+    let rent = svm.minimum_balance_for_rent_exemption(TOKEN_ACCOUNT_LEN);
+    // SystemInstruction::CreateAccount: tag 0 as a u32, then lamports, space and owner.
+    let mut create = vec![0, 0, 0, 0];
+    create.extend_from_slice(&(rent + amount).to_le_bytes());
+    create.extend_from_slice(&u64::try_from(TOKEN_ACCOUNT_LEN).unwrap().to_le_bytes());
+    create.extend_from_slice(TOKEN_PROGRAM_ID.as_ref());
+    // InitializeAccount3: tag 18, then the owner.
+    let mut initialize = vec![18];
+    initialize.extend_from_slice(owner.pubkey().as_ref());
+    let instructions = [
+        Instruction {
+            program_id: SYSTEM_PROGRAM_ID,
+            accounts: vec![
+                AccountMeta::new(owner.pubkey(), true),
+                AccountMeta::new(address, true),
+            ],
+            data: create,
+        },
+        Instruction {
+            program_id: TOKEN_PROGRAM_ID,
+            accounts: vec![
+                AccountMeta::new(address, false),
+                AccountMeta::new_readonly(WSOL_MINT, false),
+            ],
+            data: initialize,
+        },
+    ];
+    tx::send(svm, owner, &[account], &instructions, &[])
+        .unwrap_or_else(|failure| panic!("making token account {address} failed: {failure:?}"));
+    assert_eq!(token_balance(svm, &address), amount);
+    address
+}
+
 /// Jupiter's own transaction for the leg, in a fresh SVM: the run's baseline. Returns its
 /// outcome, the USDC it bought, and the lamports it cost the wallet, fee aside.
 fn jupiter_alone(snapshot: &Snapshot, leg: &Leg) -> (Outcome, u64, u64) {
@@ -242,7 +315,13 @@ fn jupiter_alone(snapshot: &Snapshot, leg: &Leg) -> (Outcome, u64, u64) {
 fn units_of(logs: &[String], program: &Address) -> Option<u64> {
     let prefix = format!("Program {program} consumed ");
     logs.iter()
-        .filter_map(|line| line.strip_prefix(&prefix)?.split_once(" of ")?.0.parse().ok())
+        .filter_map(|line| {
+            line.strip_prefix(&prefix)?
+                .split_once(" of ")?
+                .0
+                .parse()
+                .ok()
+        })
         .max()
 }
 
@@ -287,7 +366,10 @@ fn the_first_swap_creates_the_callers_entry() {
     let size = REGISTRY_ENTRY_HEADER_LEN + FIELDS_LEN;
     assert_eq!(entry.owner, ballista_sdk::ID);
     assert_eq!(entry.data.len(), size);
-    assert_eq!(entry.lamports, cap.svm.minimum_balance_for_rent_exemption(size));
+    assert_eq!(
+        entry.lamports,
+        cap.svm.minimum_balance_for_rent_exemption(size)
+    );
     assert_eq!(entry.data[..4], REGISTRY_ENTRY_MAGIC);
     assert_eq!(entry.data[5], DAILY_SPEND);
     assert_eq!(entry.data[8..40], cap.template.to_bytes());
@@ -423,6 +505,91 @@ fn a_second_caller_has_its_own_limit() {
     );
 }
 
+/// The cap counts lamports, so it takes wrapped SOL only. The wallet's USDC (write rule 1), sold
+/// through the template on route `usdcToSol`, fails at `spendsWrappedSol`, before the rate limit
+/// and the route, and leaves no entry behind.
+#[test]
+fn selling_usdc_fails_at_spends_wrapped_sol() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+    let mut cap = Cap::new(&snapshot, example);
+    let leg = snapshot.route(USDC_ROUTE).legs[0].clone();
+    assert_eq!(leg.input_mint, snapshot.named("usdcMint"));
+    let caller = cap.caller_on(wallet::wallet(), &leg);
+    token_account(
+        &mut cap.svm,
+        &caller.address(),
+        &leg.input_mint,
+        leg.in_amount,
+    );
+
+    let failure = cap.act(example, &caller).unwrap_err();
+    assert_requirement_failed(&failure, example, "spendsWrappedSol");
+    assert!(!cap.jupiter_ran(&failure), "{failure:?}");
+    assert_eq!(cap.svm.get_account(&caller.entry), None);
+    assert_eq!(
+        token_balance(&cap.svm, &caller.leg.source_token_account),
+        leg.in_amount
+    );
+    println!(
+        "refused at spendsWrappedSol (pc {}) after {} CU in Ballista's run",
+        ballista_error(&failure).unwrap().1,
+        units_of(&failure.logs, &ballista_sdk::ID).unwrap()
+    );
+}
+
+/// Jupiter requires only that `route`'s source position hold at least `in_amount`, of any mint and
+/// any owner, and it moves the accounts its steps name (`findings/oracle-swap.md`, P1). So the
+/// caller's own second wrapped-SOL account passes both source checks at `sourceAta`, while route
+/// `usdcToSol`'s step sells the caller's USDC (write rule 1). The run fails at
+/// `soldWhatTheCapCharged` once the route has run: no wrapped SOL left the source.
+#[test]
+fn a_wrapped_sol_decoy_at_the_source_fails_at_sold_what_the_cap_charged() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+    let mut cap = Cap::new(&snapshot, example);
+    let leg = snapshot.route(USDC_ROUTE).legs[0].clone();
+    let caller = cap.caller_on(wallet::wallet(), &leg);
+    token_account(
+        &mut cap.svm,
+        &caller.address(),
+        &leg.input_mint,
+        leg.in_amount,
+    );
+    let decoy = wrapped_sol_account(
+        &mut cap.svm,
+        &caller.keypair,
+        &keypair(DECOY),
+        leg.in_amount,
+    );
+
+    let failure = match cap.send(example, &caller, decoy, caller.entry) {
+        Ok(_) => panic!(
+            "the decoy landed: the entry holds {:?}, and {} USDC units are left of {}",
+            cap.entry(&caller),
+            token_balance(&cap.svm, &caller.leg.source_token_account),
+            leg.in_amount
+        ),
+        Err(failure) => failure,
+    };
+    assert_requirement_failed(&failure, example, "soldWhatTheCapCharged");
+    assert!(cap.jupiter_ran(&failure), "{failure:?}");
+    // The transaction reverted: the USDC is unsold, the decoy untouched, and no entry exists.
+    assert_eq!(
+        token_balance(&cap.svm, &caller.leg.source_token_account),
+        leg.in_amount
+    );
+    assert_eq!(token_balance(&cap.svm, &decoy), leg.in_amount);
+    assert_eq!(cap.svm.get_account(&caller.entry), None);
+    println!(
+        "refused at soldWhatTheCapCharged (pc {}) after {} CU in Ballista's run",
+        ballista_error(&failure).unwrap().1,
+        units_of(&failure.logs, &ballista_sdk::ID).unwrap()
+    );
+}
+
 /// One caller cannot charge or spend from another's entry. The run opens the entry for its own
 /// signer's key before the first step, and the runtime refuses any other account there with
 /// `InvalidRegistryEntry`: before the other caller's entry exists, it is not the address the run
@@ -436,14 +603,19 @@ fn a_caller_cannot_use_another_callers_entry() {
     let owner = cap.caller(wallet::wallet());
     let intruder = cap.caller(keypair(SECOND_CALLER));
 
-    let failure = cap.act_on(example, &intruder, owner.entry).unwrap_err();
+    let intruders_source = intruder.leg.source_token_account;
+    let failure = cap
+        .send(example, &intruder, intruders_source, owner.entry)
+        .unwrap_err();
     assert_invalid_registry_entry(&cap, example, &failure);
     assert_eq!(cap.svm.get_account(&owner.entry), None);
 
     cap.act(example, &owner)
         .unwrap_or_else(|failure| panic!("{failure:?}"));
     let before = cap.entry(&owner);
-    let failure = cap.act_on(example, &intruder, owner.entry).unwrap_err();
+    let failure = cap
+        .send(example, &intruder, intruders_source, owner.entry)
+        .unwrap_err();
     assert_invalid_registry_entry(&cap, example, &failure);
     assert_eq!(cap.entry(&owner), before);
     assert_eq!(cap.svm.get_account(&intruder.entry), None);

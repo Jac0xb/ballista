@@ -402,13 +402,20 @@ pub fn run_pyth_gate(
 /// `jupiterDailyCapSwap`'s one registry, `dailySpend`: the first it declares.
 const DAILY_SPEND: u8 = 0;
 
+pub struct DailyCapAccounts {
+    /// Signs, keys the entry, and pays its rent on the first run.
+    pub actor: Pubkey,
+    /// The actor's wrapped-SOL token account, which the route sells from.
+    pub source_ata: Pubkey,
+}
+
 /// `route` is the Swap API's `route` data split by [`RouteQuote::split`], and `action_accounts`
-/// its account list from the third account on: the template passes the token program and the
-/// actor itself. The actor's entry is at its registry address for the actor's own key; the
-/// actor's first run creates it, and pays its rent.
+/// its account list from the fourth account on: the template passes the token program, the actor
+/// and the source itself. The actor's entry is at its registry address for the actor's own key;
+/// the actor's first run creates it, and pays its rent.
 pub fn run_jupiter_daily_cap(
     template: Pubkey,
-    actor: Pubkey,
+    a: &DailyCapAccounts,
     route: &RouteQuote,
     action_accounts: Vec<AccountMeta>,
 ) -> Instruction {
@@ -420,11 +427,12 @@ pub fn run_jupiter_daily_cap(
         .u64(route.slippage_bps.into())
         .u64(route.platform_fee_bps.into())
         .finish();
-    let (spend, _) = find_registry_entry_address(&template, DAILY_SPEND, &actor.to_bytes());
+    let (spend, _) = find_registry_entry_address(&template, DAILY_SPEND, &a.actor.to_bytes());
     let mut accounts = vec![
         pinned(JUPITER_V6),
         pinned(TOKEN_PROGRAM_ID),
-        AccountMeta::new(actor, true),
+        AccountMeta::new(a.actor, true),
+        AccountMeta::new(a.source_ata, false),
         AccountMeta::new(spend, false),
         pinned(SYSTEM_PROGRAM_ID),
     ];
@@ -931,7 +939,8 @@ pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
     ("jupiterDailyCapSwap", || {
         let data = route_data();
         let route = RouteQuote::split(&data);
-        vec![run_jupiter_daily_cap(TEMPLATE, key(1), &route, group(20))]
+        let a = DailyCapAccounts { actor: key(1), source_ata: key(2) };
+        vec![run_jupiter_daily_cap(TEMPLATE, &a, &route, group(20))]
     }),
     ("jupiterDepositExactOutput", || {
         let a = JupiterDepositAccounts {

@@ -14,9 +14,11 @@ export async function buildDailyCapRun(input: {
   templateAddress: Address;
   /** Signs, keys the entry, and pays its rent on the first run. */
   actor: Address;
+  /** The actor's wrapped-SOL token account, which the route sells from. */
+  sourceAta: Address;
   /** The Swap API's `route` data. */
   routeData: Uint8Array;
-  /** The route's account list from the third account on: the template passes the token program and the actor. */
+  /** The route's account list from the fourth account on: the template passes the token program, the actor and the source. */
   actionAccounts: readonly KitAccountBinding[];
 }): Promise<Instruction> {
   const route = splitJupiterRoute(input.routeData);
@@ -39,6 +41,7 @@ export async function buildDailyCapRun(input: {
       actionProgram: pinned(JUPITER_V6),
       tokenProgram: pinned(TOKEN_PROGRAM),
       actor: at(input.actor),
+      sourceAta: at(input.sourceAta),
       spend: at(spend),
       systemProgram: pinned(SYSTEM_PROGRAM),
     },

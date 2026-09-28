@@ -1187,12 +1187,16 @@ pub fn signed_quote_settlement() -> Vec<u8> {
 
 // #region jupiter-daily-cap
 /// A per-caller daily cap on a Jupiter swap: the route's `inAmount` is charged against 1.728 SOL
-/// that refills at 20,000 lamports a second, in a registry entry keyed by the actor.
+/// that refills at 20,000 lamports a second, in a registry entry keyed by the actor. The route
+/// must sell the actor's own wrapped SOL, exactly `inAmount` of it.
 pub fn jupiter_daily_cap_swap() -> Vec<u8> {
     let mut b = ProgramBuilder::new();
+    // The compiler records a constant pubkey before the accounts' addresses.
+    b.pubkey(WRAPPED_SOL_MINT.to_bytes());
     let action_program = program(&mut b, JUPITER_V6);
     let token_program = program(&mut b, TOKEN_PROGRAM_ID);
     let actor = b.account(SIGN | WRITE, None, None, 0);
+    let source_ata = token_account(&mut b);
     let spend = b.account(WRITE, None, None, 0);
     let system_program = program(&mut b, SYSTEM_PROGRAM_ID);
     b.account_groups(1); // actionAccounts
@@ -1209,10 +1213,17 @@ pub fn jupiter_daily_cap_swap() -> Vec<u8> {
     let quoted_out_amount = b.load_input(quoted_out_amount);
     let slippage_bps = b.load_input(slippage_bps);
     let platform_fee_bps = b.load_input(platform_fee_bps);
+    let wrapped_sol = b.const_pubkey(WRAPPED_SOL_MINT.to_bytes());
     let refill_per_second = b.const_u64(20_000);
     let cap = b.const_u64(1_728_000_000);
     let key = b.account_key(actor);
     b.open_registry(spend, Some(key), actor, 0, 16, system_program);
+
+    // The cap counts lamports: a route that sold another mint would be charged in its units.
+    let held = b.read(OP_READ_PUBKEY, source_ata, TOKEN_MINT);
+    let holds_wsol = b.binary(OP_EQ, held, wrapped_sol);
+    b.require(holds_wsol);
+    require_owner(&mut b, source_ata, actor);
 
     // rateLimit: `now` never reads earlier than `lastSpend`, so it, and the `lastSpend` written
     // back (being `now`), never move backward: a clock step-back refills nothing and never
@@ -1238,10 +1249,11 @@ pub fn jupiter_daily_cap_swap() -> Vec<u8> {
     b.write_registry(spend, 0, OP_READ_U64, total);
     b.write_registry(spend, 8, OP_READ_I64, now);
 
+    let source_before = b.read(OP_READ_U64, source_ata, TOKEN_AMOUNT);
     let route = b.blob(&anchor("route"));
     let swap = b.cpi_with_group(
         action_program,
-        &[(token_program, READ), (actor, SIGN)],
+        &[(token_program, READ), (actor, SIGN), (source_ata, WRITE)],
         &[
             Segment::Literal(route),
             Segment::Register(DATA_REG_BYTES, route_plan),
@@ -1254,6 +1266,13 @@ pub fn jupiter_daily_cap_swap() -> Vec<u8> {
     );
     b.set_cpi_max_data_len(swap, 8 + ROUTE_ARGS_MAX + ROUTE_TAIL_LEN);
     b.invoke(swap, None);
+
+    // Jupiter moves the accounts its steps name, not the source it was handed. It required the
+    // source to hold `inAmount`, so the subtraction cannot underflow.
+    let expected = b.binary(OP_SUB, source_before, in_amount);
+    let source_after = b.read(OP_READ_U64, source_ata, TOKEN_AMOUNT);
+    let sold_the_charge = b.binary(OP_EQ, expected, source_after);
+    b.require(sold_the_charge);
     b.build().unwrap()
 }
 // #endregion jupiter-daily-cap

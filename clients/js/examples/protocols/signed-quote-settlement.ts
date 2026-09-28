@@ -2,13 +2,18 @@
  * Settle a maker's signed quote: the taker pays the quoted price, the maker delivers, and neither
  * side can stretch the quote past what the maker signed.
  *
- * The maker signs a 120-byte quote off chain: a price, the most it will sell, an expiry, the one
- * taker the quote is for, and the two mints. The taker puts the Ed25519 precompile instruction
- * that carries the signature directly before this template's run. The precompile verifies the
- * signature as part of the transaction, so a bad one fails it. The template checks that the
- * signature is the maker's, over a quote of this shape, and then holds the fill to the quote:
- * before the expiry, for this taker, no more than the maximum, in these mints, paid into an
- * account the maker owns, at the signed price rounded up in the maker's favour.
+ * The maker signs a 128-byte quote off chain: a tag, a price, the most it will sell, an expiry,
+ * the one taker the quote is for, and the two mints. The taker puts the Ed25519 precompile
+ * instruction that carries the signature directly before this template's run. The precompile
+ * verifies the signature as part of the transaction, so a bad one fails it. The template checks
+ * that the signature is the maker's, over a quote of this shape, and then holds the fill to the
+ * quote: before the expiry, for this taker, no more than the maximum, in these mints, paid into
+ * an account the maker owns, at the signed price rounded up in the maker's favour.
+ *
+ * The tag, `BLSTQT01`, separates quotes from everything else the maker signs. A signature covers
+ * bytes, not what they mean: without the tag, any 128 bytes the maker signed for another purpose
+ * could settle here, and a quote could pass wherever else the same layout is accepted. The
+ * template refuses a message without it.
  *
  * Ballista does not control the maker's tokens: the maker's authority co-signs the transaction.
  * Because the template enforces the terms, the service that co-signs checks only that the
@@ -31,20 +36,25 @@ import { TOKEN_ACCOUNT_LENGTH, TOKEN_ACCOUNT_MINT_OFFSET, TOKEN_ACCOUNT_OWNER_OF
 
 /** The signed quote. Integers are little-endian; keys are their 32 raw bytes. */
 export const QUOTE = {
-  length: 120,
+  length: 128,
+  /** `QUOTE_TAG`, marking the message as a settlement quote. */
+  tag: 0,
   /** Quote-token base units per `PRICE_SCALE` base-token base units. */
-  price: 0,
+  price: 8,
   /** The most base-token base units the maker delivers. */
-  maxAmount: 8,
+  maxAmount: 16,
   /** The last Unix timestamp at which the quote can settle. */
-  expiry: 16,
+  expiry: 24,
   /** The one wallet that can take the quote. */
-  taker: 24,
+  taker: 32,
   /** The mint the maker delivers. */
-  baseMint: 56,
+  baseMint: 64,
   /** The mint the taker pays in. */
-  quoteMint: 88,
+  quoteMint: 96,
 } as const;
+
+/** The eight bytes every quote starts with. */
+export const QUOTE_TAG = new TextEncoder().encode('BLSTQT01');
 
 /** Prices carry six decimals: a price of 1,000,000 is one quote unit per base unit. */
 export const PRICE_SCALE = 1_000_000n;
@@ -86,6 +96,13 @@ export const signedQuoteSettlement = defineTemplate({
   steps: [
     ...signedQuote.steps,
 
+    step.require(
+      expression.equal(
+        signedQuote.field(QUOTE.tag, 'u64'),
+        expression.u64(new DataView(QUOTE_TAG.buffer).getBigUint64(0, true)),
+      ),
+      'quoteIsTagged',
+    ),
     step.require(
       expression.lessThanOrEqual(expression.clockUnixTimestamp(), signedQuote.field(QUOTE.expiry, 'i64')),
       'quoteHasNotExpired',

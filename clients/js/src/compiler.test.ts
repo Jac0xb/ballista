@@ -1574,9 +1574,22 @@ describe('introspection expressions', () => {
     expect(() => compileWith([step.let('n', expression.bytesLength(expression.input('index')))])).toThrow(
       /bytesLength requires bytes/,
     );
-    for (const length of [0, 1025, 1.5]) {
-      expect(() => compileWith([step.let('b', expression.instructionDataBytes(sysvar, 0, 0, length))])).toThrow();
-    }
+    // Refused by the schema, as a Zod issue on the length itself.
+    const lengthIssues = (length: number) => {
+      try {
+        compileWith([step.let('b', expression.instructionDataBytes(sysvar, 0, 0, length))]);
+      } catch (error) {
+        return (error as { issues?: { code: string; path: PropertyKey[] }[] }).issues?.map(({ code, path }) => ({
+          code,
+          path,
+        }));
+      }
+      throw new Error(`a ${length}-byte read compiled`);
+    };
+    const path = ['steps', 0, 'value', 'length'];
+    expect(lengthIssues(0)).toEqual([{ code: 'too_small', path }]);
+    expect(lengthIssues(1025)).toEqual([{ code: 'too_big', path }]);
+    expect(lengthIssues(1.5)).toEqual([{ code: 'invalid_type', path }]);
   });
 
   test('isSigner and isWritable test one flag bit', () => {

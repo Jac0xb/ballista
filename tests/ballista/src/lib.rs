@@ -2125,7 +2125,7 @@ mod tests {
         }
     }
 
-    /// The 120-byte quote `signed-quote-settlement.ts` reads.
+    /// The 128-byte quote `signed-quote-settlement.ts` reads, after its tag.
     fn quote_message(
         price: u64,
         max_amount: u64,
@@ -2134,7 +2134,8 @@ mod tests {
         base_mint: &Pubkey,
         quote_mint: &Pubkey,
     ) -> Vec<u8> {
-        let mut message = Vec::with_capacity(120);
+        let mut message = Vec::with_capacity(128);
+        message.extend_from_slice(b"BLSTQT01");
         message.extend_from_slice(&price.to_le_bytes());
         message.extend_from_slice(&max_amount.to_le_bytes());
         message.extend_from_slice(&expiry.to_le_bytes());
@@ -2145,9 +2146,9 @@ mod tests {
     }
 
     /// The signed-quote example as the TypeScript SDK compiles it, settling a quote whose
-    /// signature the real Ed25519 precompile verifies. A tampered signature fails in the
+    /// signature the real Ed25519 precompile verifies. A tampered signature or message fails in the
     /// precompile, before Ballista runs; a valid one reaches the template, which binds it to the
-    /// maker, the taker, the size, the expiry and the mints.
+    /// maker, the tag, the taker, the size, the expiry and the mints.
     #[test]
     fn signed_quote_settles_only_as_the_maker_signed() {
         let creator = Pubkey::new_unique();
@@ -2218,11 +2219,28 @@ mod tests {
         let message = quote_message(2_500_000, 4_000_000, expiry, &taker, &base_mint, &quote_mint);
         let quote = ed25519_instruction(&maker_key, &message, 1, u16::MAX);
 
-        // A tampered signature fails in the precompile, instruction 0; Ballista never runs.
+        // A tampered signature, or one changed byte of the message it signs (the price), fails
+        // in the precompile, instruction 0, with `InvalidSignature`; Ballista never runs.
+        const SIGNATURE: usize = 2 + 14 + 32;
+        const MESSAGE: usize = SIGNATURE + 64;
+        let invalid_signature = Some((0, 2));
         let mut tampered = quote.clone();
-        tampered.data[2 + 14 + 32] ^= 1;
+        tampered.data[SIGNATURE] ^= 1;
         let rejected = settle(vec![tampered], taker, maker_quote, 3_000_001);
-        assert_eq!(failed_instruction(&rejected), Some(0), "{rejected:#?}");
+        assert_eq!(transaction_code(&rejected), invalid_signature, "{rejected:#?}");
+        let mut repriced = quote.clone();
+        repriced.data[MESSAGE + 8] ^= 1;
+        let rejected = settle(vec![repriced], taker, maker_quote, 3_000_001);
+        assert_eq!(transaction_code(&rejected), invalid_signature, "{rejected:#?}");
+
+        // With no precompile at all the run is instruction 0, and the index of the one before it
+        // underflows.
+        let alone = settle(vec![], taker, maker_quote, 1);
+        assert_eq!(
+            transaction_code(&alone).map(|(index, code)| (index, code & 0xffff)),
+            Some((0, 6013)),
+            "{alone:#?}"
+        );
 
         // Each broken binding fails the run, instruction 1, at its own requirement.
         let failure = |label: &str| Some((1, 6015, label.to_owned()));
@@ -2239,17 +2257,30 @@ mod tests {
             refused(vec![twice], taker, maker_quote, 1),
             failure("quoteIsOneSelfContainedSignature")
         );
-        // Index 0 is the precompile instruction here too, so it verifies; the template still
-        // wants the explicit `u16::MAX`.
-        let by_index = ed25519_instruction(&maker_key, &message, 1, 0);
-        assert_eq!(
-            refused(vec![by_index], taker, maker_quote, 1),
-            failure("quoteIsOneSelfContainedSignature")
-        );
-        let short = ed25519_instruction(&maker_key, &message[..119], 1, u16::MAX);
+        // The signature's, the key's and the message's instruction index, each set to 0 on its
+        // own. Index 0 is the precompile instruction here too, so it verifies; the template still
+        // wants the explicit `u16::MAX` in all three.
+        for field in [4, 8, 14] {
+            let mut by_index = quote.clone();
+            by_index.data[field..field + 2].copy_from_slice(&0u16.to_le_bytes());
+            assert_eq!(
+                refused(vec![by_index], taker, maker_quote, 1),
+                failure("quoteIsOneSelfContainedSignature"),
+                "the index at byte {field}"
+            );
+        }
+        let short = ed25519_instruction(&maker_key, &message[..message.len() - 1], 1, u16::MAX);
         assert_eq!(
             refused(vec![short], taker, maker_quote, 1),
             failure("quoteIsOneSelfContainedSignature")
+        );
+        // A message of the quote's shape signed for something else, under another tag.
+        let mut untagged = message.clone();
+        untagged[..8].copy_from_slice(b"BLSTQT02");
+        let untagged = ed25519_instruction(&maker_key, &untagged, 1, u16::MAX);
+        assert_eq!(
+            refused(vec![untagged], taker, maker_quote, 1),
+            failure("quoteIsTagged")
         );
         // With a memo in between, the run is instruction 2 and the one before it is the memo.
         let memo = Instruction {
@@ -2903,15 +2934,6 @@ mod tests {
                 solana_program_error::ProgramError::Custom(code),
             ) => Some((*index, *code)),
             _ => None,
-        }
-    }
-
-    /// The instruction a transaction failed at, whatever it failed with.
-    fn failed_instruction(result: &TransactionResult) -> Option<usize> {
-        match &result.program_result {
-            TransactionProgramResult::Success => None,
-            TransactionProgramResult::Failure(index, _)
-            | TransactionProgramResult::UnknownError(index, _) => Some(*index),
         }
     }
 

@@ -1317,16 +1317,16 @@
     ]
   },
   "signed-quote-settlement": {
-    "hash": "7e301e83d611fcb0cfa13734fe54a57aa9d52069bfceb1a561ac8dd85e82a124",
+    "hash": "22938ca1c2243f5a215f7c74b02716d8f5d2de64ea1665254656bb57b14c596e",
     "stats": {
-      "payloadBytes": 1266,
+      "payloadBytes": 1362,
       "fixedAccounts": 8,
       "batchStride": 0,
       "batchMaxIterations": 0,
       "batchMinIterations": 0,
       "inputs": 1,
-      "registers": 50,
-      "instructions": 61,
+      "registers": 55,
+      "instructions": 67,
       "cpis": 2,
       "maxExpandedCpis": 2,
       "maxCpiDataLength": 9,
@@ -1393,21 +1393,19 @@
       },
       {
         "pc": 14,
-        "path": "steps[0]"
+        "path": "constants[13]"
       },
       {
         "pc": 15,
-        "path": "steps[0]"
+        "path": "constants[14]"
       },
       {
         "pc": 16,
-        "path": "steps[1]",
-        "label": "quoteIsEd25519"
+        "path": "steps[0]"
       },
       {
         "pc": 17,
-        "path": "steps[1]",
-        "label": "quoteIsEd25519"
+        "path": "steps[0]"
       },
       {
         "pc": 18,
@@ -1416,13 +1414,13 @@
       },
       {
         "pc": 19,
-        "path": "steps[2]",
-        "label": "quoteIsOneSelfContainedSignature"
+        "path": "steps[1]",
+        "label": "quoteIsEd25519"
       },
       {
         "pc": 20,
-        "path": "steps[2]",
-        "label": "quoteIsOneSelfContainedSignature"
+        "path": "steps[1]",
+        "label": "quoteIsEd25519"
       },
       {
         "pc": 21,
@@ -1436,13 +1434,13 @@
       },
       {
         "pc": 23,
-        "path": "steps[3]",
-        "label": "quoteIsBySigner"
+        "path": "steps[2]",
+        "label": "quoteIsOneSelfContainedSignature"
       },
       {
         "pc": 24,
-        "path": "steps[3]",
-        "label": "quoteIsBySigner"
+        "path": "steps[2]",
+        "label": "quoteIsOneSelfContainedSignature"
       },
       {
         "pc": 25,
@@ -1461,166 +1459,196 @@
       },
       {
         "pc": 28,
-        "path": "steps[4]"
+        "path": "steps[3]",
+        "label": "quoteIsBySigner"
       },
       {
         "pc": 29,
-        "path": "steps[5]",
-        "label": "quoteHasNotExpired"
+        "path": "steps[3]",
+        "label": "quoteIsBySigner"
       },
       {
         "pc": 30,
-        "path": "steps[5]",
-        "label": "quoteHasNotExpired"
+        "path": "steps[4]"
       },
       {
         "pc": 31,
         "path": "steps[5]",
-        "label": "quoteHasNotExpired"
+        "label": "quoteIsTagged"
       },
       {
         "pc": 32,
         "path": "steps[5]",
-        "label": "quoteHasNotExpired"
+        "label": "quoteIsTagged"
       },
       {
         "pc": 33,
         "path": "steps[5]",
-        "label": "quoteHasNotExpired"
+        "label": "quoteIsTagged"
       },
       {
         "pc": 34,
         "path": "steps[6]",
-        "label": "quoteIsForThisTaker"
+        "label": "quoteHasNotExpired"
       },
       {
         "pc": 35,
         "path": "steps[6]",
-        "label": "quoteIsForThisTaker"
+        "label": "quoteHasNotExpired"
       },
       {
         "pc": 36,
         "path": "steps[6]",
-        "label": "quoteIsForThisTaker"
+        "label": "quoteHasNotExpired"
       },
       {
         "pc": 37,
         "path": "steps[6]",
-        "label": "quoteIsForThisTaker"
+        "label": "quoteHasNotExpired"
       },
       {
         "pc": 38,
         "path": "steps[6]",
-        "label": "quoteIsForThisTaker"
+        "label": "quoteHasNotExpired"
       },
       {
         "pc": 39,
         "path": "steps[7]",
-        "label": "withinTheQuotedSize"
+        "label": "quoteIsForThisTaker"
       },
       {
         "pc": 40,
         "path": "steps[7]",
-        "label": "withinTheQuotedSize"
+        "label": "quoteIsForThisTaker"
       },
       {
         "pc": 41,
         "path": "steps[7]",
-        "label": "withinTheQuotedSize"
+        "label": "quoteIsForThisTaker"
       },
       {
         "pc": 42,
         "path": "steps[7]",
-        "label": "withinTheQuotedSize"
+        "label": "quoteIsForThisTaker"
       },
       {
         "pc": 43,
-        "path": "steps[8]",
-        "label": "paysInTheQuotedMint"
+        "path": "steps[7]",
+        "label": "quoteIsForThisTaker"
       },
       {
         "pc": 44,
         "path": "steps[8]",
-        "label": "paysInTheQuotedMint"
+        "label": "withinTheQuotedSize"
       },
       {
         "pc": 45,
         "path": "steps[8]",
-        "label": "paysInTheQuotedMint"
+        "label": "withinTheQuotedSize"
       },
       {
         "pc": 46,
         "path": "steps[8]",
-        "label": "paysInTheQuotedMint"
+        "label": "withinTheQuotedSize"
       },
       {
         "pc": 47,
         "path": "steps[8]",
-        "label": "paysInTheQuotedMint"
+        "label": "withinTheQuotedSize"
       },
       {
         "pc": 48,
         "path": "steps[9]",
-        "label": "deliversTheQuotedMint"
+        "label": "paysInTheQuotedMint"
       },
       {
         "pc": 49,
         "path": "steps[9]",
-        "label": "deliversTheQuotedMint"
+        "label": "paysInTheQuotedMint"
       },
       {
         "pc": 50,
         "path": "steps[9]",
-        "label": "deliversTheQuotedMint"
+        "label": "paysInTheQuotedMint"
       },
       {
         "pc": 51,
         "path": "steps[9]",
-        "label": "deliversTheQuotedMint"
+        "label": "paysInTheQuotedMint"
       },
       {
         "pc": 52,
         "path": "steps[9]",
-        "label": "deliversTheQuotedMint"
+        "label": "paysInTheQuotedMint"
       },
       {
         "pc": 53,
         "path": "steps[10]",
-        "label": "paymentReachesTheMaker"
+        "label": "deliversTheQuotedMint"
       },
       {
         "pc": 54,
         "path": "steps[10]",
-        "label": "paymentReachesTheMaker"
+        "label": "deliversTheQuotedMint"
       },
       {
         "pc": 55,
         "path": "steps[10]",
-        "label": "paymentReachesTheMaker"
+        "label": "deliversTheQuotedMint"
       },
       {
         "pc": 56,
         "path": "steps[10]",
-        "label": "paymentReachesTheMaker"
+        "label": "deliversTheQuotedMint"
       },
       {
         "pc": 57,
-        "path": "steps[11]",
-        "label": "priceTheFill"
+        "path": "steps[10]",
+        "label": "deliversTheQuotedMint"
       },
       {
         "pc": 58,
         "path": "steps[11]",
-        "label": "priceTheFill"
+        "label": "paymentReachesTheMaker"
       },
       {
         "pc": 59,
-        "path": "steps[12]",
-        "label": "takerPays"
+        "path": "steps[11]",
+        "label": "paymentReachesTheMaker"
       },
       {
         "pc": 60,
+        "path": "steps[11]",
+        "label": "paymentReachesTheMaker"
+      },
+      {
+        "pc": 61,
+        "path": "steps[11]",
+        "label": "paymentReachesTheMaker"
+      },
+      {
+        "pc": 62,
+        "path": "steps[12]",
+        "label": "priceTheFill"
+      },
+      {
+        "pc": 63,
+        "path": "steps[12]",
+        "label": "priceTheFill"
+      },
+      {
+        "pc": 64,
+        "path": "steps[12]",
+        "label": "priceTheFill"
+      },
+      {
+        "pc": 65,
         "path": "steps[13]",
+        "label": "takerPays"
+      },
+      {
+        "pc": 66,
+        "path": "steps[14]",
         "label": "makerDelivers"
       }
     ]

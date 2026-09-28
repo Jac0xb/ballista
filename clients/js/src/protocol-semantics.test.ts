@@ -13,6 +13,7 @@ import { describe, expect, test } from 'vitest';
 import {
   ED25519_PROGRAM_ADDRESS_BYTES,
   TOKEN_PROGRAM_ADDRESS_BYTES,
+  account,
   expression,
   type AccountReference,
   type Expression,
@@ -31,7 +32,7 @@ import {
   signedQuoteSettlement,
   tokenSweepIntoSwap,
 } from '../examples/protocols/index.js';
-import { QUOTE, signedQuote } from '../examples/protocols/signed-quote-settlement.js';
+import { QUOTE, QUOTE_TAG, signedQuote } from '../examples/protocols/signed-quote-settlement.js';
 import { buildJupiterDepositRun } from '../examples/protocols/run-jupiter-deposit.js';
 import {
   BORSH_TRUE,
@@ -401,6 +402,14 @@ describe('the signed-quote settlement', () => {
     expect(dependsOn(requirement('quoteIsBySigner'), bindings, accountKey('maker'))).toBe(true);
   });
 
+  test('settles only a message that starts with the quote tag', () => {
+    expect(new TextDecoder().decode(QUOTE_TAG)).toBe('BLSTQT01');
+    // The tag's eight bytes, read as a little-endian u64.
+    expect(requirement('quoteIsTagged')).toEqual(
+      expression.equal(signedQuote.field(QUOTE.tag, 'u64'), expression.u64(0x3130_5451_5453_4c42n)),
+    );
+  });
+
   test('the taker pays the signed price for what it takes', () => {
     expect(takerPays.label).toBe('takerPays');
     expect(takerPays.accounts.map((entry) => nameOf(entry.account))).toEqual([
@@ -435,9 +444,13 @@ describe('the signed-quote settlement', () => {
     const delivers = requirement('deliversTheQuotedMint');
     expect(dependsOn(delivers, bindings, signed(QUOTE.baseMint, 'pubkey'))).toBe(true);
     expect(dependsOn(delivers, bindings, reads('makerBaseAccount', TOKEN_ACCOUNT_MINT_OFFSET))).toBe(true);
-    expect(
-      dependsOn(requirement('paymentReachesTheMaker'), bindings, reads('makerQuoteAccount', TOKEN_ACCOUNT_OWNER_OFFSET)),
-    ).toBe(true);
+    // Exactly this: the payee's owner equals the maker's key.
+    expect(requirement('paymentReachesTheMaker')).toEqual(
+      expression.equal(
+        expression.accountData(account.fixed('makerQuoteAccount'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('maker'), 'key'),
+      ),
+    );
   });
 
   test('every field lies inside the signed message', () => {

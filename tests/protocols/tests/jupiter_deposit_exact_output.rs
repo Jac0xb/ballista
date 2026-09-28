@@ -155,6 +155,10 @@ fn deposits_exactly_what_the_swap_produced() {
         minted
     );
     // The run asked Kamino for all of it; Kamino kept back only its cToken rounding.
+    assert_eq!(
+        kamino::deposits_requested(&outcome.logs),
+        [(USDC_RESERVE, produced)]
+    );
     kamino::assert_deposit_took_all_but_rounding(produced, taken, left, minted);
 }
 

@@ -162,6 +162,10 @@ fn deposits_into_kamino_exactly_what_marginfi_released() {
         minted
     );
     // The run asked Kamino for all of it; Kamino kept back only its cToken rounding.
+    assert_eq!(
+        kamino::deposits_requested(&outcome.logs),
+        [(USDC_RESERVE, released)]
+    );
     kamino::assert_deposit_took_all_but_rounding(released, taken, left, minted);
     assert_eq!(marginfi::active_banks(&svm, &scene.marginfi_account), []);
 }

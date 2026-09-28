@@ -20,6 +20,7 @@ use {
     solana_address::Address,
     solana_instruction::{AccountMeta, Instruction},
     solana_pubkey_v2::Pubkey,
+    std::str::FromStr,
 };
 
 pub const KLEND: Address = Address::from_str_const("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");
@@ -155,15 +156,17 @@ pub fn borrowed_sf(svm: &LiteSVM, obligation: &Address, reserve: &Address) -> u1
 /// Checks what a deposit asked to move `amount` did, against klend's rounding.
 ///
 /// klend deposits only what whole cTokens are worth: it mints `floor(amount / rate)` cTokens and
-/// takes `ceil(cTokens × rate)` of the liquidity (`compute_depositable_amount_and_minted_collateral`
-/// in `state/reserve.rs`). So it takes all of `amount` but less than one cToken's worth, and that
-/// remainder stays in the source.
+/// takes `ceil(cTokens × rate)` of the liquidity (`compute_depositable_amount_and_minted_collateral`,
+/// `state/reserve.rs:498-522`). So it takes all of `amount` but less than one cToken's worth, and
+/// that remainder stays in the source.
 /// - `taken`: what reached the reserve's supply vault;
 /// - `left`: what the deposit left in the source;
 /// - `minted`: the cTokens it minted.
 ///
-/// The rate is at most `taken / minted`, so "less than one cToken's worth" is checked as
-/// `left × minted < taken`.
+/// "Less than one cToken's worth" is `left < rate`, and the check reads no rate from the reserve:
+/// the deposit's own outcome pins it. klend took `taken = ceil(minted × rate)`, and for whole
+/// numbers `left × minted < ceil(minted × rate)` exactly when `left × minted < minted × rate`, that
+/// is, when `left < rate`. So the check is `left × minted < taken`.
 #[track_caller]
 pub fn assert_deposit_took_all_but_rounding(amount: u64, taken: u64, left: u64, minted: u64) {
     assert_eq!(
@@ -176,6 +179,21 @@ pub fn assert_deposit_took_all_but_rounding(amount: u64, taken: u64, left: u64, 
         "{left} of {amount} stayed behind for {minted} cTokens worth {taken}: a cToken's worth or \
          more stayed behind"
     );
+}
+
+/// Each klend deposit in `logs`, as the reserve and the amount it was asked for, in order. klend
+/// logs the request before it rounds anything
+/// (`handlers/handler_deposit_reserve_liquidity_and_obligation_collateral.rs:70-74`).
+pub fn deposits_requested(logs: &[String]) -> Vec<(Address, u64)> {
+    logs.iter()
+        .filter_map(|line| {
+            let request = line.strip_prefix(
+                "Program log: DepositReserveLiquidityAndObligationCollateral Reserve ",
+            )?;
+            let (reserve, amount) = request.split_once(" amount ")?;
+            Some((Address::from_str(reserve).ok()?, amount.parse().ok()?))
+        })
+        .collect()
 }
 
 /// Whether klend would liquidate `obligation` as its last refresh left it: its debt, adjusted by
@@ -568,6 +586,18 @@ mod tests {
     fn a_deposit_keeps_back_less_than_one_ctoken() {
         assert_deposit_took_all_but_rounding(100, 99, 1, 90);
         assert_deposit_took_all_but_rounding(100, 100, 0, 90);
+    }
+
+    #[test]
+    fn deposit_requests_are_read_from_klends_log() {
+        let logs = [
+            "Program log: Instruction: DepositReserveLiquidityAndObligationCollateralV2",
+            "Program log: DepositReserveLiquidityAndObligationCollateral Reserve D6q6wuQSrifJKZYpR1M8R4YawnLDtDsMmWM1NbBmgJ59 amount 12345678",
+            "Program log: pnl: Deposit reserve liquidity 12345677 and obligation collateral 10268848",
+        ]
+        .map(String::from);
+        assert_eq!(deposits_requested(&logs), [(USDC_RESERVE, 12_345_678)]);
+        assert_eq!(deposits_requested(&logs[2..]), []);
     }
 
     #[test]

@@ -49,6 +49,8 @@ the same commit and says why here.
   - Cookbook total: 552,315 → 552,304 (−11). Every other case and example: unchanged.
 - **Checked:** every host, SDK and Mollusk test, both ceiling tests, the proptest suites and the
   Certora specs' host tests.
+- **Bisecting:** every commit from `a31b686` through `e179e58` fails both ceiling tests, by 5 CU
+  per loop entry or output. `9b57112` fixes it.
 - **Watch:** a range pattern in `extended_instruction`'s match puts its test on the fallback path,
   which every loop entry and every output takes.
 
@@ -87,16 +89,16 @@ the same commit and says why here.
     cookbook example costs 11 to 48 more.
   - The verifier's check that every `EMIT` starts with a tag outside the run event's family,
     against `02c3017`: no fixed case moved, and no cookbook example's run or create.
-  - A 20-byte `EMIT` in three parts, measured on phase 1's tip: 429 CU, of which `sol_log_data`
-    charges 220. A run's first output also allocates the buffer, about 38 CU more.
-  - A 16-byte `SET_RETURN_DATA` as a run's first output, measured on phase 1's tip: 296 CU, of which
-    `sol_set_return_data` charges 100.
+- **Measured** on the phase-1 tip (`1efbd24`), what one output costs:
+  - A 20-byte `EMIT` in three parts: 429 CU, of which `sol_log_data` charges 220. A run's first
+    output also allocates the buffer, about 38 CU more.
+  - A 16-byte `SET_RETURN_DATA` as a run's first output: 296 CU, of which `sol_set_return_data`
+    charges 100.
 - **Checked:** the executor's unit tests, and the Mollusk suite with its ceilings. Later commits on
   the branch run the path on chain: a fixture that logs between two sends of a cached transfer
   payload, and generated programs that log and return data.
-  - Two earlier commits fail the ceiling test: at `9ec10fc` and `683689f`, `create template,
-    payroll 30 rows` measures 4,481 against its 4,470 ceiling, which `d6faac0` raises. Expect that
-    when bisecting across them.
+- **Bisecting:** `9ec10fc` and `683689f` fail the ceiling test: `create template, payroll 30 rows`
+  measures 4,481 against its 4,470 ceiling, which `d6faac0` raises.
 - **Watch:** `sol_log_data` charges 100 CU per call, 100 per field and 1 per byte, so a 1,024-byte
   `EMIT` costs 1,224 CU in the syscall alone.
 

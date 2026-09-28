@@ -241,7 +241,14 @@ pub fn runtime_type(value: RuntimeValue<'_>) -> Option<u8> {
 pub fn writes_destination(opcode: u8) -> bool {
     !matches!(
         opcode,
-        OP_REQUIRE | OP_INVOKE | OP_FOREACH | OP_REPEAT | OP_EMIT | OP_SET_RETURN_DATA
+        OP_REQUIRE
+            | OP_INVOKE
+            | OP_FOREACH
+            | OP_REPEAT
+            | OP_EMIT
+            | OP_SET_RETURN_DATA
+            | OP_OPEN_REGISTRY
+            | OP_WRITE_REGISTRY
     )
 }
 
@@ -332,6 +339,8 @@ mod tests {
     fn outputs_do_not_write_a_destination() {
         assert!(!writes_destination(OP_EMIT));
         assert!(!writes_destination(OP_SET_RETURN_DATA));
+        assert!(!writes_destination(OP_OPEN_REGISTRY));
+        assert!(!writes_destination(OP_WRITE_REGISTRY));
         assert!(writes_destination(OP_MOVE));
     }
 

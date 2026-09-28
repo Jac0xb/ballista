@@ -9,6 +9,10 @@ export function buildPythGateRun(input: {
   templateAddress: Address;
   /** The Pyth `PriceUpdateV2` account. */
   priceUpdate: Address;
+  /** The feed the price must be, as 32 bytes: SOL/USD's is `ef0d8b6f…c280b56d`. */
+  feedId: Uint8Array;
+  /** The exponent the bounds below are in units of: SOL/USD's is -8. */
+  exponent: bigint;
   actor: Address;
   /** Seconds. */
   maximumAge: bigint;
@@ -24,6 +28,8 @@ export function buildPythGateRun(input: {
     compiled,
     templateAddress: input.templateAddress,
     inputs: {
+      feedId: input.feedId,
+      exponent: input.exponent,
       maximumAge: input.maximumAge,
       maximumConfidence: input.maximumConfidence,
       floorPrice: input.floorPrice,

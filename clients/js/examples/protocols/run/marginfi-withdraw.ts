@@ -3,6 +3,7 @@ import type { Address, Instruction } from '@solana/kit';
 import { buildKitRunInstruction } from '../../../src/kit.js';
 import { compiled } from '../marginfi-withdraw-all-with-floor.js';
 import { MARGINFI_V2 } from '../shared.js';
+import { marginfiHealthAccounts, type MarginfiBalance } from './marginfi.js';
 import { TOKEN_PROGRAM, at, pinned } from './programs.js';
 
 export function buildMarginfiWithdrawRun(input: {
@@ -13,8 +14,11 @@ export function buildMarginfiWithdrawRun(input: {
   bank: Address;
   bankLiquidityVault: Address;
   bankLiquidityVaultAuthority: Address;
+  /** Where marginfi pays the withdrawal, and the treasury it is swept to: both the authority's own. */
   destinationAta: Address;
   treasuryAta: Address;
+  /** Every balance the marginfi account still holds after this one is emptied. */
+  remainingBalances: readonly MarginfiBalance[];
   minimumWithdrawn: bigint;
 }): Instruction {
   return buildKitRunInstruction({
@@ -33,5 +37,6 @@ export function buildMarginfiWithdrawRun(input: {
       destinationAta: at(input.destinationAta),
       treasuryAta: at(input.treasuryAta),
     },
+    accountGroups: { healthAccounts: marginfiHealthAccounts(input.remainingBalances) },
   });
 }

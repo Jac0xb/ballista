@@ -1,17 +1,25 @@
 import type { Address, Instruction } from '@solana/kit';
 
-import { buildKitRunInstruction, type KitAccountBinding } from '../../../src/kit.js';
-import { compiled } from '../jupiter-deposit-exact-output.js';
-import { JUPITER_V6, KAMINO_LEND, SYSVAR_INSTRUCTIONS } from '../shared.js';
+import { buildKitRunInstruction } from '../../../src/kit.js';
+import { compiled } from '../marginfi-to-kamino-rebalance.js';
+import { KAMINO_LEND, MARGINFI_V2, SYSVAR_INSTRUCTIONS } from '../shared.js';
 import { KAMINO_FARMS_PROGRAM, kaminoFarmPair, type KaminoFarm } from './kamino.js';
+import { marginfiHealthAccounts, type MarginfiBalance } from './marginfi.js';
 import { TOKEN_PROGRAM, at, pinned } from './programs.js';
 
 /** Send it behind `buildKaminoRefreshes`, in the same transaction. */
-export function buildJupiterDepositRun(input: {
+export function buildMarginfiToKaminoRun(input: {
   templateAddress: Address;
   owner: Address;
-  sourceAta: Address;
-  destinationAta: Address;
+  /** The owner's token account the assets pass through. */
+  walletAta: Address;
+  marginfiGroup: Address;
+  marginfiAccount: Address;
+  marginfiBank: Address;
+  marginfiVault: Address;
+  marginfiVaultAuthority: Address;
+  /** Every balance the marginfi account still holds after this one is emptied. */
+  remainingBalances: readonly MarginfiBalance[];
   obligation: Address;
   lendingMarket: Address;
   lendingMarketAuthority: Address;
@@ -22,24 +30,24 @@ export function buildJupiterDepositRun(input: {
   reserveDestinationDepositCollateral: Address;
   /** The reserve's collateral farm, if it has one. */
   collateralFarm?: KaminoFarm;
-  /** `splitJupiterRoute(swapData).args`: the Swap API's `route` data after the discriminator. */
-  routeArgs: Uint8Array;
-  minimumOut: bigint;
-  /** The route's account list from the fifth account on; the template passes the first four. */
-  routeAccounts: readonly KitAccountBinding[];
+  minimumMoved: bigint;
 }): Instruction {
   return buildKitRunInstruction({
     compiled,
     templateAddress: input.templateAddress,
-    inputs: { routeArgs: input.routeArgs, minimumOut: input.minimumOut },
+    inputs: { minimumMoved: input.minimumMoved },
     accounts: {
-      jupiter: pinned(JUPITER_V6),
+      marginfi: pinned(MARGINFI_V2),
       kamino: pinned(KAMINO_LEND),
       tokenProgram: pinned(TOKEN_PROGRAM),
       instructionsSysvar: pinned(SYSVAR_INSTRUCTIONS),
       owner: at(input.owner),
-      sourceAta: at(input.sourceAta),
-      destinationAta: at(input.destinationAta),
+      walletAta: at(input.walletAta),
+      marginfiGroup: at(input.marginfiGroup),
+      marginfiAccount: at(input.marginfiAccount),
+      marginfiBank: at(input.marginfiBank),
+      marginfiVault: at(input.marginfiVault),
+      marginfiVaultAuthority: at(input.marginfiVaultAuthority),
       obligation: at(input.obligation),
       lendingMarket: at(input.lendingMarket),
       lendingMarketAuthority: at(input.lendingMarketAuthority),
@@ -50,7 +58,7 @@ export function buildJupiterDepositRun(input: {
       reserveDestinationDepositCollateral: at(input.reserveDestinationDepositCollateral),
     },
     accountGroups: {
-      routeAccounts: input.routeAccounts,
+      healthAccounts: marginfiHealthAccounts(input.remainingBalances),
       // Kamino's v2 deposit ends in the farm pair and the Farms program.
       farmAccounts: [...kaminoFarmPair(input.collateralFarm), KAMINO_FARMS_PROGRAM],
     },

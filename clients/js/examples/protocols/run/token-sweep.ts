@@ -8,6 +8,7 @@ import { TOKEN_PROGRAM, at, pinned } from './programs.js';
 export function buildTokenSweepRun(input: {
   templateAddress: Address;
   seller: Address;
+  /** The seller's own token accounts: what is sold, and where the proceeds land. */
   sourceAta: Address;
   destinationAta: Address;
   /** The Swap API's `route` data, quoted for any amount; the template rescales it. */

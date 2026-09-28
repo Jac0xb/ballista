@@ -5,16 +5,28 @@ import { compiled } from '../jito-profit-guarded-tip.js';
 import { JUPITER_V6 } from '../shared.js';
 import { SYSTEM_PROGRAM, TOKEN_PROGRAM, at, pinned } from './programs.js';
 
+/**
+ * The strategy is one Jupiter `route` from the searcher's wrapped SOL back to it. The Swap API
+ * quotes the two legs separately, so they are joined: the second leg's step goes after the first's
+ * with its token indices moved up by one, and the joined list is the second leg's fixed accounts
+ * with the first leg's source, then both legs' step accounts. `round_trip` in
+ * `tests/protocols/tests/jito_tip.rs` joins single-step legs.
+ */
 export function buildJitoTipRun(input: {
   templateAddress: Address;
   searcher: Address;
+  /** The searcher's wrapped-SOL token account: the round trip's source and its destination. */
+  wsolAccount: Address;
   /** One of the eight `JITO_TIP_ACCOUNTS`. */
   jitoTip: Address;
-  /** `splitJupiterRoute(swapData).args`. */
+  /** The joined `route` data after its discriminator. */
   strategyData: Uint8Array;
   tipLamports: bigint;
   minimumEdge: bigint;
-  /** The route's account list from the third account on: the template passes the token program and the searcher. */
+  /**
+   * The joined route's account list from the fifth account on: the template passes the token
+   * program, the searcher, and the wrapped-SOL account twice.
+   */
   strategyAccounts: readonly KitAccountBinding[];
 }): Instruction {
   return buildKitRunInstruction({
@@ -30,6 +42,7 @@ export function buildJitoTipRun(input: {
       strategyProgram: pinned(JUPITER_V6),
       tokenProgram: pinned(TOKEN_PROGRAM),
       searcher: at(input.searcher),
+      wsolAccount: at(input.wsolAccount),
       jitoTip: at(input.jitoTip),
     },
     accountGroups: { strategyAccounts: input.strategyAccounts },

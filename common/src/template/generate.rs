@@ -25,7 +25,31 @@ pub struct GeneratedProgram {
     pub account_groups: usize,
     pub max_iterations: usize,
     pub min_iterations: usize,
+    /// The registry the program opens, if any. Its accounts are the last three fixed accounts.
+    pub registry: Option<GeneratedRegistry>,
 }
+
+/// A generated program's registry: its accounts are the last three fixed accounts, the System
+/// program, the payer and the entry, in that order, and its fields are [`GENERATED_REGISTRY_FIELDS`].
+#[derive(Clone, Copy, Debug)]
+pub struct GeneratedRegistry {
+    /// The registry index, below `MAX_REGISTRIES`.
+    pub index: u8,
+    /// Whether the entry is keyed by the payer's address; if not, by the zero key.
+    pub keyed_by_payer: bool,
+}
+
+/// A generated registry's fields as `(type, read opcode, offset)`: disjoint, so a `bool` read
+/// always finds a byte a `bool` write left, or the zero a creation left.
+pub const GENERATED_REGISTRY_FIELDS: [(u8, u8, u16); 5] = [
+    (VALUE_BOOL, OP_READ_BOOL, 0),
+    (VALUE_U64, OP_READ_U64, 1),
+    (VALUE_I64, OP_READ_I64, 9),
+    (VALUE_U128, OP_READ_U128, 17),
+    (VALUE_PUBKEY, OP_READ_PUBKEY, 33),
+];
+/// The bytes those fields take.
+pub const GENERATED_REGISTRY_SIZE: u16 = 65;
 
 impl GeneratedProgram {
     /// Run data for `iterations` rows and the given group lengths: the group-length prefix, the
@@ -135,6 +159,19 @@ impl GeneratedProgram {
         let accounts: Vec<u8> = (0..fixed_accounts)
             .map(|_| builder.account(0, None, None, 0))
             .collect();
+        // One program in three opens a registry. Drawn this early for the same reason as
+        // `returns_data` below: the loops read many choices, and a draw after them is mostly zero.
+        let registry = (choices.below(3) == 0).then(|| GeneratedRegistry {
+            index: choices.below(MAX_REGISTRIES) as u8,
+            keyed_by_payer: choices.below(2) == 1,
+        });
+        let registry_accounts = registry.map(|_| {
+            let system = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
+            let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+            let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+            (system, payer, entry)
+        });
+        let entry = registry_accounts.map(|(_, _, entry)| entry);
         let batched = choices.below(2) == 1;
         let (row_accounts, max_iterations, min_iterations) = if batched {
             let max_iterations = 1 + choices.below(3);
@@ -169,6 +206,13 @@ impl GeneratedProgram {
         // Every generated program starts with something in a register so later ops have operands.
         let seed = builder.const_u64(choices.next() as u64);
         registers.push(seed, VALUE_U64);
+        if let (Some(registry), Some((system, payer, entry))) = (registry, registry_accounts) {
+            let key = registry.keyed_by_payer.then(|| builder.account_key(payer));
+            if let Some(key) = key {
+                registers.push(key, VALUE_PUBKEY);
+            }
+            builder.open_registry(entry, key, payer, registry.index, GENERATED_REGISTRY_SIZE, system);
+        }
 
         // A run may set its return data once, after its last invoke. Generated programs invoke
         // nothing, so the end of the root is always a legal place. Decided this early because the
@@ -178,7 +222,7 @@ impl GeneratedProgram {
 
         let root_ops = 1 + choices.below(10);
         for _ in 0..root_ops {
-            emit_operation(&mut choices, &mut builder, &mut registers, &accounts, &inputs, false);
+            emit_operation(&mut choices, &mut builder, &mut registers, &accounts, &inputs, false, entry);
         }
 
         // Loops run one after another and never nest. A batched program has a FOREACH at a
@@ -197,12 +241,13 @@ impl GeneratedProgram {
                 &inputs,
                 &body_inputs,
                 foreach_row,
+                entry,
             );
             // Registers written inside a body are not visible afterwards; the type table for the
             // root stays as it was before the loop.
             let after_ops = choices.below(4);
             for _ in 0..after_ops {
-                emit_operation(&mut choices, &mut builder, &mut registers, &accounts, &inputs, false);
+                emit_operation(&mut choices, &mut builder, &mut registers, &accounts, &inputs, false, entry);
             }
         }
 
@@ -216,12 +261,13 @@ impl GeneratedProgram {
             bytes,
             fixed_inputs,
             row_input_bytes,
-            fixed_accounts,
+            fixed_accounts: fixed_accounts + if registry.is_some() { 3 } else { 0 },
             row_accounts,
             row_inputs: row_input_count,
             account_groups,
             max_iterations,
             min_iterations,
+            registry,
         }
     }
 }
@@ -238,6 +284,7 @@ fn emit_loop(
     inputs: &[(u8, u8)],
     foreach_inputs: &[(u8, u8)],
     row: Option<u8>,
+    entry: Option<u8>,
 ) {
     let count = if row.is_none() {
         let max = 1 + choices.below(3);
@@ -257,7 +304,7 @@ fn emit_loop(
     let body = |body: &mut ProgramBuilder| {
         let mut body_registers = root_registers.clone();
         for _ in 0..body_ops {
-            emit_operation(choices, body, &mut body_registers, &body_accounts, body_inputs, true);
+            emit_operation(choices, body, &mut body_registers, &body_accounts, body_inputs, true, entry);
         }
         if let Some(register) = carried {
             // Accumulate into the carried register with a same-typed operand.
@@ -298,6 +345,7 @@ fn emit_operation(
     accounts: &[u8],
     inputs: &[(u8, u8)],
     in_loop: bool,
+    entry: Option<u8>,
 ) {
     // Loop bodies take registers the root never sees again, so the builder's own count is the
     // one that must stay under the 64-register limit, with room for each loop's fixed extras.
@@ -305,7 +353,7 @@ fn emit_operation(
     if builder.register_count() >= 48 {
         return;
     }
-    match choices.below(17) {
+    match choices.below(19) {
         0 => {
             let value_type = SCALAR_TYPES[choices.below(SCALAR_TYPES.len())];
             let register = match value_type {
@@ -494,6 +542,23 @@ fn emit_operation(
                 parts.push(output_part(choices, registers));
             }
             builder.emit_data(&parts);
+        }
+        17 => {
+            if let Some(entry) = entry {
+                let (value_type, selector, offset) =
+                    GENERATED_REGISTRY_FIELDS[choices.below(GENERATED_REGISTRY_FIELDS.len())];
+                let register = builder.read_registry(entry, offset, selector);
+                registers.push(register, value_type);
+            }
+        }
+        18 => {
+            if let Some(entry) = entry {
+                let (value_type, selector, offset) =
+                    GENERATED_REGISTRY_FIELDS[choices.below(GENERATED_REGISTRY_FIELDS.len())];
+                if let Some(value) = choices.pick(&registers.of_type(value_type)) {
+                    builder.write_registry(entry, offset, selector, value);
+                }
+            }
         }
         _ => {
             if in_loop {

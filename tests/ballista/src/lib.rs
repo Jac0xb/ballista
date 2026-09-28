@@ -2864,15 +2864,38 @@ mod tests {
                 let created = context.process_instruction(&create_template_instruction(creator, 1, &program.bytes));
                 prop_assert!(created.program_result.is_ok(), "finalize rejected a generated program: {created:#?}");
                 let (template, _) = find_template_pda(&creator, 1);
+                // A registry takes the last three fixed accounts: the System program, a payer
+                // that signs and can pay the rent, and the entry at its derived address.
+                let payer = Pubkey::new_unique();
+                context
+                    .account_store
+                    .borrow_mut()
+                    .insert(payer, Account::new(10_000_000_000, 0, &system_program::id()));
+                let registry_metas = program.registry.map(|registry| {
+                    let key = if registry.keyed_by_payer { payer } else { Pubkey::default() };
+                    let (entry, _) = Pubkey::find_program_address(
+                        &[b"registry", template.as_ref(), &[registry.index], key.as_ref()],
+                        &ID,
+                    );
+                    [
+                        AccountMeta::new_readonly(system_program::id(), false),
+                        AccountMeta::new(payer, true),
+                        AccountMeta::new(entry, false),
+                    ]
+                });
 
                 for iterations in [program.min_iterations, program.max_iterations] {
                     let count = program.fixed_accounts + program.row_accounts * iterations;
                     // Fixed accounts and rows first, then the group members from the end of the pool.
-                    let metas: Vec<AccountMeta> = runtime[..count]
+                    let mut metas: Vec<AccountMeta> = runtime[..count]
                         .iter()
                         .chain(runtime[total - group_total..].iter())
                         .map(|address| AccountMeta::new_readonly(*address, false))
                         .collect();
+                    if let Some(registry_metas) = &registry_metas {
+                        let base = program.fixed_accounts - registry_metas.len();
+                        metas[base..program.fixed_accounts].clone_from_slice(registry_metas);
+                    }
                     let inputs = program.run_inputs(iterations, group_lengths);
                     let result = context.process_instruction(&run_instruction(template, metas, &inputs));
                     if result.program_result.is_ok() {

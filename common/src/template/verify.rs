@@ -512,6 +512,29 @@ impl ProgramView<'_> {
                 self.require_type(registers, instruction.a, VALUE_BYTES)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
             }
+            OP_OPEN_REGISTRY => {
+                self.verify_open_registry(instruction, instruction_index, scope, registers)?;
+                // Creating a pre-funded entry takes three CPIs; an open never encodes CPI data.
+                return Ok((REGISTRY_OPEN_CPIS, 0));
+            }
+            OP_READ_REGISTRY => {
+                if instruction.b != NO_INDEX || instruction.c != NO_INDEX {
+                    return Err(TemplateError::InvalidRegistry(instruction_index));
+                }
+                let field = self.registry_field(instruction, instruction_index, instruction.a, false)?;
+                self.write_register(registers, instruction.dst, scalar(read_type(field.selector)))?;
+            }
+            OP_WRITE_REGISTRY => {
+                let invalid = TemplateError::InvalidRegistry(instruction_index);
+                if instruction.dst != NO_INDEX || instruction.c != NO_INDEX {
+                    return Err(invalid);
+                }
+                let field = self.registry_field(instruction, instruction_index, instruction.b, true)?;
+                let value = self.read_register(registers, instruction.a).map_err(|_| invalid)?;
+                if value.value_type != read_type(field.selector) {
+                    return Err(invalid);
+                }
+            }
             OP_EQ | OP_NE => {
                 let left = self.read_register(registers, instruction.a)?;
                 let right = self.read_register(registers, instruction.b)?;
@@ -708,6 +731,118 @@ impl ProgramView<'_> {
             return Err(TemplateError::InvalidOutput(instruction_index));
         }
         Ok(())
+    }
+
+    /// `OPEN_REGISTRY`, every rule `InvalidRegistry`: at the root; a valid [`RegistryOpen`] with a
+    /// registry index below [`MAX_REGISTRIES`] and 1 to [`MAX_REGISTRY_SIZE`] field bytes; no
+    /// destination; the entry a fixed account declared writable and not pinned; the payer a fixed
+    /// account declared signer and writable; the System program account fixed and pinned to the
+    /// System program; the key [`NO_INDEX`] or a set `pubkey` register. Against the opens before
+    /// it: its entry account not opened already, the same size as any open of the same registry
+    /// index, at most [`MAX_REGISTRY_OPENS`] in all, and no `SET_RETURN_DATA` before it, since
+    /// creating an entry calls the System program and a CPI clears return data.
+    ///
+    /// The opens before it are found by scanning, as `SET_RETURN_DATA` scans the records after it:
+    /// the per-instruction signature Certora verifies against has no room for a slot table.
+    fn verify_open_registry(
+        &self,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
+        scope: LoopScope,
+        registers: &[Option<RegisterInfo>; MAX_REGISTERS],
+    ) -> Result<(), TemplateError> {
+        let invalid = TemplateError::InvalidRegistry(instruction_index);
+        let open = RegistryOpen::decode(instruction.immediate()).ok_or(invalid)?;
+        if scope != LoopScope::Root
+            || instruction.dst != NO_INDEX
+            || usize::from(open.index) >= MAX_REGISTRIES
+            || !(1..=MAX_REGISTRY_SIZE).contains(&usize::from(open.size))
+        {
+            return Err(invalid);
+        }
+        // `in_row_loop` is false, so a row account never matches.
+        let entry = self.account_constraint(instruction.a, false).ok_or(invalid)?;
+        if entry.flags & ACCOUNT_WRITABLE == 0 || entry.address_index != NO_INDEX {
+            return Err(invalid);
+        }
+        let payer = self.account_constraint(instruction.c, false).ok_or(invalid)?;
+        let signer_and_writable = ACCOUNT_SIGNER | ACCOUNT_WRITABLE;
+        if payer.flags & signer_and_writable != signer_and_writable {
+            return Err(invalid);
+        }
+        let system_program = self
+            .account_constraint(open.system_program, false)
+            .filter(|constraint| constraint.address_index != NO_INDEX)
+            .and_then(|constraint| self.pubkeys.get(constraint.address_index as usize))
+            .is_some_and(|address| address.bytes == SYSTEM_PROGRAM_ADDRESS);
+        if !system_program {
+            return Err(invalid);
+        }
+        if instruction.b != NO_INDEX
+            && !matches!(
+                self.read_register(registers, instruction.b),
+                Ok(info) if info.value_type == VALUE_PUBKEY
+            )
+        {
+            return Err(invalid);
+        }
+        let mut opens = 0usize;
+        for record in self.instructions.get(..instruction_index).unwrap_or(&[]) {
+            match record.opcode {
+                OP_SET_RETURN_DATA => return Err(invalid),
+                OP_OPEN_REGISTRY => {
+                    opens += 1;
+                    let earlier = RegistryOpen::decode(record.immediate()).ok_or(invalid)?;
+                    if record.a == instruction.a
+                        || (earlier.index == open.index && earlier.size != open.size)
+                    {
+                        return Err(invalid);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if opens >= MAX_REGISTRY_OPENS {
+            return Err(invalid);
+        }
+        Ok(())
+    }
+
+    /// The field a `READ_REGISTRY` or `WRITE_REGISTRY` names, every rule `InvalidRegistry`: a
+    /// valid [`RegistryField`] whose selector is a read opcode (for a write, one of the five whose
+    /// width holds every value of its type), inside the size the open of `entry` at a lower pc
+    /// declared. Opens are only at the root and loops run forward, so that open has run by the
+    /// time this instruction does, wherever it sits.
+    fn registry_field(
+        &self,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
+        entry: u8,
+        write: bool,
+    ) -> Result<RegistryField, TemplateError> {
+        let invalid = TemplateError::InvalidRegistry(instruction_index);
+        let field = RegistryField::decode(instruction.immediate()).ok_or(invalid)?;
+        let width = read_width(field.selector);
+        let holds_its_type = matches!(
+            field.selector,
+            OP_READ_BOOL | OP_READ_U64 | OP_READ_I64 | OP_READ_U128 | OP_READ_PUBKEY
+        );
+        if width == 0 || (write && !holds_its_type) {
+            return Err(invalid);
+        }
+        let size = self
+            .instructions
+            .get(..instruction_index)
+            .unwrap_or(&[])
+            .iter()
+            .find(|record| record.opcode == OP_OPEN_REGISTRY && record.a == entry)
+            .and_then(|record| RegistryOpen::decode(record.immediate()))
+            .ok_or(invalid)?
+            .size;
+        if !valid_range(usize::from(size), usize::from(field.offset), width) {
+            return Err(invalid);
+        }
+        Ok(field)
     }
 
     /// An `EMIT` starts with a literal tag of at least `MIN_EMIT_TAG_LEN` bytes outside the run
@@ -3767,5 +3902,200 @@ mod tests {
                 ((high << 4) | low) as u8
             })
             .collect()
+    }
+
+    /// System program, entry and payer, then an open of registry 2 (16 bytes) keyed by the
+    /// payer's address. Returns the builder, the three accounts and the open's pc.
+    fn registry_program() -> (ProgramBuilder, u8, u8, u8, usize) {
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
+        let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let key = builder.account_key(payer);
+        let pc = builder.open_registry(entry, Some(key), payer, 2, 16, system);
+        (builder, system, entry, payer, pc)
+    }
+
+    fn next_pc(builder: &mut ProgramBuilder) -> usize {
+        builder.instructions_mut().len()
+    }
+
+    #[test]
+    fn registry_rules() {
+        let invalid = TemplateError::InvalidRegistry;
+
+        // A valid open, a read of each width and a write of each writable width; an open counts
+        // three CPIs.
+        let (mut builder, _, entry, _, _) = registry_program();
+        let spent = builder.read_registry(entry, 0, OP_READ_U64);
+        builder.read_registry(entry, 15, OP_READ_U8);
+        builder.read_registry(entry, 12, OP_READ_I32);
+        builder.write_registry(entry, 8, OP_READ_U64, spent);
+        let flag = builder.const_bool(true);
+        builder.write_registry(entry, 15, OP_READ_BOOL, flag);
+        let stats = verify_builder(&builder).unwrap();
+        assert_eq!(stats.max_expanded_cpis, 3);
+
+        // A pubkey field takes 32 bytes: not in a 16-byte registry, and fine in a 32-byte one.
+        let (mut shorter, _, entry, _, _) = registry_program();
+        let pc = next_pc(&mut shorter);
+        shorter.read_registry(entry, 0, OP_READ_PUBKEY);
+        assert_eq!(verify_builder(&shorter).map(|_| ()), Err(invalid(pc)));
+        let (mut wider, _, entry, _, open) = registry_program();
+        wider.instructions_mut()[open].immediate_le =
+            RegistryOpen { index: 2, size: 32, system_program: 0 }.encode().to_le_bytes();
+        wider.read_registry(entry, 0, OP_READ_PUBKEY);
+        assert!(verify_builder(&wider).is_ok());
+
+        // No key: the zero key.
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(0, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
+        let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        builder.open_registry(entry, None, payer, 0, 1, system);
+        assert!(verify_builder(&builder).is_ok());
+
+        // Each broken open, one at a time. `(entry flags, entry pinned, payer flags, system pinned
+        // to, key type, index, size)`.
+        let base = (ACCOUNT_WRITABLE, false, ACCOUNT_SIGNER | ACCOUNT_WRITABLE, SYSTEM_PROGRAM_ADDRESS, Some(VALUE_PUBKEY), 0u8, 16u16);
+        let cases = [
+            ("entry read-only", (0, false, base.2, base.3, base.4, 0, 16)),
+            ("entry signer and writable is fine", (ACCOUNT_SIGNER | ACCOUNT_WRITABLE, false, base.2, base.3, base.4, 0, 16)),
+            ("entry pinned", (ACCOUNT_WRITABLE, true, base.2, base.3, base.4, 0, 16)),
+            ("payer not a signer", (base.0, false, ACCOUNT_WRITABLE, base.3, base.4, 0, 16)),
+            ("payer read-only", (base.0, false, ACCOUNT_SIGNER, base.3, base.4, 0, 16)),
+            ("system program elsewhere", (base.0, false, base.2, [1; 32], base.4, 0, 16)),
+            ("key a u64", (base.0, false, base.2, base.3, Some(VALUE_U64), 0, 16)),
+            ("key unset", (base.0, false, base.2, base.3, None, 0, 16)),
+            ("index 8", (base.0, false, base.2, base.3, base.4, 8, 16)),
+            ("size 0", (base.0, false, base.2, base.3, base.4, 0, 0)),
+            ("size 513", (base.0, false, base.2, base.3, base.4, 0, 513)),
+            ("size 512 is fine", (base.0, false, base.2, base.3, base.4, 0, 512)),
+        ];
+        for (name, (entry_flags, pinned, payer_flags, system_address, key_type, index, size)) in cases {
+            let mut builder = ProgramBuilder::new();
+            let system = builder.account(0, Some(system_address), None, 0);
+            let entry = builder.account(entry_flags, pinned.then_some([5; 32]), None, 0);
+            let payer = builder.account(payer_flags, None, None, 0);
+            let key = typed_register(&mut builder, key_type);
+            let pc = builder.open_registry(entry, Some(key), payer, index, size, system);
+            let expected = if name.ends_with("is fine") { Ok(()) } else { Err(invalid(pc)) };
+            assert_eq!(verify_builder(&builder).map(|_| ()), expected, "{name}");
+        }
+
+        // The accounts must be fixed ones: a row account, or one past the declared accounts.
+        for (entry, payer, system) in [(ITERATION_ACCOUNT_BIT, 2, 0), (1, 9, 0), (1, 2, ITERATION_ACCOUNT_BIT)] {
+            let mut builder = ProgramBuilder::new();
+            builder.account(0, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
+            builder.account(ACCOUNT_WRITABLE, None, None, 0);
+            builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+            let pc = builder.open_registry(entry, None, payer, 0, 8, system);
+            assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)), "{entry} {payer} {system}");
+        }
+
+        // A destination, or a spare immediate byte.
+        let (mut builder, _, _, _, pc) = registry_program();
+        builder.instructions_mut()[pc].dst = 0;
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)));
+        let (mut builder, _, _, _, pc) = registry_program();
+        builder.instructions_mut()[pc].immediate_le[4] = 1;
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)));
+
+        // Only at the root.
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(0, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
+        let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let count = builder.const_u64(1);
+        let mut pc = 0;
+        builder.repeat(count, 1, 0, |body| pc = body.open_registry(entry, None, payer, 0, 8, system));
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)));
+
+        // Each entry account once; one size per registry index; two entries of one registry.
+        let (mut builder, system, entry, payer, _) = registry_program();
+        let pc = builder.open_registry(entry, None, payer, 3, 16, system);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)), "entry opened twice");
+        let (mut builder, system, _, payer, _) = registry_program();
+        let other = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let pc = builder.open_registry(other, None, payer, 2, 24, system);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)), "registry 2 is 16 bytes");
+        let (mut builder, system, _, payer, _) = registry_program();
+        let other = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        builder.open_registry(other, None, payer, 2, 16, system);
+        assert_eq!(verify_builder(&builder).unwrap().max_expanded_cpis, 6);
+
+        // At most eight opens.
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(0, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
+        let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let entries: Vec<u8> = (0..9).map(|_| builder.account(ACCOUNT_WRITABLE, None, None, 0)).collect();
+        let pcs: Vec<usize> = entries
+            .iter()
+            .map(|entry| builder.open_registry(*entry, None, payer, 0, 8, system))
+            .collect();
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pcs[8])));
+
+        // Never after SET_RETURN_DATA.
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(0, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
+        let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let tag = builder.blob(&[1]);
+        builder.set_return_data(&[Segment::Literal(tag)]);
+        let pc = builder.open_registry(entry, None, payer, 0, 8, system);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)));
+
+        // Reads and writes need an open of their account before them, and a field inside it.
+        for (name, on_payer, offset, selector, write, fine) in [
+            ("read past the end", false, 9, OP_READ_U64, false, false),
+            ("read the last byte", false, 15, OP_READ_U8, false, true),
+            ("read an account never opened", true, 0, OP_READ_U64, false, false),
+            ("read with a selector that is not a read", false, 0, OP_ADD, false, false),
+            ("write a u8", false, 0, OP_READ_U8, true, false),
+            ("write a u64", false, 8, OP_READ_U64, true, true),
+            ("write an i64 from a u64", false, 8, OP_READ_I64, true, false),
+        ] {
+            let (mut program, _, entry, payer, _) = registry_program();
+            let value = program.const_u64(1);
+            let account = if on_payer { payer } else { entry };
+            let pc = next_pc(&mut program);
+            if write {
+                program.write_registry(account, offset, selector, value);
+            } else {
+                program.read_registry(account, offset, selector);
+            }
+            let expected = if fine { Ok(()) } else { Err(invalid(pc)) };
+            assert_eq!(verify_builder(&program).map(|_| ()), expected, "{name}");
+        }
+
+        // A read before its open.
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(0, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
+        let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        builder.read_registry(entry, 0, OP_READ_U64);
+        builder.open_registry(entry, None, payer, 0, 8, system);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(0)));
+
+        // Spare operands, and a write's destination.
+        let (mut builder, _, entry, _, _) = registry_program();
+        let pc = next_pc(&mut builder);
+        builder.read_registry(entry, 0, OP_READ_U64);
+        builder.instructions_mut()[pc].b = 0;
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)));
+        let (mut builder, _, entry, _, _) = registry_program();
+        let value = builder.const_u64(1);
+        let pc = builder.write_registry(entry, 0, OP_READ_U64, value);
+        builder.instructions_mut()[pc].dst = 0;
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)));
+
+        // Reads and writes work inside a loop body; the open stays at the root.
+        let (mut builder, _, entry, _, _) = registry_program();
+        let count = builder.const_u64(2);
+        builder.repeat(count, 2, 0, |body| {
+            let spent = body.read_registry(entry, 0, OP_READ_U64);
+            body.write_registry(entry, 0, OP_READ_U64, spent);
+        });
+        assert!(verify_builder(&builder).is_ok());
     }
 }

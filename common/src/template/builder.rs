@@ -288,6 +288,38 @@ impl ProgramBuilder {
         self.op(OP_BYTES_LEN, value, NO_INDEX, NO_INDEX, 0)
     }
 
+    /// Opens registry `index`'s entry in account `entry` for the rest of the run: the run checks
+    /// the entry, or creates it with `payer`'s lamports through `system_program`. `key` is a
+    /// `pubkey` register, or `None` for the zero key; `size` is the registry's field bytes.
+    /// Returns the instruction's index.
+    pub fn open_registry(
+        &mut self,
+        entry: u8,
+        key: Option<u8>,
+        payer: u8,
+        index: u8,
+        size: u16,
+        system_program: u8,
+    ) -> usize {
+        let open = RegistryOpen { index, size, system_program };
+        let key = key.unwrap_or(NO_INDEX);
+        self.emit(record(OP_OPEN_REGISTRY, NO_INDEX, entry, key, payer, 0, open.encode()))
+    }
+
+    /// The field at `offset` past the header of the entry open in `entry`, with the width and type
+    /// of `read_opcode`, one of the `OP_READ_*` opcodes.
+    pub fn read_registry(&mut self, entry: u8, offset: u16, read_opcode: u8) -> u8 {
+        let field = RegistryField { offset, selector: read_opcode };
+        self.op(OP_READ_REGISTRY, entry, NO_INDEX, NO_INDEX, field.encode())
+    }
+
+    /// Writes `value` into the field at `offset` of the entry open in `entry`, with the width of
+    /// `read_opcode`. Returns the instruction's index.
+    pub fn write_registry(&mut self, entry: u8, offset: u16, read_opcode: u8, value: u8) -> usize {
+        let field = RegistryField { offset, selector: read_opcode };
+        self.emit(record(OP_WRITE_REGISTRY, NO_INDEX, value, entry, NO_INDEX, 0, field.encode()))
+    }
+
     pub fn loop_index(&mut self) -> u8 {
         self.op(OP_LOOP_INDEX, NO_INDEX, NO_INDEX, NO_INDEX, 0)
     }

@@ -2641,10 +2641,11 @@ MSG
 
 ```ts
 describe('rateLimit', () => {
-  // The spec's example, verbatim.
+  // The spec's example, verbatim: 1 SOL a caller, refilling over a day. The cap and the rate are
+  // literals; a caller who could pass them would set their own limit.
   const limited = () =>
     defineTemplate({
-      inputs: { dailyCap: { type: 'u64' }, refillPerSecond: { type: 'u64' }, amount: { type: 'u64' } },
+      inputs: { amount: { type: 'u64' } },
       registries: { limits: { spent: 'u64', lastSpend: 'i64' } },
       accounts: {
         caller: { signer: true, writable: true },
@@ -2654,8 +2655,8 @@ describe('rateLimit', () => {
       steps: [
         ...rateLimit({
           registry: 'limits',
-          cap: expression.input('dailyCap'),
-          refillPerSecond: expression.input('refillPerSecond'),
+          cap: expression.u64(1_000_000_000),
+          refillPerSecond: expression.u64(11_574),
           amount: expression.input('amount'),
         }),
       ],
@@ -2664,6 +2665,7 @@ describe('rateLimit', () => {
   test('refills in u128, requires withinRateLimit, and writes both fields back', () => {
     const steps = limited().steps;
     expect(steps.map((item) => (item.kind === 'let' ? `let ${item.name}` : item.kind))).toEqual([
+      'let rateLimitLast',
       'let rateLimitNow',
       'let rateLimitSpent',
       'let rateLimitRefill',
@@ -2672,13 +2674,23 @@ describe('rateLimit', () => {
       'setRegistry',
       'setRegistry',
     ]);
+    // `now` is the clock, but never earlier than the last spend, and it is what the run writes
+    // back: after a clock that steps back, `lastSpend` stays put, so no later run refills the same
+    // seconds twice, and the elapsed time is never below zero.
+    const last = expression.variable('rateLimitLast');
+    const now = expression.variable('rateLimitNow');
+    expect(steps[0]).toMatchObject({ value: expression.registry('limits', 'lastSpend') });
+    expect(steps[1]).toMatchObject({ value: expression.max(expression.clockUnixTimestamp(), last) });
+    expect(steps.at(-1)).toMatchObject({ kind: 'setRegistry', field: 'lastSpend', value: now });
     const compiled = compileTemplate(limited());
+    // The caller supplies the amount alone.
+    expect(compiled.inputOrder).toEqual(['amount']);
     expect(compiled.sourceMap.some((entry) => entry.label === 'withinRateLimit')).toBe(true);
     const kinds = records(compiled).map((record) => record[0]);
     expect(kinds.filter((kind) => kind === opcode.readRegistry)).toHaveLength(2);
     expect(kinds.filter((kind) => kind === opcode.writeRegistry)).toHaveLength(2);
-    // Four u128 casts: the elapsed time, the rate, the spent amount and the new amount, and the cap.
-    expect(kinds.filter((kind) => kind === opcode.castU128).length).toBeGreaterThanOrEqual(4);
+    // Five u128 casts: the spent amount, the elapsed time, the rate, the new amount and the cap.
+    expect(kinds.filter((kind) => kind === opcode.castU128)).toHaveLength(5);
     expect(compiled.stats.maxExpandedCpis).toBe(3);
   });
 
@@ -2692,7 +2704,8 @@ describe('rateLimit', () => {
       lastSpend: 'at',
       name: 'daily',
     });
-    expect(steps[0]).toMatchObject({ kind: 'let', name: 'dailyNow' });
+    expect(steps[0]).toMatchObject({ kind: 'let', name: 'dailyLast', value: expression.registry('limits', 'at') });
+    expect(steps[1]).toMatchObject({ kind: 'let', name: 'dailyNow' });
     expect(steps.find((item) => item.kind === 'require')).toMatchObject({ label: 'withinDaily' });
     expect(steps.filter((item) => item.kind === 'setRegistry').map((item) => (item as { field: string }).field)).toEqual([
       'used',

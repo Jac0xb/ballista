@@ -236,8 +236,9 @@ pub fn runtime_type(value: RuntimeValue<'_>) -> Option<u8> {
 }
 
 /// Whether an accepted instruction writes its destination register. A loop opcode writes nothing
-/// itself; the instructions in its body do. The output opcodes name no register at all: the
-/// verifier requires `dst` to be `NO_INDEX`.
+/// itself; the instructions in its body do. The output opcodes, and `OP_OPEN_REGISTRY` and
+/// `OP_WRITE_REGISTRY` (75 and 77, which open an entry and write one of its fields rather than a
+/// register), name no register at all: the verifier requires `dst` to be `NO_INDEX`.
 pub fn writes_destination(opcode: u8) -> bool {
     !matches!(
         opcode,

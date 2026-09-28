@@ -2045,7 +2045,7 @@ describe('rateLimit', () => {
         refillPerSecond: expression.u64(11_574),
         amount: expression.input('amount'),
       }),
-    ).toThrow('cap must be a template constant or an author-controlled value, not a caller input');
+    ).toThrow('cap must be written inline, from literals and arithmetic');
   });
 
   test('refuses a refillPerSecond built from a row input', () => {
@@ -2056,6 +2056,63 @@ describe('rateLimit', () => {
         refillPerSecond: expression.rowInput('rate'),
         amount: expression.input('amount'),
       }),
-    ).toThrow('refillPerSecond must be a template constant or an author-controlled value, not a caller input');
+    ).toThrow('refillPerSecond must be written inline, from literals and arithmetic');
+  });
+
+  test('refuses a cap laundered through a variable, since its origin cannot be traced', () => {
+    // `step.let('cap', expression.input('cap'))` would bind the same input to `cap` outside
+    // rateLimit's view; the helper must refuse the `variable` read regardless of what it holds.
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.variable('cap'),
+        refillPerSecond: expression.u64(11_574),
+        amount: expression.input('amount'),
+      }),
+    ).toThrow('cap must be written inline, from literals and arithmetic');
+  });
+
+  test('refuses a cap read from the Instructions sysvar', () => {
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.instructionData(account.fixed('instructions'), expression.u64(0), expression.u64(0), 'u64'),
+        refillPerSecond: expression.u64(11_574),
+        amount: expression.input('amount'),
+      }),
+    ).toThrow('cap must be written inline, from literals and arithmetic');
+  });
+
+  test('refuses a cap read from an account field, such as the caller\'s own lamports', () => {
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.accountField(account.fixed('caller'), 'lamports'),
+        refillPerSecond: expression.u64(11_574),
+        amount: expression.input('amount'),
+      }),
+    ).toThrow('cap must be written inline, from literals and arithmetic');
+  });
+
+  test('accepts a cap built from arithmetic over literals', () => {
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.multiply(expression.u64(1_000), expression.u64(1_000_000)),
+        refillPerSecond: expression.u64(11_574),
+        amount: expression.input('amount'),
+      }),
+    ).not.toThrow();
+  });
+
+  test('accepts a cap read from a registry field', () => {
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.registry('limits', 'spent'),
+        refillPerSecond: expression.u64(11_574),
+        amount: expression.input('amount'),
+      }),
+    ).not.toThrow();
   });
 });

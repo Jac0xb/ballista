@@ -306,16 +306,42 @@ export function ed25519Signature(input: {
 }
 
 /**
- * Whether `value` is, or anywhere in its tree contains, an `input` or row input expression. Walks
- * plain objects and arrays generically rather than switching on `Expression`'s variants, so it
- * keeps working as the expression tree grows new kinds of nodes.
+ * Whether `value`'s tree is built only from literals, arithmetic or logic over them, and registry
+ * reads — the expressions `rateLimit` trusts for `cap` and `refillPerSecond`. This is an allow
+ * list, not a search for the caller-chosen kinds: a kind this does not yet know about is refused,
+ * not silently let through, which is how the previous, deny-list version of this check missed a
+ * `variable` bound to an input, a read of the Instructions sysvar, and a read of an account's own
+ * field.
  */
-function containsCallerInput(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(containsCallerInput);
-  if (value === null || typeof value !== 'object') return false;
+function isTemplateConstant(value: unknown): boolean {
+  if (Array.isArray(value)) return value.every(isTemplateConstant);
+  if (value === null || typeof value !== 'object') return true;
   const record = value as Record<string, unknown>;
-  if (record.kind === 'input' || record.kind === 'rowInput') return true;
-  return Object.values(record).some(containsCallerInput);
+  if (typeof record.kind !== 'string') return true;
+  switch (record.kind) {
+    // Self-contained: `registry` names its account and field as plain strings, with no nested
+    // expression to walk. The entry it reads is a fixed account the runtime verifies against its
+    // derived PDA, so, unlike a generic account read, the caller cannot substitute another one.
+    case 'literal':
+    case 'clock':
+    case 'loopIndex':
+    case 'registry':
+      return true;
+    // Pure operators over other expressions: safe exactly when every operand is.
+    case 'binary':
+    case 'multiplyDivide':
+    case 'powerOfTen':
+    case 'not':
+    case 'select':
+    case 'cast':
+    case 'bytesLength':
+      return Object.values(record).every(isTemplateConstant);
+    // Everything else — input, rowInput, variable (this cannot trace what it was bound to),
+    // accountField, accountData, accountDataBytes, returnData, pda, and every instruction* kind
+    // that reads the caller-built transaction — is refused, including any kind added later.
+    default:
+      return false;
+  }
 }
 
 /**
@@ -334,11 +360,15 @@ function containsCallerInput(value: unknown): boolean {
  *   leaves `lastSpend` where it was: it never moves back, so no later run refills the same seconds
  *   twice.
  * - `cap`, `refillPerSecond` and `amount` are `u64` expressions. `cap` and `refillPerSecond` must
- *   not come from the caller: whoever builds the transaction sets every input, so a cap taken from
- *   an input is a limit the caller picks. Pass literals, such as `expression.u64(1_000_000)`, or
- *   values the author controls, such as a registry field only an author-only branch writes. This
- *   helper throws if `cap` or `refillPerSecond` contains an `input` or row input anywhere in its
- *   expression tree.
+ *   be a template constant, written inline: a literal, such as `expression.u64(1_000_000)`, or
+ *   arithmetic or logic over literals, such as `expression.multiply(expression.u64(1_000),
+ *   expression.u64(1_000_000))`. A registry field is the one exception, since a registry entry's
+ *   address is verified at runtime: an author-only branch can write a cap or rate there for
+ *   `rateLimit` to read back. Everything else is refused — an input or row input, a variable (its
+ *   origin cannot be traced), a read of the caller-built transaction, or of an account's data or
+ *   fields (a caller can substitute any account not pinned by address) — because `cap` and
+ *   `refillPerSecond` each appear once in the generated steps, so writing them inline costs
+ *   nothing.
  * - The registry account's `key` (passed to `account.registry`) must not come from the caller
  *   either: a key taken from an input lets a caller open a fresh entry on every run and spend past
  *   the cap forever. Key the entry by a signer's address, such as
@@ -363,9 +393,11 @@ export function rateLimit(input: {
   name?: string;
 }): Step[] {
   for (const field of ['cap', 'refillPerSecond'] as const) {
-    if (containsCallerInput(input[field])) {
+    if (!isTemplateConstant(input[field])) {
       throw new TypeError(
-        `${field} must be a template constant or an author-controlled value, not a caller input`,
+        `${field} must be written inline, from literals and arithmetic: a template constant, not ` +
+          `an input, a variable, a read of the caller-built transaction, or of an account's data ` +
+          `or fields. It appears once in the generated steps, so inlining it costs nothing.`,
       );
     }
   }

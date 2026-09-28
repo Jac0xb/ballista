@@ -1034,6 +1034,16 @@ describe('output steps', () => {
     );
   });
 
+  test('setReturnData stays out of count loops, and emit may run in them', () => {
+    const count = { n: { type: 'u64' } } as const;
+    expect(() =>
+      compileSteps(count, [step.repeat(expression.input('n'), [step.setReturnData([data.literal(Uint8Array.of(1))])], { max: 2 })]),
+    ).toThrow('setReturnData is not allowed inside a loop');
+    expect(() =>
+      compileSteps(count, [step.repeat(expression.input('n'), [step.emit([data.encode('u64', expression.loopIndex())])], { max: 2 })]),
+    ).not.toThrow();
+  });
+
   test('an output encodes at most 1,024 bytes, counting a bytes value at its maximum length', () => {
     const memo = { memo: { type: 'bytes', maxLength: 1024 } } as const;
     expect(() => compileSteps(memo, [step.setReturnData([data.encode('bytes', expression.input('memo'))])])).not.toThrow();

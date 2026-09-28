@@ -27,6 +27,7 @@ mod tests {
         OP_LTE, OP_NE, OP_READ_I32, OP_READ_U64, OP_REPEAT, OP_REQUIRE, OP_SUB, VALUE_BOOL,
         VALUE_I64, VALUE_U64,
     };
+    use mollusk_svm::result::types::{TransactionProgramResult, TransactionResult};
     use mollusk_svm::{program::loader_keys::LOADER_V3, Mollusk, MolluskContext};
     use mollusk_svm_programs_memo::memo;
     use mollusk_svm_programs_token::{associated_token, token};
@@ -34,7 +35,7 @@ mod tests {
     use solana_instruction::{AccountMeta, Instruction};
     use solana_program_option::COption;
     use solana_pubkey::{pubkey, Pubkey};
-    use solana_sdk_ids::system_program;
+    use solana_sdk_ids::{system_program, sysvar};
     use solana_svm_log_collector::LogCollector;
     use spl_token_interface::state::{Account as TokenAccount, AccountState, Mint};
     use zerocopy::{Immutable, IntoBytes};
@@ -1982,6 +1983,321 @@ mod tests {
         assert_eq!(decode_kind(&huge), Some(6013));
     }
 
+    /// The introspection opcodes as the TypeScript SDK compiles them, run as the middle of three
+    /// instructions, between two memos, against the Instructions sysvar Mollusk builds from the
+    /// whole transaction.
+    #[test]
+    fn typescript_introspection_fixture_reads_the_transaction() {
+        let creator = Pubkey::new_unique();
+        let signer = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let mut accounts = funded_accounts([creator, signer], 10_000_000_000);
+        accounts.insert(
+            mint,
+            token::create_account_for_mint(Mint {
+                mint_authority: COption::None,
+                supply: 0,
+                decimals: 6,
+                is_initialized: true,
+                freeze_authority: COption::None,
+            }),
+        );
+        let context = context(accounts);
+        let payload = fixture("introspection");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 91, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 91);
+        let before = Instruction {
+            program_id: memo::ID,
+            accounts: vec![AccountMeta::new_readonly(signer, true)],
+            data: b"before".to_vec(),
+        };
+        let after = Instruction {
+            program_id: memo::ID,
+            accounts: vec![],
+            data: b"after".to_vec(),
+        };
+        let run = |neighbour: u64, position: u64, data_offset: u64, writable_mint: bool| {
+            let mut inputs = Vec::new();
+            for value in [neighbour, position, data_offset] {
+                inputs.extend_from_slice(&value.to_le_bytes());
+            }
+            let mint_meta = if writable_mint {
+                AccountMeta::new(mint, false)
+            } else {
+                AccountMeta::new_readonly(mint, false)
+            };
+            let ballista = run_instruction(
+                template,
+                vec![
+                    AccountMeta::new_readonly(sysvar::instructions::id(), false),
+                    AccountMeta::new_readonly(signer, true),
+                    mint_meta,
+                ],
+                &inputs,
+            );
+            context.process_transaction_instructions(&[before.clone(), ballista, after.clone()])
+        };
+
+        let read = run(0, 0, 44, false);
+        assert!(read.program_result.is_ok(), "{read:#?}");
+        let memos = context.process_transaction_instructions(&[before.clone(), after.clone()]);
+        eprintln!(
+            "introspection fixture compute units: {}",
+            read.compute_units_consumed - memos.compute_units_consumed
+        );
+
+        // Every failure is the run's, instruction 1, at the step whose read is out of range.
+        let failure = |label: &str, kind: u32| Some((1, kind, label.to_owned()));
+        assert_eq!(
+            fixture_failure(&run(3, 0, 44, false), "introspection"),
+            failure("neighbourIsMemo", 6023),
+            "there is no fourth instruction"
+        );
+        assert_eq!(
+            fixture_failure(&run(0, 1, 44, false), "introspection"),
+            failure("memoNamesItsSigner", 6023),
+            "the memo names one account"
+        );
+        assert_eq!(
+            fixture_failure(&run(0, 0, 82, false), "introspection"),
+            failure("mintHasSixDecimals", 6023),
+            "a mint is 82 bytes"
+        );
+        assert_eq!(
+            fixture_failure(&run(0, 0, 44, true), "introspection"),
+            failure("mintHasSixDecimals", 6024),
+            "a writable account's bytes are not lent"
+        );
+        // The last memo exists but names no accounts, so the checks on it fail as requirements.
+        assert_eq!(
+            fixture_failure(&run(2, 0, 44, false), "introspection"),
+            failure("oneAccount", 6015)
+        );
+    }
+
+    /// A deterministic Ed25519 key pair and its address.
+    fn ed25519_keypair(seed: u8) -> (ed25519_dalek::Keypair, Pubkey) {
+        let secret = ed25519_dalek::SecretKey::from_bytes(&[seed; 32]).expect("a 32-byte secret");
+        let public = ed25519_dalek::PublicKey::from(&secret);
+        let address = Pubkey::new_from_array(public.to_bytes());
+        (ed25519_dalek::Keypair { secret, public }, address)
+    }
+
+    /// An Ed25519 precompile instruction with `count` copies of one signature over `message`,
+    /// laid out as `new_ed25519_instruction_with_signature` lays out one: the offsets, then the
+    /// key, the signature and the message. Every offset names `index` as the instruction holding
+    /// its bytes; `u16::MAX` is the precompile instruction itself.
+    fn ed25519_instruction(
+        keypair: &ed25519_dalek::Keypair,
+        message: &[u8],
+        count: u8,
+        index: u16,
+    ) -> Instruction {
+        use ed25519_dalek::Signer;
+        let signature = keypair.sign(message).to_bytes();
+        let key_offset = 2 + 14 * count as u16;
+        let signature_offset = key_offset + 32;
+        let message_offset = signature_offset + 64;
+        let mut data = vec![count, 0];
+        for _ in 0..count {
+            for field in [
+                signature_offset,
+                index,
+                key_offset,
+                index,
+                message_offset,
+                message.len() as u16,
+                index,
+            ] {
+                data.extend_from_slice(&field.to_le_bytes());
+            }
+        }
+        data.extend_from_slice(&keypair.public.to_bytes());
+        data.extend_from_slice(&signature);
+        data.extend_from_slice(message);
+        Instruction {
+            program_id: solana_sdk_ids::ed25519_program::id(),
+            accounts: vec![],
+            data,
+        }
+    }
+
+    /// The 120-byte quote `signed-quote-settlement.ts` reads.
+    fn quote_message(
+        price: u64,
+        max_amount: u64,
+        expiry: i64,
+        taker: &Pubkey,
+        base_mint: &Pubkey,
+        quote_mint: &Pubkey,
+    ) -> Vec<u8> {
+        let mut message = Vec::with_capacity(120);
+        message.extend_from_slice(&price.to_le_bytes());
+        message.extend_from_slice(&max_amount.to_le_bytes());
+        message.extend_from_slice(&expiry.to_le_bytes());
+        for key in [taker, base_mint, quote_mint] {
+            message.extend_from_slice(key.as_ref());
+        }
+        message
+    }
+
+    /// The signed-quote example as the TypeScript SDK compiles it, settling a quote whose
+    /// signature the real Ed25519 precompile verifies. A tampered signature fails in the
+    /// precompile, before Ballista runs; a valid one reaches the template, which binds it to the
+    /// maker, the taker, the size, the expiry and the mints.
+    #[test]
+    fn signed_quote_settles_only_as_the_maker_signed() {
+        let creator = Pubkey::new_unique();
+        let (maker_key, maker) = ed25519_keypair(7);
+        let (stranger_key, _) = ed25519_keypair(8);
+        let taker = Pubkey::new_unique();
+        let other_taker = Pubkey::new_unique();
+        let (base_mint, quote_mint) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let taker_quote = Pubkey::new_unique();
+        let maker_quote = Pubkey::new_unique();
+        let maker_base = Pubkey::new_unique();
+        let taker_base = Pubkey::new_unique();
+        let diverted = Pubkey::new_unique();
+        let mut accounts = funded_accounts([creator, maker, taker, other_taker], 10_000_000_000);
+        for mint in [base_mint, quote_mint] {
+            accounts.insert(
+                mint,
+                token::create_account_for_mint(Mint {
+                    mint_authority: COption::None,
+                    supply: 1_000_000_000_000,
+                    decimals: 6,
+                    is_initialized: true,
+                    freeze_authority: COption::None,
+                }),
+            );
+        }
+        for (address, mint, owner, amount) in [
+            (taker_quote, quote_mint, taker, 100_000_000),
+            (maker_quote, quote_mint, maker, 0),
+            (maker_base, base_mint, maker, 10_000_000),
+            (taker_base, base_mint, taker, 0),
+            (diverted, quote_mint, taker, 0),
+        ] {
+            accounts.insert(
+                address,
+                token::create_account_for_token_account(token_account_state(mint, owner, amount)),
+            );
+        }
+        let mut context = context(accounts);
+        context.mollusk.sysvars.clock.unix_timestamp = 1_800_000_000;
+        let payload = fixture("signed-quote-settlement");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 92, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 92);
+        let settle = |instructions: Vec<Instruction>, taker: Pubkey, payee: Pubkey, amount: u64| {
+            let run = run_instruction(
+                template,
+                vec![
+                    AccountMeta::new_readonly(sysvar::instructions::id(), false),
+                    AccountMeta::new_readonly(token::ID, false),
+                    AccountMeta::new_readonly(taker, true),
+                    AccountMeta::new_readonly(maker, true),
+                    AccountMeta::new(taker_quote, false),
+                    AccountMeta::new(payee, false),
+                    AccountMeta::new(maker_base, false),
+                    AccountMeta::new(taker_base, false),
+                ],
+                &amount.to_le_bytes(),
+            );
+            let mut transaction = instructions;
+            transaction.push(run);
+            context.process_transaction_instructions(&transaction)
+        };
+        let expiry = 1_800_000_060;
+        // 2.5 quote units per base unit, at most 4 base units.
+        let message = quote_message(2_500_000, 4_000_000, expiry, &taker, &base_mint, &quote_mint);
+        let quote = ed25519_instruction(&maker_key, &message, 1, u16::MAX);
+
+        // A tampered signature fails in the precompile, instruction 0; Ballista never runs.
+        let mut tampered = quote.clone();
+        tampered.data[2 + 14 + 32] ^= 1;
+        let rejected = settle(vec![tampered], taker, maker_quote, 3_000_001);
+        assert_eq!(failed_instruction(&rejected), Some(0), "{rejected:#?}");
+
+        // Each broken binding fails the run, instruction 1, at its own requirement.
+        let failure = |label: &str| Some((1, 6015, label.to_owned()));
+        let refused = |instructions: Vec<Instruction>, taker: Pubkey, payee: Pubkey, amount: u64| {
+            fixture_failure(&settle(instructions, taker, payee, amount), "signed-quote-settlement")
+        };
+        let by_stranger = ed25519_instruction(&stranger_key, &message, 1, u16::MAX);
+        assert_eq!(
+            refused(vec![by_stranger], taker, maker_quote, 1),
+            failure("quoteIsBySigner")
+        );
+        let twice = ed25519_instruction(&maker_key, &message, 2, u16::MAX);
+        assert_eq!(
+            refused(vec![twice], taker, maker_quote, 1),
+            failure("quoteIsOneSelfContainedSignature")
+        );
+        // Index 0 is the precompile instruction here too, so it verifies; the template still
+        // wants the explicit `u16::MAX`.
+        let by_index = ed25519_instruction(&maker_key, &message, 1, 0);
+        assert_eq!(
+            refused(vec![by_index], taker, maker_quote, 1),
+            failure("quoteIsOneSelfContainedSignature")
+        );
+        let short = ed25519_instruction(&maker_key, &message[..119], 1, u16::MAX);
+        assert_eq!(
+            refused(vec![short], taker, maker_quote, 1),
+            failure("quoteIsOneSelfContainedSignature")
+        );
+        // With a memo in between, the run is instruction 2 and the one before it is the memo.
+        let memo = Instruction {
+            program_id: memo::ID,
+            accounts: vec![],
+            data: b"between".to_vec(),
+        };
+        assert_eq!(
+            refused(vec![quote.clone(), memo], taker, maker_quote, 1),
+            Some((2, 6015, "quoteIsEd25519".to_owned()))
+        );
+        let stale =
+            quote_message(2_500_000, 4_000_000, 1_799_999_999, &taker, &base_mint, &quote_mint);
+        let stale = ed25519_instruction(&maker_key, &stale, 1, u16::MAX);
+        assert_eq!(
+            refused(vec![stale], taker, maker_quote, 1),
+            failure("quoteHasNotExpired")
+        );
+        assert_eq!(
+            refused(vec![quote.clone()], other_taker, maker_quote, 1),
+            failure("quoteIsForThisTaker")
+        );
+        assert_eq!(
+            refused(vec![quote.clone()], taker, maker_quote, 4_000_001),
+            failure("withinTheQuotedSize")
+        );
+        let other_market =
+            quote_message(2_500_000, 4_000_000, expiry, &taker, &base_mint, &base_mint);
+        let other_market = ed25519_instruction(&maker_key, &other_market, 1, u16::MAX);
+        assert_eq!(
+            refused(vec![other_market], taker, maker_quote, 1),
+            failure("paysInTheQuotedMint")
+        );
+        assert_eq!(
+            refused(vec![quote.clone()], taker, diverted, 1),
+            failure("paymentReachesTheMaker")
+        );
+
+        // The real thing: 3.000001 base units at 2.5, rounded up in the maker's favour.
+        let settled = settle(vec![quote], taker, maker_quote, 3_000_001);
+        assert!(settled.program_result.is_ok(), "{settled:#?}");
+        eprintln!("signed-quote settlement compute units: {}", settled.compute_units_consumed);
+        assert_eq!(token_amount(&context, taker_quote), 100_000_000 - 7_500_003);
+        assert_eq!(token_amount(&context, maker_quote), 7_500_003);
+        assert_eq!(token_amount(&context, maker_base), 10_000_000 - 3_000_001);
+        assert_eq!(token_amount(&context, taker_base), 3_000_001);
+    }
+
     /// `READ_I32` runs in `extended_instruction`, not the dispatch loop's read arm, so its dynamic
     /// offsets are checked there. A read in range sign-extends, up to the last four bytes. One that
     /// would end past the data fails at the read, and so does an offset of `u64::MAX`, which cannot
@@ -2561,6 +2877,10 @@ mod tests {
             "math-ops" => include_str!("../../../fixtures/math-ops.hex"),
             "output" => include_str!("../../../fixtures/output.hex"),
             "loops" => include_str!("../../../fixtures/loops.hex"),
+            "introspection" => include_str!("../../../fixtures/introspection.hex"),
+            "signed-quote-settlement" => {
+                include_str!("../../../fixtures/signed-quote-settlement.hex")
+            }
             other => panic!("unknown fixture {other}"),
         };
         let bytes: Vec<u8> = hex
@@ -2573,6 +2893,42 @@ mod tests {
             .and_then(|program| program.verify())
             .unwrap_or_else(|error| panic!("fixture {name} does not verify: {error}"));
         bytes
+    }
+
+    /// The instruction a transaction failed at and its custom error code, if it failed with one.
+    fn transaction_code(result: &TransactionResult) -> Option<(usize, u32)> {
+        match &result.program_result {
+            TransactionProgramResult::Failure(
+                index,
+                solana_program_error::ProgramError::Custom(code),
+            ) => Some((*index, *code)),
+            _ => None,
+        }
+    }
+
+    /// The instruction a transaction failed at, whatever it failed with.
+    fn failed_instruction(result: &TransactionResult) -> Option<usize> {
+        match &result.program_result {
+            TransactionProgramResult::Success => None,
+            TransactionProgramResult::Failure(index, _)
+            | TransactionProgramResult::UnknownError(index, _) => Some(*index),
+        }
+    }
+
+    /// Where a transaction failed inside a compiler fixture's run: the instruction, the error kind,
+    /// and the label of the step that emitted the failing program counter, from the source map
+    /// `pnpm fixtures` records.
+    fn fixture_failure(result: &TransactionResult, name: &str) -> Option<(usize, u32, String)> {
+        let (index, code) = transaction_code(result)?;
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../../../fixtures/manifest.json")).expect("manifest");
+        let label = manifest[name]["sourceMap"]
+            .as_array()?
+            .iter()
+            .find(|entry| entry["pc"] == code >> 16)?["label"]
+            .as_str()?
+            .to_owned();
+        Some((index, code & 0xffff, label))
     }
 
     /// The error kind (low 16 bits) a run failed with, ignoring its context.

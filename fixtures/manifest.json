@@ -936,6 +936,85 @@
       }
     ]
   },
+  "output": {
+    "hash": "434aeccd892f7df2118c684a41f7281e726d3e584068e92dc0ef1386f52e4b65",
+    "stats": {
+      "payloadBytes": 384,
+      "fixedAccounts": 2,
+      "batchStride": 1,
+      "batchMaxIterations": 2,
+      "batchMinIterations": 1,
+      "inputs": 2,
+      "registers": 7,
+      "instructions": 13,
+      "cpis": 1,
+      "maxExpandedCpis": 2,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "inputs.amount"
+      },
+      {
+        "pc": 1,
+        "path": "inputs.memo"
+      },
+      {
+        "pc": 2,
+        "path": "constants[0]"
+      },
+      {
+        "pc": 3,
+        "path": "steps[1]"
+      },
+      {
+        "pc": 4,
+        "path": "steps[1].steps[0]"
+      },
+      {
+        "pc": 5,
+        "path": "steps[1].steps[1]",
+        "label": "logRow"
+      },
+      {
+        "pc": 6,
+        "path": "steps[1].steps[1]",
+        "label": "logRow"
+      },
+      {
+        "pc": 7,
+        "path": "steps[1].steps[1]",
+        "label": "logRow"
+      },
+      {
+        "pc": 8,
+        "path": "steps[1].steps[2]"
+      },
+      {
+        "pc": 9,
+        "path": "steps[1].steps[2]"
+      },
+      {
+        "pc": 10,
+        "path": "steps[2]",
+        "label": "logMemo"
+      },
+      {
+        "pc": 11,
+        "path": "steps[3]",
+        "label": "returnTotal"
+      },
+      {
+        "pc": 12,
+        "path": "steps[3]",
+        "label": "returnTotal"
+      }
+    ]
+  },
   "event-flag": {
     "hash": "df163e083afb3a8a9cc2faae9d70f8d58ee720200e2b8b2a592f3e304e51bf6d",
     "stats": {

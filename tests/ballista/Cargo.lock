@@ -366,6 +366,7 @@ name = "ballista-integration-tests"
 version = "1.0.0"
 dependencies = [
  "ballista-common",
+ "base64",
  "mollusk-svm",
  "mollusk-svm-bencher",
  "mollusk-svm-programs-memo",
@@ -387,6 +388,7 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-short-vec",
  "solana-signature",
+ "solana-svm-log-collector",
  "solana-system-program",
  "solana-transaction",
  "spl-token-interface",

@@ -9,7 +9,9 @@ mod profile;
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{cell::RefCell, collections::HashMap, rc::Rc};
+
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     use ballista_common::instruction::{
         IX_BEGIN_TEMPLATE, IX_CANCEL_TEMPLATE, IX_CREATE_TEMPLATE, IX_FINALIZE_TEMPLATE, IX_RUN,
@@ -33,6 +35,7 @@ mod tests {
     use solana_program_option::COption;
     use solana_pubkey::{pubkey, Pubkey};
     use solana_sdk_ids::system_program;
+    use solana_svm_log_collector::LogCollector;
     use spl_token_interface::state::{Account as TokenAccount, AccountState, Mint};
     use zerocopy::{Immutable, IntoBytes};
 
@@ -735,13 +738,16 @@ mod tests {
     }
 
     /// The event flag adds one data log after a successful run and changes nothing else. Mollusk
-    /// does not expose program logs, so the layout is covered by a host unit test.
+    /// records program logs once it is given a log collector, so the event is read back from its
+    /// `Program data:` line.
     #[test]
     fn event_flag_does_not_change_run_semantics() {
         let creator = Pubkey::new_unique();
         let payer = Pubkey::new_unique();
         let recipient = Pubkey::new_unique();
-        let context = context(funded_accounts([creator, payer, recipient], 10_000_000_000));
+        let mut context = context(funded_accounts([creator, payer, recipient], 10_000_000_000));
+        let logger = LogCollector::new_ref();
+        context.mollusk.logger = Some(logger.clone());
 
         let mut builder = ProgramBuilder::new();
         builder.flags(ballista_common::template::PROGRAM_FLAG_EMIT_EVENT);
@@ -785,6 +791,13 @@ mod tests {
         ));
         assert!(result.program_result.is_ok(), "{result:#?}");
         assert_eq!(lamports(&context, recipient), before + 1_000);
+        // Magic, bytecode version, iterations, invokes reached, the mask of those that ran, and
+        // the template address.
+        let mut event = b"BEV1".to_vec();
+        event.extend_from_slice(&[1, 0, 1]);
+        event.extend_from_slice(&1u64.to_le_bytes());
+        event.extend_from_slice(template.as_ref());
+        assert_eq!(program_data(&logger), vec![event]);
         eprintln!(
             "transfer with event compute units: {}",
             result.compute_units_consumed
@@ -2293,6 +2306,164 @@ mod tests {
         assert!(result.program_result.is_ok(), "{result:#?}");
     }
 
+    /// The output opcodes as the TypeScript SDK compiles them, run on chain. Each row logs its
+    /// index and recipient right after a transfer whose data the next row sends again without
+    /// encoding it, so a log that wrote the invocation's buffer would break the second transfer.
+    /// The run then logs the memo and returns the total paid and the payer.
+    #[test]
+    fn typescript_output_fixture_logs_every_row_and_returns_the_total() {
+        let creator = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let first = Pubkey::new_unique();
+        let second = Pubkey::new_unique();
+        let mut context = context(funded_accounts([creator, payer, first, second], 10_000_000_000));
+        let payload = fixture("output");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 91, &payload))
+            .program_result
+            .is_ok());
+        let (template, _) = find_template_pda(&creator, 91);
+        let logger = LogCollector::new_ref();
+        context.mollusk.logger = Some(logger.clone());
+        let before = (lamports(&context, first), lamports(&context, second));
+
+        let result = context.process_instruction(&run_instruction(
+            template,
+            vec![
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new(first, false),
+                AccountMeta::new(second, false),
+            ],
+            &output_fixture_inputs(),
+        ));
+        assert!(result.program_result.is_ok(), "{result:#?}");
+        assert_eq!(lamports(&context, first), before.0 + 1_000);
+        assert_eq!(lamports(&context, second), before.1 + 1_000);
+
+        let row = |index: u8, recipient: Pubkey| {
+            let mut line = b"PAID".to_vec();
+            line.push(index);
+            line.extend_from_slice(recipient.as_ref());
+            line
+        };
+        assert_eq!(
+            program_data(&logger),
+            vec![row(0, first), row(1, second), b"hello".to_vec()]
+        );
+        let mut returned = 2_000u64.to_le_bytes().to_vec();
+        returned.extend_from_slice(payer.as_ref());
+        assert_eq!(result.return_data, returned);
+        eprintln!("output fixture compute units: {}", result.compute_units_consumed);
+    }
+
+    /// Return data survives the callee's return: a template that runs the output fixture through
+    /// Ballista reads the total it set, directly after the invoke, then returns its own value.
+    #[test]
+    fn a_nested_template_reads_the_return_data_its_callee_set() {
+        let creator = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let first = Pubkey::new_unique();
+        let second = Pubkey::new_unique();
+        let context = context(funded_accounts([creator, payer, first, second], 10_000_000_000));
+        let inner_payload = fixture("output");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 93, &inner_payload))
+            .program_result
+            .is_ok());
+        let (inner, _) = find_template_pda(&creator, 93);
+
+        let mut builder = ProgramBuilder::new();
+        let ballista = builder.account(ACCOUNT_EXECUTABLE, Some(ID.to_bytes()), None, 0);
+        let template = builder.account(0, None, Some(ID.to_bytes()), 80);
+        let system =
+            builder.account(ACCOUNT_EXECUTABLE, Some(system_program::id().to_bytes()), None, 0);
+        let source = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let to_first = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let to_second = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let mut data = vec![IX_RUN];
+        data.extend_from_slice(&output_fixture_inputs());
+        let literal = builder.blob(&data);
+        let cpi = builder.cpi(
+            ballista,
+            &[
+                (template, 0),
+                (system, 0),
+                (source, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+                (to_first, ACCOUNT_WRITABLE),
+                (to_second, ACCOUNT_WRITABLE),
+            ],
+            &[Segment::Literal(literal)],
+        );
+        builder.invoke(cpi, None);
+        let paid = builder.return_data(OP_READ_U64, 0);
+        let expected = builder.const_u64(2_000);
+        let same = builder.binary(OP_EQ, paid, expected);
+        builder.require(same);
+        let doubled = builder.binary(OP_ADD, paid, paid);
+        builder.set_return_data(&[Segment::Register(DATA_REG_U64, doubled)]);
+        let outer_payload = builder.build().expect("builds");
+        assert!(context
+            .process_instruction(&create_template_instruction(creator, 94, &outer_payload))
+            .program_result
+            .is_ok());
+        let (outer, _) = find_template_pda(&creator, 94);
+
+        let result = context.process_instruction(&run_instruction(
+            outer,
+            vec![
+                AccountMeta::new_readonly(ID, false),
+                AccountMeta::new_readonly(inner, false),
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new(first, false),
+                AccountMeta::new(second, false),
+            ],
+            &[],
+        ));
+        assert!(result.program_result.is_ok(), "{result:#?}");
+        assert_eq!(result.return_data, 4_000u64.to_le_bytes());
+    }
+
+    /// Return data that a later invoke would erase is refused when the template is created, with
+    /// the output error and the index of the instruction that sets it.
+    #[test]
+    fn return_data_set_before_an_invoke_is_rejected_at_create() {
+        let creator = Pubkey::new_unique();
+        let context = context(funded_accounts([creator], 10_000_000_000));
+        let mut builder = ProgramBuilder::new();
+        let system =
+            builder.account(ACCOUNT_EXECUTABLE, Some(system_program::id().to_bytes()), None, 0);
+        let value = builder.const_u64(1);
+        let at = builder.set_return_data(&[Segment::Register(DATA_REG_U64, value)]);
+        let cpi = builder.cpi(system, &[], &[]);
+        builder.invoke(cpi, None);
+        let payload = builder.build().expect("builds");
+        let result =
+            context.process_instruction(&create_template_instruction(creator, 95, &payload));
+        assert_eq!(custom_code(&result), Some(((at as u32) << 16) | 6130), "{result:#?}");
+    }
+
+    /// Run data for the output fixture: 1,000 lamports per row and the memo `hello`.
+    fn output_fixture_inputs() -> Vec<u8> {
+        let mut inputs = 1_000u64.to_le_bytes().to_vec();
+        inputs.extend_from_slice(&5u16.to_le_bytes());
+        inputs.extend_from_slice(b"hello");
+        inputs
+    }
+
+    /// The bytes of every `Program data:` line the collector recorded, in order. Ballista logs one
+    /// field per line, which the runtime writes as base64.
+    fn program_data(logger: &Rc<RefCell<LogCollector>>) -> Vec<Vec<u8>> {
+        logger
+            .borrow()
+            .get_recorded_content()
+            .iter()
+            .filter_map(|line| line.strip_prefix("Program data: "))
+            .map(|field| STANDARD.decode(field).expect("base64 field"))
+            .collect()
+    }
+
     /// Anything the verifier accepts must execute without a structural error. Generated programs
     /// contain no CPIs, so the only failures they may produce are value-dependent.
     #[test]
@@ -2368,6 +2539,7 @@ mod tests {
             "payroll-row-amounts" => include_str!("../../../fixtures/payroll-row-amounts.hex"),
             "group-forward-transfer" => include_str!("../../../fixtures/group-forward-transfer.hex"),
             "math-ops" => include_str!("../../../fixtures/math-ops.hex"),
+            "output" => include_str!("../../../fixtures/output.hex"),
             "loops" => include_str!("../../../fixtures/loops.hex"),
             other => panic!("unknown fixture {other}"),
         };

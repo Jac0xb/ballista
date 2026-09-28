@@ -449,6 +449,46 @@ export const fixtures: Record<string, () => Template> = {
       ],
     }),
 
+  output: () =>
+    defineTemplate({
+      inputs: { amount: { type: 'u64' }, memo: { type: 'bytes', maxLength: 16 } },
+      accounts: { ...systemPrograms, payer: { signer: true, writable: true } },
+      batch: { maxIterations: 2, minIterations: 1, row: { recipient: { writable: true } } },
+      steps: [
+        step.let('paid', expression.u64(0)),
+        step.forEach(
+          [
+            systemTransfer({
+              systemProgram: account.fixed('systemProgram'),
+              from: account.fixed('payer'),
+              to: account.iteration('recipient'),
+              lamports: expression.input('amount'),
+            }),
+            // The next row sends the transfer's data again without encoding it, so this log
+            // must leave the invocation's buffer alone.
+            step.emit(
+              [
+                data.literal(Uint8Array.of(0x50, 0x41, 0x49, 0x44)),
+                data.encode('u8', expression.loopIndex()),
+                data.encode('pubkey', expression.accountField(account.iteration('recipient'), 'key')),
+              ],
+              'logRow',
+            ),
+            step.assign('paid', expression.add(expression.variable('paid'), expression.input('amount'))),
+          ],
+          { carry: ['paid'] },
+        ),
+        step.emit([data.encode('bytes', expression.input('memo'))], 'logMemo'),
+        step.setReturnData(
+          [
+            data.encode('u64', expression.variable('paid')),
+            data.encode('pubkey', expression.accountField(account.fixed('payer'), 'key')),
+          ],
+          'returnTotal',
+        ),
+      ],
+    }),
+
   'event-flag': () =>
     defineTemplate({
       emitEvent: true,

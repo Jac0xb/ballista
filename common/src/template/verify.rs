@@ -861,15 +861,24 @@ impl ProgramView<'_> {
     /// so a CPI between such a read and the open could change the entry, and a write based on the
     /// read would lose that update. After the open, the read would fail on the mark. The entry's
     /// key, owner, lamports and data length stay readable, since none of them is a field.
+    ///
+    /// An open accepts only a fixed account declared writable, so the scan for one runs only for
+    /// such an account: most data reads name an account the template cannot write, and scanning
+    /// the program for each would make a large template's upload quadratic. A read of any other
+    /// account an open names still fails, at that open.
     fn refuse_entry_data(
         &self,
         instruction: &InstructionRecord,
         instruction_index: usize,
     ) -> Result<(), TemplateError> {
-        let opened = self
-            .instructions
-            .iter()
-            .any(|record| record.opcode == OP_OPEN_REGISTRY && record.a == instruction.a);
+        let may_be_entry = self
+            .account_constraint(instruction.a, false)
+            .is_some_and(|account| account.flags & ACCOUNT_WRITABLE != 0);
+        let opened = may_be_entry
+            && self
+                .instructions
+                .iter()
+                .any(|record| record.opcode == OP_OPEN_REGISTRY && record.a == instruction.a);
         if opened {
             return Err(TemplateError::InvalidRegistry(instruction_index));
         }

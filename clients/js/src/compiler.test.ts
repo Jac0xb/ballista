@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+import { ZodError } from 'zod';
 
 import {
   ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -1005,7 +1006,29 @@ describe('output steps', () => {
     expect(() => compileSteps({}, [step.setReturnData([data.literal(new Uint8Array(1025))])])).toThrow(
       'setReturnData can encode 1025 bytes; maximum is 1024',
     );
-    expect(() => compileSteps({}, [step.emit([])])).toThrow();
+  });
+
+  test('an output takes 1 to 64 parts', () => {
+    /** The issues of the schema error that compiling `steps` throws. */
+    const schemaIssues = (steps: Step[]) => {
+      try {
+        compileSteps({}, steps);
+      } catch (error) {
+        if (error instanceof ZodError) return error.issues;
+        throw error;
+      }
+      throw new Error('the template compiled');
+    };
+    const parts = (count: number) => Array.from({ length: count }, (_, index) => data.literal(Uint8Array.of(index)));
+    for (const output of [step.emit, step.setReturnData]) {
+      expect(schemaIssues([output([])])).toMatchObject([
+        { code: 'too_small', minimum: 1, path: ['steps', 0, 'parts'], message: 'Too small: expected array to have >=1 items' },
+      ]);
+      expect(() => compileSteps({}, [output(parts(64))])).not.toThrow();
+      expect(schemaIssues([output(parts(65))])).toMatchObject([
+        { code: 'too_big', maximum: 64, path: ['steps', 0, 'parts'], message: 'Too big: expected array to have <=64 items' },
+      ]);
+    }
   });
 });
 

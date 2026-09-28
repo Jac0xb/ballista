@@ -54,17 +54,22 @@ that fix, all three required runs behave as specified against the real programs.
    own check could therefore enforce "no loss", but its failure would carry Jupiter's code, not the
    template's label.
 
-4. **Jupiter checks `route`'s source and destination accounts by mint only.**
-   - A destination holding another mint than `destination_mint` fails with 6019. So does a
-     `destination_mint` that differs from the destination account's.
-   - A source holding another mint fails with 6024.
+4. **Jupiter does not tie `route`'s source and destination accounts to its steps.** It checks the
+   two positions like this:
+   - **The source (position 2)** must hold at least `in_amount`, of any mint and any owner. One
+     unit short fails with 6024. Exactly `in_amount` lands, including another wallet's USDC account.
+   - **The destination (position 3)** must hold `destination_mint`. Another mint fails with 6019.
+     So does a `destination_mint` that differs from the destination account's.
    - Neither code is in Jupiter's published IDL, which stops at 6017.
-   - With *another wallet's* wrapped-SOL account in both positions, the route runs and moves the
-     searcher's own accounts, the ones in its steps.
+   - Accounts that pass are left untouched. With another wallet's wrapped-SOL account in both
+     positions, the route runs and moves the searcher's own accounts, the ones in its steps.
 
    So positions 2 and 3 prove nothing about what moved. Pinned by
-   `jupiter_checks_only_the_mints_of_the_route_s_source_and_destination`. The template relies only
-   on the balance it reads itself.
+   `jupiter_does_not_tie_the_route_s_source_and_destination_to_its_steps`. The template relies
+   only on the balance it reads itself.
+
+   An earlier draft of this note, and of `bd186b5`'s message, called 6024 a source-mint check. It
+   is a balance check.
 
 5. **Tip accounts.** The snapshot's tip account is owned by the Tip Payment program (`T1pyy…`) and
    has 8 bytes of data. A plain System transfer to it lands. The template now pins
@@ -150,6 +155,8 @@ The template payload grew from 424 to 628 bytes. The run passes 46 runtime accou
   route was built, and the route is the searcher's own.
 - **Refreshing the snapshot.** The whale's sale must stay inside the tick array the snapshot holds.
   After a refresh the current tick may sit nearer that array's edge. The sale then fails in
-  Raydium, visibly, and `WHALE_SALE` needs resizing.
+  Raydium, visibly, and `WHALE_SALE` needs resizing. A refresh can also move the second leg to
+  another AMM, such as Whirlpool or Meteora. `whale_sells_sol` asserts that the leg's program is
+  Raydium CLMM and says a refresh moved it, since the sale is built for Raydium's `swap`.
 - **The auction.** Jito's block engine is not in LiteSVM. The tests show the tip is transferred,
   not how the auction scores it.

@@ -18,7 +18,10 @@ use {
         snapshot::{Route, Snapshot, SNAPSHOT_DIR},
         template::{examples, upload, Example, Run},
         tx::{self, Failure, Outcome},
-        wallet::{self, fund, keypair, token_account, token_balance, SOL, WSOL_MINT},
+        wallet::{
+            self, associated_token_address, fund, keypair, token_account, token_balance, SOL,
+            WSOL_MINT,
+        },
     },
     ballista_sdk::{SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID},
     litesvm::LiteSVM,
@@ -133,16 +136,30 @@ fn balance(svm: &LiteSVM, address: &Address) -> u64 {
 /// passes Raydium in the second leg, with the input and output sides exchanged.
 ///
 /// The whale's wallet and token accounts are written directly, under write rule 1.
-fn whale_sells_sol(svm: &mut LiteSVM, route: &Route, lamports: u64) {
+///
+/// # Panics
+///
+/// If a snapshot refresh has moved the second leg off Raydium CLMM: the sale is built for
+/// Raydium's `swap`.
+fn whale_sells_sol(svm: &mut LiteSVM, snapshot: &Snapshot, lamports: u64) {
+    let route = snapshot.route(ROUTE);
+    // Jupiter's Raydium step: the Raydium program, then `swap`'s accounts in `swap`'s order.
+    let step = &route.legs[1].instructions.swap.accounts[ROUTE_FIXED_ACCOUNTS..];
+    assert_eq!(
+        step[0].pubkey,
+        snapshot.named("raydiumClmm"),
+        "a snapshot refresh moved {ROUTE}'s second leg off Raydium CLMM; the whale's sale is built \
+         for Raydium's `swap` and must be rebuilt for the AMM the leg goes through now"
+    );
+
     let whale = keypair(b"ballista-protocol-tests-whale-01");
     let usdc_mint = route.legs[0].output_mint;
     fund(svm, &whale.pubkey(), SOL);
     let wsol = token_account(svm, &whale.pubkey(), &WSOL_MINT, lamports);
     let usdc = token_account(svm, &whale.pubkey(), &usdc_mint, 0);
 
-    // Jupiter's Raydium step: the Raydium program, then `swap`'s accounts in `swap`'s order. The
-    // second leg sells USDC, so its input vault is the pool's USDC and its output vault the SOL.
-    let step = &route.legs[1].instructions.swap.accounts[ROUTE_FIXED_ACCOUNTS..];
+    // The second leg sells USDC, so its input vault is the pool's USDC and its output vault the
+    // SOL.
     let (usdc_vault, sol_vault) = (step[6].pubkey, step[7].pubkey);
     assert_eq!(mint_of(svm, &sol_vault), WSOL_MINT);
     assert_eq!(mint_of(svm, &usdc_vault), usdc_mint);
@@ -188,7 +205,7 @@ fn market(snapshot: &Snapshot, whale_sale: Option<u64>) -> LiteSVM {
     fund(&mut svm, &searcher, 10 * SOL);
     token_account(&mut svm, &searcher, &route.legs[0].output_mint, 0);
     if let Some(lamports) = whale_sale {
-        whale_sells_sol(&mut svm, route, lamports);
+        whale_sells_sol(&mut svm, snapshot, lamports);
     }
     svm
 }
@@ -322,48 +339,91 @@ fn a_route_moves_wrapped_sol_and_no_lamports() {
     assert_eq!(realised.lamports, 0);
 }
 
-/// Jupiter checks the mints of `route`'s source and destination accounts but not that its steps
-/// move them. With another wallet's wrapped SOL account in both places, the round trip runs and
-/// moves the searcher's own. So those two positions prove nothing about what moved; the template
+/// The round trip with `edit` applied, sent to Jupiter directly after the setup that wraps its SOL,
+/// in a market with no whale. Returns the SVM, the searcher's wrapped SOL before the route, and
+/// what the route did.
+fn send_edited_round_trip(
+    snapshot: &Snapshot,
+    edit: impl FnOnce(&mut LiteSVM, &mut Instruction),
+) -> (LiteSVM, u64, Result<Outcome, Failure>) {
+    let route = snapshot.route(ROUTE);
+    let first = &route.legs[0];
+    let searcher = wallet::wallet();
+    let mut svm = market(snapshot, None);
+    tx::send(&mut svm, &searcher, &[], &first.instructions.setup, &[])
+        .unwrap_or_else(|failure| panic!("wrapping the SOL failed: {failure:?}"));
+    let wsol_before = token_balance(&svm, &first.source_token_account);
+    let mut instruction = round_trip(route);
+    edit(&mut svm, &mut instruction);
+    let result = tx::send(
+        &mut svm,
+        &searcher,
+        &[],
+        &[instruction],
+        &route.lookup_tables(),
+    );
+    (svm, wsol_before, result)
+}
+
+/// Jupiter does not check that `route`'s source and destination are the accounts its steps move.
+/// It requires only that the source hold at least `in_amount`, of any mint, and that the
+/// destination hold the destination mint; accounts that pass are left untouched while the steps
+/// move the searcher's own. So those two positions prove nothing about what moved; the template
 /// measures the account itself.
 #[test]
-fn jupiter_checks_only_the_mints_of_the_route_s_source_and_destination() {
+fn jupiter_does_not_tie_the_route_s_source_and_destination_to_its_steps() {
     let snapshot = Snapshot::load(SNAPSHOT_DIR);
     let route = snapshot.route(ROUTE);
     let jupiter = snapshot.named("jupiter");
     let first = &route.legs[0];
-    let searcher = wallet::wallet();
+    let (in_amount, usdc_mint) = (first.route.in_amount, first.output_mint);
+    let searcher_wsol = first.source_token_account;
     let other = keypair(b"ballista-protocol-tests-other-01").pubkey();
 
-    let mut svm = market(&snapshot, None);
-    let decoy = token_account(&mut svm, &other, &WSOL_MINT, 5 * SOL);
-    tx::send(&mut svm, &searcher, &[], &first.instructions.setup, &[]).unwrap();
-    let wsol_before = token_balance(&svm, &first.source_token_account);
-    let mut decoyed = round_trip(route);
-    decoyed.accounts[2].pubkey = decoy;
-    decoyed.accounts[3].pubkey = decoy;
-    tx::send(&mut svm, &searcher, &[], &[decoyed], &route.lookup_tables()).unwrap();
-    assert_eq!(token_balance(&svm, &decoy), 5 * SOL);
-    assert_ne!(
-        token_balance(&svm, &first.source_token_account),
-        wsol_before
-    );
+    // Another wallet's wrapped SOL, holding exactly `in_amount`, as both source and destination:
+    // the route runs and moves the searcher's wrapped SOL, not the decoy.
+    let decoy = associated_token_address(&other, &WSOL_MINT);
+    let (svm, wsol_before, result) = send_edited_round_trip(&snapshot, |svm, round_trip| {
+        token_account(svm, &other, &WSOL_MINT, in_amount);
+        round_trip.accounts[2].pubkey = decoy;
+        round_trip.accounts[3].pubkey = decoy;
+    });
+    result.unwrap_or_else(|failure| panic!("the decoyed round trip failed: {failure:?}"));
+    assert_eq!(token_balance(&svm, &decoy), in_amount);
+    assert_ne!(token_balance(&svm, &searcher_wsol), wsol_before);
 
-    // A destination that holds another mint than the route ends in is refused. The code is not in
-    // Jupiter's published IDL.
-    let mut svm = market(&snapshot, None);
-    tx::send(&mut svm, &searcher, &[], &first.instructions.setup, &[]).unwrap();
-    let mut usdc_destination = round_trip(route);
-    usdc_destination.accounts[3].pubkey = first.destination_token_account;
-    let failure = tx::send(
-        &mut svm,
-        &searcher,
-        &[],
-        &[usdc_destination],
-        &route.lookup_tables(),
-    )
-    .unwrap_err();
-    assert_eq!((failure.program, failure.code), (jupiter, Some(6019)));
+    // The source's mint is not checked: another wallet's USDC does as well, if there is enough.
+    let usdc_decoy = associated_token_address(&other, &usdc_mint);
+    let (svm, wsol_before, result) = send_edited_round_trip(&snapshot, |svm, round_trip| {
+        token_account(svm, &other, &usdc_mint, in_amount);
+        round_trip.accounts[2].pubkey = usdc_decoy;
+    });
+    result.unwrap_or_else(|failure| panic!("the USDC-sourced round trip failed: {failure:?}"));
+    assert_eq!(token_balance(&svm, &usdc_decoy), in_amount);
+    assert_ne!(token_balance(&svm, &searcher_wsol), wsol_before);
+
+    // Its balance is: one unit short of `in_amount` is refused. The codes here are not in Jupiter's
+    // published IDL.
+    let (_, _, result) = send_edited_round_trip(&snapshot, |svm, round_trip| {
+        round_trip.accounts[2].pubkey = token_account(svm, &other, &WSOL_MINT, in_amount - 1);
+    });
+    let failure = result.unwrap_err();
+    assert_eq!((failure.program, failure.code), (jupiter, Some(6024)));
+
+    // A destination that does not hold the destination mint is refused, and so is a destination
+    // mint that is not the destination's: the searcher's USDC account at position 3, then the
+    // USDC mint at position 5.
+    for (position, address) in [(3, first.destination_token_account), (5, usdc_mint)] {
+        let (_, _, result) = send_edited_round_trip(&snapshot, |_, round_trip| {
+            round_trip.accounts[position].pubkey = address;
+        });
+        let failure = result.unwrap_err();
+        assert_eq!(
+            (failure.program, failure.code),
+            (jupiter, Some(6019)),
+            "position {position}"
+        );
+    }
 }
 
 /// The required pass: a whale's sale leaves the Raydium pool cheap, the searcher's round trip

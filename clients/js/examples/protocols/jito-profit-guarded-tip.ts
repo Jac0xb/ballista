@@ -24,8 +24,9 @@
  * quoted as two legs, SOL for USDC and then that output back to SOL, and joined into one `route`.
  * The second leg's plan steps follow the first's, renumbered to start from the first leg's output
  * index, so that the second leg spends exactly what the first produced; its accounts follow the
- * first leg's. Jupiter checks the mints of the source and destination accounts it is given but not
- * that its steps move them, so the route must be built to start and end in this account. The
+ * first leg's. Jupiter does not check that its steps move the source and destination accounts it
+ * is given: it requires only that the source hold at least `in_amount` and that the destination
+ * hold the output mint. So the route must be built to start and end in this account, and the
  * template relies only on the balance it measures.
  *
  * The tip amount is a run input, so it is decided before signing exactly like an ordinary tip.

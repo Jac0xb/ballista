@@ -12,7 +12,7 @@ machine. Build the program first with `pnpm build:program`.
 | What | Command | Output |
 | --- | --- | --- |
 | Cost of each feature | `cargo test --manifest-path tests/ballista/Cargo.toml profile_compute_units -- --nocapture` | printed table |
-| Twelve fixed cases | `pnpm cu:bench` | `benches/compute_units.md` |
+| Thirteen fixed cases | `pnpm cu:bench` | `benches/compute_units.md` |
 | Every cookbook example | `cargo test --manifest-path tests/ballista/Cargo.toml measure_every_example -- --nocapture` | one line per example |
 | Where one run's compute goes | `pnpm cu:phases` | `fixtures/cu-phases.json` |
 | Lock in a win | `pnpm cu:ceilings`, `pnpm benchmarks` | lowers `fixtures/cu-ceilings.json`, `fixtures/example-ceilings.json` |
@@ -33,6 +33,22 @@ the same commit and says why here.
 ---
 
 ## Pending: runtime extensions, not merged
+
+### 2026-09-27 · Introspection and byte opcodes · `claude/runtime-introspection`
+- **Change:** eleven opcodes, 64 to 74, reach the executor through `extended_instruction`'s inner
+  match, whose outer dispatch is untouched. The count, the index and `BYTES_LEN` run there; the
+  sysvar parsing and both byte reads run in two `#[inline(never)]` helpers that take four words
+  each, all in registers.
+- **Measured** against the phase-1 tip (`1efbd24`):
+  - Uploading the 30-row payroll: 4,446 → 4,448, the verifier's new arms.
+  - A run using all eleven (`run, introspection, no cpi`): 3,552, now ratcheted.
+  - The math opcodes case: 2,797 → 2,761. The TypeScript math fixture: 4,712 → 4,676.
+  - Every other case and every cookbook example: unchanged.
+- **Checked:** the introspection fixture and a signed-quote settlement under Mollusk; every host
+  and Mollusk test.
+- **Watch:** a helper that takes the loop context as an argument takes words from the stack, and
+  their loads move to `extended_instruction`'s entry, where every math opcode pays for them. The
+  larger router also stopped LLVM inlining `math::remainder`, which `#[inline(always)]` now pins.
 
 ### 2026-09-27 · An output buffer for `EMIT` and `SET_RETURN_DATA` · `claude/runtime-output`
 - **Change:** `Scratch` holds the output opcodes' buffer. Every run sets it to `None`, the run's
@@ -303,6 +319,12 @@ combined numbers; the entries after it keep what each branch measured alone.
       cases moved between −99 and +110, and the output case cost 96 more.
     - The outputs stay behind `extended_instruction`'s fallback arm, and each loop entry keeps its
       +8.
+- **Introspection dispatch** (math fixture 4,859 at base, on `7a5e15e`'s layout):
+  - Three arms whose helpers took the loop context: +50, from the stack-passed words' loads on
+    the router's entry.
+  - One `64..=74` arm into one helper: +47, and +42 on an introspecting run.
+  - The router's fallback arm into the helper: +47, and +53 on a settlement.
+  - Sharing the count-and-index code between the router and the parser: +10 on the ratchet case.
 
 ## Landed
 

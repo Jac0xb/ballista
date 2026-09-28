@@ -274,6 +274,9 @@ pub fn integer<'data>(
     }
 }
 
+/// Pinned inline: once `extended_instruction` grew the introspection arms, LLVM stopped inlining
+/// it by size, and every `REM` paid for a call.
+#[inline(always)]
 fn remainder<'data>(
     left: RuntimeValue<'data>,
     right: RuntimeValue<'data>,

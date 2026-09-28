@@ -162,7 +162,8 @@ pub const OP_POW10: u8 = 59;
 pub const OP_READ_I32: u8 = 60;
 /// A loop that runs its body a counted number of times: `a` is the body length, `b` the `u64`
 /// register holding the count, read once when the loop starts, `c` the static maximum, and the
-/// immediate the carry mask, as for [`OP_FOREACH`]. A count above `c` fails the run.
+/// immediate the carry mask, as for [`OP_FOREACH`]. It writes no register, so `dst` is
+/// [`NO_INDEX`]. A count above `c` fails the run.
 pub const OP_REPEAT: u8 = 61;
 
 pub const DATA_LITERAL: u8 = 0;
@@ -656,8 +657,8 @@ pub enum TemplateError {
     InvalidMinIterations,
     /// The header declares more than `MAX_ACCOUNT_GROUPS` account groups.
     TooManyAccountGroups,
-    /// A `REPEAT` with an empty body or a zero maximum, or inside another loop; a loop past
-    /// `MAX_LOOPS`; or a row account or row input named inside a `REPEAT` body.
+    /// A `REPEAT` with an empty body, a zero maximum or a destination register, or inside another
+    /// loop; a loop past `MAX_LOOPS`; or a row account or row input named inside a `REPEAT` body.
     InvalidLoop(usize),
 }
 

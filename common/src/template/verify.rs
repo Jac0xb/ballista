@@ -177,7 +177,10 @@ impl ProgramView<'_> {
                     row_loops += 1;
                     (LoopScope::Rows, header.batch_max_iterations())
                 } else {
-                    if instruction.a == 0 || instruction.c == 0 {
+                    // A REPEAT writes no register, so its destination is reserved: a stored
+                    // template is never verified again, so a field accepted with any value now
+                    // could never take a meaning later. FOREACH shipped without this check.
+                    if instruction.a == 0 || instruction.c == 0 || instruction.dst != NO_INDEX {
                         return Err(TemplateError::InvalidLoop(program_counter));
                     }
                     self.require_type(&registers, instruction.b, VALUE_U64)?;
@@ -1625,6 +1628,27 @@ mod tests {
         builder.instructions_mut()[repeat].a = 1;
         builder.instructions_mut()[repeat].flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET;
         assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidFlags(repeat)));
+
+        // A REPEAT writes no register, so its destination is reserved, whatever register it names.
+        builder.instructions_mut()[repeat].flags = 0;
+        assert!(verify_builder(&builder).is_ok());
+        for dst in [0, 1, MAX_REGISTERS as u8, NO_INDEX - 1] {
+            builder.instructions_mut()[repeat].dst = dst;
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidLoop(repeat)),
+                "destination {dst}"
+            );
+        }
+        // FOREACH shipped accepting any destination, and templates that verify today must keep
+        // verifying, so its destination stays unchecked.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let condition = builder.const_bool(true);
+        let foreach = builder.for_each(0, |body| body.require(condition));
+        builder.instructions_mut()[foreach].dst = 0;
+        assert!(verify_builder(&builder).is_ok());
 
         // Carried registers follow the FOREACH rules: set before the loop, and the same type after.
         let mut builder = ProgramBuilder::new();

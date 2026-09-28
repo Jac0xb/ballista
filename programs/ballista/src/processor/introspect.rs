@@ -46,64 +46,19 @@ pub fn read_instruction<'data>(
     instruction: &InstructionRecord,
 ) -> RunResult<()> {
     let data = sysvar_data(sysvar)?;
-    // SAFETY: `sysvar_data` checked the account's address, and the runtime writes that account's
-    // data in exactly the layout `introspect` parses.
-    let value = unsafe { introspect(data, registers, instruction) }?;
-    set(registers, instruction.dst as usize, value)
-}
-
-/// Runs `READ_ACCOUNT_BYTES`: `immediate` bytes of `account`'s data from the offset in register
-/// `b`.
-#[inline(never)]
-pub fn read_account_bytes<'data>(
-    account: &'data AccountView,
-    registers: &mut [RuntimeValue<'data>],
-    instruction: &InstructionRecord,
-) -> RunResult<()> {
-    let offset = position(registers, instruction.b)?;
-    let bytes = byte_range(read_only_data(account)?, offset, instruction.immediate())?;
-    set(
-        registers,
-        instruction.dst as usize,
-        RuntimeValue::Bytes(bytes),
-    )
-}
-
-/// The value one sysvar opcode reads from `sysvar`, the Instructions sysvar's data. Takes the data
-/// rather than the account so the host tests and formal specifications, which have no account to
-/// hand it, can call it.
-///
-/// # Safety
-///
-/// `sysvar` must be the Instructions sysvar's data, in exactly the layout the runtime writes; on
-/// chain, the slice `sysvar_data` returns once it has checked the account's address. pinocchio's
-/// parser trusts the instruction count, the offset table and every length it finds, and reads
-/// through them without bounds checks, so any other bytes can send it outside the slice.
-pub unsafe fn introspect<'data>(
-    sysvar: &'data [u8],
-    registers: &[RuntimeValue<'data>],
-    instruction: &InstructionRecord,
-) -> RunResult<RuntimeValue<'data>> {
-    // SAFETY: the caller guarantees `sysvar` is the Instructions sysvar's data, in the layout
-    // `Instructions` parses.
-    let instructions = unsafe { Instructions::new_unchecked(sysvar) };
-    match instruction.opcode {
-        OP_INSTRUCTION_COUNT => {
-            return Ok(RuntimeValue::U64(instructions.num_instructions() as u64))
-        }
-        OP_INSTRUCTION_INDEX => {
-            return Ok(RuntimeValue::U64(u64::from(
-                instructions.load_current_index(),
-            )))
-        }
-        _ => {}
-    }
+    // SAFETY: `sysvar_data` checked the account's address, so `data` is the Instructions sysvar's
+    // data, in exactly the layout the runtime writes and `Instructions` parses. pinocchio trusts
+    // the instruction count, the offset table and every length it finds, and reads through them
+    // without bounds checks, so other bytes could send it outside the slice. It reads the offset
+    // table through `*const u16`, so the data must be 2-aligned: the runtime aligns every
+    // account's data to 8 bytes.
+    let instructions = unsafe { Instructions::new_unchecked(data) };
     // pinocchio checks the index and the account position; the data ranges are checked here.
     let index = position(registers, instruction.b)?;
     let introspected = instructions
         .load_instruction_at(index)
         .map_err(|_| out_of_range())?;
-    Ok(match instruction.opcode {
+    let value = match instruction.opcode {
         OP_INSTRUCTION_PROGRAM => RuntimeValue::Pubkey(introspected.get_program_id().to_bytes()),
         OP_INSTRUCTION_ACCOUNT_COUNT => RuntimeValue::U64(introspected.num_account_metas() as u64),
         OP_INSTRUCTION_ACCOUNT | OP_INSTRUCTION_ACCOUNT_FLAGS => {
@@ -122,29 +77,51 @@ pub unsafe fn introspect<'data>(
             RuntimeValue::U64(introspected.get_instruction_data().len() as u64)
         }
         OP_READ_INSTRUCTION_DATA => {
-            // The verifier admits only read opcodes, which all fit a byte.
-            let selector = instruction.immediate() as u8;
-            let width = read_width(selector);
-            if width == 0 {
-                return Err(BallistaError::InvalidTemplateProgram.into());
-            }
             let offset = position(registers, instruction.c)?;
-            let data = introspected.get_instruction_data();
-            // Checked here so a short read is out of range, not `read_value`'s account error.
-            byte_range(data, offset, width as u64)?;
-            read_value(selector, data, offset)?
+            // The verifier admits only read opcodes, which all fit a byte. `read_value` checks the
+            // selector and the range once each; a read past the data is the transaction's fault,
+            // so its account error becomes `InstructionOutOfRange`.
+            read_value(
+                instruction.immediate() as u8,
+                introspected.get_instruction_data(),
+                offset,
+            )
+            .map_err(|error| match error {
+                RunError::Vm(BallistaError::InvalidRuntimeAccount) => out_of_range(),
+                error => error,
+            })?
         }
         OP_READ_INSTRUCTION_BYTES => {
-            let data =
-                reborrow(sysvar, introspected.get_instruction_data()).ok_or_else(out_of_range)?;
+            let bytes =
+                reborrow(data, introspected.get_instruction_data()).ok_or_else(out_of_range)?;
             RuntimeValue::Bytes(byte_range(
-                data,
+                bytes,
                 position(registers, instruction.c)?,
                 instruction.immediate(),
             )?)
         }
+        // `INSTRUCTION_COUNT` and `INSTRUCTION_INDEX` never reach here: the router runs them
+        // through `count_or_index`.
         _ => return Err(BallistaError::InvalidTemplateProgram.into()),
-    })
+    };
+    set(registers, instruction.dst as usize, value)
+}
+
+/// Runs `READ_ACCOUNT_BYTES`: `immediate` bytes of `account`'s data from the offset in register
+/// `b`.
+#[inline(never)]
+pub fn read_account_bytes<'data>(
+    account: &'data AccountView,
+    registers: &mut [RuntimeValue<'data>],
+    instruction: &InstructionRecord,
+) -> RunResult<()> {
+    let offset = position(registers, instruction.b)?;
+    let bytes = byte_range(read_only_data(account)?, offset, instruction.immediate())?;
+    set(
+        registers,
+        instruction.dst as usize,
+        RuntimeValue::Bytes(bytes),
+    )
 }
 
 /// The Instructions sysvar's data, borrowed for the rest of the run.
@@ -258,102 +235,109 @@ mod tests {
         )
     }
 
-    /// Runs `opcode` with the instruction index in r0 and the position or offset in r1.
+    /// The Instructions sysvar's account, holding `three_instructions()`. Its data is 8-aligned,
+    /// as the runtime lays account data out and as pinocchio's `u16` reads of the offset table
+    /// need.
+    fn sysvar_account() -> TestAccount {
+        TestAccount::new(INSTRUCTIONS_SYSVAR_ID, false, &three_instructions())
+    }
+
+    /// Runs `opcode` against `sysvar` with the instruction index in r0 and the position or offset
+    /// in r1, and returns what it wrote to r3.
     fn run<'a>(
-        sysvar: &'a [u8],
+        sysvar: &'a AccountView,
         registers: &[RuntimeValue<'a>],
         opcode: u8,
         immediate: u64,
     ) -> RunResult<RuntimeValue<'a>> {
-        // SAFETY: every caller passes `three_instructions()`, which `sysvar` lays out as the
-        // runtime does.
-        unsafe { introspect(sysvar, registers, &record(opcode, 3, 0, 0, 1, 0, immediate)) }
-    }
-
-    #[test]
-    fn counts_and_indexes_come_from_the_sysvar() {
-        let data = three_instructions();
-        assert_eq!(run(&data, &[U64(0), U64(0)], OP_INSTRUCTION_COUNT, 0), Ok(U64(3)));
-        assert_eq!(run(&data, &[U64(0), U64(0)], OP_INSTRUCTION_INDEX, 0), Ok(U64(1)));
+        let mut registers = registers.to_vec();
+        registers.resize(4, Unset);
+        read_instruction(sysvar, &mut registers, &record(opcode, 3, 0, 0, 1, 0, immediate))?;
+        Ok(registers[3])
     }
 
     #[test]
     fn instruction_fields_read_the_indexed_instruction() {
-        let data = three_instructions();
+        let mut account = sysvar_account();
+        let sysvar = account.view();
         // r0 is the instruction index, r1 the account position or data offset.
-        assert_eq!(run(&data, &[U64(0), U64(0)], OP_INSTRUCTION_PROGRAM, 0), Ok(Pubkey([5; 32])));
-        assert_eq!(run(&data, &[U64(1), U64(0)], OP_INSTRUCTION_PROGRAM, 0), Ok(Pubkey([9; 32])));
-        assert_eq!(run(&data, &[U64(1), U64(0)], OP_INSTRUCTION_ACCOUNT_COUNT, 0), Ok(U64(2)));
-        assert_eq!(run(&data, &[U64(2), U64(0)], OP_INSTRUCTION_ACCOUNT_COUNT, 0), Ok(U64(0)));
-        assert_eq!(run(&data, &[U64(1), U64(1)], OP_INSTRUCTION_ACCOUNT, 0), Ok(Pubkey([1; 32])));
-        assert_eq!(run(&data, &[U64(1), U64(0)], OP_INSTRUCTION_ACCOUNT_FLAGS, 0), Ok(U64(0b10)));
-        assert_eq!(run(&data, &[U64(1), U64(1)], OP_INSTRUCTION_ACCOUNT_FLAGS, 0), Ok(U64(0b01)));
-        assert_eq!(run(&data, &[U64(0), U64(0)], OP_INSTRUCTION_DATA_LEN, 0), Ok(U64(6)));
-        assert_eq!(run(&data, &[U64(2), U64(0)], OP_INSTRUCTION_DATA_LEN, 0), Ok(U64(5)));
+        assert_eq!(run(&sysvar, &[U64(0), U64(0)], OP_INSTRUCTION_PROGRAM, 0), Ok(Pubkey([5; 32])));
+        assert_eq!(run(&sysvar, &[U64(1), U64(0)], OP_INSTRUCTION_PROGRAM, 0), Ok(Pubkey([9; 32])));
+        assert_eq!(run(&sysvar, &[U64(1), U64(0)], OP_INSTRUCTION_ACCOUNT_COUNT, 0), Ok(U64(2)));
+        assert_eq!(run(&sysvar, &[U64(2), U64(0)], OP_INSTRUCTION_ACCOUNT_COUNT, 0), Ok(U64(0)));
+        assert_eq!(run(&sysvar, &[U64(1), U64(1)], OP_INSTRUCTION_ACCOUNT, 0), Ok(Pubkey([1; 32])));
+        assert_eq!(run(&sysvar, &[U64(1), U64(0)], OP_INSTRUCTION_ACCOUNT_FLAGS, 0), Ok(U64(0b10)));
+        assert_eq!(run(&sysvar, &[U64(1), U64(1)], OP_INSTRUCTION_ACCOUNT_FLAGS, 0), Ok(U64(0b01)));
+        assert_eq!(run(&sysvar, &[U64(0), U64(0)], OP_INSTRUCTION_DATA_LEN, 0), Ok(U64(6)));
+        assert_eq!(run(&sysvar, &[U64(2), U64(0)], OP_INSTRUCTION_DATA_LEN, 0), Ok(U64(5)));
     }
 
     #[test]
     fn instruction_data_reads_take_the_selected_width() {
-        let data = three_instructions();
+        let mut account = sysvar_account();
+        let sysvar = account.view();
         // "before" is 62 65 66 6f 72 65.
         assert_eq!(
-            run(&data, &[U64(0), U64(1)], OP_READ_INSTRUCTION_DATA, OP_READ_U8 as u64),
+            run(&sysvar, &[U64(0), U64(1)], OP_READ_INSTRUCTION_DATA, OP_READ_U8 as u64),
             Ok(U64(0x65))
         );
         assert_eq!(
-            run(&data, &[U64(0), U64(0)], OP_READ_INSTRUCTION_DATA, OP_READ_U32 as u64),
+            run(&sysvar, &[U64(0), U64(0)], OP_READ_INSTRUCTION_DATA, OP_READ_U32 as u64),
             Ok(U64(0x6f66_6562))
         );
         // The last two bytes fit; one more does not.
         assert_eq!(
-            run(&data, &[U64(0), U64(4)], OP_READ_INSTRUCTION_DATA, OP_READ_U16 as u64),
+            run(&sysvar, &[U64(0), U64(4)], OP_READ_INSTRUCTION_DATA, OP_READ_U16 as u64),
             Ok(U64(0x6572))
         );
         assert_eq!(
-            run(&data, &[U64(0), U64(5)], OP_READ_INSTRUCTION_DATA, OP_READ_U16 as u64),
+            run(&sysvar, &[U64(0), U64(5)], OP_READ_INSTRUCTION_DATA, OP_READ_U16 as u64),
             Err(err(BallistaError::InstructionOutOfRange))
         );
         assert_eq!(
-            run(&data, &[U64(0), U64(0)], OP_READ_INSTRUCTION_DATA, OP_ADD as u64),
+            run(&sysvar, &[U64(0), U64(0)], OP_READ_INSTRUCTION_DATA, OP_ADD as u64),
             Err(err(BallistaError::InvalidTemplateProgram))
         );
     }
 
     #[test]
     fn instruction_byte_reads_borrow_the_sysvar() {
-        let data = three_instructions();
-        let value = run(&data, &[U64(2), U64(0)], OP_READ_INSTRUCTION_BYTES, 5).unwrap();
+        let mut account = sysvar_account();
+        let sysvar = account.view();
+        let value = run(&sysvar, &[U64(2), U64(0)], OP_READ_INSTRUCTION_BYTES, 5).unwrap();
         let Bytes(bytes) = value else { panic!("{value:?}") };
         assert_eq!(bytes, b"after");
         // A slice of the sysvar itself, not a copy: its last byte sits just before the index.
-        assert_eq!(bytes.as_ptr_range().end, data[data.len() - 2..].as_ptr());
+        let index = sysvar.data_ptr().wrapping_add(sysvar.data_len() - 2);
+        assert_eq!(bytes.as_ptr_range().end, index);
         assert_eq!(
-            run(&data, &[U64(2), U64(1)], OP_READ_INSTRUCTION_BYTES, 5),
+            run(&sysvar, &[U64(2), U64(1)], OP_READ_INSTRUCTION_BYTES, 5),
             Err(err(BallistaError::InstructionOutOfRange))
         );
         assert_eq!(
-            run(&data, &[U64(0), U64(u64::MAX)], OP_READ_INSTRUCTION_BYTES, 1),
+            run(&sysvar, &[U64(0), U64(u64::MAX)], OP_READ_INSTRUCTION_BYTES, 1),
             Err(err(BallistaError::InstructionOutOfRange))
         );
     }
 
     #[test]
     fn indexes_and_positions_outside_the_transaction_fail() {
-        let data = three_instructions();
+        let mut account = sysvar_account();
+        let sysvar = account.view();
         let out_of_range = Err(err(BallistaError::InstructionOutOfRange));
         for opcode in [OP_INSTRUCTION_PROGRAM, OP_INSTRUCTION_ACCOUNT_COUNT, OP_INSTRUCTION_DATA_LEN] {
-            assert_eq!(run(&data, &[U64(3), U64(0)], opcode, 0), out_of_range, "{opcode}");
-            assert_eq!(run(&data, &[U64(u64::MAX), U64(0)], opcode, 0), out_of_range, "{opcode}");
+            assert_eq!(run(&sysvar, &[U64(3), U64(0)], opcode, 0), out_of_range, "{opcode}");
+            assert_eq!(run(&sysvar, &[U64(u64::MAX), U64(0)], opcode, 0), out_of_range, "{opcode}");
         }
-        assert_eq!(run(&data, &[U64(1), U64(2)], OP_INSTRUCTION_ACCOUNT, 0), out_of_range);
-        assert_eq!(run(&data, &[U64(2), U64(0)], OP_INSTRUCTION_ACCOUNT_FLAGS, 0), out_of_range);
+        assert_eq!(run(&sysvar, &[U64(1), U64(2)], OP_INSTRUCTION_ACCOUNT, 0), out_of_range);
+        assert_eq!(run(&sysvar, &[U64(2), U64(0)], OP_INSTRUCTION_ACCOUNT_FLAGS, 0), out_of_range);
         // An operand that is not a set u64 is the template's fault, not the transaction's.
         assert_eq!(
-            run(&data, &[Unset, U64(0)], OP_INSTRUCTION_PROGRAM, 0),
+            run(&sysvar, &[Unset, U64(0)], OP_INSTRUCTION_PROGRAM, 0),
             Err(err(BallistaError::InvalidRegister))
         );
         assert_eq!(
-            run(&data, &[Pubkey([0; 32]), U64(0)], OP_INSTRUCTION_PROGRAM, 0),
+            run(&sysvar, &[Pubkey([0; 32]), U64(0)], OP_INSTRUCTION_PROGRAM, 0),
             Err(err(BallistaError::TypeMismatch))
         );
     }
@@ -374,7 +358,8 @@ mod tests {
         assert_eq!(reborrow(&whole[1..], &elsewhere), None);
     }
 
-    /// An account laid out as the entrypoint hands it over: the runtime header, then its data.
+    /// An account laid out as the entrypoint hands it over: the runtime header, then its data, both
+    /// 8-aligned.
     struct TestAccount {
         buffer: Vec<u64>,
     }

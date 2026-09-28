@@ -42,6 +42,7 @@ the same commit and says why here.
 - **Measured** against the phase-1 tip (`1efbd24`):
   - Uploading the 30-row payroll: 4,446 → 4,448, the verifier's new arms.
   - A run using all eleven (`run, introspection, no cpi`): 3,552, now ratcheted.
+  - One check per data read, no dead parser arms: 3,552 → 3,488; the settlement, 9,895 → 9,568.
   - The math opcodes case: 2,797 → 2,761. The TypeScript math fixture: 4,712 → 4,676.
   - Every other case and every cookbook example: unchanged.
 - **Checked:** the introspection fixture and a signed-quote settlement under Mollusk; every host

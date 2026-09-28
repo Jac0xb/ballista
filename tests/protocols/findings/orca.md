@@ -1,8 +1,9 @@
 # Orca: what the templates did against the real Whirlpool program
 
 Milestone 2 of the real-protocol tests ran `orcaCompoundFees` and `orcaHarvestManyPositions` as
-signed transactions against mainnet's Whirlpool program in LiteSVM. Neither worked as written.
-Both are fixed, and each fix landed with a test that failed before it. Plan:
+signed transactions against mainnet's Whirlpool program in LiteSVM. Neither worked as written, and
+both are fixed. Every fix except M5's, a rewritten header, landed with a test that failed before
+it; the findings table says what shows each one. Plan:
 [2026-09-27-protocol-orca](../../../docs/superpowers/plans/2026-09-27-protocol-orca.md).
 
 - **Snapshot:** `tests/protocols/snapshot-orca/`, slot 451,137,027 (2026-09-27 22:54:57 UTC).
@@ -13,22 +14,24 @@ Both are fixed, and each fix landed with a test that failed before it. Plan:
   - `orca_snapshot.rs`: the pools and their tick arrays are in the snapshot.
   - `orca_setup.rs`: the Orca behaviors the fixes rest on, called without Ballista.
   - `orca_cpis.rs`: every Whirlpool call against Orca's own client.
-  - `orca_compound_fees.rs`: 8 tests.
-  - `orca_harvest_many_positions.rs`: 4 tests.
+  - `orca_compound_fees.rs`: 11 tests, three of them with a real `dustFloor`.
+  - `orca_harvest_many_positions.rs`: 5 tests, one with a real `dustFloor`.
+  - Each run's Whirlpool calls are asserted in order (`orca::whirlpool_calls`), not counted, so a
+    call by the wrong row fails. A collect of nothing moves nothing, so no account would show it.
 - **Setup is real:** positions, deposits, withdrawals, swaps and updates go through Orca's
   instructions, built with `orca_whirlpools_client` 8.0.0. Expected numbers come from Orca's own
   math, `orca_whirlpools_core` 2.1.1. Only wallets' balances are written directly.
 
 ## Findings
 
-| | Finding | Template | Fixed |
-| --- | --- | --- | --- |
-| M1 | `collect_fees` passed the whirlpool writable; Orca declares it read-only | both | yes |
-| M2 | `fee_owed_*` was read without `update_fees_and_rewards`, so it was stale, usually 0 | both | yes |
-| M3 | The guard read token A's fee only | both | yes |
-| M4 | `increase_liquidity` with a liquidity fixed at signing fails once the price moves or the fees are one-sided | compound | yes |
-| M5 | The harvest's `when` was said to prevent reverts; it only saves compute | harvest | header rewritten |
-| M6 | Whirlpool's error codes collide with Ballista's | both | tests and runner read the logs |
+| | Finding | Template | Shown by | Fixed |
+| --- | --- | --- | --- | --- |
+| M1 | `collect_fees` passed the whirlpool writable; Orca declares it read-only | both | a static check of the compiled templates (`orca_cpis.rs`): no run can see a flag | yes |
+| M2 | `fee_owed_*` was read without `update_fees_and_rewards`, so it was stale, usually 0 | both | real runs | yes |
+| M3 | The guard read token A's fee only | both | real runs | yes |
+| M4 | `increase_liquidity` with a liquidity fixed at signing fails once the price moves or the fees are one-sided | compound | real runs | yes |
+| M5 | The harvest's `when` was said to prevent reverts; it only saves compute | harvest | a setup test of Orca alone (`orca_setup.rs`) and real refusals | header rewritten |
+| M6 | Whirlpool's error codes collide with Ballista's | both | real refusals, and the runner's unit tests | tests and runner read the logs |
 
 ## `orcaCompoundFees`
 
@@ -106,17 +109,25 @@ this branch; the docs session's copy may have moved on.
   mints must be SPL Token mints. SOL and USDC are.
 - **Dust can fail the deposit.** A fee too small to buy one unit of liquidity over the position's
   range makes the deposit fail with 6012, and the collect reverts with it. A full range buys the
-  least per unit of fee. Measured in a scratch run with Orca's own instructions, on a full-range
-  SOL/USDC position:
-  - owed (1 lamport, 39 micro-USDC) at `dustFloor` 0: Whirlpools refused the deposit with 6012;
-  - at this price, 1 or 2 lamports buy no full-range liquidity, and 3 buy 1;
-  - at `dustFloor` 1 the deposit was skipped, and the run landed with the update and the collect.
+  least per unit of fee. `dust_that_buys_no_liquidity_fails_the_run_unless_the_floor_skips_it`
+  shows it on a full-range SOL/USDC position, set up with Orca's own instructions (its end tick
+  arrays included):
+  - owed (1 lamport, 34 micro-USDC) at `dustFloor` 0, Whirlpools refuses the deposit with 6012;
+  - at a `dustFloor` of 1, the deposit is skipped, and the run lands with the update and the
+    collect;
+  - by Orca's own quote at this price, 1 or 2 lamports buy no full-range liquidity, and 3 buy 1.
 
   So a floor of a few base units covers SOL/USDC. A pool whose token A is worth less per base unit
   needs more; a few thousand is a safe default.
 - **One `dustFloor` for two tokens.** It is compared with each fee in that token's own base
-  units, and lamports and micro-USDC differ by 1,000 times. Two floors would be more precise. The
-  name is kept because milestone 1's harness test and both runners use it.
+  units, and lamports and micro-USDC differ by 1,000 times.
+  - `a_floor_between_the_fees_collects_both_and_reinvests_neither` pins what that means. At a
+    floor equal to the smaller fee, that fee is dust, the larger is worth collecting, and
+    `collect_fees` takes both. The deposit, which needs both, is skipped.
+  - `fees_at_or_below_the_floor_stay_owed`: with both fees at or below it, nothing is collected,
+    and the update leaves them recorded as owed.
+  - Two floors would be more precise. The name is kept because milestone 1's harness test and
+    both runners use it.
 
 ## `orcaHarvestManyPositions`
 
@@ -128,6 +139,11 @@ this branch; the docs session's copy may have moved on.
 **Fixed.**
 - Each row calls `update_fees_and_rewards`, skipped for a position without liquidity. Then the
   row collects when either fee is above the floor.
+  - `only_the_rows_that_earned_collect`: the calls come out as update and collect for the two
+    earning rows, update alone for the out-of-range row, and nothing for the empty one.
+  - `a_row_whose_fees_are_at_the_floor_is_left_for_later`: the floor is compared with each row's
+    own fees. A row whose one fee equals the floor updates, which records the fee, and leaves it
+    owed.
 - The row is `position`, `positionTokenAccount`, `tickArrayLower` and `tickArrayUpper`. The update
   reads both tick arrays.
 - `collect_fees` takes the whirlpool read-only (M1). The schema keeps `whirlpool` writable because
@@ -238,7 +254,8 @@ include Ballista's own work; sizes are the signed transaction on the wire.
 
 ## Evidence
 
-Each finding's test, failing before its fix, as run at this snapshot.
+The tests written before each fix, failing as run at this snapshot. M5 has none: its fix is the
+header.
 
 M1, `orca_cpis.rs`, before the flag fix:
 
@@ -316,6 +333,16 @@ Program whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc failed: custom program error
 Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD failed: custom program error: 0x1783
 ```
 
+The floor tests and the ordered calls came after the fixes, so they have no failure from before
+one. A mutation check stands in. With both templates' floor comparisons weakened to `>=`, all four
+floor tests fail. So does `only_the_rows_that_earned_collect`, on its calls alone: the idle rows'
+empty collects left every balance and account as it was.
+
+```text
+  left: ["UpdateFeesAndRewards", "CollectFees", "UpdateFeesAndRewards", "CollectFees", "UpdateFeesAndRewards", "CollectFees", "CollectFees"]
+ right: ["UpdateFeesAndRewards", "CollectFees", "UpdateFeesAndRewards", "CollectFees", "UpdateFeesAndRewards"]
+```
+
 ## Commits
 
 On `claude/protocol-orca`, after 461d230:
@@ -332,5 +359,7 @@ On `claude/protocol-orca`, after 461d230:
 | 28755bf | Update each Orca position before harvesting it, and collect either fee (M2, M3, M5) |
 | e28e05b | Name the program that refused an Orca harvest from its logs (M6) |
 | 2e7ba70 | Document the Orca snapshot |
+| 11cadf8 | Record what the Orca templates did against the real program |
+| eaa4546 | Pin each Orca run's Whirlpool calls in order, and test a real dustFloor |
 
-This file is the next commit.
+This revision of the file is the next commit.

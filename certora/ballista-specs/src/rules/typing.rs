@@ -38,6 +38,17 @@ fn value_dependent(kind: BallistaError) -> bool {
     )
 }
 
+/// One past the highest pass index a loop in `scope` reaches. A FOREACH makes one pass per batch
+/// row, and the rows' accounts are runtime accounts, so it makes fewer than
+/// `MAX_RUNTIME_ACCOUNTS`. A REPEAT makes at most its maximum, a byte, so its last pass is 254.
+fn pass_bound(scope: LoopScope) -> usize {
+    if scope.in_row_loop() {
+        MAX_RUNTIME_ACCOUNTS
+    } else {
+        usize::from(u8::MAX) + 1
+    }
+}
+
 fn check_typing_preservation(with_account: bool, accounts: &[AccountView]) {
     let program = ProgramView::parse(spec_program(with_account)).expect("spec program parses");
 
@@ -64,14 +75,14 @@ fn check_typing_preservation(with_account: bool, accounts: &[AccountView]) {
     let mut scratch = Scratch::new(&program);
     // A FOREACH's rows start after the fixed accounts; a REPEAT has none.
     let loop_context = if scope.in_loop() {
-        let iteration: usize = nondet();
-        cvlr_assume!(iteration < MAX_RUNTIME_ACCOUNTS);
+        let pass: usize = nondet();
+        cvlr_assume!(pass < pass_bound(scope));
         let row_base = if scope.in_row_loop() {
             program.header.fixed_account_count()
         } else {
             NO_ROWS
         };
-        Some((iteration, row_base))
+        Some((pass, row_base))
     } else {
         None
     };
@@ -135,4 +146,48 @@ pub fn rule_verified_pure_instructions_preserve_register_typing() {
 pub fn rule_verified_account_reads_preserve_register_typing() {
     let accounts = nondet_account_views::<1, 64>();
     check_typing_preservation(true, &accounts[..]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A program with one loop of the most passes its kind allows, which must verify.
+    fn verifies(build: impl FnOnce(&mut ProgramBuilder)) -> bool {
+        let mut builder = ProgramBuilder::new();
+        build(&mut builder);
+        let bytes = builder.build().expect("builds");
+        ProgramView::parse(&bytes).expect("parses").verify().is_ok()
+    }
+
+    /// The rule's pass index reaches the last pass of every loop the verifier accepts: a REPEAT
+    /// at the largest maximum, and a FOREACH over the most rows a batch holds.
+    #[test]
+    fn the_pass_bound_covers_the_last_pass_of_every_verified_loop() {
+        let longest_repeat = u8::MAX;
+        assert!(verifies(|builder| {
+            let count = builder.const_u64(u64::from(longest_repeat));
+            builder.repeat(count, longest_repeat, 0, |body| {
+                body.loop_index();
+            });
+        }));
+        assert!(usize::from(longest_repeat) - 1 < pass_bound(LoopScope::Count));
+
+        let most_rows = MAX_RUNTIME_ACCOUNTS as u8;
+        assert!(verifies(|builder| {
+            builder.row_account(0, None, None, 0);
+            builder.batch(most_rows, 0);
+            builder.for_each(0, |body| {
+                body.loop_index();
+            });
+        }));
+        assert!(!verifies(|builder| {
+            builder.row_account(0, None, None, 0);
+            builder.batch(most_rows + 1, 0);
+            builder.for_each(0, |body| {
+                body.loop_index();
+            });
+        }));
+        assert!(usize::from(most_rows) - 1 < pass_bound(LoopScope::Rows));
+    }
 }

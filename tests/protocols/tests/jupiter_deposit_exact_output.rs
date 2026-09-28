@@ -4,7 +4,7 @@
 use {
     ballista_protocol_tests::{
         kamino,
-        lending::{self, MARKET, SOL_TO_USDC, USDC_MINT, USDC_RESERVE},
+        lending::{self, JUPITER, MARKET, SOL_TO_USDC, USDC_MINT, USDC_RESERVE},
         snapshot::Leg,
         template::{self, Run},
         tx::{self, Failure, Outcome},
@@ -20,7 +20,6 @@ use {
 };
 
 const NAME: &str = "jupiterDepositExactOutput";
-const JUPITER: Address = Address::from_str_const("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
 
 struct Scene {
     owner: Keypair,
@@ -113,15 +112,12 @@ fn run(svm: &LiteSVM, scene: &Scene, minimum_out: u64) -> Instruction {
 /// the obligation's: klend's deposit refreshes its own reserve (`kamino_contract.rs` pins it).
 /// Refreshing the reserve here as well is what the plan's probe measured, and is harmless.
 fn send_run(svm: &mut LiteSVM, scene: &Scene, run: Instruction) -> Result<Outcome, Failure> {
-    lending::next_slot(svm);
-    let mut instructions = vec![lending::compute_limit()];
-    instructions.extend(kamino::refreshes(svm, &scene.obligation, &[USDC_RESERVE]));
-    instructions.push(run);
-    tx::send(
+    lending::send_run(
         svm,
+        &scene.obligation,
+        &[USDC_RESERVE],
         &scene.owner,
-        &[],
-        &instructions,
+        run,
         &scene.leg.lookup_tables,
     )
 }

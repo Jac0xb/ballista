@@ -265,7 +265,10 @@ fn scope_prices(svm: &LiteSVM, prices: &Address) -> Account {
 mod tests {
     use {
         super::*,
-        crate::snapshot::{Snapshot, SNAPSHOT_DIR},
+        crate::{
+            lending::{SCOPE_PRICES, SOL_SPOT, USDC_MINT},
+            snapshot::{Snapshot, SNAPSHOT_DIR},
+        },
     };
 
     const SOL_USD: Address =
@@ -351,13 +354,6 @@ mod tests {
             "bytes outside price..publish_time changed: {changed:?}"
         );
     }
-
-    const SCOPE_PRICES: Address =
-        Address::from_str_const("3t4JZcueEzTbVP6kLxXrL3VpWx45jDer4eqysweBchNH");
-    const USDC_MINT: Address =
-        Address::from_str_const("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
-    /// Kamino's SOL spot price.
-    const SOL_SPOT: usize = 3;
 
     /// The lending snapshot's `address` alone, in a bare SVM.
     fn lending_account(address: Address) -> (LiteSVM, Account) {

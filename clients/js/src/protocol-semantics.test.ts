@@ -221,14 +221,6 @@ describe('the oracle-checked swap', () => {
     ).toBe(true);
   });
 
-  test("pins the feed's exponent, which decides what the price means", () => {
-    const pinned = steps(jupiterOracleCheckedSwap).some(
-      (step) =>
-        step.kind === 'require' && dependsOn(step.condition, bindings, reads('priceUpdate', PYTH.exponent)),
-    );
-    expect(pinned).toBe(true);
-  });
-
   test('scales by both mints’ decimals, read on chain rather than supplied', () => {
     expect(dependsOn(check.condition, bindings, reads('sourceMint', SPL_MINT.decimals))).toBe(true);
     expect(dependsOn(check.condition, bindings, reads('destinationMint', SPL_MINT.decimals))).toBe(true);
@@ -316,6 +308,33 @@ describe('the Pyth templates', () => {
     const labels = template.steps.map((step) => step.label);
     expect(labels.indexOf('priceIsFullyVerified')).toBe(0);
     expect(labels.indexOf('priceIsTheExpectedFeed')).toBe(1);
+  });
+
+  // A price is `price × 10^exponent`. A requirement that never reads the exponent compares raw
+  // integers whose meaning the feed decides, and another exponent would move each of them by a
+  // power of ten.
+  test.each(pythTemplates)("%s makes a requirement depend on the feed's exponent", (_, template) => {
+    const bindings = bindingsOf(template);
+    const reading = steps(template).some(
+      (step) => step.kind === 'require' && dependsOn(step.condition, bindings, reads('priceUpdate', PYTH.exponent)),
+    );
+    expect(reading).toBe(true);
+  });
+});
+
+describe('the Pyth gate', () => {
+  // Its bounds are raw integers at the exponent the caller set them for, so it requires that
+  // exponent, as soon as the feed is known.
+  test("requires the feed's exponent to be `exponent`, right after the feed pin", () => {
+    expect(requireLabeled(pythFreshPriceGate, 'priceExponentIsExpected').condition).toEqual(
+      expression.equal(
+        expression.accountData(account.fixed('priceUpdate'), PYTH.exponent, 'i32'),
+        expression.input('exponent'),
+      ),
+    );
+    expect(pythFreshPriceGate.inputs?.exponent).toEqual({ type: 'i64' });
+    const labels = pythFreshPriceGate.steps.map((step) => step.label);
+    expect(labels.indexOf('priceExponentIsExpected')).toBe(labels.indexOf('priceIsTheExpectedFeed') + 1);
   });
 });
 

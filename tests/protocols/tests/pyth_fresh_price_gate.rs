@@ -8,7 +8,10 @@
 
 use {
     ballista_protocol_tests::{
-        oracle::{copy_pyth_feed, pyth_price, SOL_USD_FEED_ID, USDC_USD_FEED_ID},
+        oracle::{
+            copy_pyth_feed, pyth_price, set_pyth_price, PythPrice, SOL_USD_FEED_ID,
+            USDC_USD_FEED_ID,
+        },
         snapshot::{warp, Leg, Snapshot, SNAPSHOT_DIR},
         template::{examples, upload, Example, Run},
         tx::{self, assert_requirement_failed, Failure, Outcome},
@@ -29,6 +32,8 @@ const TEMPLATE_ID: u16 = 7;
 /// The accounts at the head of `route`'s list that the gate passes itself: the token program and
 /// the signer. The rest arrive as `actionAccounts`.
 const ROUTE_HEAD: usize = 2;
+/// SOL/USD's exponent, which the bounds below are in units of: hundred-millionths of a dollar.
+const EXPONENT: i32 = -8;
 /// A minute, in seconds.
 const MAXIMUM_AGE: i64 = 60;
 /// $0.10 at the feed's exponent of −8.
@@ -42,6 +47,7 @@ const CEILING_PRICE: i64 = 15_000_000_000;
 struct Terms {
     price_update: Address,
     feed_id: Address,
+    exponent: i32,
     maximum_age: i64,
     maximum_confidence: u64,
     floor_price: i64,
@@ -84,12 +90,13 @@ impl Gate {
         }
     }
 
-    /// The terms a trader selling SOL would set: the SOL/USD price, at most a minute old, confident
-    /// to $0.10, between $100 and $150.
+    /// The terms a trader selling SOL would set: the SOL/USD price, at its exponent of −8, at most
+    /// a minute old, confident to $0.10, between $100 and $150.
     fn terms(&self) -> Terms {
         Terms {
             price_update: self.sol_usd,
             feed_id: SOL_USD_FEED_ID,
+            exponent: EXPONENT,
             maximum_age: MAXIMUM_AGE,
             maximum_confidence: MAXIMUM_CONFIDENCE,
             floor_price: FLOOR_PRICE,
@@ -105,6 +112,7 @@ impl Gate {
             .account("tokenProgram", TOKEN_PROGRAM_ID, false, false)
             .account("actor", self.actor.pubkey(), true, true)
             .input_pubkey("feedId", terms.feed_id)
+            .input_i64("exponent", terms.exponent.into())
             .input_i64("maximumAge", terms.maximum_age)
             .input_u64("maximumConfidence", terms.maximum_confidence)
             .input_i64("floorPrice", terms.floor_price)
@@ -176,7 +184,7 @@ fn a_fresh_price_in_band_lets_the_route_run() {
     assert!(
         (0..MAXIMUM_AGE).contains(&age)
             && price.conf < MAXIMUM_CONFIDENCE
-            && price.exponent == -8
+            && price.exponent == EXPONENT
             && (FLOOR_PRICE + 1..CEILING_PRICE).contains(&price.price),
         "{age} s old: {price:?}"
     );
@@ -303,6 +311,53 @@ fn a_price_from_another_feed_fails_at_the_feed_pin() {
     let named = Terms {
         feed_id: USDC_USD_FEED_ID,
         ..terms
+    };
+    gate.act(example, named)
+        .unwrap_or_else(|failure| panic!("{failure:?}"));
+    gate.assert_the_route_ran();
+}
+
+/// A price at another exponent is refused, even one whose raw integers pass every other check.
+///
+/// The account is the snapshot's SOL/USD with its exponent moved from −8 to −7 (write rule 2), and
+/// its raw price, confidence and publish time as they were. At −7 the price is $1,230.88 and its
+/// confidence $0.12, outside the terms. But the terms are raw integers at −8, and those still pass.
+#[test]
+fn a_price_at_another_exponent_fails_at_the_exponent_pin() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+    let mut gate = Gate::new(&snapshot, example);
+    let market = pyth_price(&gate.svm, &gate.sol_usd);
+    assert_eq!(market.exponent, EXPONENT);
+    let moved = PythPrice {
+        exponent: -7,
+        ..market
+    };
+    set_pyth_price(&mut gate.svm, &gate.sol_usd, moved);
+
+    let failure = match gate.act(example, gate.terms()) {
+        Err(failure) => failure,
+        // What the pin stops: the route runs on a price its terms were never set for.
+        Ok(outcome) => panic!(
+            "the run landed on a price of {} × 10^{}, with {} × 10^{} of confidence, and bought \
+             {} USDC units. {} CU, {} bytes",
+            moved.price,
+            moved.exponent,
+            moved.conf,
+            moved.exponent,
+            token_balance(&gate.svm, &gate.leg.destination_token_account),
+            outcome.compute_units,
+            outcome.size,
+        ),
+    };
+    assert_requirement_failed(&failure, example, "priceExponentIsExpected");
+
+    // Named with its exponent, the same account passes every other check: the band and the
+    // confidence limit are raw integers, so before the pin nothing read the exponent.
+    let named = Terms {
+        exponent: moved.exponent,
+        ..gate.terms()
     };
     gate.act(example, named)
         .unwrap_or_else(|failure| panic!("{failure:?}"));

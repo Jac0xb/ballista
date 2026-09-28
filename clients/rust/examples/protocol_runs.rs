@@ -25,14 +25,17 @@ const PYTH_RECEIVER: Pubkey = pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5Lt
 // #region plain
 /// Shape one: fixed accounts and fixed inputs, in the order the template declares them.
 ///
-/// This is `pyth-fresh-price-gate`. Its inputs are `feedId`, `maximumAge`, `maximumConfidence`,
-/// `floorPrice`, `ceilingPrice`, `actionData`; its accounts are the price update, the action
-/// program, the token program, and the actor. `feed_id` is the Pyth feed the price update must
-/// carry, as 32 bytes. The action is a Jupiter `route`, whose list starts with the token program
-/// and the actor, so `action_accounts` is its list from the third account on.
+/// This is `pyth-fresh-price-gate`. Its inputs are `feedId`, `exponent`, `maximumAge`,
+/// `maximumConfidence`, `floorPrice`, `ceilingPrice`, `actionData`; its accounts are the price
+/// update, the action program, the token program, and the actor. `feed_id` is the Pyth feed the
+/// price update must carry, as 32 bytes, and `exponent` the exponent it must have: the confidence
+/// limit and the band are raw integers at it (SOL/USD's is −8). The action is a Jupiter `route`,
+/// whose list starts with the token program and the actor, so `action_accounts` is its list from
+/// the third account on.
 pub struct PriceGate {
     pub price_update: Pubkey,
     pub feed_id: [u8; 32],
+    pub exponent: i32,
     pub action_program: Pubkey,
     pub actor: Pubkey,
 }
@@ -50,6 +53,8 @@ pub fn run_price_gate(
     let inputs = RunInputs::new()
         .groups(&[action_accounts.len() as u8])
         .pubkey(&Pubkey::new_from_array(gate.feed_id))
+        // Pyth stores the exponent as an i32; the template takes it as an i64.
+        .i64(gate.exponent.into())
         .i64(maximum_age)
         .u64(maximum_confidence)
         .i64(band.0)
@@ -167,6 +172,7 @@ fn main() {
         &PriceGate {
             price_update: key(),
             feed_id: sol_usd,
+            exponent: -8,
             action_program: SYSTEM_PROGRAM_ID,
             actor: key(),
         },

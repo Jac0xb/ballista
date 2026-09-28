@@ -17,6 +17,11 @@
  * `get_price_no_older_than` checks the feed id for the same reason; the template checks it
  * against `feedId`.
  *
+ * The third pins the exponent. A Pyth price is `price × 10^exponent`, and the bounds are raw
+ * integers at the exponent the caller set them for: SOL/USD's −8 makes them hundred-millionths of
+ * a dollar. If the feed's exponent ever changed, every bound would be off by a power of ten, so the
+ * template requires the account's exponent to equal `exponent`.
+ *
  * The action here is a Jupiter `route`. It takes the token program and the signer first, so the
  * template passes those two itself and the rest of the route's list arrives as a group.
  */
@@ -43,6 +48,11 @@ export const pythFreshPriceGate = defineTemplate({
      * `ef0d8b6f…c280b56d`.
      */
     feedId: { type: 'pubkey' },
+    /**
+     * The feed's exponent, which the three bounds below are in units of: SOL/USD's is −8. The
+     * account holds it as an i32.
+     */
+    exponent: { type: 'i64' },
     /** How stale a price may be, in seconds. */
     maximumAge: { type: 'i64' },
     /** The widest confidence interval the caller will act on. */
@@ -81,6 +91,15 @@ export const pythFreshPriceGate = defineTemplate({
         expression.input('feedId'),
       ),
       'priceIsTheExpectedFeed',
+    ),
+
+    // What the raw integers below mean. At another exponent each bound is off by a power of ten.
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('priceUpdate'), PYTH.exponent, 'i32'),
+        expression.input('exponent'),
+      ),
+      'priceExponentIsExpected',
     ),
 
     step.require(

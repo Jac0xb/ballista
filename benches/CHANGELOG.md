@@ -50,6 +50,8 @@ the same commit and says why here.
   - `run, log and return 16 bytes`, a new case: 1,481.
   - `create template, payroll 30 rows`: 4,470 → 4,481, from the verifier's two new arms. Creating a
     cookbook example costs 11 to 48 more.
+  - The verifier's check that every `EMIT` starts with a tag outside the run event's family,
+    against `02c3017`: no fixed case moved, and no cookbook example's run or create.
   - A 20-byte `EMIT` in three parts, measured on phase 1's tip: 429 CU, of which `sol_log_data`
     charges 220. A run's first output also allocates the buffer, about 38 CU more.
   - A 16-byte `SET_RETURN_DATA` as a run's first output, measured on phase 1's tip: 296 CU, of which

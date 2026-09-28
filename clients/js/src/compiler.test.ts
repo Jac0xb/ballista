@@ -22,12 +22,15 @@ import {
   step,
   systemTransfer,
   type CompiledTemplate,
+  type DataPart,
   type Expression,
   type Step,
   type TemplateInput,
 } from './index.js';
 
 const address = (byte: number) => new Uint8Array(32).fill(byte);
+/** Every emit starts with a literal tag of at least four bytes. */
+const TAG = new TextEncoder().encode('TAG1');
 
 const HEADER_LENGTH = 24;
 const ACCOUNT_RECORD_LENGTH = 8;
@@ -956,7 +959,7 @@ describe('data segments', () => {
           accounts: { program: { executable: true, address: address(9) }, owner: {} },
           steps: [
             output([
-              data.literal(Uint8Array.of(1)),
+              data.literal(TAG),
               data.encode(
                 'pubkey',
                 expression.pda(account.fixed('program'), [expression.accountField(account.fixed('owner'), 'key')]),
@@ -1003,7 +1006,7 @@ describe('output steps', () => {
 
   test('emit and setReturnData lower to one record naming a contiguous run of their parts', () => {
     const compiled = compileSteps({ amount: { type: 'u64' } }, [
-      step.emit([data.literal(Uint8Array.of(1, 2)), data.encode('u64', expression.input('amount'))], 'log'),
+      step.emit([data.literal(TAG), data.encode('u64', expression.input('amount'))], 'log'),
       step.setReturnData([data.encode('pubkey', expression.accountField(account.fixed('payer'), 'key'))], 'result'),
     ]);
     const outputs = records(compiled).filter(
@@ -1034,13 +1037,13 @@ describe('output steps', () => {
       compileSteps(
         {},
         [
-          step.emit([data.literal(Uint8Array.of(1))]),
+          step.emit([data.literal(TAG)]),
           step.forEach([
-            step.emit([data.encode('u64', expression.loopIndex())]),
+            step.emit([data.literal(TAG), data.encode('u64', expression.loopIndex())]),
             pay(account.iteration('recipient')),
-            step.emit([data.encode('u64', expression.loopIndex())]),
+            step.emit([data.literal(TAG), data.encode('u64', expression.loopIndex())]),
           ]),
-          step.emit([data.literal(Uint8Array.of(2))]),
+          step.emit([data.literal(TAG)]),
         ],
         rows,
       ),
@@ -1069,7 +1072,9 @@ describe('output steps', () => {
       compileSteps(count, [step.repeat(expression.input('n'), [step.setReturnData([data.literal(Uint8Array.of(1))])], { max: 2 })]),
     ).toThrow('setReturnData is not allowed inside a loop');
     expect(() =>
-      compileSteps(count, [step.repeat(expression.input('n'), [step.emit([data.encode('u64', expression.loopIndex())])], { max: 2 })]),
+      compileSteps(count, [
+        step.repeat(expression.input('n'), [step.emit([data.literal(TAG), data.encode('u64', expression.loopIndex())])], { max: 2 }),
+      ]),
     ).not.toThrow();
   });
 
@@ -1077,10 +1082,8 @@ describe('output steps', () => {
     const memo = { memo: { type: 'bytes', maxLength: 1024 } } as const;
     expect(() => compileSteps(memo, [step.setReturnData([data.encode('bytes', expression.input('memo'))])])).not.toThrow();
     expect(() =>
-      compileSteps(memo, [
-        step.emit([data.encode('bytes', expression.input('memo')), data.literal(Uint8Array.of(0))]),
-      ]),
-    ).toThrow('emit can encode 1025 bytes; maximum is 1024');
+      compileSteps(memo, [step.emit([data.literal(TAG), data.encode('bytes', expression.input('memo'))])]),
+    ).toThrow('emit can encode 1028 bytes; maximum is 1024');
     expect(() => compileSteps({}, [step.setReturnData([data.literal(new Uint8Array(1025))])])).toThrow(
       'setReturnData can encode 1025 bytes; maximum is 1024',
     );
@@ -1097,7 +1100,8 @@ describe('output steps', () => {
       }
       throw new Error('the template compiled');
     };
-    const parts = (count: number) => Array.from({ length: count }, (_, index) => data.literal(Uint8Array.of(index)));
+    const parts = (count: number) =>
+      Array.from({ length: count }, (_, index) => data.literal(index === 0 ? TAG : Uint8Array.of(index)));
     for (const output of [step.emit, step.setReturnData]) {
       expect(schemaIssues([output([])])).toMatchObject([
         { code: 'too_small', minimum: 1, path: ['steps', 0, 'parts'], message: 'Too small: expected array to have >=1 items' },
@@ -1107,6 +1111,33 @@ describe('output steps', () => {
         { code: 'too_big', maximum: 64, path: ['steps', 0, 'parts'], message: 'Too big: expected array to have <=64 items' },
       ]);
     }
+  });
+
+  test('emit starts with a literal tag of at least 4 bytes, outside the run event family', () => {
+    const amount = { amount: { type: 'u64' } } as const;
+    const value = data.encode('u64', expression.input('amount'));
+    const tag = (text: string) => data.literal(new TextEncoder().encode(text));
+    const emit = (parts: DataPart[]) => () => compileSteps(amount, [step.emit(parts)]);
+    const untagged = "emit must start with a literal tag of at least 4 bytes, so its log cannot pass for Ballista's run event";
+    const reserved = 'emit tag cannot start with "BEV": that tag family is reserved for Ballista\'s run event';
+
+    // A tag alone or before the data, including tags that only resemble the family.
+    for (const text of ['TAG1', 'a longer tag', 'BEU1', 'bev1', 'XBEV']) {
+      expect(emit([tag(text), value])).not.toThrow();
+      expect(emit([tag(text)])).not.toThrow();
+    }
+    // No tag, a value before the tag, and a three-byte tag, even with a fourth literal byte after
+    // it: the tag is the first part alone.
+    expect(emit([value])).toThrow(untagged);
+    expect(emit([value, tag('TAG1')])).toThrow(untagged);
+    expect(emit([tag('TAG'), value])).toThrow(untagged);
+    expect(emit([tag('TAG'), tag('1')])).toThrow(untagged);
+    // The run event's magic, and every other version of it.
+    for (const text of ['BEV1', 'BEV2', 'BEV\0', 'BEVERAGE']) {
+      expect(emit([tag(text), value])).toThrow(reserved);
+    }
+    // Return data is read by the caller that invoked the run, never mistaken for a log.
+    expect(() => compileSteps(amount, [step.setReturnData([value])])).not.toThrow();
   });
 });
 

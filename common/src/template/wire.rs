@@ -38,6 +38,11 @@ pub const ITERATION_INPUT_BIT: u8 = ITERATION_ACCOUNT_BIT;
 /// Program header flag: emit a `sol_log_data` event after a successful run.
 pub const PROGRAM_FLAG_EMIT_EVENT: u8 = 1 << 0;
 pub const PROGRAM_FLAGS_MASK: u8 = PROGRAM_FLAG_EMIT_EVENT;
+/// The run event's tag family: the first three bytes of its magic, `BEV1`, which every version of
+/// the event keeps. No [`OP_EMIT`] may start its log line with them.
+pub const RUN_EVENT_TAG_FAMILY: [u8; 3] = *b"BEV";
+/// The shortest literal tag an [`OP_EMIT`] may start with.
+pub const MIN_EMIT_TAG_LEN: usize = 4;
 
 /// Instruction flag (read opcodes only): the data offset comes from register `b` instead of the immediate.
 pub const INSTRUCTION_FLAG_DYNAMIC_OFFSET: u8 = 1 << 0;
@@ -167,6 +172,11 @@ pub const OP_READ_I32: u8 = 60;
 pub const OP_REPEAT: u8 = 61;
 /// Encodes the data segments the immediate names, as CPI data is encoded, and logs the bytes with
 /// `sol_log_data` as one field. Writes no register.
+///
+/// The first segment must be a literal tag of at least [`MIN_EMIT_TAG_LEN`] bytes that does not
+/// start with [`RUN_EVENT_TAG_FAMILY`]. A log line names the program that wrote it, Ballista, but
+/// not the template, so without a tag a template could log a byte-exact copy of the run event for
+/// any template address, and indexers could not tell the copy from the real one.
 pub const OP_EMIT: u8 = 62;
 /// Encodes the data segments the immediate names and sets the bytes as the run's return data.
 /// Allowed once, outside every loop, after the last invoke. Writes no register.

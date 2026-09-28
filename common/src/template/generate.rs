@@ -476,12 +476,14 @@ fn emit_operation(
             registers.push(register, VALUE_U128);
         }
         15 => {
-            // A log line of one to three registers, sometimes after a literal byte. Outputs may
-            // appear anywhere, loop bodies included, and write no register.
-            let mut parts = Vec::new();
-            if choices.below(4) == 0 {
-                parts.push(Segment::Literal(builder.blob(&[choices.next() as u8])));
+            // A log line: a four-byte tag, then one to three registers. Outputs may appear
+            // anywhere, loop bodies included, and write no register. The verifier reserves the
+            // run event's tag family, so a tag that would start with it is changed.
+            let mut tag = choices.next().to_le_bytes();
+            if tag.starts_with(&RUN_EVENT_TAG_FAMILY) {
+                tag[0] = !tag[0];
             }
+            let mut parts = vec![Segment::Literal(builder.blob(&tag))];
             for _ in 0..1 + choices.below(3) {
                 parts.push(output_part(choices, registers));
             }

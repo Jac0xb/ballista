@@ -33,6 +33,10 @@ export const MAX_RETURN_DATA_LENGTH = 1_024;
 
 /** Program header flag: emit a `BEV1` data log after every successful run. */
 export const PROGRAM_FLAG_EMIT_EVENT = 1;
+/** The run event's tag family: the first three bytes of `BEV1`, kept by every version. No emit may start with them. */
+export const RUN_EVENT_TAG_FAMILY = Uint8Array.of(0x42, 0x45, 0x56);
+/** The shortest literal tag an emit may start with. */
+export const MIN_EMIT_TAG_LENGTH = 4;
 /** Instruction flag on read opcodes: the offset comes from register `b`. */
 export const INSTRUCTION_FLAG_DYNAMIC_OFFSET = 1;
 
@@ -668,6 +672,19 @@ class Compiler {
 
   /** EMIT and SET_RETURN_DATA: the parts are encoded as invocation data is, to at most 1,024 bytes. */
   compileOutput(current: Extract<Step, { kind: 'emit' | 'setReturnData' }>, loop: LoopKind | undefined, bindings: Bindings): void {
+    if (current.kind === 'emit') {
+      // A log line names the program that wrote it, Ballista, but not the template. Without a tag,
+      // a template could log a byte-exact copy of the run event for any template address.
+      const [tag] = current.parts;
+      if (tag?.kind !== 'literal' || tag.bytes.length < MIN_EMIT_TAG_LENGTH) {
+        throw new TypeError(
+          `emit must start with a literal tag of at least ${MIN_EMIT_TAG_LENGTH} bytes, so its log cannot pass for Ballista's run event`,
+        );
+      }
+      if (RUN_EVENT_TAG_FAMILY.every((byte, index) => tag.bytes[index] === byte)) {
+        throw new TypeError(`emit tag cannot start with "BEV": that tag family is reserved for Ballista's run event`);
+      }
+    }
     if (current.kind === 'setReturnData') {
       // Solana clears return data whenever a program is invoked, so what a run returns is set
       // once, outside every loop, after its last invoke.

@@ -2309,7 +2309,7 @@ mod tests {
     /// The output opcodes as the TypeScript SDK compiles them, run on chain. Each row logs its
     /// index and recipient right after a transfer whose data the next row sends again without
     /// encoding it, so a log that wrote the invocation's buffer would break the second transfer.
-    /// The run then logs the memo and returns the total paid and the payer.
+    /// The run then logs the memo after its tag and returns the total paid and the payer.
     #[test]
     fn typescript_output_fixture_logs_every_row_and_returns_the_total() {
         let creator = Pubkey::new_unique();
@@ -2349,7 +2349,7 @@ mod tests {
         };
         assert_eq!(
             program_data(&logger),
-            vec![row(0, first), row(1, second), b"hello".to_vec()]
+            vec![row(0, first), row(1, second), b"MEMOhello".to_vec()]
         );
         let mut returned = 2_000u64.to_le_bytes().to_vec();
         returned.extend_from_slice(payer.as_ref());
@@ -2441,6 +2441,26 @@ mod tests {
         let payload = builder.build().expect("builds");
         let result =
             context.process_instruction(&create_template_instruction(creator, 95, &payload));
+        assert_eq!(custom_code(&result), Some(((at as u32) << 16) | 6130), "{result:#?}");
+    }
+
+    /// A template cannot forge the run event: a log that starts with the event's tag family is
+    /// refused when the template is created, even a byte-exact event for another template.
+    #[test]
+    fn a_log_that_copies_the_run_event_is_rejected_at_create() {
+        let creator = Pubkey::new_unique();
+        let context = context(funded_accounts([creator], 10_000_000_000));
+        let (victim, _) = find_template_pda(&Pubkey::new_unique(), 7);
+        let mut event = b"BEV1".to_vec();
+        event.extend_from_slice(&[1, 0, 1]);
+        event.extend_from_slice(&1u64.to_le_bytes());
+        event.extend_from_slice(victim.as_ref());
+        let mut builder = ProgramBuilder::new();
+        let forged = builder.blob(&event);
+        let at = builder.emit_data(&[Segment::Literal(forged)]);
+        let payload = builder.build().expect("builds");
+        let result =
+            context.process_instruction(&create_template_instruction(creator, 96, &payload));
         assert_eq!(custom_code(&result), Some(((at as u32) << 16) | 6130), "{result:#?}");
     }
 

@@ -412,6 +412,11 @@ impl ProgramBuilder {
 
     /// Pushes `parts` and emits an `EMIT`, which logs their encoding as one `Program data:` field.
     /// Returns the instruction's index. (`emit` itself appends a raw record.)
+    ///
+    /// The verifier accepts the log only if its first part is a literal tag of at least
+    /// [`MIN_EMIT_TAG_LEN`] bytes that does not start with [`RUN_EVENT_TAG_FAMILY`], the run
+    /// event's. Like the rest of the builder, this does not check it, so tests can build a log the
+    /// verifier refuses.
     pub fn emit_data(&mut self, parts: &[Segment]) -> usize {
         self.output(OP_EMIT, parts)
     }
@@ -685,7 +690,7 @@ mod tests {
         let mut builder = ProgramBuilder::new();
         let amount = builder.const_u64(7);
         let flag = builder.const_bool(true);
-        let tag = builder.blob(b"TAG");
+        let tag = builder.blob(b"TAG1");
         let logged = builder.emit_data(&[
             Segment::Literal(tag),
             Segment::Register(DATA_REG_U64, amount),

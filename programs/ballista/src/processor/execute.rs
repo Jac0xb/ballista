@@ -277,7 +277,9 @@ pub fn run<'data>(
     Ok(())
 }
 
-/// Magic prefix of the run event emitted through `sol_log_data` when the template opts in.
+/// Magic prefix of the run event emitted through `sol_log_data` when the template opts in. Its
+/// first three bytes are `RUN_EVENT_TAG_FAMILY`, which the verifier refuses as an `EMIT` tag, so no
+/// template can log a line that reads as a run event. A later version keeps them.
 pub const EVENT_MAGIC: [u8; 4] = *b"BEV1";
 /// Size of the run event: magic, bytecode version, iterations, expanded invokes, executed mask,
 /// template address.
@@ -1097,8 +1099,9 @@ fn extended_instruction<'data>(
 /// then logged as one `Program data:` field or set as the run's return data. The verifier bounds
 /// every output at `MAX_RETURN_DATA_LEN` bytes, and admits one `SET_RETURN_DATA`, outside every
 /// loop and after the last invoke, because the runtime clears return data whenever a program is
-/// invoked. A `cu-profile` build replaces it with the profile record once the run ends; see
-/// `profile::report`.
+/// invoked. It also requires every `EMIT` to start with a literal tag outside the run event's
+/// family, so no log reads as a run event; nothing here checks that again. A `cu-profile` build
+/// replaces the return data with the profile record once the run ends; see `profile::report`.
 ///
 /// Cold, so the register allocator charges this call rather than the math arms beside it. Without
 /// that, keeping `instruction` alive for the call cost the math opcodes spills, and the math
@@ -2098,6 +2101,10 @@ mod tests {
         let event = encode_event(3, 5, 0b10110, &template);
         assert_eq!(event.len(), EVENT_LEN);
         assert_eq!(&event[..4], b"BEV1");
+        assert!(
+            EVENT_MAGIC.starts_with(&RUN_EVENT_TAG_FAMILY),
+            "the verifier reserves this family, so no EMIT can log a line that reads as the event"
+        );
         assert_eq!(event[4], TEMPLATE_PROGRAM_VERSION);
         assert_eq!(event[5], 3, "iterations");
         assert_eq!(event[6], 5, "expanded invokes");
@@ -2664,7 +2671,7 @@ mod tests {
         let mut builder = ProgramBuilder::new();
         let amount = builder.const_u64(0x0102);
         let key = builder.const_pubkey([7; 32]);
-        let tag = builder.blob(b"OUT");
+        let tag = builder.blob(b"OUT1");
         let logged = builder.emit_data(&[
             Segment::Literal(tag),
             Segment::Register(DATA_REG_U16, amount),
@@ -2687,7 +2694,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let mut expected = b"OUT".to_vec();
+        let mut expected = b"OUT1".to_vec();
         expected.extend_from_slice(&0x0102u16.to_le_bytes());
         expected.extend_from_slice(&[7; 32]);
         assert_eq!(scratch.output.as_deref(), Some(&expected));

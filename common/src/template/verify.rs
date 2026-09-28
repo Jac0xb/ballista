@@ -558,6 +558,7 @@ impl ProgramView<'_> {
             }
             OP_EMIT => {
                 self.verify_output(instruction, instruction_index, registers)?;
+                self.verify_emit_tag(instruction, instruction_index)?;
             }
             OP_SET_RETURN_DATA => {
                 // The runtime clears return data whenever a program is invoked, CPIs included, so
@@ -660,6 +661,34 @@ impl ProgramView<'_> {
             return Err(TemplateError::InvalidOutput(instruction_index));
         }
         Ok(())
+    }
+
+    /// An `EMIT` starts with a literal tag of at least `MIN_EMIT_TAG_LEN` bytes outside the run
+    /// event's family, `RUN_EVENT_TAG_FAMILY`. A log line names the program that wrote it but not
+    /// the template, so an untagged line could be a byte-exact run event for any template address.
+    /// Checked after `verify_output`, so a bad segment reports its own error first.
+    fn verify_emit_tag(
+        &self,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
+    ) -> Result<(), TemplateError> {
+        let (segment_start, _) = instruction.blob_range();
+        let tag = self
+            .data_segments
+            .get(segment_start)
+            .filter(|segment| segment.kind == DATA_LITERAL)
+            .and_then(|segment| {
+                self.blob
+                    .get(segment.offset()..segment.offset() + segment.len())
+            });
+        match tag {
+            Some(tag)
+                if tag.len() >= MIN_EMIT_TAG_LEN && !tag.starts_with(&RUN_EVENT_TAG_FAMILY) =>
+            {
+                Ok(())
+            }
+            _ => Err(TemplateError::InvalidOutput(instruction_index)),
+        }
     }
 
     /// Checks one data segment of a PDA seed or an output and returns the most bytes it can
@@ -2731,7 +2760,7 @@ mod tests {
         let memo = builder.load_input(memo_input);
         let amount = builder.const_u64(7);
         let key = builder.account_key(owner);
-        let tag = builder.blob(b"TAG");
+        let tag = builder.blob(b"TAG1");
         builder.emit_data(&[
             Segment::Literal(tag),
             Segment::Register(DATA_REG_U16, amount),
@@ -2758,7 +2787,8 @@ mod tests {
         let (outcome, at) = at_limit(1);
         assert_eq!(outcome, Err(TemplateError::InvalidOutput(at)));
 
-        // EMIT has the same bound, and a select counts its longer branch: 1,000 bytes.
+        // EMIT has the same bound, and a select counts its longer branch: 1,000 bytes, after a tag
+        // of padding.
         let emit_with_padding = |padding: usize| {
             let mut builder = ProgramBuilder::new();
             let condition = builder.const_bool(true);
@@ -2767,8 +2797,8 @@ mod tests {
             let selected = builder.select(condition, short, long);
             let literal = builder.blob(&vec![0; padding]);
             let at = builder.emit_data(&[
-                Segment::Register(DATA_REG_BYTES, selected),
                 Segment::Literal(literal),
+                Segment::Register(DATA_REG_BYTES, selected),
             ]);
             (verify_builder(&builder).map(|_| ()), at)
         };
@@ -2780,7 +2810,8 @@ mod tests {
     #[test]
     fn output_segments_follow_the_segment_rules() {
         // Each case builds a CPI with two segments first, so the output's own segment is at
-        // index 2: errors name the segment's place in the whole table.
+        // index 2: errors name the segment's place in the whole table. The segment rules come
+        // before an EMIT's tag, so these untagged logs fail on their segment.
         let check = |mutate: &dyn Fn(&mut ProgramBuilder, u8), expected: TemplateError| {
             let mut builder = ProgramBuilder::new();
             let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
@@ -2845,10 +2876,15 @@ mod tests {
 
     #[test]
     fn output_records_name_a_non_empty_range_and_no_register() {
+        // The output names both segments in the table: its tag, then the amount.
         let with_output = |mutate: &dyn Fn(&mut InstructionRecord)| {
             let mut builder = ProgramBuilder::new();
             let amount = builder.const_u64(1);
-            let at = builder.emit_data(&[Segment::Register(DATA_REG_U64, amount)]);
+            let tag = builder.blob(b"TAG1");
+            let at = builder.emit_data(&[
+                Segment::Literal(tag),
+                Segment::Register(DATA_REG_U64, amount),
+            ]);
             mutate(&mut builder.instructions_mut()[at]);
             (verify_builder(&builder).map(|_| ()), at)
         };
@@ -2859,14 +2895,90 @@ mod tests {
             |record| record.b = 0,
             |record| record.c = 0,
             |record| record.immediate_le = range_immediate(0, 0).to_le_bytes(),
-            |record| record.immediate_le = range_immediate(1, 1).to_le_bytes(),
-            |record| record.immediate_le = range_immediate(0, 2).to_le_bytes(),
+            |record| record.immediate_le = range_immediate(2, 1).to_le_bytes(),
+            |record| record.immediate_le = range_immediate(0, 3).to_le_bytes(),
         ] {
             let (outcome, at) = with_output(&mutate);
             assert_eq!(outcome, Err(TemplateError::InvalidInstruction(at)));
         }
         let (outcome, at) = with_output(&|record| record.flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET);
         assert_eq!(outcome, Err(TemplateError::InvalidFlags(at)));
+    }
+
+    /// A log line names the program that wrote it, not the template, so an `EMIT` starts with a
+    /// literal tag of four bytes or more, and never with the run event's family: otherwise any
+    /// template could log a byte-exact run event for any template address.
+    #[test]
+    fn an_emit_starts_with_a_tag_outside_the_run_event_family() {
+        let emit = |parts: &dyn Fn(&mut ProgramBuilder, u8) -> Vec<Segment>| {
+            let mut builder = ProgramBuilder::new();
+            let amount = builder.const_u64(1);
+            let parts = parts(&mut builder, amount);
+            let at = builder.emit_data(&parts);
+            (verify_builder(&builder).map(|_| ()), at)
+        };
+
+        // A tag of four bytes or more, alone or before the data, including tags that only
+        // resemble the family.
+        for tag in [&b"TAG1"[..], b"a longer tag", b"BEU1", b"bev1", b"XBEV"] {
+            let tagged = emit(&|builder, amount| {
+                vec![
+                    Segment::Literal(builder.blob(tag)),
+                    Segment::Register(DATA_REG_U64, amount),
+                ]
+            });
+            assert_eq!(tagged.0, Ok(()), "{tag:?}");
+            assert_eq!(
+                emit(&|builder, _| vec![Segment::Literal(builder.blob(tag))]).0,
+                Ok(())
+            );
+        }
+
+        // No tag, a register before the tag, and a three-byte tag, even with a fourth literal
+        // byte after it: the tag is the first segment alone.
+        for parts in [
+            (|_: &mut ProgramBuilder, amount: u8| vec![Segment::Register(DATA_REG_U64, amount)])
+                as fn(&mut ProgramBuilder, u8) -> Vec<Segment>,
+            |builder, amount| {
+                vec![
+                    Segment::Register(DATA_REG_U64, amount),
+                    Segment::Literal(builder.blob(b"TAG1")),
+                ]
+            },
+            |builder, amount| {
+                vec![
+                    Segment::Literal(builder.blob(b"TAG")),
+                    Segment::Register(DATA_REG_U64, amount),
+                ]
+            },
+            |builder, _| {
+                vec![
+                    Segment::Literal(builder.blob(b"TAG")),
+                    Segment::Literal(builder.blob(b"1")),
+                ]
+            },
+        ] {
+            let (outcome, at) = emit(&parts);
+            assert_eq!(outcome, Err(TemplateError::InvalidOutput(at)));
+        }
+
+        // The run event's magic, any other version of it, and a byte-exact event: magic, bytecode
+        // version, iterations, invokes reached, the mask of those that ran, template address.
+        let mut event = b"BEV1".to_vec();
+        event.extend_from_slice(&[TEMPLATE_PROGRAM_VERSION, 0, 1]);
+        event.extend_from_slice(&1u64.to_le_bytes());
+        event.extend_from_slice(&[9; 32]);
+        for tag in [&b"BEV1"[..], b"BEV2", b"BEV\0", b"BEVERAGE", &event] {
+            let (outcome, at) = emit(&|builder, _| vec![Segment::Literal(builder.blob(tag))]);
+            assert_eq!(outcome, Err(TemplateError::InvalidOutput(at)), "{tag:?}");
+        }
+
+        // Return data is read by the caller that invoked the run, never mistaken for a log, so it
+        // needs no tag.
+        let mut builder = ProgramBuilder::new();
+        let amount = builder.const_u64(1);
+        builder.set_return_data(&[Segment::Register(DATA_REG_U64, amount)]);
+        assert!(verify_builder(&builder).is_ok());
     }
 
     #[test]
@@ -2886,10 +2998,14 @@ mod tests {
         builder.row_account(0, None, None, 0);
         builder.batch(2, 0);
         let count = builder.const_u64(3);
-        builder.emit_data(&[Segment::Register(DATA_REG_U64, count)]);
+        let tag = builder.blob(b"TAG1");
+        builder.emit_data(&[
+            Segment::Literal(tag),
+            Segment::Register(DATA_REG_U64, count),
+        ]);
         builder.for_each(0, |body| {
             let row = body.loop_index();
-            body.emit_data(&[Segment::Register(DATA_REG_U8, row)]);
+            body.emit_data(&[Segment::Literal(tag), Segment::Register(DATA_REG_U8, row)]);
             body.invoke(cpi, None);
         });
         builder.invoke(cpi, None);
@@ -2966,7 +3082,11 @@ mod tests {
         });
         assert_eq!(outcome, Err(TemplateError::InvalidOutput(at)));
         let (outcome, _) = with_body(&|builder, value| {
-            builder.emit_data(&[Segment::Register(DATA_REG_U64, value)])
+            let tag = builder.blob(b"TAG1");
+            builder.emit_data(&[
+                Segment::Literal(tag),
+                Segment::Register(DATA_REG_U64, value),
+            ])
         });
         assert_eq!(outcome, Ok(()));
     }

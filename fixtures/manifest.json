@@ -937,9 +937,9 @@
     ]
   },
   "output": {
-    "hash": "434aeccd892f7df2118c684a41f7281e726d3e584068e92dc0ef1386f52e4b65",
+    "hash": "4c21afc221a389807198ecce49bb6d5694dc0dadbaaef13b6444c5157d713dd3",
     "stats": {
-      "payloadBytes": 384,
+      "payloadBytes": 396,
       "fixedAccounts": 2,
       "batchStride": 1,
       "batchMaxIterations": 2,

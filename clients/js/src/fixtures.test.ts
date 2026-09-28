@@ -478,7 +478,11 @@ export const fixtures: Record<string, () => Template> = {
           ],
           { carry: ['paid'] },
         ),
-        step.emit([data.encode('bytes', expression.input('memo'))], 'logMemo'),
+        // Every log starts with a tag of four bytes or more, here ASCII `MEMO`.
+        step.emit(
+          [data.literal(Uint8Array.of(0x4d, 0x45, 0x4d, 0x4f)), data.encode('bytes', expression.input('memo'))],
+          'logMemo',
+        ),
         step.setReturnData(
           [
             data.encode('u64', expression.variable('paid')),

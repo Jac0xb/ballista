@@ -2059,6 +2059,25 @@ describe('rateLimit', () => {
     ).toThrow('refillPerSecond must be written inline, from literals and arithmetic');
   });
 
+  test('refuses a cap that grows with the clock or a rate that follows a loop index', () => {
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.add(expression.u64(1_000), expression.clockSlot()),
+        refillPerSecond: expression.u64(11_574),
+        amount: expression.input('amount'),
+      }),
+    ).toThrow('cap must be written inline, from literals and arithmetic');
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.u64(1_000_000_000),
+        refillPerSecond: expression.loopIndex(),
+        amount: expression.input('amount'),
+      }),
+    ).toThrow('refillPerSecond must be written inline, from literals and arithmetic');
+  });
+
   test('refuses a cap laundered through a variable, since its origin cannot be traced', () => {
     // `step.let('cap', expression.input('cap'))` would bind the same input to `cap` outside
     // rateLimit's view; the helper must refuse the `variable` read regardless of what it holds.

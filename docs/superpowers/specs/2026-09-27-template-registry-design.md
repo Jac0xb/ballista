@@ -157,9 +157,13 @@ author controls work too, such as a registry field only an author-only branch wr
   template's `registryOrder`. Both SDKs test against vectors the program's own derivation
   produces, in `fixtures/registry-entry-addresses.txt`.
 
-**Allowlists are steps.** A registry such as `allowed: { ok: 'u64' }` keyed by the caller; ordinary
-runs require `ok == 1`; an author-only branch (the author a pinned signer) opens the entry keyed
-by an input address and sets it.
+**Allowlists are steps.** A registry such as `allowed: { ok: 'u64' }` with one entry whose key the
+template selects: `select(isAuthor, member, caller)`, where `isAuthor` compares the signer with a
+pinned author and `member` is an input address. An author's run sets `ok` on the member's entry; any
+other run requires `ok == 1` on its own. It has to be one entry, not a caller's entry plus a
+member's: every declared registry entry is opened on every run, so a second entry would make every
+caller pass, and perhaps pay to create, a member's entry too. Every caller still passes the
+`member` input, which ordinary runs ignore.
 
 ## Testing
 

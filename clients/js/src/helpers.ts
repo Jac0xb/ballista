@@ -321,10 +321,11 @@ function isTemplateConstant(value: unknown): boolean {
   switch (record.kind) {
     // Self-contained: `registry` names its account and field as plain strings, with no nested
     // expression to walk. The entry it reads is a fixed account the runtime verifies against its
-    // derived PDA, so, unlike a generic account read, the caller cannot substitute another one.
+    // derived PDA, so, unlike a generic account read, the caller cannot substitute another one;
+    // who may write that field is the template's to decide (see `rateLimit`). The clock and a
+    // loop's index are refused: neither is caller-chosen, but neither is a constant either, and a
+    // cap that grows with time or with a caller-sized loop is not the limit an author means.
     case 'literal':
-    case 'clock':
-    case 'loopIndex':
     case 'registry':
       return true;
     // Pure operators over other expressions: safe exactly when every operand is.

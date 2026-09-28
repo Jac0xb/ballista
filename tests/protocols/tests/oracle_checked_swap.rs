@@ -2,9 +2,11 @@
 //! Meteora DLMM, valued at the snapshot's Pyth SOL/USD price.
 //!
 //! The template reads the feed's exponent and both mints' decimals itself, so a run passes only the
-//! feed id, the route and a tolerance. The run takes `route`'s place in Jupiter's own transaction:
-//! Jupiter's setup wraps the SOL and creates the USDC account before it, and its cleanup closes the
-//! wrapped SOL account after.
+//! feed id, the route and a tolerance. The route goes in parts, its plan and the four numbers after
+//! it, so that the template can require `in_amount` to leave the account it measures.
+//!
+//! The run takes `route`'s place in Jupiter's own transaction: Jupiter's setup wraps the SOL and
+//! creates the USDC account before it, and its cleanup closes the wrapped SOL account after.
 
 use {
     ballista_protocol_tests::{
@@ -15,7 +17,7 @@ use {
         snapshot::{Leg, Snapshot, SNAPSHOT_DIR},
         template::{examples, upload, Example, Run},
         tx::{self, assert_requirement_failed, Failure, Outcome},
-        wallet::{self, fund, keypair, token_balance, SOL},
+        wallet::{self, fund, keypair, token_account, token_balance, SOL},
     },
     ballista_sdk::TOKEN_PROGRAM_ID,
     litesvm::LiteSVM,
@@ -89,17 +91,44 @@ impl Swap {
         tolerance_bps: u64,
     ) -> Instruction {
         let leg = &self.leg;
+        self.run_measuring(
+            example,
+            price_update,
+            feed_id,
+            tolerance_bps,
+            leg.source_token_account,
+            leg.destination_token_account,
+        )
+    }
+
+    /// [`Swap::run`] with `source` and `destination` in the two positions the template reads
+    /// balances from, `sourceAta` and `destinationAta`, in place of the route's own. The route's
+    /// steps, in the group, still name the trader's accounts.
+    fn run_measuring(
+        &self,
+        example: &Example,
+        price_update: Address,
+        feed_id: Address,
+        tolerance_bps: u64,
+        source: Address,
+        destination: Address,
+    ) -> Instruction {
+        let leg = &self.leg;
         Run::new(self.template, example)
             .account("jupiter", self.jupiter, false, false)
             .account("tokenProgram", TOKEN_PROGRAM_ID, false, false)
             .account("priceUpdate", price_update, false, false)
             .account("trader", self.trader.pubkey(), true, true)
-            .account("sourceAta", leg.source_token_account, true, false)
-            .account("destinationAta", leg.destination_token_account, true, false)
+            .account("sourceAta", source, true, false)
+            .account("destinationAta", destination, true, false)
             .account("sourceMint", leg.input_mint, false, false)
             .account("destinationMint", leg.output_mint, false, false)
             .input_pubkey("feedId", feed_id)
-            .input_bytes("routeArgs", &leg.route.args)
+            .input_bytes("routePlan", &leg.route.route_plan)
+            .input_u64("inAmount", leg.route.in_amount)
+            .input_u64("quotedOutAmount", leg.route.quoted_out_amount)
+            .input_u64("slippageBps", u64::from(leg.route.slippage_bps))
+            .input_u64("platformFeeBps", u64::from(leg.route.platform_fee_bps))
             .input_u64("toleranceBps", tolerance_bps)
             .group(
                 "routeAccounts",
@@ -327,6 +356,68 @@ fn an_oracle_above_the_market_fails_the_fill_check() {
     assert_eq!(swap.svm.get_account(&leg.source_token_account), None);
     assert_eq!(swap.svm.get_account(&leg.destination_token_account), None);
     assert_eq!(swap.svm.get_balance(&trader), Some(before - failure.fee));
+}
+
+/// Decoys where the template measures: another wallet's wrapped SOL and USDC accounts at
+/// `sourceAta` and `destinationAta` (write rule 1), while the route's steps still name the trader's
+/// own. Jupiter asks of those two positions only that the source hold at least `in_amount` and the
+/// destination hold the destination mint, and it moves the accounts its steps name. So the decoys
+/// see nothing sold and nothing bought, and the fill check alone, whose floor is proportional to
+/// what was sold, passes at any price: here the oracle is 5% above the market (write rule 2). The
+/// run fails at `soldTheRouteInput`, after the route ran.
+#[test]
+fn decoys_where_the_template_measures_fail_at_sold_the_route_input() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+    let mut swap = Swap::new(&snapshot, example);
+    let leg = swap.leg.clone();
+    let decoys = keypair(b"ballista-protocol-tests-decoy-01").pubkey();
+    let decoy_source = token_account(&mut swap.svm, &decoys, &leg.input_mint, leg.in_amount);
+    let decoy_destination = token_account(&mut swap.svm, &decoys, &leg.output_mint, 0);
+    let market = pyth_price(&swap.svm, &swap.sol_usd);
+    set_pyth_price(
+        &mut swap.svm,
+        &swap.sol_usd,
+        PythPrice {
+            price: market.price * 105 / 100,
+            ..market
+        },
+    );
+
+    let run = swap.run_measuring(
+        example,
+        swap.sol_usd,
+        SOL_USD_FEED_ID,
+        TOLERANCE_BPS,
+        decoy_source,
+        decoy_destination,
+    );
+    let failure = match swap.send(run) {
+        Err(failure) => failure,
+        // What the requirement stops: the route sells the trader's SOL at the market, and the fill
+        // check passes on two balances that never moved.
+        Ok(outcome) => panic!(
+            "the run landed. The decoys still hold {} and {}; the trader's wrapped SOL account \
+             was {}, and its USDC account holds {}. {} CU, {} bytes",
+            token_balance(&swap.svm, &decoy_source),
+            token_balance(&swap.svm, &decoy_destination),
+            match swap.svm.get_account(&leg.source_token_account) {
+                None => "emptied and closed".to_string(),
+                Some(_) => format!(
+                    "left holding {}",
+                    token_balance(&swap.svm, &leg.source_token_account)
+                ),
+            },
+            swap.usdc(),
+            outcome.compute_units,
+            outcome.size,
+        ),
+    };
+    assert_requirement_failed(&failure, example, "soldTheRouteInput");
+    // Jupiter took the decoys and ran the route: the requirement refused a completed swap.
+    let jupiter_returned = format!("Program {} success", swap.jupiter);
+    assert!(failure.logs.contains(&jupiter_returned), "{failure:?}");
 }
 
 /// A price from another feed is refused before anything else reads it.

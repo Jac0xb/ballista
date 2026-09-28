@@ -21,6 +21,15 @@
  * each token account against the mint it is supposed to hold so a caller cannot point the decimals
  * read at the wrong mint. The caller supplies only the feed id, the route and the tolerance.
  *
+ * Jupiter does not tie `route`'s source and destination accounts to the accounts its steps move.
+ * It asks only that the source hold at least `in_amount` and the destination hold the destination
+ * mint. Put other accounts there, and both measured balances stay where they were: nothing sold,
+ * a floor of nothing, and a fill check that passes at any price. So the caller hands over the
+ * route in parts, as `splitJupiterRoute` splits the Swap API's data. The template writes
+ * `in_amount` into the instruction itself and requires exactly that much to have left `sourceAta`.
+ * That does not cover everything: the signer authorizes every step of the route, so a route's steps
+ * can also spend other token accounts the signer owns, which neither balance shows.
+ *
  * A transaction cannot express this: the fill is only known after the route runs, and by then
  * every instruction is already committed.
  */
@@ -55,8 +64,16 @@ export const jupiterOracleCheckedSwap = defineTemplate({
      * `ef0d8b6f…c280b56d`. It must price the token sold in the token bought.
      */
     feedId: { type: 'pubkey' },
-    /** Jupiter's `route` arguments: the Swap API's instruction data after the discriminator. */
-    routeArgs: { type: 'bytes', maxLength: 512 },
+    /** `route_plan` as the Swap API encoded it: the bytes between the discriminator and `in_amount`. */
+    routePlan: { type: 'bytes', maxLength: 512 },
+    /** The route's `in_amount`: what the route sells, and exactly what must leave `sourceAta`. */
+    inAmount: { type: 'u64' },
+    /** The quote's `quoted_out_amount`. */
+    quotedOutAmount: { type: 'u64' },
+    /** The quote's `slippage_bps`. */
+    slippageBps: { type: 'u64' },
+    /** The quote's `platform_fee_bps`. */
+    platformFeeBps: { type: 'u64' },
     /** How far below the oracle the fill may land, in basis points. */
     toleranceBps: { type: 'u64' },
   },
@@ -156,8 +173,8 @@ export const jupiterOracleCheckedSwap = defineTemplate({
     step.snapshot('balanceBefore', balanceOf('destinationAta'), 'readBalanceBeforeSwap'),
 
     // `route` takes the token program, the signer, and the user's source and destination token
-    // accounts first. Passing the two token accounts here means the accounts Jupiter moves are the
-    // ones this template measures; the route's own accounts follow as the group.
+    // accounts first; the route's own accounts follow as the group. Jupiter moves the accounts its
+    // steps name, not necessarily these two, which is why `soldTheRouteInput` below exists.
     step.invoke({
       program: account.fixed('jupiter'),
       accounts: [
@@ -167,7 +184,14 @@ export const jupiterOracleCheckedSwap = defineTemplate({
         { account: account.fixed('destinationAta'), signer: false, writable: true },
       ],
       accountGroup: 'routeAccounts',
-      data: [data.literal(JUPITER_ROUTE), data.encode('bytes', expression.input('routeArgs'))],
+      data: [
+        data.literal(JUPITER_ROUTE),
+        data.encode('bytes', expression.input('routePlan')),
+        data.encode('u64', expression.input('inAmount')),
+        data.encode('u64', expression.input('quotedOutAmount')),
+        data.encode('u16', expression.input('slippageBps')),
+        data.encode('u8', expression.input('platformFeeBps')),
+      ],
       label: 'swap',
     }),
 
@@ -176,6 +200,13 @@ export const jupiterOracleCheckedSwap = defineTemplate({
       'sold',
       expression.subtract(expression.snapshot('sourceBefore'), balanceOf('sourceAta')),
       'measureAmountSold',
+    ),
+
+    // The route sold `inAmount`, so that much must have left the account measured. If the steps
+    // moved other accounts, `sold` is 0 and so is the floor below, which any fill would clear.
+    step.require(
+      expression.equal(expression.variable('sold'), expression.input('inAmount')),
+      'soldTheRouteInput',
     ),
 
     // sold × price, scaled by 10^scale, is the fill at the oracle price in destination base

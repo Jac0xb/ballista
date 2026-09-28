@@ -11,6 +11,7 @@ import { describe, expect, test } from 'vitest';
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
+  data,
   expression,
   type AccountReference,
   type Expression,
@@ -248,6 +249,30 @@ describe('the oracle-checked swap', () => {
       dependsOn(destinationCheck.condition, bindings, reads('destinationAta', TOKEN_ACCOUNT_MINT_OFFSET)),
     ).toBe(true);
     expect(dependsOn(destinationCheck.condition, bindings, accountKey('destinationMint'))).toBe(true);
+  });
+
+  // Jupiter moves the accounts its steps name. Of `route`'s source it asks only a balance of at
+  // least `in_amount`, so other accounts there leave both measured balances still, and a floor
+  // valued on nothing sold passes any fill.
+  test('writes the route’s `in_amount` itself, from the input it holds the source to', () => {
+    const [swap] = invokesOf(jupiterOracleCheckedSwap, 'jupiter') as [Invoke];
+    expect(swap.data).toEqual([
+      data.literal(JUPITER_ROUTE),
+      data.encode('bytes', expression.input('routePlan')),
+      data.encode('u64', expression.input('inAmount')),
+      data.encode('u64', expression.input('quotedOutAmount')),
+      data.encode('u16', expression.input('slippageBps')),
+      data.encode('u8', expression.input('platformFeeBps')),
+    ]);
+  });
+
+  test('requires exactly `in_amount` to have left the source, before valuing the fill', () => {
+    const soldCheck = requireLabeled(jupiterOracleCheckedSwap, 'soldTheRouteInput');
+    expect(soldCheck.condition).toEqual(expression.equal(expression.variable('sold'), expression.input('inAmount')));
+    expect(dependsOn(soldCheck.condition, bindings, reads('sourceAta', TOKEN_ACCOUNT_AMOUNT_OFFSET))).toBe(true);
+    const labels = jupiterOracleCheckedSwap.steps.map((step) => step.label);
+    expect(labels.indexOf('soldTheRouteInput')).toBe(labels.indexOf('measureAmountSold') + 1);
+    expect(labels.indexOf('soldTheRouteInput')).toBeLessThan(labels.indexOf('fillBeatTheOracle'));
   });
 });
 

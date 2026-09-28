@@ -24,9 +24,11 @@ const PYTH_RECEIVER: Pubkey = pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5Lt
 const JUPITER_V6: Pubkey = pubkey!("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
 const KAMINO_FARMS: Pubkey = pubkey!("FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr");
 const INSTRUCTIONS_SYSVAR: Pubkey = pubkey!("Sysvar1nstructions1111111111111111111111111");
-/// The first eight bytes of `sha256("global:refresh_reserve")` and `…refresh_obligation`.
-const REFRESH_RESERVE: [u8; 8] = [0x02, 0xda, 0x8a, 0xeb, 0x4f, 0xc9, 0x19, 0x66];
-const REFRESH_OBLIGATION: [u8; 8] = [0x21, 0x84, 0x93, 0xe4, 0x97, 0xc0, 0x48, 0x59];
+
+/// An Anchor instruction discriminator: the first eight bytes of `sha256("global:<handler>")`.
+fn anchor_discriminator(handler: &str) -> Vec<u8> {
+    solana_sha256_hasher::hash(format!("global:{handler}").as_bytes()).to_bytes()[..8].to_vec()
+}
 
 // #region plain
 /// Shape one: fixed accounts and fixed inputs, in the order the template declares them.
@@ -158,11 +160,17 @@ pub fn run_jupiter_deposit(
 /// - Each reserve comes with the Scope price account its config names. The main market prices by
 ///   Scope alone, so the Pyth and Switchboard slots take the Kamino program ID, which it reads as
 ///   "none".
+/// - `referrer_token_states` is empty unless the obligation has a referrer. Then Kamino expects
+///   one per borrow after the reserves, or it fails with `InvalidAccountInput`: the PDA
+///   `["referrer_acc", referrer, borrow reserve]`. It reads them in borrow order, but only for
+///   reserves that pay referral fees, so those go first. klend-interface's `refresh_obligation`
+///   helper builds this list.
 pub fn kamino_refreshes(
     lending_market: Pubkey,
     obligation: Pubkey,
     held: &[(Pubkey, Pubkey)],
     touched: &[(Pubkey, Pubkey)],
+    referrer_token_states: &[Pubkey],
 ) -> Vec<Instruction> {
     let refresh_reserve = |&(reserve, scope_prices): &(Pubkey, Pubkey)| Instruction {
         program_id: KAMINO_LEND,
@@ -174,7 +182,7 @@ pub fn kamino_refreshes(
             AccountMeta::new_readonly(KAMINO_LEND, false), // Switchboard TWAP
             AccountMeta::new_readonly(scope_prices, false),
         ],
-        data: REFRESH_RESERVE.to_vec(),
+        data: anchor_discriminator("refresh_reserve"),
     };
     let mut refreshed: Vec<Pubkey> = Vec::new();
     let mut instructions = Vec::new();
@@ -188,12 +196,14 @@ pub fn kamino_refreshes(
         AccountMeta::new_readonly(lending_market, false),
         AccountMeta::new(obligation, false),
     ];
-    // Every reserve the obligation holds, writable, in its own order.
+    // Every reserve the obligation holds, writable, in its own order; then any referrer token
+    // states, writable.
     accounts.extend(held.iter().map(|&(reserve, _)| AccountMeta::new(reserve, false)));
+    accounts.extend(referrer_token_states.iter().map(|&state| AccountMeta::new(state, false)));
     instructions.push(Instruction {
         program_id: KAMINO_LEND,
         accounts,
-        data: REFRESH_OBLIGATION.to_vec(),
+        data: anchor_discriminator("refresh_obligation"),
     });
     instructions
 }
@@ -273,7 +283,7 @@ fn main() {
         1_000_000,
     );
     println!("jupiter deposit   {} accounts, {} data bytes", deposit.accounts.len(), deposit.data.len());
-    let refreshes = kamino_refreshes(key(), key(), &[(key(), key())], &[]);
+    let refreshes = kamino_refreshes(key(), key(), &[(key(), key())], &[], &[]);
     println!("kamino refreshes  {} instructions before the run", refreshes.len());
 
     let positions: Vec<(Pubkey, Pubkey)> = (0..5).map(|_| (key(), key())).collect();

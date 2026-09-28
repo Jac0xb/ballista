@@ -94,10 +94,10 @@ Each rule has a test against the deployed program. Codes are the failing program
 - **Refresh first, in the same transaction.** Before a run that deposits into, repays or
   liquidates an obligation: `refresh_reserve` for each reserve the obligation holds, plus any
   reserve the run touches that it does not hold yet (a first deposit's), then
-  `refresh_obligation` with the held reserves, writable, deposits then borrows. No template
-  refreshes. Builders: `kamino_refreshes` in `clients/rust/examples/protocol_runs.rs` (region
-  `#refresh`), klend-interface's `refresh_all_for_obligation`, and `kamino::refreshes` in the
-  harness.
+  `refresh_obligation` with the held reserves, writable, deposits then borrows, then a referred
+  obligation's referrer token states (`handler_refresh_obligation.rs:18`). No template refreshes.
+  Builders: `kamino_refreshes` in `clients/rust/examples/protocol_runs.rs` (region `#refresh`),
+  klend-interface's `refresh_all_for_obligation`, and `kamino::refreshes` in the harness.
 - **Fill `farmAccounts` per reserve.** Writable when the reserve has the farm; klend's program ID,
   read-only, when it does not.
   - Deposit, 3: the obligation's user state in the reserve's collateral farm, that farm, Farms.
@@ -251,7 +251,8 @@ Line numbers are as of this branch (`claude/protocol-lending`).
   optional farm) instead of `[Pubkey; 7]`, passes the instructions sysvar, and sends two groups.
   Four pages embed it: `jupiter-deposit.md`, `jupiter-oracle-swap.md`, `kamino-repay.md`,
   `token-sweep.md`. The last two only borrow its shape.
-- `#refresh` is new: `kamino_refreshes`. The Kamino pages will want it.
+- `#refresh` is new: `kamino_refreshes`, which takes a referred obligation's referrer token
+  states. The Kamino pages will want it.
 - `#plain` and `#rows` are unchanged.
 - The module doc now says "all eleven examples".
 

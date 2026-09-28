@@ -3852,10 +3852,16 @@ mod tests {
                     AccountMeta::new_readonly(ID, false),
                     AccountMeta::new_readonly(inner_template, false),
                 ];
-                let result = context.process_instruction(&run_instruction(template, metas, &[]));
+                let result = context.process_instruction(&run_instruction(template, metas.clone(), &[]));
                 if pass_entry {
-                    // The invoke is the second instruction, after the open.
+                    // The invoke is the second instruction, after the open, which created the entry.
                     assert_eq!(failure(&result), (REGISTRY_REENTRY, 1));
+                    // Once the entry exists, the open checks it instead of creating it, and marks
+                    // it all the same.
+                    let seeded = seeded_entry(&context, &template, 0, &Pubkey::default(), 72 + 8);
+                    context.account_store.borrow_mut().insert(entry, seeded);
+                    let result = context.process_instruction(&run_instruction(template, metas, &[]));
+                    assert_eq!(failure(&result), (REGISTRY_REENTRY, 1), "an existing entry");
                 } else {
                     assert!(result.program_result.is_ok(), "a CPI to Ballista that leaves the entry out runs: {result:#?}");
                 }

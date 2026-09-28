@@ -165,6 +165,13 @@ impl GeneratedProgram {
             index: choices.below(MAX_REGISTRIES) as u8,
             keyed_by_payer: choices.below(2) == 1,
         });
+        // Half of those end their root by writing a field, which the next run reads back. Left
+        // to `emit_operation` alone, a write takes one draw in nineteen and a register of the
+        // field's type, mostly late in the stream where the draws are zero: one program in forty
+        // wrote a field.
+        let final_write = registry
+            .filter(|_| choices.below(2) == 1)
+            .map(|_| GENERATED_REGISTRY_FIELDS[choices.below(GENERATED_REGISTRY_FIELDS.len())]);
         let registry_accounts = registry.map(|_| {
             let system = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
             let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
@@ -249,6 +256,18 @@ impl GeneratedProgram {
             for _ in 0..after_ops {
                 emit_operation(&mut choices, &mut builder, &mut registers, &accounts, &inputs, false, entry);
             }
+        }
+
+        if let (Some((value_type, selector, offset)), Some(entry)) = (final_write, entry) {
+            // A register of the field's type from the root, or else the seed into the `u64` field.
+            let (selector, offset, value) = match choices.pick(&registers.of_type(value_type)) {
+                Some(value) => (selector, offset, value),
+                None => {
+                    let (_, selector, offset) = GENERATED_REGISTRY_FIELDS[1];
+                    (selector, offset, seed)
+                }
+            };
+            builder.write_registry(entry, offset, selector, value);
         }
 
         if returns_data {

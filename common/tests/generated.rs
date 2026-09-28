@@ -106,7 +106,7 @@ fn generated_programs_reach_every_loop_output_and_registry_shape() {
         ("read a registry field", 8, |program| {
             program.iter().any(|record| record.opcode == OP_READ_REGISTRY)
         }),
-        ("write a registry field", 3, |program| {
+        ("write a registry field", 24, |program| {
             program.iter().any(|record| record.opcode == OP_WRITE_REGISTRY)
         }),
         ("read or write a registry field in a loop body", 3, |program| {

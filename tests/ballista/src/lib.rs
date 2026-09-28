@@ -3546,6 +3546,7 @@ mod tests {
         const INVALID_REGISTRY_ENTRY: u32 = 6025;
         const REGISTRY_REENTRY: u32 = 6026;
         const ACCOUNT_CONSTRAINT_FAILED: u32 = 6020;
+        const INVALID_REGISTRY: u32 = 6132;
 
         /// The accounts every registry template here declares, in this order.
         struct Accounts {
@@ -3824,6 +3825,31 @@ mod tests {
                     assert!(result.program_result.is_ok(), "a CPI to Ballista that leaves the entry out runs: {result:#?}");
                 }
             }
+        }
+
+        /// The lost update a generic data read would allow, built by hand: read the entry's data
+        /// before its open, let a CPI pass the still-unmarked entry writable, then open the entry
+        /// and write a value based on the read. The upload refuses it at the read.
+        #[test]
+        fn a_template_that_reads_an_entry_as_data_is_refused_at_upload() {
+            let mut builder = ProgramBuilder::new();
+            let accounts = declare(&mut builder);
+            let ballista = builder.account(ACCOUNT_EXECUTABLE, Some(ID.to_bytes()), None, 0);
+            let offset = builder.const_u64(72);
+            let read_pc = builder.instructions_mut().len();
+            let stale = builder.read_dynamic(OP_READ_U64, accounts.entry, offset);
+            let data = builder.blob(&[IX_RUN]);
+            let cpi = builder.cpi(ballista, &[(accounts.entry, ACCOUNT_WRITABLE)], &[Segment::Literal(data)]);
+            builder.invoke(cpi, None);
+            builder.open_registry(accounts.entry, None, accounts.payer, 0, 8, accounts.system);
+            let one = builder.const_u64(1);
+            let total = builder.binary(OP_ADD, stale, one);
+            builder.write_registry(accounts.entry, 0, OP_READ_U64, total);
+
+            let creator = Pubkey::new_unique();
+            let context = context(funded_accounts([creator], 10_000_000_000));
+            let result = context.process_instruction(&create_template_instruction(creator, 9, &builder.build().unwrap()));
+            assert_eq!(failure(&result), (INVALID_REGISTRY, read_pc as u32));
         }
 
         /// The kind and the source label of a failed run of fixture `name`.

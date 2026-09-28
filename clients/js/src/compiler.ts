@@ -922,7 +922,9 @@ class Compiler {
     }
     if (current.kind === 'accountData') {
       const accountReference = this.encodeAccountReference(current.account, loop);
-      this.requirePinnedForRead(current.account, this.constraintFor(current.account, loop));
+      const constraint = this.constraintFor(current.account, loop);
+      this.refuseRegistryData(current.account, constraint);
+      this.requirePinnedForRead(current.account, constraint);
       const operation = readOpcode[current.type];
       const type = readResultType[current.type];
       if (typeof current.offset === 'number') {
@@ -1060,6 +1062,7 @@ class Compiler {
     if (current.kind === 'accountDataBytes') {
       const accountReference = this.encodeAccountReference(current.account, loop);
       const constraint = this.constraintFor(current.account, loop);
+      this.refuseRegistryData(current.account, constraint);
       this.requirePinnedForRead(current.account, constraint);
       if (constraint.writable) {
         throw new TypeError(
@@ -1173,6 +1176,18 @@ class Compiler {
       );
     }
     return this.encodeAccountReference(reference, undefined);
+  }
+
+  /**
+   * A registry entry's data is read only through its fields, with `expression.registry`: the
+   * verifier refuses any other data read of an account an open names, wherever it sits.
+   */
+  refuseRegistryData(reference: AccountReference, constraint: AccountConstraint): void {
+    if (constraint.registry !== undefined) {
+      throw new TypeError(
+        `${reference.name} is a registry entry: read its fields with expression.registry('${reference.name}', field)`,
+      );
+    }
   }
 
   /** Data reads only mean something when the account's layout is known, which needs a pin. */

@@ -93,6 +93,9 @@ Verifier rules, `InvalidRegistry` unless noted:
 - The key register is a set `pubkey` register.
 - `READ_REGISTRY` and `WRITE_REGISTRY` name an entry account opened at a lower pc, and a field
   range inside its registry's size.
+- No read opcode or `READ_ACCOUNT_BYTES` names an entry account, before its open or after it:
+  fields are read only with `READ_REGISTRY`. Before the open, a CPI could still change the entry
+  after such a read. The entry's key, owner, lamports and data length stay readable.
 - No `OPEN_REGISTRY` after `SET_RETURN_DATA`.
 
 ## Errors

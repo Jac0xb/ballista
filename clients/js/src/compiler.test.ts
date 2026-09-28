@@ -1866,6 +1866,18 @@ describe('registries: compiler', () => {
       /mine is a registry entry: a CPI that passes it writable fails with RegistryReentry/,
     );
   });
+
+  test("reads an entry's data only through its fields", () => {
+    const message = /mine is a registry entry: read its fields with expression\.registry\('mine', field\)/;
+    const mine = account.fixed('mine');
+    const u64Read = expression.accountData(mine, 72, 'u64');
+    expect(() => compileTemplate(base([step.require(expression.equal(u64Read, expression.u64(0)))]))).toThrow(message);
+    const byteRead = expression.accountDataBytes(mine, 72, 8);
+    expect(() => compileTemplate(base([step.let('raw', byteRead)]))).toThrow(message);
+    // Its lamports are not a field.
+    const lamports = expression.accountField(mine, 'lamports');
+    expect(() => compileTemplate(base([step.require(expression.greaterThan(lamports, expression.u64(0)))]))).not.toThrow();
+  });
 });
 
 describe('rateLimit', () => {

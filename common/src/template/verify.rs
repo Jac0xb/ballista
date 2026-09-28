@@ -402,6 +402,7 @@ impl ProgramView<'_> {
             }
             OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_U128
             | OP_READ_PUBKEY | OP_READ_BOOL | OP_READ_I32 => {
+                self.refuse_entry_data(instruction, instruction_index)?;
                 if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
                     self.require_account(instruction.a, in_row_loop)?;
                     self.require_type(registers, instruction.b, VALUE_U64)?;
@@ -503,6 +504,7 @@ impl ProgramView<'_> {
                 self.write_register(registers, instruction.dst, RegisterInfo::bytes(len))?;
             }
             OP_READ_ACCOUNT_BYTES => {
+                self.refuse_entry_data(instruction, instruction_index)?;
                 self.require_account(instruction.a, in_row_loop)?;
                 self.require_type(registers, instruction.b, VALUE_U64)?;
                 let len = byte_read_len(instruction, instruction_index)?;
@@ -843,6 +845,27 @@ impl ProgramView<'_> {
             return Err(invalid);
         }
         Ok(field)
+    }
+
+    /// Refuses an account-data read, a read opcode or `READ_ACCOUNT_BYTES`, of an account any
+    /// `OPEN_REGISTRY` names, wherever either sits: an entry's fields are read with
+    /// `READ_REGISTRY`, which needs the open first. Before the open, the entry is not yet marked,
+    /// so a CPI between such a read and the open could change the entry, and a write based on the
+    /// read would lose that update. After the open, the read would fail on the mark. The entry's
+    /// key, owner, lamports and data length stay readable, since none of them is a field.
+    fn refuse_entry_data(
+        &self,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
+    ) -> Result<(), TemplateError> {
+        let opened = self
+            .instructions
+            .iter()
+            .any(|record| record.opcode == OP_OPEN_REGISTRY && record.a == instruction.a);
+        if opened {
+            return Err(TemplateError::InvalidRegistry(instruction_index));
+        }
+        Ok(())
     }
 
     /// An `EMIT` starts with a literal tag of at least `MIN_EMIT_TAG_LEN` bytes outside the run
@@ -4100,6 +4123,66 @@ mod tests {
             let spent = body.read_registry(entry, 0, OP_READ_U64);
             body.write_registry(entry, 0, OP_READ_U64, spent);
         });
+        assert!(verify_builder(&builder).is_ok());
+    }
+
+    /// An entry's data is read only through its fields: any other account-data read of an entry
+    /// account is refused, after the open, before it, where a CPI could still change the entry,
+    /// or in a loop body. The entry's key, owner, lamports and data length stay readable.
+    #[test]
+    fn entry_data_is_read_only_through_its_fields() {
+        let invalid = TemplateError::InvalidRegistry;
+        let read_opcodes = [
+            OP_READ_U8, OP_READ_U16, OP_READ_U32, OP_READ_U64, OP_READ_I64, OP_READ_U128,
+            OP_READ_PUBKEY, OP_READ_BOOL, OP_READ_I32,
+        ];
+        for opcode in read_opcodes {
+            let (mut builder, _, entry, _, _) = registry_program();
+            let pc = next_pc(&mut builder);
+            builder.read(opcode, entry, 72);
+            assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)), "static {opcode}");
+
+            let (mut builder, _, entry, _, _) = registry_program();
+            let offset = builder.const_u64(72);
+            let pc = next_pc(&mut builder);
+            builder.read_dynamic(opcode, entry, offset);
+            assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)), "dynamic {opcode}");
+        }
+        let (mut builder, _, entry, _, _) = registry_program();
+        let offset = builder.const_u64(72);
+        let pc = next_pc(&mut builder);
+        builder.read_account_bytes(entry, offset, 8);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)), "bytes");
+
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(0, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
+        let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+        let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+        let offset = builder.const_u64(72);
+        let pc = next_pc(&mut builder);
+        builder.read_dynamic(OP_READ_U64, entry, offset);
+        builder.open_registry(entry, None, payer, 0, 8, system);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)), "before the open");
+
+        let (mut builder, _, entry, _, _) = registry_program();
+        let offset = builder.const_u64(72);
+        let count = builder.const_u64(1);
+        let mut pc = 0;
+        builder.repeat(count, 1, 0, |body| {
+            pc = next_pc(body);
+            body.read_dynamic(OP_READ_U64, entry, offset);
+        });
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)), "in a loop body");
+
+        // Not fields: the entry's header reads, and another account's data.
+        let (mut builder, _, entry, payer, _) = registry_program();
+        builder.account_key(entry);
+        builder.account_owner(entry);
+        builder.account_lamports(entry);
+        builder.account_data_len(entry);
+        builder.account_is_empty(entry);
+        let offset = builder.const_u64(0);
+        builder.read_dynamic(OP_READ_U64, payer, offset);
         assert!(verify_builder(&builder).is_ok());
     }
 }

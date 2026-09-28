@@ -1098,7 +1098,17 @@ fn extended_instruction<'data>(
         // Parsing the sysvar and reading byte ranges run in their own frames. Each helper takes
         // four words, all passed in registers: one that took the loop context as well would take
         // words from the stack, and their loads would run on entry here, for every opcode.
-        OP_INSTRUCTION_PROGRAM..=OP_READ_INSTRUCTION_BYTES => {
+        //
+        // The seven reads are listed, not written as a range. rustc tests a range pattern apart
+        // from the match's switch, on the way to the fallback arm, where it cost every loop entry
+        // and every output 5 compute units.
+        OP_INSTRUCTION_PROGRAM
+        | OP_INSTRUCTION_ACCOUNT_COUNT
+        | OP_INSTRUCTION_ACCOUNT
+        | OP_INSTRUCTION_ACCOUNT_FLAGS
+        | OP_INSTRUCTION_DATA_LEN
+        | OP_READ_INSTRUCTION_DATA
+        | OP_READ_INSTRUCTION_BYTES => {
             let sysvar = resolve(machine.program, machine.accounts, instruction.a, None)?;
             introspect::read_instruction(sysvar, registers, instruction)
         }

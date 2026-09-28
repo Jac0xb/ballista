@@ -1316,6 +1316,315 @@
       }
     ]
   },
+  "signed-quote-settlement": {
+    "hash": "7e301e83d611fcb0cfa13734fe54a57aa9d52069bfceb1a561ac8dd85e82a124",
+    "stats": {
+      "payloadBytes": 1266,
+      "fixedAccounts": 8,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 50,
+      "instructions": 61,
+      "cpis": 2,
+      "maxExpandedCpis": 2,
+      "maxCpiDataLength": 9,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "inputs.amount"
+      },
+      {
+        "pc": 1,
+        "path": "constants[0]"
+      },
+      {
+        "pc": 2,
+        "path": "constants[1]"
+      },
+      {
+        "pc": 3,
+        "path": "constants[2]"
+      },
+      {
+        "pc": 4,
+        "path": "constants[3]"
+      },
+      {
+        "pc": 5,
+        "path": "constants[4]"
+      },
+      {
+        "pc": 6,
+        "path": "constants[5]"
+      },
+      {
+        "pc": 7,
+        "path": "constants[6]"
+      },
+      {
+        "pc": 8,
+        "path": "constants[7]"
+      },
+      {
+        "pc": 9,
+        "path": "constants[8]"
+      },
+      {
+        "pc": 10,
+        "path": "constants[9]"
+      },
+      {
+        "pc": 11,
+        "path": "constants[10]"
+      },
+      {
+        "pc": 12,
+        "path": "constants[11]"
+      },
+      {
+        "pc": 13,
+        "path": "constants[12]"
+      },
+      {
+        "pc": 14,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 15,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 16,
+        "path": "steps[1]",
+        "label": "quoteIsEd25519"
+      },
+      {
+        "pc": 17,
+        "path": "steps[1]",
+        "label": "quoteIsEd25519"
+      },
+      {
+        "pc": 18,
+        "path": "steps[1]",
+        "label": "quoteIsEd25519"
+      },
+      {
+        "pc": 19,
+        "path": "steps[2]",
+        "label": "quoteIsOneSelfContainedSignature"
+      },
+      {
+        "pc": 20,
+        "path": "steps[2]",
+        "label": "quoteIsOneSelfContainedSignature"
+      },
+      {
+        "pc": 21,
+        "path": "steps[2]",
+        "label": "quoteIsOneSelfContainedSignature"
+      },
+      {
+        "pc": 22,
+        "path": "steps[2]",
+        "label": "quoteIsOneSelfContainedSignature"
+      },
+      {
+        "pc": 23,
+        "path": "steps[3]",
+        "label": "quoteIsBySigner"
+      },
+      {
+        "pc": 24,
+        "path": "steps[3]",
+        "label": "quoteIsBySigner"
+      },
+      {
+        "pc": 25,
+        "path": "steps[3]",
+        "label": "quoteIsBySigner"
+      },
+      {
+        "pc": 26,
+        "path": "steps[3]",
+        "label": "quoteIsBySigner"
+      },
+      {
+        "pc": 27,
+        "path": "steps[3]",
+        "label": "quoteIsBySigner"
+      },
+      {
+        "pc": 28,
+        "path": "steps[4]"
+      },
+      {
+        "pc": 29,
+        "path": "steps[5]",
+        "label": "quoteHasNotExpired"
+      },
+      {
+        "pc": 30,
+        "path": "steps[5]",
+        "label": "quoteHasNotExpired"
+      },
+      {
+        "pc": 31,
+        "path": "steps[5]",
+        "label": "quoteHasNotExpired"
+      },
+      {
+        "pc": 32,
+        "path": "steps[5]",
+        "label": "quoteHasNotExpired"
+      },
+      {
+        "pc": 33,
+        "path": "steps[5]",
+        "label": "quoteHasNotExpired"
+      },
+      {
+        "pc": 34,
+        "path": "steps[6]",
+        "label": "quoteIsForThisTaker"
+      },
+      {
+        "pc": 35,
+        "path": "steps[6]",
+        "label": "quoteIsForThisTaker"
+      },
+      {
+        "pc": 36,
+        "path": "steps[6]",
+        "label": "quoteIsForThisTaker"
+      },
+      {
+        "pc": 37,
+        "path": "steps[6]",
+        "label": "quoteIsForThisTaker"
+      },
+      {
+        "pc": 38,
+        "path": "steps[6]",
+        "label": "quoteIsForThisTaker"
+      },
+      {
+        "pc": 39,
+        "path": "steps[7]",
+        "label": "withinTheQuotedSize"
+      },
+      {
+        "pc": 40,
+        "path": "steps[7]",
+        "label": "withinTheQuotedSize"
+      },
+      {
+        "pc": 41,
+        "path": "steps[7]",
+        "label": "withinTheQuotedSize"
+      },
+      {
+        "pc": 42,
+        "path": "steps[7]",
+        "label": "withinTheQuotedSize"
+      },
+      {
+        "pc": 43,
+        "path": "steps[8]",
+        "label": "paysInTheQuotedMint"
+      },
+      {
+        "pc": 44,
+        "path": "steps[8]",
+        "label": "paysInTheQuotedMint"
+      },
+      {
+        "pc": 45,
+        "path": "steps[8]",
+        "label": "paysInTheQuotedMint"
+      },
+      {
+        "pc": 46,
+        "path": "steps[8]",
+        "label": "paysInTheQuotedMint"
+      },
+      {
+        "pc": 47,
+        "path": "steps[8]",
+        "label": "paysInTheQuotedMint"
+      },
+      {
+        "pc": 48,
+        "path": "steps[9]",
+        "label": "deliversTheQuotedMint"
+      },
+      {
+        "pc": 49,
+        "path": "steps[9]",
+        "label": "deliversTheQuotedMint"
+      },
+      {
+        "pc": 50,
+        "path": "steps[9]",
+        "label": "deliversTheQuotedMint"
+      },
+      {
+        "pc": 51,
+        "path": "steps[9]",
+        "label": "deliversTheQuotedMint"
+      },
+      {
+        "pc": 52,
+        "path": "steps[9]",
+        "label": "deliversTheQuotedMint"
+      },
+      {
+        "pc": 53,
+        "path": "steps[10]",
+        "label": "paymentReachesTheMaker"
+      },
+      {
+        "pc": 54,
+        "path": "steps[10]",
+        "label": "paymentReachesTheMaker"
+      },
+      {
+        "pc": 55,
+        "path": "steps[10]",
+        "label": "paymentReachesTheMaker"
+      },
+      {
+        "pc": 56,
+        "path": "steps[10]",
+        "label": "paymentReachesTheMaker"
+      },
+      {
+        "pc": 57,
+        "path": "steps[11]",
+        "label": "priceTheFill"
+      },
+      {
+        "pc": 58,
+        "path": "steps[11]",
+        "label": "priceTheFill"
+      },
+      {
+        "pc": 59,
+        "path": "steps[12]",
+        "label": "takerPays"
+      },
+      {
+        "pc": 60,
+        "path": "steps[13]",
+        "label": "makerDelivers"
+      }
+    ]
+  },
   "pinned-mint-read": {
     "hash": "4b488823e719c1badf3afe80f299617616d8a1a4dd9684ba4cb56506a6f4cbd5",
     "stats": {

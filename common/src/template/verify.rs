@@ -3623,7 +3623,7 @@ mod tests {
     /// Every compiler fixture must parse and verify; the TypeScript suite keeps the files current.
     #[test]
     fn every_shared_fixture_parses_and_verifies() {
-        let fixtures: [(&str, &str); 18] = [
+        let fixtures: [(&str, &str); 19] = [
             ("system-transfer", include_str!("../../../fixtures/system-transfer.hex")),
             ("batch-transfer-30", include_str!("../../../fixtures/batch-transfer-30.hex")),
             ("ensure-ata", include_str!("../../../fixtures/ensure-ata.hex")),
@@ -3648,6 +3648,10 @@ mod tests {
             ("output", include_str!("../../../fixtures/output.hex")),
             ("loops", include_str!("../../../fixtures/loops.hex")),
             ("introspection", include_str!("../../../fixtures/introspection.hex")),
+            (
+                "signed-quote-settlement",
+                include_str!("../../../fixtures/signed-quote-settlement.hex"),
+            ),
         ];
         for (name, hex) in fixtures {
             let bytes = decode_hex(hex);
@@ -3674,7 +3678,7 @@ mod tests {
                 .unwrap_or_else(|error| panic!("protocol example {examples}: {error}"));
             examples += 1;
         }
-        assert_eq!(examples, 12, "every protocol example is verified");
+        assert_eq!(examples, 13, "every protocol example is verified");
         let carry = decode_hex(include_str!("../../../fixtures/carry-sum.hex"));
         let program = ProgramView::parse(&carry).unwrap();
         assert_eq!(program.header.batch_min_iterations(), 1);

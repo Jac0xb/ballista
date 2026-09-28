@@ -5,13 +5,18 @@
  * directly: which accounts reach Jupiter in which position, and which on-chain reads a guarantee
  * actually depends on. Each one pins a mistake an example once made.
  */
+import { isDeepStrictEqual } from 'node:util';
+
 import { getAddressDecoder, type Address } from '@solana/kit';
 import { describe, expect, test } from 'vitest';
 
 import {
+  ED25519_PROGRAM_ADDRESS_BYTES,
   TOKEN_PROGRAM_ADDRESS_BYTES,
+  expression,
   type AccountReference,
   type Expression,
+  type ReadType,
   type Step,
   type Template,
 } from './index.js';
@@ -23,8 +28,10 @@ import {
   jupiterOracleCheckedSwap,
   kaminoRepaySwapOutput,
   pythFreshPriceGate,
+  signedQuoteSettlement,
   tokenSweepIntoSwap,
 } from '../examples/protocols/index.js';
+import { QUOTE, signedQuote } from '../examples/protocols/signed-quote-settlement.js';
 import { buildJupiterDepositRun } from '../examples/protocols/run-jupiter-deposit.js';
 import {
   BORSH_TRUE,
@@ -36,6 +43,7 @@ import {
   SPL_MINT,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_MINT_OFFSET,
+  TOKEN_ACCOUNT_OWNER_OFFSET,
   addressBytes,
   anchorDiscriminator,
 } from '../examples/protocols/shared.js';
@@ -115,6 +123,17 @@ function dependsOn(
       return recurse(expression.left) || recurse(expression.right) || recurse(expression.divisor);
     case 'powerOfTen':
       return recurse(expression.exponent);
+    case 'instruction':
+      return recurse(expression.index);
+    case 'instructionAccount':
+      return recurse(expression.index) || recurse(expression.position);
+    case 'instructionData':
+    case 'instructionDataBytes':
+      return recurse(expression.index) || recurse(expression.offset);
+    case 'accountDataBytes':
+      return recurse(expression.offset);
+    case 'bytesLength':
+      return recurse(expression.value);
     default:
       return false;
   }
@@ -361,5 +380,68 @@ describe('the Jupiter deposit runner', () => {
         minimumOut: 1n,
       }),
     ).rejects.toThrow(/useSharedAccounts/);
+  });
+});
+
+describe('the signed-quote settlement', () => {
+  const bindings = bindingsOf(signedQuoteSettlement);
+  const is = (target: Expression) => (candidate: Expression) => isDeepStrictEqual(candidate, target);
+  const signed = (offset: number, type: ReadType) => is(signedQuote.field(offset, type));
+  const requirement = (label: string) => requireLabeled(signedQuoteSettlement, label).condition;
+  const [takerPays, makerDelivers] = invokesOf(signedQuoteSettlement, 'tokenProgram') as [Invoke, Invoke];
+  const amountOf = (call: Invoke) => {
+    const part = call.data[1];
+    return part?.kind === 'encoded' && part.encoding === 'u64' ? part.value : undefined;
+  };
+
+  test('takes the quote from the Ed25519 program, signed by the maker', () => {
+    expect(
+      dependsOn(requirement('quoteIsEd25519'), bindings, is(expression.pubkey(ED25519_PROGRAM_ADDRESS_BYTES))),
+    ).toBe(true);
+    expect(dependsOn(requirement('quoteIsBySigner'), bindings, accountKey('maker'))).toBe(true);
+  });
+
+  test('the taker pays the signed price for what it takes', () => {
+    expect(takerPays.label).toBe('takerPays');
+    expect(takerPays.accounts.map((entry) => nameOf(entry.account))).toEqual([
+      'takerQuoteAccount',
+      'makerQuoteAccount',
+      'taker',
+    ]);
+    const payment = amountOf(takerPays)!;
+    expect(dependsOn(payment, bindings, signed(QUOTE.price, 'u64'))).toBe(true);
+    expect(dependsOn(payment, bindings, is(expression.input('amount')))).toBe(true);
+  });
+
+  test('the maker delivers what the taker takes, within the signed size, to the signed taker, before expiry', () => {
+    expect(makerDelivers.label).toBe('makerDelivers');
+    expect(makerDelivers.accounts.map((entry) => nameOf(entry.account))).toEqual([
+      'makerBaseAccount',
+      'takerBaseAccount',
+      'maker',
+    ]);
+    expect(amountOf(makerDelivers)).toEqual(expression.input('amount'));
+    expect(dependsOn(requirement('withinTheQuotedSize'), bindings, signed(QUOTE.maxAmount, 'u64'))).toBe(true);
+    expect(dependsOn(requirement('quoteIsForThisTaker'), bindings, signed(QUOTE.taker, 'pubkey'))).toBe(true);
+    expect(dependsOn(requirement('quoteIsForThisTaker'), bindings, accountKey('taker'))).toBe(true);
+    expect(dependsOn(requirement('quoteHasNotExpired'), bindings, signed(QUOTE.expiry, 'i64'))).toBe(true);
+    expect(dependsOn(requirement('quoteHasNotExpired'), bindings, is(expression.clockUnixTimestamp()))).toBe(true);
+  });
+
+  test('settles only in the signed mints, into an account the maker owns', () => {
+    const paysIn = requirement('paysInTheQuotedMint');
+    expect(dependsOn(paysIn, bindings, signed(QUOTE.quoteMint, 'pubkey'))).toBe(true);
+    expect(dependsOn(paysIn, bindings, reads('takerQuoteAccount', TOKEN_ACCOUNT_MINT_OFFSET))).toBe(true);
+    const delivers = requirement('deliversTheQuotedMint');
+    expect(dependsOn(delivers, bindings, signed(QUOTE.baseMint, 'pubkey'))).toBe(true);
+    expect(dependsOn(delivers, bindings, reads('makerBaseAccount', TOKEN_ACCOUNT_MINT_OFFSET))).toBe(true);
+    expect(
+      dependsOn(requirement('paymentReachesTheMaker'), bindings, reads('makerQuoteAccount', TOKEN_ACCOUNT_OWNER_OFFSET)),
+    ).toBe(true);
+  });
+
+  test('every field lies inside the signed message', () => {
+    expect(() => signedQuote.field(QUOTE.quoteMint + 1, 'pubkey')).toThrow(/inside/);
+    expect(() => signedQuote.field(QUOTE.length - 7, 'u64')).toThrow(/inside/);
   });
 });

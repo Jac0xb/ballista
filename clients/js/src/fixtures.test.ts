@@ -29,6 +29,7 @@ import {
   systemTransfer,
   type Template,
 } from './index.js';
+import { signedQuoteSettlement } from '../examples/protocols/signed-quote-settlement.js';
 
 const FIXTURE_DIR = fileURLToPath(new URL('../../../fixtures/', import.meta.url));
 const MANIFEST_PATH = `${FIXTURE_DIR}manifest.json`;
@@ -571,6 +572,8 @@ export const fixtures: Record<string, () => Template> = {
       ],
     });
   },
+
+  'signed-quote-settlement': () => signedQuoteSettlement,
 
   'pinned-mint-read': () =>
     defineTemplate({

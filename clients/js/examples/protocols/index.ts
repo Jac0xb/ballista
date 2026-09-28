@@ -17,4 +17,5 @@ export { marginfiWithdrawAllWithFloor } from './marginfi-withdraw-all-with-floor
 export { orcaCompoundFees } from './orca-compound-fees.js';
 export { orcaHarvestManyPositions } from './orca-harvest-many-positions.js';
 export { pythFreshPriceGate } from './pyth-fresh-price-gate.js';
+export { signedQuoteSettlement } from './signed-quote-settlement.js';
 export { tokenSweepIntoSwap } from './token-sweep-into-swap.js';

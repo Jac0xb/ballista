@@ -556,6 +556,26 @@ impl ProgramView<'_> {
                 self.verify_pda_seeds(instruction, instruction_index, in_row_loop, registers)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_PUBKEY))?;
             }
+            OP_EMIT => {
+                self.verify_output(instruction, instruction_index, registers)?;
+            }
+            OP_SET_RETURN_DATA => {
+                // The runtime clears return data whenever a program is invoked, CPIs included, so
+                // what a run returns is set once, outside every loop, after its last invoke. Loops
+                // run forward, so every instruction that can run later sits at a later index.
+                let later = self
+                    .instructions
+                    .get(instruction_index.saturating_add(1)..)
+                    .unwrap_or(&[]);
+                if scope.in_loop()
+                    || later
+                        .iter()
+                        .any(|record| matches!(record.opcode, OP_INVOKE | OP_SET_RETURN_DATA))
+                {
+                    return Err(TemplateError::InvalidOutput(instruction_index));
+                }
+                self.verify_output(instruction, instruction_index, registers)?;
+            }
             OP_REQUIRE => self.require_type(registers, instruction.a, VALUE_BOOL)?,
             OP_INVOKE => {
                 if instruction.b != NO_INDEX {
@@ -598,8 +618,7 @@ impl ProgramView<'_> {
             .iter()
             .enumerate()
         {
-            let seed_len =
-                self.verify_pda_seed_segment(segment_start + offset, segment, registers)?;
+            let seed_len = self.verify_segment(segment_start + offset, segment, registers)?;
             if seed_len > MAX_PDA_SEED_LEN {
                 return Err(TemplateError::InvalidDataSegment(segment_start + offset));
             }
@@ -607,7 +626,46 @@ impl ProgramView<'_> {
         Ok(())
     }
 
-    fn verify_pda_seed_segment(
+    /// Shared by `EMIT` and `SET_RETURN_DATA`. The record names no register, and its immediate
+    /// names a non-empty, in-bounds run of data segments, encoded as invocation data is. Their
+    /// widths, a `bytes` register counted at its maximum length, must sum to at most
+    /// `MAX_RETURN_DATA_LEN`, the return-data limit, which also bounds a log line.
+    fn verify_output(
+        &self,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
+        registers: &[Option<RegisterInfo>; MAX_REGISTERS],
+    ) -> Result<(), TemplateError> {
+        if [instruction.dst, instruction.a, instruction.b, instruction.c] != [NO_INDEX; 4] {
+            return Err(TemplateError::InvalidInstruction(instruction_index));
+        }
+        let (segment_start, segment_len) = instruction.blob_range();
+        let segment_end = segment_start
+            .checked_add(segment_len)
+            .ok_or(TemplateError::CountOverflow)?;
+        if segment_len == 0 || segment_end > self.data_segments.len() {
+            return Err(TemplateError::InvalidInstruction(instruction_index));
+        }
+        let mut max_len = 0usize;
+        for (offset, segment) in self.data_segments[segment_start..segment_end]
+            .iter()
+            .enumerate()
+        {
+            let len = self.verify_segment(segment_start + offset, segment, registers)?;
+            max_len = max_len
+                .checked_add(len)
+                .ok_or(TemplateError::CountOverflow)?;
+        }
+        if max_len > MAX_RETURN_DATA_LEN {
+            return Err(TemplateError::InvalidOutput(instruction_index));
+        }
+        Ok(())
+    }
+
+    /// Checks one data segment of a PDA seed or an output and returns the most bytes it can
+    /// encode: a literal's length, a register kind's width, or a `bytes` register's maximum
+    /// length. Invocation data applies the same widths in `verify_cpi`.
+    fn verify_segment(
         &self,
         index: usize,
         segment: &DataSegment,
@@ -1145,6 +1203,14 @@ mod tests {
             (OP_POW10, Some(VALUE_I64), None, Err(TemplateError::TypeMismatch)),
             (OP_POW10, Some(VALUE_U128), None, Err(TemplateError::TypeMismatch)),
             (OP_POW10, None, None, Err(TemplateError::RegisterNotInitialized(0))),
+            // An output names its parts in the immediate and no register at all.
+            (OP_EMIT, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
+            (
+                OP_SET_RETURN_DATA,
+                Some(VALUE_U64),
+                Some(VALUE_U64),
+                Err(TemplateError::InvalidInstruction(2)),
+            ),
             (75, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
             (39, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
             (0xfe, Some(VALUE_U64), Some(VALUE_U64), Err(TemplateError::InvalidInstruction(2))),
@@ -2649,6 +2715,256 @@ mod tests {
             body.require(same);
         });
         assert!(verify_builder(&builder).is_ok());
+    }
+
+    #[test]
+    fn outputs_are_encoded_like_invocation_data_up_to_the_return_data_limit() {
+        // Literal bytes, a u64 narrowed to two bytes, a pubkey, and a bytes input counted at its
+        // maximum length. Neither output is an invocation.
+        let mut builder = ProgramBuilder::new();
+        let owner = builder.account(0, None, None, 0);
+        let memo_input = builder.input(VALUE_BYTES, 16);
+        let memo = builder.load_input(memo_input);
+        let amount = builder.const_u64(7);
+        let key = builder.account_key(owner);
+        let tag = builder.blob(b"TAG");
+        builder.emit_data(&[
+            Segment::Literal(tag),
+            Segment::Register(DATA_REG_U16, amount),
+            Segment::Register(DATA_REG_PUBKEY, key),
+            Segment::Register(DATA_REG_BYTES, memo),
+        ]);
+        builder.set_return_data(&[Segment::Register(DATA_REG_U64, amount)]);
+        let stats = verify_builder(&builder).unwrap();
+        assert_eq!((stats.cpis, stats.max_expanded_cpis, stats.max_cpi_data_len), (0, 0, 0));
+
+        // A 1,024-byte bytes input fills the limit; one more literal byte passes it.
+        let at_limit = |extra: usize| {
+            let mut builder = ProgramBuilder::new();
+            let input = builder.input(VALUE_BYTES, MAX_INPUT_BYTES as u16);
+            let value = builder.load_input(input);
+            let literal = builder.blob(&vec![0; extra]);
+            let at = builder.set_return_data(&[
+                Segment::Register(DATA_REG_BYTES, value),
+                Segment::Literal(literal),
+            ]);
+            (verify_builder(&builder).map(|_| ()), at)
+        };
+        assert_eq!(at_limit(0).0, Ok(()));
+        let (outcome, at) = at_limit(1);
+        assert_eq!(outcome, Err(TemplateError::InvalidOutput(at)));
+
+        // EMIT has the same bound, and a select counts its longer branch: 1,000 bytes.
+        let emit_with_padding = |padding: usize| {
+            let mut builder = ProgramBuilder::new();
+            let condition = builder.const_bool(true);
+            let short = builder.const_bytes(&[1; 4]);
+            let long = builder.const_bytes(&[2; 1_000]);
+            let selected = builder.select(condition, short, long);
+            let literal = builder.blob(&vec![0; padding]);
+            let at = builder.emit_data(&[
+                Segment::Register(DATA_REG_BYTES, selected),
+                Segment::Literal(literal),
+            ]);
+            (verify_builder(&builder).map(|_| ()), at)
+        };
+        assert_eq!(emit_with_padding(24).0, Ok(()));
+        let (outcome, at) = emit_with_padding(25);
+        assert_eq!(outcome, Err(TemplateError::InvalidOutput(at)));
+    }
+
+    #[test]
+    fn output_segments_follow_the_segment_rules() {
+        // Each case builds a CPI with two segments first, so the output's own segment is at
+        // index 2: errors name the segment's place in the whole table.
+        let check = |mutate: &dyn Fn(&mut ProgramBuilder, u8), expected: TemplateError| {
+            let mut builder = ProgramBuilder::new();
+            let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+            let amount = builder.const_u64(1);
+            let literal = builder.blob(&[2, 0, 0, 0]);
+            let cpi = builder.cpi(
+                program,
+                &[],
+                &[Segment::Literal(literal), Segment::Register(DATA_REG_U64, amount)],
+            );
+            builder.invoke(cpi, None);
+            mutate(&mut builder, amount);
+            assert_eq!(verify_builder(&builder), Err(expected), "{expected:?}");
+        };
+        check(
+            &|builder, amount| {
+                builder.emit_data(&[Segment::Register(DATA_REG_I64, amount)]);
+            },
+            TemplateError::TypeMismatch,
+        );
+        check(
+            &|builder, _| {
+                let unset = builder.register();
+                builder.emit_data(&[Segment::Register(DATA_REG_U64, unset)]);
+            },
+            TemplateError::RegisterNotInitialized(1),
+        );
+        check(
+            &|builder, amount| {
+                builder.emit_data(&[Segment::Register(0xfe, amount)]);
+            },
+            TemplateError::InvalidDataSegment(2),
+        );
+        check(
+            &|builder, _| {
+                builder.emit_data(&[Segment::Literal((2, 3))]);
+            },
+            TemplateError::InvalidDataSegment(2),
+        );
+        check(
+            &|builder, _| {
+                builder.emit_data(&[Segment::Literal((0, 1))]);
+                builder.segments_mut()[2].register = 0;
+            },
+            TemplateError::InvalidDataSegment(2),
+        );
+        check(
+            &|builder, amount| {
+                builder.emit_data(&[Segment::Register(DATA_REG_U64, amount)]);
+                builder.segments_mut()[2].len_le = [1, 0];
+            },
+            TemplateError::InvalidDataSegment(2),
+        );
+        check(
+            &|builder, amount| {
+                builder.emit_data(&[Segment::Register(DATA_REG_U64, amount)]);
+                builder.segments_mut()[2].reserved = [0, 1];
+            },
+            TemplateError::InvalidDataSegment(2),
+        );
+    }
+
+    #[test]
+    fn output_records_name_a_non_empty_range_and_no_register() {
+        let with_output = |mutate: &dyn Fn(&mut InstructionRecord)| {
+            let mut builder = ProgramBuilder::new();
+            let amount = builder.const_u64(1);
+            let at = builder.emit_data(&[Segment::Register(DATA_REG_U64, amount)]);
+            mutate(&mut builder.instructions_mut()[at]);
+            (verify_builder(&builder).map(|_| ()), at)
+        };
+        assert_eq!(with_output(&|_| {}).0, Ok(()));
+        for mutate in [
+            (|record: &mut InstructionRecord| record.dst = 0) as fn(&mut InstructionRecord),
+            |record| record.a = 0,
+            |record| record.b = 0,
+            |record| record.c = 0,
+            |record| record.immediate_le = range_immediate(0, 0).to_le_bytes(),
+            |record| record.immediate_le = range_immediate(1, 1).to_le_bytes(),
+            |record| record.immediate_le = range_immediate(0, 2).to_le_bytes(),
+        ] {
+            let (outcome, at) = with_output(&mutate);
+            assert_eq!(outcome, Err(TemplateError::InvalidInstruction(at)));
+        }
+        let (outcome, at) = with_output(&|record| record.flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET);
+        assert_eq!(outcome, Err(TemplateError::InvalidFlags(at)));
+    }
+
+    #[test]
+    fn return_data_is_set_once_outside_every_loop_after_the_last_invoke() {
+        let transfer = |builder: &mut ProgramBuilder| {
+            let system = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+            builder.cpi(system, &[], &[])
+        };
+        let result = |builder: &mut ProgramBuilder| {
+            let value = builder.const_u64(7);
+            builder.set_return_data(&[Segment::Register(DATA_REG_U64, value)])
+        };
+
+        // After the last invoke, with outputs logged anywhere else, it verifies.
+        let mut builder = ProgramBuilder::new();
+        let cpi = transfer(&mut builder);
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let count = builder.const_u64(3);
+        builder.emit_data(&[Segment::Register(DATA_REG_U64, count)]);
+        builder.for_each(0, |body| {
+            let row = body.loop_index();
+            body.emit_data(&[Segment::Register(DATA_REG_U8, row)]);
+            body.invoke(cpi, None);
+        });
+        builder.invoke(cpi, None);
+        result(&mut builder);
+        assert!(verify_builder(&builder).is_ok());
+
+        // Before an invoke.
+        let mut builder = ProgramBuilder::new();
+        let cpi = transfer(&mut builder);
+        let at = result(&mut builder);
+        builder.invoke(cpi, None);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidOutput(at)));
+
+        // Before a loop whose body invokes.
+        let mut builder = ProgramBuilder::new();
+        let cpi = transfer(&mut builder);
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let at = result(&mut builder);
+        builder.for_each(0, |body| body.invoke(cpi, None));
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidOutput(at)));
+
+        // Inside a loop.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let value = builder.const_u64(7);
+        let mut at = 0;
+        builder.for_each(0, |body| {
+            at = body.set_return_data(&[Segment::Register(DATA_REG_U64, value)]);
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidOutput(at)));
+
+        // Twice: the first names the error.
+        let mut builder = ProgramBuilder::new();
+        let at = result(&mut builder);
+        result(&mut builder);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidOutput(at)));
+
+        // The single-instruction entry point the specifications use never indexes out of range.
+        let mut builder = ProgramBuilder::new();
+        result(&mut builder);
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut registers = [None; MAX_REGISTERS];
+        registers[0] = Some(RegisterInfo::scalar(VALUE_U64));
+        let record = program.instructions[1];
+        assert_eq!(
+            program.verify_single_instruction(
+                &record,
+                usize::MAX,
+                LoopScope::Root,
+                None,
+                &mut registers
+            ),
+            Ok((0, 0))
+        );
+    }
+
+    /// A count loop, the loops phase's `REPEAT`, is a loop like any other.
+    #[test]
+    fn return_data_is_not_set_inside_a_count_loop() {
+        // REPEAT: `a` is the body length, `b` the u64 count register, `c` the static maximum.
+        let with_body = |body: &dyn Fn(&mut ProgramBuilder, u8) -> usize| {
+            let mut builder = ProgramBuilder::new();
+            let count = builder.const_u64(2);
+            let value = builder.const_u64(7);
+            builder.emit(record(OP_REPEAT, NO_INDEX, 1, count, 2, 0, 0));
+            let at = body(&mut builder, value);
+            (verify_builder(&builder).map(|_| ()), at)
+        };
+        let (outcome, at) = with_body(&|builder, value| {
+            builder.set_return_data(&[Segment::Register(DATA_REG_U64, value)])
+        });
+        assert_eq!(outcome, Err(TemplateError::InvalidOutput(at)));
+        let (outcome, _) = with_body(&|builder, value| {
+            builder.emit_data(&[Segment::Register(DATA_REG_U64, value)])
+        });
+        assert_eq!(outcome, Ok(()));
     }
 
     #[test]

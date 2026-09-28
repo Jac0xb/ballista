@@ -1,7 +1,7 @@
 # Errors and events
 
-How to read a failed run's error code, find the step that failed, and make a template log an event
-for each run.
+How to read a failed run's error code, find the step that failed, and get data out of a run: the
+run event, logs of the template's own, and return data.
 
 ## Error code layout
 
@@ -12,9 +12,9 @@ the error kind; the high 16 bits hold a context number that locates the failure.
 code = kind | (context << 16)
 ```
 
-- **6000 to 6021** (`0x1770` to `0x1785`) are runtime errors, raised while uploading or running.
+- **6000 to 6024** (`0x1770` to `0x1788`) are runtime errors, raised while uploading or running.
   The context is usually the program counter: the index of the failing compiled instruction.
-- **6100 to 6128** (`0x17D4` to `0x17F0`) are verifier errors, raised when a template is created
+- **6100 to 6131** (`0x17D4` to `0x17F3`) are verifier errors, raised when a template is created
   or finalized. The context is the index of the offending instruction, account, input, register or
   CPI, where there is one.
 - In hex, the last four digits are the kind. `0x7177F` is `0x177F` (6015, `RequirementFailed`)
@@ -60,6 +60,9 @@ not a Ballista code.
 | 6019 | `0x1783` | `ReturnDataMismatch` | The return data came from a different program |
 | 6020 | `0x1784` | `AccountConstraintFailed` | An account does not match its declaration |
 | 6021 | `0x1785` | `CpiAccountLimitExceeded` | A CPI's accounts plus its account group exceed 64 |
+| 6022 | `0x1786` | `LoopCountExceeded` | A `repeat` count was above the loop's `max` |
+| 6023 | `0x1787` | `InstructionOutOfRange` | A read asked for an instruction, account position or byte range that does not exist |
+| 6024 | `0x1788` | `WritableAccountBytesRead` | `accountDataBytes` read an account the transaction passed as writable |
 
 ### Verifier codes
 
@@ -78,7 +81,7 @@ Raised by `CreateTemplate` or `FinalizeTemplate` when the template fails its che
 | 6108 | `0x17DC` | `TooManyInputs` | Too many inputs or input values |
 | 6109 | `0x17DD` | `TooManyRegisters` | More than 64 registers |
 | 6110 | `0x17DE` | `TooManyInstructions` | No instructions, or more than 128 |
-| 6111 | `0x17DF` | `InvalidBatch` | The batch or its loop is malformed |
+| 6111 | `0x17DF` | `InvalidBatch` | The batch or a `forEach` is malformed, or a batch has no `forEach` |
 | 6112 | `0x17E0` | `InvalidAccountConstraint` | An account declaration is invalid |
 | 6113 | `0x17E1` | `InvalidInput` | An input declaration is invalid |
 | 6114 | `0x17E2` | `InvalidInstruction` | An instruction is invalid |
@@ -88,7 +91,7 @@ Raised by `CreateTemplate` or `FinalizeTemplate` when the template fails its che
 | 6118 | `0x17E6` | `RegisterNotInitialized` | A register is read before it is set |
 | 6119 | `0x17E7` | `TypeMismatch` | An instruction receives the wrong type |
 | 6120 | `0x17E8` | `InvalidBlobRange` | A literal points outside the stored bytes |
-| 6121 | `0x17E9` | `ExcessiveCpiExpansion` | More than 64 CPIs in the worst case, counting every loop row |
+| 6121 | `0x17E9` | `ExcessiveCpiExpansion` | More than 64 CPIs in the worst case, with every loop run to its maximum |
 | 6122 | `0x17EA` | `InvalidFlags` | An instruction sets flags its opcode does not accept |
 | 6123 | `0x17EB` | `InvalidCarry` | A carried value is unset before the loop or changes type in it |
 | 6124 | `0x17EC` | `ReadOutOfBounds` | A fixed-offset read runs past the account's minimum length |
@@ -96,6 +99,9 @@ Raised by `CreateTemplate` or `FinalizeTemplate` when the template fails its che
 | 6126 | `0x17EE` | `InvalidReturnData` | A return-data read is not directly after an unguarded invoke |
 | 6127 | `0x17EF` | `InvalidMinIterations` | The minimum rows exceed the maximum, or are set without a batch |
 | 6128 | `0x17F0` | `TooManyAccountGroups` | More than 8 account groups |
+| 6129 | `0x17F1` | `InvalidLoop` | More than 8 loops, a `repeat` inside another loop or naming a row, or a malformed `repeat` |
+| 6130 | `0x17F2` | `InvalidOutput` | An `emit` or `setReturnData` breaks a rule in [Logs and return data](#logs-and-return-data) |
+| 6131 | `0x17F3` | `InvalidIntrospection` | A read of the transaction's instructions names an account not pinned to the Instructions sysvar |
 
 The same names are in `fixtures/runtime-error-names.txt` and `fixtures/verifier-error-names.txt`.
 The program, the Rust SDK and the TypeScript SDK are all tested against them.
@@ -163,8 +169,8 @@ line, where indexers can read it.
 | ---: | ---: | --- |
 | 0 | 4 | The ASCII bytes `BEV1`, which identify the event |
 | 4 | 1 | Template format version, currently 1 |
-| 5 | 1 | Number of batch rows the run processed |
-| 6 | 1 | Number of calls the run reached, counting each row's calls separately |
+| 5 | 1 | Number of batch rows the run processed. Passes of a `repeat` loop are not counted |
+| 6 | 1 | Number of calls the run reached, counting a loop's calls once per row or pass |
 | 7 | 8 | Which reached calls actually ran, as a little-endian bit mask: bit `n` is set if reached call `n`, counting from 0, ran |
 | 15 | 32 | Template address |
 
@@ -172,3 +178,30 @@ A call skipped by its `when` condition counts as reached, with its bit clear. So
 "the ATA (associated token account) already existed" apart from "the ATA was created" without
 inspecting inner instructions. The event is off by default because it costs a few hundred compute
 units, Solana's measure of execution cost.
+
+## Logs and return data
+
+The run event's fields are fixed. To send out values a template computes, use one of two steps.
+Their parts are built the way a call's data is, from `data.literal` and `data.encode`, and each
+output is at most 1,024 bytes, counting a `bytes` value at its maximum length.
+
+- `step.emit(parts)` logs one `Program data:` field, like the run event, and can appear anywhere,
+  loops included. Its first part must be a literal tag of at least 4 bytes that doesn't start with
+  `BEV`. A log line names the program that wrote it, Ballista, but not the template, so without
+  this rule a template could log a copy of another template's run event.
+- `step.setReturnData(parts)` sets the run's return data: bytes a program hands back to whoever
+  called it. A program that calls Ballista can read them as soon as the call returns. It can appear
+  once, outside every loop, with no invoke after it, because calling a program clears return data.
+
+```ts
+const TAG = new TextEncoder().encode('PAID'); // 4 bytes or more, not starting with "BEV"
+
+// The last steps of a template whose earlier steps add up `paid`:
+const outputSteps = [
+  step.emit([data.literal(TAG), data.encode('u64', expression.variable('paid'))]),
+  step.setReturnData([data.encode('u64', expression.variable('paid'))]),
+];
+```
+
+The TypeScript compiler refuses a template that breaks these rules. One built another way fails
+when it is created or finalized, with `InvalidOutput` (6130).

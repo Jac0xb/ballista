@@ -25,7 +25,7 @@ const guideSidebar = [
     items: [
       { text: 'Amounts read at run time', link: '/guide/runtime-values' },
       { text: 'Conditional calls', link: '/guide/conditional' },
-      { text: 'Loops that decide per row', link: '/guide/loops' },
+      { text: 'Loops over rows and counts', link: '/guide/loops' },
       { text: 'Safety guardrails', link: '/guide/guardrails' },
     ],
   },
@@ -79,6 +79,7 @@ const examplesSidebar = [
       { text: 'Orca · Harvest positions that earned', link: '/examples/protocols/orca-harvest' },
       { text: 'Pyth · Act on a fresh price', link: '/examples/protocols/pyth-gate' },
       { text: 'Jito · Tip only from profit', link: '/examples/protocols/jito-tip' },
+      { text: 'Ed25519 · Settle at a signed quote', link: '/examples/protocols/signed-quote' },
     ],
   },
   {

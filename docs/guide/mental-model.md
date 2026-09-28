@@ -78,10 +78,10 @@ the caller, passed along to one call without being read.
 | `step.invoke({ ... })` | Calls another program (a CPI). Helpers such as `systemTransfer` build one for you |
 | `when: condition` on an invoke | Skips that one call when the condition is false, and carries on |
 | `step.forEach(steps)` | Runs its steps once per batch row |
-| `step.repeat(count, steps, { max })` | Runs its steps `count` times, never more than `max` (at most 255). A template can have up to eight loops of either kind, and loops never nest |
+| `step.repeat(count, steps, { max })` | Runs its steps `count` times, never more than `max` (at most 255). A template can have up to eight loops of either kind, and loops never nest. [Example](/guide/loops#crank-once-per-waiting-entry) |
 | `step.assign(name, value)` | Updates a value a loop carries from one pass to the next, inside `forEach` or `repeat` only |
-| `step.emit(parts)` | Logs event data for indexers. It must start with a tag of at least four bytes |
-| `step.setReturnData(parts)` | Sets the run's return data: once, outside every loop, with no call after it |
+| `step.emit(parts)` | Logs event data for indexers. It must start with a tag of at least four bytes. [Logs and return data](/guide/errors-and-events#logs-and-return-data) |
+| `step.setReturnData(parts)` | Sets the run's return data: once, outside every loop, with no call after it. [Logs and return data](/guide/errors-and-events#logs-and-return-data) |
 
 ## Expressions
 
@@ -98,7 +98,10 @@ Steps compute with expressions. An expression can read:
 It can combine them with checked arithmetic (`add`, `subtract`, `multiply`, `divide`, `remainder`,
 `min`, `max`), exact `multiplyDivide` that rounds down or up, `powerOfTen`, shifts and bitwise
 operations, comparisons, `and`/`or`/`not`, and `select`. Overflow fails the run instead of wrapping.
-[Inputs and expressions](/guide/expressions) has the full list.
+[Inputs and expressions](/guide/expressions) covers the math, including
+[prices and decimals](/guide/expressions#prices-and-decimals). The
+[language reference](/reference/language#other-instructions-in-the-transaction) covers reading
+other instructions and byte ranges, and lists every source.
 
 ## Upload: checked, then locked
 

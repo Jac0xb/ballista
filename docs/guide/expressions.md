@@ -75,6 +75,53 @@ const chosen = expression.select(
 );
 ```
 
+## Prices and decimals
+
+Token amounts are counted in a mint's base units, its smallest units: with 6 decimals, 1.5 tokens
+is 1,500,000. Pricing an amount means multiplying by one number and dividing by another, and the
+product can overflow even when the answer would fit.
+
+`expression.multiplyDivide(a, b, divisor, rounding)` computes `a × b ÷ divisor`. The product
+`a × b` is an intermediate value, used only on the way to the result, and it is held at twice the
+inputs' width (256 bits for `u128` inputs), so it cannot overflow. Only the result has to fit.
+`rounding` is `'down'`, the default, or `'up'`. The three values are all `u64` or all `u128`, and
+the result has the same type.
+
+`expression.powerOfTen(exponent)` is `10^exponent` as a `u128`, for a `u64` exponent of at most 38.
+A larger exponent fails the run.
+
+For example, the cost of `amount` base units at a `price` per whole token is
+`amount × price ÷ 10^decimals`, rounded up so the buyer never pays less than the exact cost:
+
+```ts
+const decimals = expression.accountData(account.fixed('mint'), 44, 'u8'); // an SPL mint's decimals
+
+// powerOfTen gives a u128, so the inputs are cast up to match, and the result back to a u64.
+const cost = expression.cast(
+  'u64',
+  expression.multiplyDivide(
+    expression.cast('u128', expression.input('amount')),
+    expression.cast('u128', expression.input('price')),
+    expression.powerOfTen(decimals),
+    'up',
+  ),
+);
+```
+
+The [oracle-checked swap](/examples/protocols/jupiter-oracle-swap) does the same with a Pyth price:
+it reads both mints' decimals and the price's exponent during the run, and computes its floor with
+`powerOfTen` and `multiplyDivide`.
+
+## Remainder, shifts and bitwise operations
+
+- `remainder(a, b)` is what is left after dividing `a` by `b`, for `u64`, `i64` or `u128`. For an
+  `i64` it has the sign of `a`. A zero `b` fails the run.
+- `shiftLeft(a, bits)` is `a × 2^bits`, and `shiftRight(a, bits)` is `a ÷ 2^bits`, rounded down.
+  `a` is a `u64` or `u128`, and `bits` is a `u64`. A left shift that would push a set bit out
+  fails the run.
+- `bitAnd`, `bitOr` and `bitXor` combine two `u64`s or two `u128`s bit by bit, for flags packed
+  into one number. They are separate from the boolean `and` and `or`.
+
 ## Fixed-width account reads
 
 ```ts
@@ -85,8 +132,11 @@ const initialized = expression.accountData(account.fixed('stateAccount'), 8, 'bo
 
 `expression.accountData(account, offset, type)` reads the value stored at a byte offset in an
 account's data. The type sets the width: 8 bytes for `u64`, 32 for `pubkey`, 1 for `bool`, and so
-on. Reads of `u8`, `u16`, and `u32` produce a `u64`. The offset is usually a number fixed in the
-template, but it can also be a `u64` expression evaluated during the run.
+on. Reads of `u8`, `u16`, and `u32` produce a `u64`. An `i32` read produces an `i64` and is
+sign-extended: widened with its sign kept, so four bytes that a `u32` read gives as 4,294,967,288
+read as -8. Pyth stores its price exponent this way, and it is usually negative. The offset is
+usually a number fixed in the template, but it can also be a `u64` expression evaluated during the
+run.
 
 To find a field's offset, add up the sizes of the fields before it in the program's account layout;
 [amounts read at run time](/guide/runtime-values#forward-the-whole-token-balance) shows how. An

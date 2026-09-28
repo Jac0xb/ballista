@@ -83,14 +83,15 @@ ProgramView::parse(&payload)?.verify()?;
 | `load_input(input)`, `const_u64(value)` | Put an input or a constant into a new register |
 | `blob(bytes)` | Stores literal bytes, such as an instruction discriminator, and returns their `(offset, len)` |
 | `cpi(program, accounts, segments)` | Declares a CPI (a call to another program): its program, its `(account, flags)` pairs, and the segments of its instruction data. Returns the CPI's index |
-| `for_each(carry_mask, body)` | Emits the loop. Bit *n* of `carry_mask` keeps register *n*'s value from one row to the next and after the loop |
+| `for_each(carry_mask, body)` | Emits a loop over the batch rows. Bit *n* of `carry_mask` keeps register *n*'s value from one row to the next and after the loop |
 | `invoke(cpi, guard)` | Performs a declared CPI. If `guard` names a `bool` register, the CPI runs only when that register is true |
 | `binary(opcode, a, b)` | Emits a two-operand instruction such as `OP_ADD` or `OP_LTE` |
 | `mov(dst, src)` | Copies one register into another; used to update a carried register |
 | `require(register)` | Fails the run unless the `bool` register is true |
 
 Other methods cover the rest of the instruction set, such as `read` and `read_dynamic` for account
-data, `derive_pda` and `create_pda`, `row_input`, and `account_groups` with `cpi_with_group`.
+data, `derive_pda` and `create_pda`, `row_input`, and `account_groups` with `cpi_with_group`. The
+sections below cover math, loops, output, and introspection, and
 [Wire format](/reference/wire-format) lists every opcode.
 
 Declaration order matters. Callers pass fixed accounts in the order you declare them, then each
@@ -104,6 +105,122 @@ program runs when a template is finalized.
 The builder does not apply the TypeScript compiler's pinning rules, which require an invoked
 program to pin its address and a read account to pin its owner or address. Pin them yourself: an
 unpinned program account lets the caller choose which program runs.
+
+### Math
+
+| Call | Effect |
+| --- | --- |
+| `mul_div(a, b, c)`, `mul_div_ceil(a, b, c)` | `a × b ÷ c` for three `u64` or three `u128` registers, rounded down or up. The product is exact, up to 256 bits, so only the result has to fit |
+| `pow10(exponent)` | `10^exponent` as a `u128`, from a `u64` register holding 0 to 38 |
+| `binary(OP_REM, a, b)` | `a mod b` for matching `u64`, `i64`, or `u128` registers. The result takes the sign of `a` |
+| `binary(OP_SHL, a, b)`, `binary(OP_SHR, a, b)` | Shifts a `u64` or `u128` register by the `u64` in `b`. `OP_SHR` rounds down |
+| `binary(OP_BIT_AND, a, b)`, and the same with `OP_BIT_OR` or `OP_BIT_XOR` | Bitwise operations on matching `u64` or `u128` registers |
+| `read(OP_READ_I32, account, offset)` | Reads four bytes as a signed number into an `i64` register. Every call that takes a read opcode accepts `OP_READ_I32` |
+
+A zero divisor fails the run with `DivisionByZero`. A result too large for its type, a left shift
+that would drop a set bit, an exponent above 38, or `i64::MIN` modulo -1 fails it with
+`ArithmeticOverflow`. Operands of the wrong type fail verification with `TypeMismatch`.
+
+### Loops
+
+`repeat(count, max, carry_mask, body)` emits a count loop and returns its instruction index. The
+body runs as many times as the `u64` register `count` holds when the loop starts. `max`, from 1 to
+255, caps it: a larger count fails the run with `LoopCountExceeded`. `carry_mask` works as it does
+for `for_each`, and `loop_index` gives the current pass, counting from 0.
+
+A template holds up to eight loops (`MAX_LOOPS`) of either kind. They run one after another and
+never nest. A template with a batch needs at least one `for_each`. A `repeat` body has no rows, so
+it cannot name a row account or row input. The verifier rejects a ninth loop, a loop inside
+another, a `max` of 0, or a row inside `repeat` with `InvalidLoop`. A batch without a `for_each`,
+or a `for_each` inside another loop, gets `InvalidBatch`. The limit of 64 CPIs per run counts every
+loop at its maximum.
+
+### Output
+
+| Call | Effect |
+| --- | --- |
+| `emit_data(parts)` | Logs the encoded `parts` as one `Program data:` line. The first part must be a `Segment::Literal` tag of at least 4 bytes (`MIN_EMIT_TAG_LEN`) that does not start with `BEV` (`RUN_EVENT_TAG_FAMILY`), so the log cannot pass for Ballista's run event |
+| `set_return_data(parts)` | Sets the encoded `parts` as the run's return data, the bytes a program hands back to its caller. At most once, outside every loop, and with no `invoke` after it, because invoking a program clears return data |
+
+Both encode `Segment`s as `cpi` does, write no register, and return the instruction's index. Each
+can encode at most 1,024 bytes, counting a `bytes` register at its maximum length. The builder
+checks none of this; the verifier rejects a break with `InvalidOutput`. A template that invoked the
+run reads its return data with `return_data`, and a client can read it by simulating a transaction
+that ends with the run. The plain `emit` method is different: it appends a raw instruction record.
+
+```rust
+// After `builder.require(within)` in the example above:
+// log the tag "PAID" and the total, then return the total to the caller.
+let tag = builder.blob(b"PAID");
+builder.emit_data(&[Segment::Literal(tag), Segment::Register(DATA_REG_U64, total)]);
+builder.set_return_data(&[Segment::Register(DATA_REG_U64, total)]);
+```
+
+### Introspection and byte reads
+
+Introspection means reading the other instructions in the same transaction. The builder does it
+through the Instructions sysvar. A sysvar is an account whose data the Solana runtime maintains,
+and this one holds every instruction in the current transaction. Declare it as a fixed account
+pinned to `INSTRUCTIONS_SYSVAR_ID`, and pass it read-only in the run, as
+`AccountMeta::new_readonly(INSTRUCTIONS_SYSVAR_ID, false)`. The verifier rejects `introspect`,
+`read_instruction_data`, or `read_instruction_bytes` on any other account with
+`InvalidIntrospection`.
+
+| Call | Effect |
+| --- | --- |
+| `introspect(opcode, sysvar, index, position)` | One fact about the transaction, picked by `opcode` from the table below. `index` and `position` are `u64` registers; pass `NO_INDEX` for one the opcode does not take |
+| `read_instruction_data(read_opcode, sysvar, index, offset)` | A value from instruction `index`'s data at the `u64` offset in `offset`, with the width and type of an `OP_READ_*` opcode |
+| `read_instruction_bytes(sysvar, index, offset, len)` | Exactly `len` bytes, 1 to 1,024, of instruction `index`'s data from `offset` |
+| `read_account_bytes(account, offset, len)` | Exactly `len` bytes, 1 to 1,024, of an account's data from the `u64` offset in `offset`, read in place without a copy |
+| `bytes_len(value)` | The length of a `bytes` register, as a `u64` |
+
+| `opcode` | Operands | Result |
+| --- | --- | --- |
+| `OP_INSTRUCTION_COUNT` | None | The number of instructions in the transaction |
+| `OP_INSTRUCTION_INDEX` | None | The index of the instruction running the template |
+| `OP_INSTRUCTION_PROGRAM` | `index` | The program that instruction `index` calls, as a `pubkey` |
+| `OP_INSTRUCTION_ACCOUNT_COUNT` | `index` | How many accounts instruction `index` lists |
+| `OP_INSTRUCTION_ACCOUNT` | `index`, `position` | The address of the account at `position` in instruction `index` |
+| `OP_INSTRUCTION_ACCOUNT_FLAGS` | `index`, `position` | The flags of that account, as a `u64`: bit 0 is signer, bit 1 is writable |
+| `OP_INSTRUCTION_DATA_LEN` | `index` | The length of instruction `index`'s data |
+
+An index, position, or byte range beyond what exists fails the run with `InstructionOutOfRange`.
+`read_account_bytes` also fails with `WritableAccountBytesRead` if the account is writable in the
+run instruction, because a CPI could change the bytes while the run holds them. Declare the account
+without `ACCOUNT_WRITABLE` and pass it with `AccountMeta::new_readonly`: neither the builder nor the
+verifier checks this.
+
+```rust
+use ballista_sdk::{
+    ballista_common::template::{
+        NO_INDEX, OP_EQ, OP_INSTRUCTION_INDEX, OP_INSTRUCTION_PROGRAM, OP_SUB,
+    },
+    ProgramBuilder, ED25519_PROGRAM_ID, INSTRUCTIONS_SYSVAR_ID,
+};
+
+let mut builder = ProgramBuilder::new();
+let sysvar = builder.account(0, Some(INSTRUCTIONS_SYSVAR_ID.to_bytes()), None, 0);
+let one = builder.const_u64(1);
+let ed25519 = builder.const_pubkey(ED25519_PROGRAM_ID.to_bytes());
+
+// Require the instruction just before this run to call the Ed25519 program.
+let current = builder.introspect(OP_INSTRUCTION_INDEX, sysvar, NO_INDEX, NO_INDEX);
+let previous = builder.binary(OP_SUB, current, one);
+let program = builder.introspect(OP_INSTRUCTION_PROGRAM, sysvar, previous, NO_INDEX);
+let is_ed25519 = builder.binary(OP_EQ, program, ed25519);
+builder.require(is_ed25519);
+```
+
+The Ed25519 program is a precompile: a program built into Solana that checks signatures as part of
+the transaction, so a transaction with an invalid signature fails. The Rust SDK has no counterpart
+to TypeScript's `ed25519Signature`, which ties such a signature to a template.
+`signed_quote_settlement` in the `protocol_templates` example writes the same checks with the calls
+above: the instruction before the run is the Ed25519 program and holds one signature, by the maker,
+over a message of the expected length, with the key, the signature, and the message all in its own
+data. Check the signed key against one the transaction's builder cannot choose, such as a pinned
+address or the key of an account that must sign; otherwise the builder can sign with a key of
+their own. `protocol_templates_run` builds the Ed25519 instruction, and
+[Settle at a signed quote](/examples/protocols/signed-quote) walks through both.
 
 ## Addresses and hashing
 

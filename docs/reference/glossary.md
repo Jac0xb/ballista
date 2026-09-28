@@ -38,8 +38,9 @@ then anyone can run it. See [How it works](/guide/mental-model).
 
 ### Step
 
-One entry in a template's step list: `let`, `require`, `invoke`, `forEach` or `assign`. Steps run
-in order.
+One entry in a template's step list: `let`, `require`, `invoke`, `assign`, a loop (`forEach` or
+`repeat`), or an output (`emit` or `setReturnData`). Steps run in order. See
+[Steps and control flow](/reference/language#steps-and-control-flow).
 
 ### Run input
 
@@ -56,6 +57,17 @@ supplies once per item. The template sets the maximum number of rows. See
 
 One set of batch accounts and row inputs. `forEach` runs its steps once per row, and
 `account.iteration(name)` names the current row's account.
+
+### Count loop
+
+A loop that runs its steps a number of times read at run time, up to a maximum the template sets
+(at most 255), without rows: `step.repeat`. A template can have up to 8 loops of either kind, one
+after another. See [Loops](/reference/language#loops).
+
+### Pass
+
+One run through a loop's steps: once per row for `forEach`, once per count for `repeat`. Values
+marked as carried keep their result from one pass to the next.
 
 ### Account group
 

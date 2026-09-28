@@ -21,9 +21,13 @@ Terms used on this page:
   The bump is one extra seed byte that makes the result a valid program address; the canonical
   bump is the highest value that does.
 - **Runtime accounts:** the accounts passed to a run after the template account. Fixed accounts
-  are passed once. A batch row is a set of accounts repeated for each loop iteration. An account
-  group is a list of accounts, sized by the caller, that a CPI forwards without the template
-  reading them.
+  are passed once. Batch rows are sets of accounts, one set per row, that `FOREACH` loops run over.
+  An account group is a list of accounts, sized by the caller, that a CPI forwards without the
+  template reading them.
+- **Loop:** a `FOREACH` or `REPEAT` instruction and the body of instructions that follows it. A
+  pass is one run of the body.
+- **Instructions sysvar:** the read-only account at `Sysvar1nstructions1111111111111111111111111`
+  in which Solana lists the transaction's instructions. Opcodes 64 to 72 read it.
 
 ## Template account {#template-account}
 
@@ -138,8 +142,8 @@ Each fixed account, then each account of the batch row, has one 8-byte constrain
 
 Instructions, CPI descriptors, and CPI account records name an account with a one-byte reference.
 A value below `0x80` is the index of a fixed account. A value with bit `0x80` set names the account
-at position `value & 0x7f` in the current batch row, and is valid only inside `FOREACH`. Account
-group members have no references; only a CPI descriptor can forward them.
+at position `value & 0x7f` in the current batch row, and is valid only inside `FOREACH`, never
+inside `REPEAT`. Account group members have no references; only a CPI descriptor can forward them.
 
 ## Input descriptors {#inputs-table-and-cpi-descriptors}
 
@@ -153,7 +157,7 @@ inputs.
 | 2 | 2 | Maximum length: 1 to 1,024 for `bytes`, zero for every other type |
 
 A `LOAD_INPUT` whose `a` operand has bit `0x80` set loads row input `a & 0x7f` of the current row,
-and is valid only inside `FOREACH`.
+and is valid only inside `FOREACH`, never inside `REPEAT`.
 
 ## Instruction record
 
@@ -163,9 +167,9 @@ Every instruction is 16 bytes:
 | ---: | ---: | --- | --- |
 | 0 | 1 | opcode | The operation |
 | 1 | 1 | destination | The register that receives the result, or `0xff` for none |
-| 2 | 3 | a, b, c | Operands: registers, account references, or table indices, depending on the opcode |
+| 2 | 3 | a, b, c | Operands: registers, account references, table indices, or counts, depending on the opcode |
 | 5 | 1 | flags | Bit 0 on read opcodes: the offset comes from register `b`. Zero for every other opcode |
-| 6 | 8 | immediate | A constant, a packed range, or the loop's carry mask |
+| 6 | 8 | immediate | A constant, a packed range, a length, a read opcode, or a loop's carry mask |
 | 14 | 2 | reserved | Must be zero |
 
 A packed range holds a start (a blob offset or a first table index) in its low 32 bits and a length
@@ -173,8 +177,9 @@ in its high 32 bits.
 
 ### Opcodes
 
-`REQUIRE`, `INVOKE`, and `FOREACH` produce no value. Every other instruction writes its result to
-the destination register.
+`REQUIRE`, `INVOKE`, `FOREACH`, `REPEAT`, `EMIT`, and `SET_RETURN_DATA` produce no value, and the
+last three must set the destination to `0xff`. Every other instruction writes its result to the
+destination register.
 
 | Opcode | Name | Operands | Result |
 | ---: | --- | --- | --- |
@@ -215,7 +220,7 @@ the destination register.
 | 35 | `CAST_U64` | `a`: numeric register | `u64`; fails if the value does not fit |
 | 36 | `CAST_I64` | `a`: numeric register | `i64`; fails if the value does not fit |
 | 37 | `CAST_U128` | `a`: numeric register | `u128`; fails if the value does not fit |
-| 38 | `LOOP_INDEX` | none; inside `FOREACH` only | `u64`, the zero-based row index |
+| 38 | `LOOP_INDEX` | none; inside a loop only | `u64`, the zero-based row or pass index |
 | 40 | `REQUIRE` | `a`: `bool` register; the run fails if it is false | none |
 | 41 | `INVOKE` | `a`: CPI descriptor index; `b`: a `bool` guard register, or `0xff` for none | none |
 | 42 | `FOREACH` | `a`: body length in instructions; immediate: carry mask, one bit per register whose value survives each row | none |
@@ -224,21 +229,79 @@ the destination register.
 | 45 | `READ_U32` | as `READ_U64` | `u64` |
 | 46 | `READ_BOOL` | as `READ_U64`; fails unless the byte is 0 or 1 | `bool` |
 | 47 | `DERIVE_PDA` | `a`: the executable program account; immediate: packed range of 1 to 15 data segments used as seeds | `pubkey`; searches for the canonical bump |
-| 48 | `RETURN_DATA` | `a`: a read opcode (13 to 16 or 43 to 46) that selects width and type; immediate: byte offset | The read's type; must directly follow an `INVOKE` with no guard |
+| 48 | `RETURN_DATA` | `a`: a read opcode (13 to 16, 43 to 46, or 60) that selects width and type; immediate: byte offset | The read's type; must directly follow an `INVOKE` with no guard |
 | 49 | `MOVE` | `a`: source register | A copy of `a`; used to update carried registers |
 | 50 | `CREATE_PDA` | as `DERIVE_PDA`, plus `b`: a `u64` register holding the bump | `pubkey`; derives once, and fails with `InvalidPdaDerivation` if the bump exceeds 255 or the result is on the ed25519 curve (not a valid program address) |
+| 51 | `MUL_DIV` | `a`, `b`, `c`: three `u64` or three `u128` registers | That type: `a × b ÷ c` rounded down, with the product held exactly; fails on a zero `c` or a result that does not fit |
+| 52 | `MUL_DIV_CEIL` | as `MUL_DIV` | As `MUL_DIV`, rounded up |
+| 53 | `REM` | as `ADD` | That type: `a` mod `b`, with the sign of `a`; fails on a zero divisor or the `i64` minimum mod −1 |
+| 54 | `SHL` | `a`: a `u64` or `u128` register; `b`: a `u64` register, the shift | The type of `a`; fails rather than shift out a set bit |
+| 55 | `SHR` | as `SHL` | The type of `a`, rounded down; a shift of the full width or more gives 0 |
+| 56 | `BIT_AND` | `a`, `b`: two `u64` or two `u128` registers | That type |
+| 57 | `BIT_OR` | as `BIT_AND` | That type |
+| 58 | `BIT_XOR` | as `BIT_AND` | That type |
+| 59 | `POW10` | `a`: a `u64` register | `u128`, 10 to the power `a`; fails if `a` is above 38 |
+| 60 | `READ_I32` | as `READ_U64` | `i64`, sign-extended from 4 bytes |
+| 61 | `REPEAT` | `a`: body length in instructions; `b`: the `u64` count register, read once at the start; `c`: maximum passes, 1 to 255; immediate: carry mask, as `FOREACH` | none; fails with `LoopCountExceeded` if the count is above `c` |
+| 62 | `EMIT` | immediate: packed range of data segments, the first a literal tag | none; logs the encoded bytes as one `Program data:` field |
+| 63 | `SET_RETURN_DATA` | immediate: packed range of data segments | none; sets the encoded bytes as the run's return data |
+| 64 | `INSTRUCTION_COUNT` | `a`: the Instructions sysvar account | `u64`, the number of instructions in the transaction |
+| 65 | `INSTRUCTION_INDEX` | as `INSTRUCTION_COUNT` | `u64`, the index of the instruction running this template |
+| 66 | `INSTRUCTION_PROGRAM` | `a`: the sysvar account; `b`: a `u64` register, the instruction index | `pubkey`, that instruction's program |
+| 67 | `INSTRUCTION_ACCOUNT_COUNT` | as `INSTRUCTION_PROGRAM` | `u64`, how many accounts it names |
+| 68 | `INSTRUCTION_ACCOUNT` | as `INSTRUCTION_PROGRAM`, plus `c`: a `u64` register, the account position | `pubkey`, that account's key |
+| 69 | `INSTRUCTION_ACCOUNT_FLAGS` | as `INSTRUCTION_ACCOUNT` | `u64`: bit 0 signer, bit 1 writable |
+| 70 | `INSTRUCTION_DATA_LEN` | as `INSTRUCTION_PROGRAM` | `u64`, the length of its data |
+| 71 | `READ_INSTRUCTION_DATA` | as `INSTRUCTION_PROGRAM`, plus `c`: a `u64` register, the byte offset; immediate: a read opcode that selects width and type, as for `RETURN_DATA` | The read's type |
+| 72 | `READ_INSTRUCTION_BYTES` | as `READ_INSTRUCTION_DATA`, but the immediate is a length, 1 to 1,024 | `bytes` of exactly that length |
+| 73 | `READ_ACCOUNT_BYTES` | `a`: account reference; `b`: a `u64` register, the byte offset; immediate: a length, 1 to 1,024 | `bytes` of exactly that length; fails with `WritableAccountBytesRead` if the account is writable |
+| 74 | `BYTES_LEN` | `a`: a `bytes` register | `u64`, its length |
 
-Opcode 39 is unassigned. A `FOREACH` appears exactly once when the header declares a batch and
-never otherwise. Its body follows it directly and cannot contain another `FOREACH`.
+Opcodes 0 and 39 are unassigned, as is every number above 74.
 
-Read opcodes (13 to 16 and 43 to 46) with the dynamic-offset flag take their offset from the `u64`
-register in `b`, and must have a zero immediate. Without the flag, the immediate offset plus the
-read width must fit inside the account's declared minimum data length.
+Read opcodes (13 to 16, 43 to 46, and 60) with the dynamic-offset flag take their offset from the
+`u64` register in `b`, and must have a zero immediate. Without the flag, the immediate offset plus
+the read width must fit inside the account's declared minimum data length.
+
+#### Loops
+
+- A template holds at most eight loops, `FOREACH` and `REPEAT` counted together. Each sits at the
+  top level, and its body is the `a` instructions after it, which cannot include another loop.
+- Every `FOREACH` runs over the same batch rows, from the first. A template with a batch has at
+  least one `FOREACH`, and one without a batch has none.
+- A `REPEAT` needs a body, a maximum of at least 1, and a destination of `0xff`, and its body
+  cannot name a row account or row input. The verifier rejects a `REPEAT` that breaks these rules,
+  or a ninth loop, with `InvalidLoop`.
+- The worst-case CPI count adds, for each loop, the `INVOKE`s in its body times its maximum (the
+  header's maximum batch rows for `FOREACH`, `c` for `REPEAT`), plus the `INVOKE`s outside loops.
+  It must be at most 64.
+
+#### Outputs
+
+- `EMIT` and `SET_RETURN_DATA` encode their data segments the way a CPI encodes its data. `dst`,
+  `a`, `b`, and `c` must be `0xff`, the range must name at least one segment, and the worst-case
+  length, counting a `bytes` register at its maximum, must be at most 1,024 bytes.
+- An `EMIT`'s first segment must be a literal of at least 4 bytes that does not start with `BEV`,
+  the run event's tag family.
+- `SET_RETURN_DATA` may appear once, outside every loop, with no `INVOKE` at a later index, because
+  invoking a program clears return data.
+- The verifier rejects a template that breaks these rules with `InvalidOutput`.
+
+#### Introspection and byte reads
+
+- Opcodes 64 to 72 name, in `a`, a fixed account whose constraint pins its address to the
+  Instructions sysvar. The verifier rejects any other account with `InvalidIntrospection`.
+- Indexes, positions, and offsets are `u64` registers. An index, position, or byte range that the
+  transaction or account does not hold fails the run with `InstructionOutOfRange`.
+- `READ_ACCOUNT_BYTES` may name any declared account, including a row account inside `FOREACH`,
+  but only one that is read-only in this instruction.
+- Byte reads return slices of the sysvar's or the account's data rather than copies. Neither can
+  change while the instruction runs.
 
 ## CPI descriptors
 
 Each CPI the template can make is described once by a 12-byte descriptor. An `INVOKE` names a
-descriptor, and a loop can invoke the same descriptor on every row.
+descriptor, and a loop can invoke the same descriptor on every pass.
 
 | Offset | Bytes | Field |
 | ---: | ---: | --- |
@@ -265,8 +328,9 @@ Each record is 2 bytes:
 
 ### Data segments
 
-Each segment is 8 bytes. CPI descriptors use segments to build instruction data, and
-`DERIVE_PDA` and `CREATE_PDA` use them as seeds.
+Each segment is 8 bytes. CPI descriptors use segments to build instruction data, `EMIT` and
+`SET_RETURN_DATA` use them to build their output, and `DERIVE_PDA` and `CREATE_PDA` use them as
+seeds.
 
 | Offset | Bytes | Field |
 | ---: | ---: | --- |
@@ -318,19 +382,24 @@ When the header sets `PROGRAM_FLAG_EMIT_EVENT`, a successful run logs this 47-by
 | Field | Meaning |
 | --- | --- |
 | `version` | Bytecode version, `1` |
-| `iterations` | Batch rows processed |
-| `expanded` | `INVOKE` instructions reached, counting each row separately |
+| `iterations` | Batch rows in the run. `REPEAT` passes are not counted |
+| `expanded` | `INVOKE` instructions reached, counting each loop pass separately |
 | `executed` | Bitmask, one bit per invoke reached, in order and counting from bit 0. A bit is set when that invoke ran, and clear when its guard skipped it |
 | `template address` | The template account that ran |
+
+Each `EMIT` also logs a `Program data:` line. Its tag cannot start with `BEV`, so an `EMIT` line
+cannot be mistaken for this event.
 
 ## Why this is zero-copy
 
 Parsing a payload copies nothing: the parser returns slices that point into the template account's
 memory for every record table. Running a template allocates its buffers once per run: the decoded
-inputs, the register file, and one set of buffers for building CPIs, reused by every CPI in the
-run. PDA seeds are assembled on the stack. Heap use therefore does not grow with the number of
-CPIs a run performs. "Zero-copy" describes how the stored payload is read, not an execution engine
-that never allocates.
+inputs, the register file, one set of buffers for building CPIs, reused by every CPI in the run,
+one register snapshot shared by every loop, and, at the first `EMIT` or `SET_RETURN_DATA`, one
+1,024-byte output buffer that every later output reuses. PDA seeds are assembled on the stack, and
+byte reads borrow the sysvar's or the account's data. Heap use therefore does not grow with the
+number of CPIs, loops, or outputs a run performs. "Zero-copy" describes how the stored payload is
+read, not an execution engine that never allocates.
 
 The example payloads in `fixtures/` are produced by the TypeScript compiler. The Rust tests verify
 them and run them against the program, and check that the Rust builder reproduces

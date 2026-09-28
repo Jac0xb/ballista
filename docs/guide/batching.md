@@ -114,13 +114,14 @@ The caller passes each row's accounts together, in the order `row` declares them
 wallet, ATA, and so on.
 
 A row holds 1 to 8 accounts. The accounts passed for rows must make up a whole number of rows, and
-the row count must lie between `minIterations` and `maxIterations`. There are no nested loops, no
-backward jumps, and no `while` loops that run until a condition changes. Steps outside the loop can
-run before it and after it.
+the row count must lie between `minIterations` and `maxIterations`. A template can have up to eight
+loops, run one after another. There are no nested loops, no backward jumps, and no `while` loops
+that run until a condition changes. Steps outside a loop can run before it and after it.
 
 ::: warning Count CPIs, not just rows
-A template can make at most 64 CPIs, counted for the worst case: the calls outside the loop, plus
-the calls in the loop body times `maxIterations`. Calls with a `when` condition count too. A 30-row
+A template can make at most 64 CPIs, counted for the worst case: the calls outside loops, plus
+each loop's calls times its maximum (`maxIterations` for `forEach`, `max` for `repeat`). Calls with
+a `when` condition count too. A 30-row
 loop with two calls counts as 60; a third call in the loop body would make 90, and finalization
 would reject the template. The stride-two example above makes two calls per row, so its 8 rows count
 as 16.

@@ -26,7 +26,8 @@ chain, reads accounts as it goes, and decides:
 - [Amounts read at run time](/guide/runtime-values): read a balance, then spend it.
 - [Conditional calls](/guide/conditional): skip a call instead of failing the
   transaction.
-- [Loops that decide per row](/guide/loops): each row decides from what it finds.
+- [Loops over rows and counts](/guide/loops): each row decides from what it finds, or steps repeat
+  a number of times read during the run.
 - [Safety guardrails](/guide/guardrails): check the result after a call returns, and undo
   everything if the check fails.
 

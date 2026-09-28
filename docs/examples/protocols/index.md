@@ -1,12 +1,13 @@
 # Protocol templates
 
-Eleven example templates that work with real Solana protocols: Jupiter, Kamino, marginfi, Orca,
-Pyth and Jito. Each one works with a value that only exists while the transaction runs, such as what
-a swap returned or what a position has earned. The source files are in
-`clients/js/examples/protocols/`.
+Twelve example templates. Eleven work with real Solana protocols: Jupiter, Kamino, marginfi, Orca,
+Pyth and Jito. The twelfth settles a trade at a price someone signed off chain. Each one works with a
+value that only exists while the transaction runs, such as what a swap returned or what a position
+has earned. The source files are in `clients/js/examples/protocols/`.
 
-All eleven have been run as real transactions against the protocols' own programs, copied from
-mainnet. [What has been tested](#what-has-been-tested) has the details. Treat them as starting
+The eleven protocol templates have been run as real transactions against the protocols' own
+programs, copied from mainnet, and the signed quote against Solana's own Ed25519 and token
+programs. [What has been tested](#what-has-been-tested) has the details. Treat them as starting
 points, and check them against the protocols' current programs before you use them.
 
 | Template | Protocol | Decided during the run |
@@ -15,6 +16,7 @@ points, and check them against the protocols' current programs before you use th
 | [Swap checked against an oracle](/examples/protocols/jupiter-oracle-swap) | Jupiter + Pyth | Whether the swap paid at least the oracle price, less a tolerance |
 | [Sell a whole balance](/examples/protocols/token-sweep) | SPL Token → Jupiter | How much there is to sell |
 | [Pay a Jito tip only from profit](/examples/protocols/jito-tip) | Jupiter → Jito | Whether the trade's profit covered the tip |
+| [Settle at a signed quote](/examples/protocols/signed-quote) | Ed25519 → SPL Token | Whether the maker signed this quote for this taker, and it hasn't expired |
 | [Act only on a fresh price](/examples/protocols/pyth-gate) | Pyth → Jupiter | Whether the price is recent, precise and in range |
 | [Compound the fees you collected](/examples/protocols/orca-compound) | Orca | How much the position had earned |
 | [Harvest only the positions that earned](/examples/protocols/orca-harvest) | Orca | Which positions have earned enough to collect |
@@ -30,10 +32,12 @@ points, and check them against the protocols' current programs before you use th
   Ballista program runs before it stores a template (`common/src/template/verify.rs`).
 - **Rust.** Each Rust template is byte-identical to the TypeScript one, and each Rust run passes
   the accounts, flags and inputs its template declares (`clients/rust/tests/protocol_templates.rs`).
-- **Running against the protocols.** Every template runs as real signed transactions against the
-  protocols' own programs in [LiteSVM](https://github.com/LiteSVM/litesvm), a local Solana runtime.
-  The programs and accounts are copied from mainnet at a single slot, so the tests never touch the
-  network (`tests/protocols/`). Each page's "What has been tested" says what its runs showed.
+- **Running against the protocols.** The eleven protocol templates run as real signed transactions
+  against the protocols' own programs in [LiteSVM](https://github.com/LiteSVM/litesvm), a local
+  Solana runtime. The programs and accounts are copied from mainnet at a single slot, so the tests
+  never touch the network (`tests/protocols/`). The signed quote runs in Mollusk, a harness that runs
+  Solana programs without a validator, with the real Ed25519 precompile and token program
+  (`tests/ballista/`). Each page's "What has been tested" says what its runs showed.
 - **Account offsets.** The Orca, Pyth and SPL Token offsets are also checked against real devnet
   accounts by an opt-in test; see [reading offsets](#reading-offsets-from-an-account). The Kamino
   and marginfi templates don't read those protocols' accounts. They read SPL token accounts: their

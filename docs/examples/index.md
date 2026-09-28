@@ -23,8 +23,9 @@ result without Ballista:
 
 ## Protocol templates {#live-protocols}
 
-Templates that work with Jupiter, Kamino, marginfi, Orca, Pyth and Jito. All of them have been run
-as real transactions against the protocols' own programs, copied from mainnet. See
+Templates that work with Jupiter, Kamino, marginfi, Orca, Pyth and Jito, plus one that settles a
+trade at a signed quote. All of them have been run as real transactions: the protocol ones against
+the protocols' own programs, copied from mainnet. See
 [what has been tested](/examples/protocols/#what-has-been-tested).
 
 | Recipe | Protocol | Decided during the run |
@@ -40,6 +41,7 @@ as real transactions against the protocols' own programs, copied from mainnet. S
 | [Harvest](/examples/protocols/orca-harvest) | Orca | Which positions have earned enough to collect |
 | [Price gate](/examples/protocols/pyth-gate) | Pyth → Jupiter | Whether the price is recent, precise and in range |
 | [Conditional tip](/examples/protocols/jito-tip) | Jupiter → Jito | Whether the trade's profit covered the tip |
+| [Signed quote](/examples/protocols/signed-quote) | Ed25519 → SPL Token | Whether the maker signed this quote for this taker, and it hasn't expired |
 
 ## Composition
 

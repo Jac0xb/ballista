@@ -2662,6 +2662,10 @@ mod tests {
             }
         }
         assert_eq!(registers[0], U64(7));
+        assert!(
+            scratch.output.is_none(),
+            "the reject path, which every loop entry takes, allocates no output buffer"
+        );
     }
 
     /// `EMIT` and `SET_RETURN_DATA` encode into their own buffer. `data` may hold an invocation
@@ -2681,6 +2685,10 @@ mod tests {
         let bytes = builder.build().unwrap();
         let program = ProgramView::parse(&bytes).unwrap();
         let mut scratch = Scratch::new(&program);
+        assert!(
+            scratch.output.is_none(),
+            "no buffer before the run's first output"
+        );
         scratch.data.extend_from_slice(b"cached payload");
         let mut registers = vec![U64(0x0102), Pubkey([7; 32])];
 

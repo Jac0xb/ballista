@@ -2868,6 +2868,13 @@ mod tests {
         check(
             &|builder, amount| {
                 builder.emit_data(&[Segment::Register(DATA_REG_U64, amount)]);
+                builder.segments_mut()[2].offset_le = [1, 0];
+            },
+            TemplateError::InvalidDataSegment(2),
+        );
+        check(
+            &|builder, amount| {
+                builder.emit_data(&[Segment::Register(DATA_REG_U64, amount)]);
                 builder.segments_mut()[2].reserved = [0, 1];
             },
             TemplateError::InvalidDataSegment(2),
@@ -2876,33 +2883,42 @@ mod tests {
 
     #[test]
     fn output_records_name_a_non_empty_range_and_no_register() {
-        // The output names both segments in the table: its tag, then the amount.
-        let with_output = |mutate: &dyn Fn(&mut InstructionRecord)| {
+        // Either output names both segments in the table: a tag, then the amount.
+        let with_output = |opcode: u8, mutate: &dyn Fn(&mut InstructionRecord)| {
             let mut builder = ProgramBuilder::new();
             let amount = builder.const_u64(1);
             let tag = builder.blob(b"TAG1");
-            let at = builder.emit_data(&[
-                Segment::Literal(tag),
-                Segment::Register(DATA_REG_U64, amount),
-            ]);
+            let parts = [Segment::Literal(tag), Segment::Register(DATA_REG_U64, amount)];
+            let at = if opcode == OP_EMIT {
+                builder.emit_data(&parts)
+            } else {
+                builder.set_return_data(&parts)
+            };
             mutate(&mut builder.instructions_mut()[at]);
             (verify_builder(&builder).map(|_| ()), at)
         };
-        assert_eq!(with_output(&|_| {}).0, Ok(()));
-        for mutate in [
-            (|record: &mut InstructionRecord| record.dst = 0) as fn(&mut InstructionRecord),
-            |record| record.a = 0,
-            |record| record.b = 0,
-            |record| record.c = 0,
-            |record| record.immediate_le = range_immediate(0, 0).to_le_bytes(),
-            |record| record.immediate_le = range_immediate(2, 1).to_le_bytes(),
-            |record| record.immediate_le = range_immediate(0, 3).to_le_bytes(),
-        ] {
-            let (outcome, at) = with_output(&mutate);
-            assert_eq!(outcome, Err(TemplateError::InvalidInstruction(at)));
+        for opcode in [OP_EMIT, OP_SET_RETURN_DATA] {
+            assert_eq!(with_output(opcode, &|_| {}).0, Ok(()), "opcode {opcode}");
+            for mutate in [
+                (|record: &mut InstructionRecord| record.dst = 0) as fn(&mut InstructionRecord),
+                |record| record.a = 0,
+                |record| record.b = 0,
+                |record| record.c = 0,
+                |record| record.immediate_le = range_immediate(0, 0).to_le_bytes(),
+                |record| record.immediate_le = range_immediate(2, 1).to_le_bytes(),
+                |record| record.immediate_le = range_immediate(0, 3).to_le_bytes(),
+            ] {
+                let (outcome, at) = with_output(opcode, &mutate);
+                assert_eq!(
+                    outcome,
+                    Err(TemplateError::InvalidInstruction(at)),
+                    "opcode {opcode}"
+                );
+            }
+            let (outcome, at) =
+                with_output(opcode, &|record| record.flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET);
+            assert_eq!(outcome, Err(TemplateError::InvalidFlags(at)), "opcode {opcode}");
         }
-        let (outcome, at) = with_output(&|record| record.flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET);
-        assert_eq!(outcome, Err(TemplateError::InvalidFlags(at)));
     }
 
     /// A log line names the program that wrote it, not the template, so an `EMIT` starts with a

@@ -26,6 +26,7 @@ import {
   ensureAssociatedTokenAccount,
   expression,
   step,
+  rateLimit,
   systemTransfer,
   type Template,
 } from './index.js';
@@ -572,6 +573,36 @@ export const fixtures: Record<string, () => Template> = {
       ],
     });
   },
+  /**
+   * A transfer of `amount` lamports from the caller, capped per caller at 1,000,000 lamports that
+   * refill at 10 a second. The Mollusk suite runs it across a clock change.
+   */
+  'rate-limited-transfer': () =>
+    defineTemplate({
+      inputs: { amount: { type: 'u64' } },
+      registries: { limits: { spent: 'u64', lastSpend: 'i64' } },
+      accounts: {
+        caller: { signer: true, writable: true },
+        recipient: { writable: true },
+        limits: account.registry('limits', { key: expression.accountKey('caller'), payer: 'caller' }),
+        systemProgram: account.systemProgram(),
+      },
+      steps: [
+        ...rateLimit({
+          registry: 'limits',
+          cap: expression.u64(1_000_000),
+          refillPerSecond: expression.u64(10),
+          amount: expression.input('amount'),
+        }),
+        systemTransfer({
+          systemProgram: account.fixed('systemProgram'),
+          from: account.fixed('caller'),
+          to: account.fixed('recipient'),
+          lamports: expression.input('amount'),
+          label: 'pay',
+        }),
+      ],
+    }),
 
   'signed-quote-settlement': () => signedQuoteSettlement,
 

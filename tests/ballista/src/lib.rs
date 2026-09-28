@@ -2909,6 +2909,7 @@ mod tests {
             "output" => include_str!("../../../fixtures/output.hex"),
             "loops" => include_str!("../../../fixtures/loops.hex"),
             "introspection" => include_str!("../../../fixtures/introspection.hex"),
+            "rate-limited-transfer" => include_str!("../../../fixtures/rate-limited-transfer.hex"),
             "signed-quote-settlement" => {
                 include_str!("../../../fixtures/signed-quote-settlement.hex")
             }
@@ -3800,6 +3801,66 @@ mod tests {
                     assert!(result.program_result.is_ok(), "a CPI to Ballista that leaves the entry out runs: {result:#?}");
                 }
             }
+        }
+
+        /// The kind and the source label of a failed run of fixture `name`.
+        fn labeled(result: &mollusk_svm::result::InstructionResult, name: &str) -> (u32, String) {
+            let (kind, pc) = failure(result);
+            let manifest: serde_json::Value =
+                serde_json::from_str(include_str!("../../../fixtures/manifest.json")).expect("manifest");
+            let label = manifest[name]["sourceMap"]
+                .as_array()
+                .and_then(|entries| entries.iter().find(|entry| entry["pc"] == pc))
+                .and_then(|entry| entry["label"].as_str())
+                .unwrap_or_default()
+                .to_owned();
+            (kind, label)
+        }
+
+        #[test]
+        fn a_rate_limited_transfer_spends_within_its_cap_and_refills_with_time() {
+            const REQUIREMENT_FAILED: u32 = 6015;
+            let caller = Pubkey::new_unique();
+            let recipient = Pubkey::new_unique();
+            let (mut context, template) = setup(&fixture("rate-limited-transfer"), 20, &[caller, recipient]);
+            let entry = entry_address(&template, 0, &caller);
+            let pay = |context: &MolluskContext<HashMap<Pubkey, Account>>, amount: u64| {
+                // The fixture's account order: caller, recipient, limits, systemProgram.
+                let metas = vec![
+                    AccountMeta::new(caller, true),
+                    AccountMeta::new(recipient, false),
+                    AccountMeta::new(entry, false),
+                    AccountMeta::new_readonly(system_program::id(), false),
+                ];
+                context.process_instruction(&run_instruction(template, metas, &amount.to_le_bytes()))
+            };
+            let rent = context.mollusk.sysvars.rent.minimum_balance(72 + 16);
+
+            // The first run creates the entry; the caller pays its rent and the transfer.
+            let result = pay(&context, 600_000);
+            assert!(result.program_result.is_ok(), "{result:#?}");
+            assert_eq!(lamports(&context, caller), 1_000_000_000 - rent - 600_000);
+            assert_eq!(account(&context, entry).owner, ID);
+            // Up to the cap exactly.
+            assert!(pay(&context, 400_000).program_result.is_ok());
+            assert_eq!(lamports(&context, recipient), 1_000_000_000 + 1_000_000);
+            // One lamport over.
+            let result = pay(&context, 1);
+            assert_eq!(labeled(&result, "rate-limited-transfer"), (REQUIREMENT_FAILED, "withinRateLimit".into()));
+
+            // Ten seconds refill 100 lamports: 101 is still over, 100 lands.
+            context.mollusk.sysvars.clock.unix_timestamp += 10;
+            let result = pay(&context, 101);
+            assert_eq!(labeled(&result, "rate-limited-transfer"), (REQUIREMENT_FAILED, "withinRateLimit".into()));
+            assert!(pay(&context, 100).program_result.is_ok());
+            let data = account(&context, entry).data;
+            assert_eq!(data[72..80], 1_000_000u64.to_le_bytes());
+            assert_eq!(data[80..88], 1_800_000_010i64.to_le_bytes());
+
+            // A clock that steps back refills nothing, and does not fail the run on its own.
+            context.mollusk.sysvars.clock.unix_timestamp -= 5;
+            let result = pay(&context, 1);
+            assert_eq!(labeled(&result, "rate-limited-transfer"), (REQUIREMENT_FAILED, "withinRateLimit".into()));
         }
     }
 }

@@ -1705,3 +1705,68 @@ describe('ed25519Signature', () => {
     );
   });
 });
+
+describe('registries: schema', () => {
+  const limits = () =>
+    defineTemplate({
+      registries: { limits: { spent: 'u64', lastSpend: 'i64' } },
+      accounts: {
+        caller: { signer: true, writable: true },
+        limits: account.registry('limits', { key: expression.accountKey('caller'), payer: 'caller' }),
+        systemProgram: account.systemProgram(),
+      },
+      steps: [step.setRegistry('limits', 'spent', expression.u64(1))],
+    });
+
+  test('declares registries, registry accounts and the System program', () => {
+    const template = limits();
+    expect(template.registries).toEqual({ limits: { spent: 'u64', lastSpend: 'i64' } });
+    expect(template.accounts.limits).toMatchObject({
+      writable: true,
+      signer: false,
+      registry: { name: 'limits', payer: 'caller', key: expression.accountKey('caller') },
+    });
+    expect(template.accounts.systemProgram).toMatchObject({ executable: true, address: new Uint8Array(32) });
+    expect(expression.accountKey('caller')).toEqual(expression.accountField(account.fixed('caller'), 'key'));
+    expect(expression.registry('limits', 'spent')).toEqual({ kind: 'registry', account: 'limits', field: 'spent' });
+    expect(step.setRegistry('limits', 'spent', expression.u64(2), 'charge')).toEqual({
+      kind: 'setRegistry',
+      account: 'limits',
+      field: 'spent',
+      value: expression.u64(2),
+      label: 'charge',
+    });
+    expect(account.registry('limits', { payer: 'caller' })).toEqual({
+      writable: true,
+      registry: { name: 'limits', payer: 'caller' },
+    });
+  });
+
+  test('a registry holds 1 to 512 bytes of the five writable types, and a template at most 8', () => {
+    const withRegistries = (registries: Record<string, Record<string, string>>) => () =>
+      defineTemplate({
+        registries: registries as never,
+        accounts: {},
+        steps: [step.require(expression.bool(true))],
+      });
+    expect(withRegistries({ empty: {} })).toThrow(/1 to 512 bytes/);
+    expect(withRegistries({ narrow: { count: 'u8' } })).toThrow();
+    expect(withRegistries({ bytes: { blob: 'bytes' } })).toThrow();
+    const sixteenKeys = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`k${i}`, 'pubkey']));
+    expect(withRegistries({ full: sixteenKeys })).not.toThrow();
+    expect(withRegistries({ over: { ...sixteenKeys, flag: 'bool' } })).toThrow(/1 to 512 bytes/);
+    const nine = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`r${i}`, { flag: 'bool' }]));
+    expect(withRegistries(nine)).toThrow(/at most 8 registries/);
+  });
+
+  test('registry accounts are fixed accounts', () => {
+    expect(() =>
+      defineTemplate({
+        registries: { limits: { spent: 'u64' } },
+        accounts: { caller: { signer: true, writable: true } },
+        batch: { maxIterations: 2, row: { entry: account.registry('limits', { payer: 'caller' }) } },
+        steps: [step.forEach([step.require(expression.bool(true))])],
+      }),
+    ).toThrow(/registry accounts are fixed accounts/);
+  });
+});

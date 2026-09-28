@@ -600,6 +600,8 @@ class Compiler {
         }
       } else if (current.kind === 'emit' || current.kind === 'setReturnData') {
         this.compileOutput(current, loop, bindings);
+      } else if (current.kind === 'setRegistry') {
+        throw new TypeError('setRegistry is not compiled yet');
       } else {
         this.compileInvoke(current, loop, bindings);
       }
@@ -986,6 +988,7 @@ class Compiler {
       requireType(value, 'bytes', 'bytesLength');
       return this.emit(opcode.bytesLength, 'u64', 0, value.register);
     }
+    if (current.kind === 'registry') throw new TypeError('registry reads are not compiled yet');
     if (current.kind === 'select') {
       const condition = this.compileExpression(current.condition, loop, bindings);
       const ifTrue = this.compileExpression(current.ifTrue, loop, bindings);

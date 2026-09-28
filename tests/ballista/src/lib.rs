@@ -2177,9 +2177,9 @@ mod tests {
         let creator = Pubkey::new_unique();
         let payer = Pubkey::new_unique();
         let recipient = Pubkey::new_unique();
-        let holders: Vec<Pubkey> = (0..4).map(|_| Pubkey::new_unique()).collect();
+        let holders: Vec<Pubkey> = (0..5).map(|_| Pubkey::new_unique()).collect();
         let mut accounts = funded_accounts([creator, payer, recipient], 10_000_000_000);
-        for (holder, lamports) in holders.iter().zip([100u64, 200, 300, 400]) {
+        for (holder, lamports) in holders.iter().zip([100u64, 200, 300, 400, 301]) {
             accounts.insert(*holder, Account::new(lamports, 0, &system_program::id()));
         }
         let context = context(accounts);
@@ -2227,6 +2227,13 @@ mod tests {
         // A row holding more than half of the total fails the second row loop's check.
         let lopsided = run(1, &[holders[0], holders[1], holders[3]]);
         assert_eq!(decode_kind(&lopsided), Some(6015), "{lopsided:#?}");
+
+        // The total is the rows' lamports and nothing more: twice 301 is one over 100 + 200 + 301.
+        // Both accumulators start from `u64(0)`. Had they shared that constant's register, the
+        // total would start from the 6 that four rounds leave in `indexSum`, and this run would
+        // pass.
+        let barely_over = run(4, &[holders[0], holders[1], holders[4]]);
+        assert_eq!(decode_kind(&barely_over), Some(6015), "{barely_over:#?}");
     }
 
     /// Eight loops over sixty-four registers. The heap is a 32 KiB bump allocator that never frees;

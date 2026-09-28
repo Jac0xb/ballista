@@ -11,26 +11,20 @@
 ## Verdict
 
 As written, the template could not pay a tip out of a Jupiter strategy. It measured the searcher's
-lamports around `route`, and `route` never moves them. Fixed in 6682f45: it now measures the
-searcher's wrapped-SOL account, and the strategy is a round trip that starts and ends there. With
-that fix, all three required runs behave as specified against the real programs.
+lamports around `route`, and `route` never moves them. Fixed: it now measures the searcher's
+wrapped-SOL account, and the strategy is a round trip that starts and ends there. With that fix,
+all three required runs behave as specified against the real programs.
 
 ## What the real programs showed
 
 1. **The searcher's lamports do not move inside `route`.** `route` moves only token accounts. The
-   Swap API wraps SOL and unwraps it in separate instructions before and after it. Each leg run
-   through the old template:
-
-   | Leg | Tip 0 | Tip 1 |
-   | --- | --- | --- |
-   | Leg 0 | lands: 79,725 CU, 810 bytes | fails at `profitCoversTheTip` |
-   | Leg 1 | lands: 70,496 CU, 729 bytes | fails at `profitCoversTheTip` |
-
-   After the whale's sale below, the round trip really makes 1,764,764 lamports. The old template
-   still refused a 1-lamport tip, and Jito's 1,000-lamport floor, at `profitCoversTheTip`. It paid
-   only a zero tip (118,948 CU, 935 bytes). Pinned by `a_route_moves_wrapped_sol_and_no_lamports`:
-   sent to Jupiter directly, a profitable round trip grows the wrapped SOL and changes the lamports
-   by exactly the fee.
+   Swap API wraps SOL and unwraps it in separate instructions before and after it, so a template
+   that reads the searcher's lamports around `route` sees no profit even when the route makes one.
+   After the whale's sale below, the round trip really makes 1,764,764 lamports, but the old
+   template refused a 1-lamport tip, and Jito's 1,000-lamport floor, at `profitCoversTheTip`,
+   paying only a zero tip. Pinned by `a_route_moves_wrapped_sol_and_no_lamports`: sent to Jupiter
+   directly, a profitable round trip grows the wrapped SOL and changes the lamports by exactly the
+   fee.
 
 2. **The loss path.** The research predicted that a loss would underflow at `measureProfit` with
    ArithmeticOverflow. With lamports as the measure, a Jupiter strategy could not even produce the
@@ -46,13 +40,14 @@ that fix, all three required runs behave as specified against the real programs.
    - then leg 0's step accounts, then leg 1's.
 
    Jupiter runs it. Step 2 spends exactly what step 1 produced, and the searcher's USDC ends where
-   it started. Alone (compute budget and `route`), it costs 88,457 CU and 710 bytes.
+   it started. Alone (compute budget and `route`), it costs 88,457 CU and 710 bytes, measured at
+   slot 451,100,151 by the ignored `measure_the_findings_numbers`.
 
    Jupiter's slippage check applies to the last step's gross output (999,749,340), not to the net
    change of the account. With source equal to destination, that net change is −250,660.
-   `quoted_out_amount = in_amount` with 0 bps fails with 6001 `SlippageToleranceExceeded`. Jupiter's
-   own check could therefore enforce "no loss", but its failure would carry Jupiter's code, not the
-   template's label.
+   `quoted_out_amount = in_amount` with 0 bps fails with 6001 `SlippageToleranceExceeded`: Jupiter's
+   own check could therefore enforce "no loss", but its failure carries Jupiter's code, not the
+   template's label. Pinned by `jupiters_own_slippage_check_can_reject_a_loss`.
 
 4. **Jupiter does not tie `route`'s source and destination accounts to its steps.** It checks the
    two positions like this:
@@ -68,9 +63,6 @@ that fix, all three required runs behave as specified against the real programs.
    `jupiter_does_not_tie_the_route_s_source_and_destination_to_its_steps`. The template relies
    only on the balance it reads itself.
 
-   An earlier draft of this note, and of `bd186b5`'s message, called 6024 a source-mint check. It
-   is a balance check.
-
 5. **Tip accounts.** The snapshot's tip account is owned by the Tip Payment program (`T1pyy…`) and
    has 8 bytes of data. A plain System transfer to it lands. The template now pins
    `jitoTip.owner` to that program, so a wallet passed as the tip account fails with
@@ -78,8 +70,8 @@ that fix, all three required runs behave as specified against the real programs.
 
 ## The design chosen
 
-The task offered three options. This change uses **(a), one joined `route`**, together with
-**measuring the wrapped-SOL account that is its source and destination**.
+This change uses **(a), one joined `route`**, together with **measuring the wrapped-SOL account
+that is its source and destination**.
 
 - **(a)** It works against the deployed Jupiter. It is one invoke with one group, and Jupiter
   chains the amounts exactly: step 2 takes 100% of what step 1 produced.
@@ -108,16 +100,22 @@ The only state written directly is the whale's wallet, under write rule 1: its S
 wrapped SOL, and an empty USDC account. Every other change goes through Raydium, Meteora, Jupiter
 and Ballista.
 
-| Whale sells | Raydium tick | Round trip on 1 SOL |
-| --- | --- | --- |
-| — | −20950 | −250,660 |
-| 100 SOL | −20954 | +153,077 |
-| 300 SOL | −20962 | +958,406 |
-| 500 SOL (the tests) | −20970 | **+1,764,764** |
+| Whale sells | Round trip on 1 SOL |
+| --- | --- |
+| — | −250,660 |
+| 100 SOL | +153,077 |
+| 300 SOL | +958,406 |
+| 500 SOL (the tests) | **+1,764,764** |
 
-A 500 SOL sale costs 165,069 CU, so the whale's transaction asks for 400,000 CU. The sale stays
-inside the tick array [−21000, −20941], which holds the current tick and is the only array below
-the price that the snapshot has.
+The "—" and 500 SOL rows are pinned by
+`a_losing_round_trip_fails_at_the_requirement_rather_than_underflowing` and
+`a_backrun_pays_the_tip_out_of_its_profit`; the 100 and 300 SOL rows are measured at slot
+451,100,151 by the ignored `measure_the_findings_numbers`.
+
+A 500 SOL sale costs 165,219 CU, measured the same way, so the whale's transaction asks for
+`WHALE_SALE_COMPUTE_UNIT_LIMIT` (400,000) CU. The sale stays inside the tick array
+[−21000, −20941], which holds the current tick and is the only array below the price that the
+snapshot has.
 
 ## Runs
 
@@ -144,7 +142,7 @@ The template payload grew from 424 to 628 bytes. The run passes 46 runtime accou
   0 received, and pass `fillBeatTheOracle` without checking anything. That matters for the threat
   its header names, a route built by someone other than the signer. `tokenSweepIntoSwap` fails
   safe in the same case: `saleMetTheQuote` and `nothingMeaningfulLeftBehind` both need the
-  measured accounts to move. Worth verifying in Task 5's suite.
+  measured accounts to move.
 - **Only single-step legs can be joined.** The test's `round_trip` needs each leg to be one step.
   A step ends in its two index bytes, but Jupiter's `Swap` enum before them has variants of
   different lengths, so a longer plan cannot be renumbered without decoding it. The SDK has no

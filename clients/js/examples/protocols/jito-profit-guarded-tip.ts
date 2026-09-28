@@ -2,40 +2,22 @@
  * Pay a Jito tip only out of an arbitrage that actually worked.
  *
  * Jito's own advice is to keep the tip in the same transaction as the strategy, "this way if the
- * transaction fails, you don't pay the Jito tip". That only helps when the strategy *fails*. An
- * arbitrage that succeeds but comes out thinner than the tip still pays the tip in full, and a
- * transaction cannot compare its own profit against its own tip.
- *
- * This template can. The strategy is a Jupiter `route` that starts and ends in the searcher's
- * wrapped-SOL account: a round trip such as SOL → USDC → SOL. The template reads that account's
- * balance, runs the route, and refuses to continue unless the balance grew by the tip plus a
- * margin. A run that misses the bar reverts before the tip is transferred.
- *
- * Profit is measured on the wrapped-SOL account, not on the searcher's lamports, because that is
- * where it lands. `route` moves token accounts only: the Swap API wraps SOL before it and unwraps
- * it after, in instructions of their own, so the searcher's lamports do not move while the route
- * runs. Wrapped SOL is counted in lamports, the tip's own unit, so the two compare without a
- * price.
- *
- * The check adds instead of subtracting: it requires `after ≥ before + tip + margin`. A round trip
- * that lost SOL fails that same requirement, rather than underflowing on the way to it.
+ * transaction fails, you don't pay the Jito tip" — but a strategy that succeeds thinner than the
+ * tip still pays it in full, and a transaction cannot compare its own profit to its own tip. This
+ * template can: the strategy is a Jupiter `route` that starts and ends in the searcher's
+ * wrapped-SOL account, and it refuses to pay the tip unless that account grew by the tip plus
+ * `minimumEdge`.
  *
  * Jupiter's API refuses a quote whose input and output mints are the same, so a round trip is
- * quoted as two legs, SOL for USDC and then that output back to SOL, and joined into one `route`.
- * The second leg's plan steps follow the first's, renumbered to start from the first leg's output
- * index, so that the second leg spends exactly what the first produced; its accounts follow the
- * first leg's. Jupiter does not check that its steps move the source and destination accounts it
- * is given: it requires only that the source hold at least `in_amount` and that the destination
- * hold the output mint. So the route must be built to start and end in this account, and the
- * template relies only on the balance it measures.
+ * quoted as two legs and joined here into one `route`. Jupiter does not tie a route's source and
+ * destination to the accounts its steps move, so the route must be built to start and end in them
+ * regardless; only single-step legs can be joined this way, since a step's plan index sits right
+ * after a `Swap` enum whose variants differ in length.
  *
- * The tip amount is a run input, so it is decided before signing exactly like an ordinary tip.
- * Ballista could instead compute it as a share of realized profit — the tip is a plain SOL
- * transfer and Jito accepts one made by CPI — but the block engine is closed source and the
- * public write-ups disagree on whether a runtime-computed amount is scored at its simulated
- * value in the auction or read from the instruction. Until that is settled, bidding a fixed
- * amount and guaranteeing you only pay it when you earned it is the version that cannot
- * misbehave.
+ * The tip is a fixed run input, not a share of profit computed at run time: the block engine is
+ * closed source, and it is unsettled whether a runtime-computed amount is scored at its simulated
+ * value or read from the instruction. Bidding fixed and paying only when you earned it cannot
+ * misbehave either way.
  */
 import {
   SYSTEM_PROGRAM_ADDRESS_BYTES,

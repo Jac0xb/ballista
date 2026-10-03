@@ -9,6 +9,7 @@ mod profile;
 
 #[cfg(test)]
 mod tests {
+    mod compiler_fuzz;
     mod property_findings;
     mod register_reuse;
 

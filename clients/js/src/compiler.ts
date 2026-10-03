@@ -340,6 +340,22 @@ export interface CompileStats {
   accountGroups: number;
 }
 
+/**
+ * Test-only options for `compileTemplate`; not part of the supported API, and no template needs
+ * them.
+ * @internal
+ */
+export interface CompileOptions {
+  /**
+   * `'always'` renumbers registers for reuse even when every value fits in 64 registers, one each,
+   * so a differential test can run the renumbered program against the one-register-per-value
+   * program. `'never'` keeps one register per value past 64, which no verifier accepts, so a test
+   * can compare a renumbered program with the numbering it came from. Unset, reuse happens only
+   * past 64, as always.
+   */
+  registerReuse?: 'always' | 'never';
+}
+
 export interface CompiledTemplate {
   template: Template;
   bytes: Uint8Array;
@@ -402,9 +418,12 @@ class Compiler {
   maxCpiDataLength = 0;
   /** Whether a `setReturnData` step has compiled; no invoke may follow it. */
   returnDataSet = false;
+  /** Test-only: see `CompileOptions.registerReuse`. */
+  readonly registerReuse: CompileOptions['registerReuse'];
 
-  constructor(template: Template) {
+  constructor(template: Template, options: CompileOptions = {}) {
     this.template = template;
+    this.registerReuse = options.registerReuse === 'always' || options.registerReuse === 'never' ? options.registerReuse : undefined;
     this.inputEntries = Object.entries(template.inputs);
     this.rowInputEntries = Object.entries(template.batch?.rowInputs ?? {});
     this.fixedEntries = Object.entries(template.accounts);
@@ -465,8 +484,12 @@ class Compiler {
     for (const [, input] of this.rowInputEntries) this.inputRecords.push(this.compileInput(input));
 
     // Values take registers in order, one each. A template that fits in 64 keeps that numbering;
-    // only one that does not is renumbered to reuse registers.
-    const registers = this.nextRegister > MAX_REGISTERS ? this.reuseRegisters() : this.nextRegister;
+    // only one that does not is renumbered to reuse registers (or, in a test, one that forces it).
+    const reuse =
+      this.registerReuse === 'never'
+        ? false
+        : this.nextRegister > MAX_REGISTERS || (this.registerReuse === 'always' && this.nextRegister > 0);
+    const registers = reuse ? this.reuseRegisters() : this.nextRegister;
     if (this.instructions.length > MAX_VM_INSTRUCTIONS) {
       throw new RangeError('Template uses more than 128 VM instructions');
     }
@@ -1379,8 +1402,8 @@ class Compiler {
   }
 }
 
-export function compileTemplate(input: TemplateInput | Template): CompiledTemplate {
-  return new Compiler(TemplateSchema.parse(input)).compile();
+export function compileTemplate(input: TemplateInput | Template, options?: CompileOptions): CompiledTemplate {
+  return new Compiler(TemplateSchema.parse(input), options).compile();
 }
 
 /**

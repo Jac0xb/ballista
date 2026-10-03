@@ -20,29 +20,84 @@ use super::util::{
     writes_destination, REGISTERS,
 };
 
-/// Errors an accepted instruction may raise because of the values it sees, not its shape.
+/// Errors an accepted instruction may raise because of the values it meets rather than its shape.
 ///
-/// `READ_ACCOUNT_BYTES` reaches the executor in the account rule, whose one account is
-/// unconstrained: the account may be writable, and the offset register may point past its data.
-/// The introspection opcodes never do, since neither spec program pins the Instructions sysvar,
-/// but an index past the transaction is value-dependent too.
+/// - Arithmetic, `REQUIRE`, PDA derivations, introspection indexes, registry entries, return data,
+///   a count loop's count and the size of a forwarded account group all fail on values.
+/// - `TypeMismatch` (6012) is a value error too for every opcode that decodes a `bool` from bytes:
+///   a byte other than 0 or 1 is not a `bool`, and nothing at finalization can rule that out. Those
+///   are a typed account read (`READ_BOOL`), and a return-data, instruction-data or registry-field
+///   read whose read opcode is `READ_BOOL`. For every other opcode, the verifier's typing rules it
+///   out, which is the property.
+/// - `InvalidRuntimeAccount` (6009) is a value error for a typed account read. These rules do not
+///   check the account against its declaration, so its data may be shorter than the minimum the
+///   verifier bounds a fixed offset by, and a dynamic offset is any register value.
 ///
-/// The registry opcodes never reach the executor in either rule: neither spec program declares a
-/// fixed account pinned to the System program, so the verifier rejects every open, and a field
-/// read or write verified at pc 0 has no open before it. Their errors depend on the accounts a
-/// run passes, not on the template's shape, so they are value-dependent too.
-fn value_dependent(kind: BallistaError) -> bool {
-    matches!(
-        kind,
+/// Within these rules, most of these never reach the executor: neither spec program declares a CPI,
+/// pins the Instructions sysvar, or pins an account to the System program, and an instruction is
+/// verified at pc 0 with nothing before it, so the verifier rejects every invoke, return-data read,
+/// introspection opcode, registry opcode and loop. They are listed so the rule states the property
+/// rather than an artifact of the two spec programs.
+fn value_dependent(kind: BallistaError, instruction: &InstructionRecord) -> bool {
+    match kind {
         BallistaError::ArithmeticOverflow
-            | BallistaError::DivisionByZero
-            | BallistaError::RequirementFailed
-            | BallistaError::InvalidPdaDerivation
-            | BallistaError::InstructionOutOfRange
-            | BallistaError::WritableAccountBytesRead
-            | BallistaError::InvalidRegistryEntry
-            | BallistaError::RegistryReentry
+        | BallistaError::DivisionByZero
+        | BallistaError::RequirementFailed
+        | BallistaError::InvalidPdaDerivation
+        | BallistaError::InstructionOutOfRange
+        | BallistaError::WritableAccountBytesRead
+        | BallistaError::InvalidRegistryEntry
+        | BallistaError::RegistryReentry
+        | BallistaError::MissingReturnData
+        | BallistaError::ReturnDataMismatch
+        | BallistaError::LoopCountExceeded
+        | BallistaError::CpiAccountLimitExceeded => true,
+        BallistaError::TypeMismatch => decodes_a_bool(instruction),
+        BallistaError::InvalidRuntimeAccount => reads_account_data(instruction.opcode),
+        _ => false,
+    }
+}
+
+/// Whether `instruction` decodes a `bool` from bytes, the one decode that can fail on a byte's
+/// value: the executor's `decode_value` refuses anything but 0 and 1 with `TypeMismatch`.
+fn decodes_a_bool(instruction: &InstructionRecord) -> bool {
+    match instruction.opcode {
+        OP_READ_BOOL => true,
+        // The read opcode is operand `a`.
+        OP_RETURN_DATA => instruction.a == OP_READ_BOOL,
+        // The read opcode is the immediate.
+        OP_READ_INSTRUCTION_DATA => instruction.immediate() == u64::from(OP_READ_BOOL),
+        // The read opcode is byte 2 of the immediate, as `registry_instruction` takes it.
+        OP_READ_REGISTRY => (instruction.immediate() >> 16) as u8 == OP_READ_BOOL,
+        _ => false,
+    }
+}
+
+/// The typed reads of account data, which fail with `InvalidRuntimeAccount` past the data's end.
+fn reads_account_data(opcode: u8) -> bool {
+    matches!(
+        opcode,
+        OP_READ_U8
+            | OP_READ_U16
+            | OP_READ_U32
+            | OP_READ_U64
+            | OP_READ_I64
+            | OP_READ_I32
+            | OP_READ_U128
+            | OP_READ_PUBKEY
+            | OP_READ_BOOL
     )
+}
+
+/// Whether `opcode` can fail with an error the runtime or another program returns: the clock
+/// sysvar read, a CPI (the callee's error), and a typed account read (`try_borrow` fails while a
+/// registry open holds the account's data).
+fn raises_program_errors(opcode: u8) -> bool {
+    opcode == OP_CLOCK_SLOT
+        || opcode == OP_CLOCK_TIMESTAMP
+        || opcode == OP_INVOKE
+        || opcode == OP_OPEN_REGISTRY
+        || reads_account_data(opcode)
 }
 
 /// One past the highest pass index a loop in `scope` reaches. A FOREACH makes one pass per batch
@@ -125,13 +180,12 @@ fn check_typing_preservation(with_account: bool, accounts: &[AccountView]) {
                 }
             }
         }
-        Err(RunError::Vm(kind)) => cvlr_assert!(value_dependent(kind)),
-        Err(RunError::VmAt(_, _)) => cvlr_assert!(false),
-        // Clock reads go through a sysvar syscall the prover may model as failing; nothing else
-        // in the pure subset touches the runtime.
-        Err(RunError::Program(_)) => {
-            cvlr_assert!(matches!(instruction.opcode, OP_CLOCK_SLOT | OP_CLOCK_TIMESTAMP))
+        Err(RunError::Vm(kind)) => cvlr_assert!(value_dependent(kind, &instruction)),
+        // Only an invoke raises an indexed error while running (a forwarded group too large).
+        Err(RunError::VmAt(kind, _)) => {
+            cvlr_assert!(instruction.opcode == OP_INVOKE && value_dependent(kind, &instruction))
         }
+        Err(RunError::Program(_)) => cvlr_assert!(raises_program_errors(instruction.opcode)),
     }
 }
 
@@ -158,6 +212,39 @@ pub fn rule_verified_account_reads_preserve_register_typing() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ballista::processor::execute::read_value;
+
+    /// A `bool` decode of a byte above 1 fails with `TypeMismatch` in the executor, and the rule
+    /// counts that error as value-dependent for exactly the opcodes that decode one.
+    #[test]
+    fn bool_decodes_count_type_mismatch_as_value_dependent() {
+        assert_eq!(
+            read_value(OP_READ_BOOL, &[2], 0),
+            Err(RunError::Vm(BallistaError::TypeMismatch))
+        );
+        let registry_bool = RegistryField { offset: 0, selector: OP_READ_BOOL }.encode();
+        let registry_u64 = RegistryField { offset: 0, selector: OP_READ_U64 }.encode();
+        for decodes in [
+            record(OP_READ_BOOL, 0, 0, NO_INDEX, NO_INDEX, 0, 0),
+            record(OP_RETURN_DATA, 0, OP_READ_BOOL, NO_INDEX, NO_INDEX, 0, 0),
+            record(OP_READ_INSTRUCTION_DATA, 0, 0, 1, 2, 0, u64::from(OP_READ_BOOL)),
+            record(OP_READ_REGISTRY, 0, 0, NO_INDEX, NO_INDEX, 0, registry_bool),
+        ] {
+            assert!(value_dependent(BallistaError::TypeMismatch, &decodes), "{decodes:?}");
+        }
+        for other in [
+            record(OP_ADD, 0, 1, 2, NO_INDEX, 0, 0),
+            record(OP_READ_U64, 0, 0, NO_INDEX, NO_INDEX, 0, 0),
+            record(OP_RETURN_DATA, 0, OP_READ_U64, NO_INDEX, NO_INDEX, 0, 0),
+            record(OP_READ_REGISTRY, 0, 0, NO_INDEX, NO_INDEX, 0, registry_u64),
+        ] {
+            assert!(!value_dependent(BallistaError::TypeMismatch, &other), "{other:?}");
+        }
+        let read = record(OP_READ_U64, 0, 0, NO_INDEX, NO_INDEX, 0, 0);
+        assert!(value_dependent(BallistaError::InvalidRuntimeAccount, &read));
+        assert!(!value_dependent(BallistaError::InvalidRegister, &read));
+        assert!(!value_dependent(BallistaError::InvalidTemplateProgram, &read));
+    }
 
     /// A program with one loop of the most passes its kind allows, which must verify.
     fn verifies(build: impl FnOnce(&mut ProgramBuilder)) -> bool {

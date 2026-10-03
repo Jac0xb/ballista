@@ -13,8 +13,8 @@ The declaration is also a ceiling. A CPI in the template may pass an account as 
 writable only if the account's declaration requires that privilege. Finalization, the one-time
 check that locks the template on chain, enforces this, so the declarations tell you the most a run
 can ask of each declared account. They don't say which calls get it: a declared signer can be
-passed as a signer to every CPI in the template. And [account group](#account-groups) members have
-no declaration to bound them.
+passed as a signer to every CPI in the template. [Account group](#account-groups) members are
+outside the ceiling, since they have no declaration.
 
 Ballista passes on only the signatures the transaction already carries and never signs a
 template's calls, so a template cannot create authority the transaction did not already have. See

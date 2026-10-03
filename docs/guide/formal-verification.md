@@ -42,7 +42,7 @@ blocked ones.
 
 | Area | What the rules state |
 | --- | --- |
-| `u64` arithmetic | Add, subtract, multiply, divide, min, and max give the same result as Rust's checked operations for every pair of `u64` values, and overflow and division by zero are reported as errors. Remainder, shifts, and bitwise operations match Rust's too, and a remainder by zero or a left shift that loses a set bit is an error |
+| `u64` arithmetic | Add, subtract, multiply, divide, min, and max give the same result as Rust's checked operations for every pair of `u64` values, and overflow and division by zero are reported as errors. Remainder, shifts, and bitwise operations give the exact result too, and a remainder by zero, or a left shift that would lose a set bit, is an error |
 | `i64` arithmetic | The same for `i64`, except division. For signed division, only the error cases are proved: division by zero, and the one quotient that overflows (`i64::MIN / -1`). The prover cannot follow the compiler's signed-division routine, so unit tests check the quotient instead |
 | Mixed types | Arithmetic on mixed number types or on values that are not numbers fails with a type error |
 | Comparisons | All six comparisons match Rust for `u64` and `i64`. Less than, greater than, and their variants reject booleans, public keys, bytes, and mixed number types |

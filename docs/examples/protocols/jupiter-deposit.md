@@ -79,11 +79,8 @@ A fuller TypeScript runner, `clients/js/examples/protocols/run-jupiter-deposit.t
 API's response directly: it refuses data that isn't `route`, checks that the account list starts
 with the four accounts above, forwards the rest as the group, and fills `farmAccounts`.
 
-::: tip Requesting the route
-Ask Jupiter's Swap API for `useSharedAccounts: false`. The template always sends Jupiter's `route`
-instruction. The API's default, `shared_accounts_route`, is a different instruction whose accounts
-are in a different order.
-:::
+[Getting a Jupiter route](/examples/protocols/#jupiter-routes) says how to request the route from
+Jupiter's Swap API and what to keep from its response.
 
 ## What has been tested
 

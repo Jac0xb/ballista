@@ -68,11 +68,8 @@ The Run tabs pass the five declared accounts, `jupiter`, `tokenProgram`, `seller
 `platformFeeBps` and `dustFloor`, then the group. `splitJupiterRoute` (TypeScript) and
 `RouteQuote::split` (Rust) split the Swap API's `route` data into the plan and the quote's numbers.
 
-::: tip Requesting the route
-Ask Jupiter's Swap API for `useSharedAccounts: false`. The template always sends Jupiter's `route`
-instruction. The API's default, `shared_accounts_route`, is a different instruction whose accounts
-are in a different order.
-:::
+[Getting a Jupiter route](/examples/protocols/#jupiter-routes) says how to request the route from
+Jupiter's Swap API and what to keep from its response.
 
 ## What has been tested
 

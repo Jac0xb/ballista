@@ -81,11 +81,8 @@ The actor's first run creates the entry, with no separate instruction, and the a
 1,503,360 lamports, about 0.0015 SOL, for this 88-byte entry. Nothing closes an entry, so the rent
 isn't returned.
 
-::: tip Requesting the route
-Ask Jupiter's Swap API for `useSharedAccounts: false`. The template always sends Jupiter's `route`
-instruction. The API's default, `shared_accounts_route`, is a different instruction whose accounts
-are in a different order.
-:::
+[Getting a Jupiter route](/examples/protocols/#jupiter-routes) says how to request the route from
+Jupiter's Swap API and what to keep from its response.
 
 ## What has been tested
 

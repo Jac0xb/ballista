@@ -4,5 +4,6 @@ pub mod diagnostics;
 pub mod errors;
 pub mod lifecycle;
 pub mod parser;
+pub mod symbolic;
 pub mod typing;
 pub mod util;

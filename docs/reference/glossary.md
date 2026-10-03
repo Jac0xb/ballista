@@ -90,8 +90,9 @@ marked as carried keep their result from one pass to the next.
 
 ### Account group
 
-A list of accounts, sized by the caller at run time, that one call passes along without the
-template reading them. See [Account groups](/guide/account-groups).
+A list of accounts, sized by the caller at run time, that one call passes along. The template
+can count them and test them against a filter, but not read them freely. See
+[Account groups](/guide/accounts-and-cpis#account-groups).
 
 ### Runtime accounts
 

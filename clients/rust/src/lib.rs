@@ -2,11 +2,14 @@
 //! input encoding, error decoding, run output decoding from transaction logs, and re-exports of
 //! the shared authoring builder.
 //!
-//! Authoring from Rust uses [`ProgramBuilder`], which emits the same bytecode the TypeScript
-//! compiler produces; see `examples/author_template.rs`. Running a template from Rust needs only
-//! the template address, the account metas in schema order, and inputs encoded with
-//! [`RunInputs`]; see `examples/run_template.rs`. [`program_data`] and [`decode_run_event`] read a
-//! run's events and `EMIT` output back from the transaction's logs.
+//! Authoring from Rust uses [`template`], a declarative API that mirrors the TypeScript SDK's
+//! `defineTemplate` one to one and compiles to the same bytes, with the same checks: see
+//! `examples/docs_templates.rs`. [`template::CompiledTemplate::run`] builds a run by name; see
+//! `examples/docs_runs.rs`. Without the definition, [`run_instruction`] takes the account metas in
+//! declaration order and inputs encoded with [`RunInputs`]; see `examples/run_template.rs`.
+//! [`program_data`]
+//! and [`decode_run_event`] read a run's events and `EMIT` output back from the transaction's
+//! logs.
 
 use ballista_common::instruction::*;
 use solana_program::{
@@ -16,6 +19,7 @@ use solana_program::{
 };
 
 mod logs;
+pub mod template;
 
 pub use ballista_common;
 pub use ballista_common::template::{
@@ -34,6 +38,8 @@ pub const ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
 pub const BALLISTA_ID: Pubkey = ID;
 pub const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111");
 pub const TOKEN_PROGRAM_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+/// Token-2022. Its token accounts share the SPL Token layout's first 165 bytes.
+pub const TOKEN_2022_PROGRAM_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 pub const ASSOCIATED_TOKEN_PROGRAM_ID: Pubkey =
     pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 /// The Instructions sysvar. Introspecting templates declare it as a fixed account pinned to this
@@ -584,6 +590,7 @@ mod tests {
         assert_eq!(decode_ballista_error(6026).unwrap().name, "RegistryReentry");
         assert_eq!(decode_ballista_error(6132).unwrap().name, "InvalidRegistry");
         assert!(decode_ballista_error(6027).is_none());
-        assert!(decode_ballista_error(6133).is_none());
+        assert_eq!(decode_ballista_error(6133).unwrap().name, "InvalidAccountGroup");
+        assert!(decode_ballista_error(6134).is_none());
     }
 }

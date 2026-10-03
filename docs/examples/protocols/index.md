@@ -147,9 +147,10 @@ The run files bind accounts with `pinned` and `at`:
 
 ## Rust helpers {#rust-helpers}
 
-The Rust templates share these helpers and constants: the account flags, the program addresses and
-account offsets, `anchor` for an Anchor instruction's discriminator, `program` to declare a pinned
-program, and the token-account declarations and checks.
+The Rust templates share these constants and helpers: the program addresses, account offsets and
+instruction discriminators, `token_account()` to declare an SPL Token account, `balance_of()` to
+read its balance, and `jupiter_route_data()` and `platform_fee_within_cap()` for the Jupiter
+templates.
 
 ::: details The Rust helpers
 
@@ -161,16 +162,17 @@ program, and the token-account declarations and checks.
 
 You upload a template once. After that, each use is a single run instruction, which a bot or
 service can build in TypeScript or Rust. Building a run doesn't need the template's bytecode, only
-three things from its author: the order of the declared accounts, the order of the inputs, and,
-for a template that takes one, the accounts in each [account group](/guide/account-groups) or batch
-row.
+the names of its declared accounts and inputs, and, for a template that takes one, the accounts in
+each [account group](/guide/accounts-and-cpis#account-groups) or batch row.
 
 Each page shows the template and a run of it, in TypeScript and in Rust.
 
 - TypeScript runs are in `clients/js/examples/protocols/run/`. They bind accounts by name, and
   `buildKitRunInstruction` puts them in the template's order.
-- Rust templates are in `clients/rust/examples/protocol_templates.rs`, built with
-  `ProgramBuilder`. Rust runs are in `clients/rust/examples/protocol_templates_run.rs`.
+- Rust templates are in `clients/rust/examples/protocol_templates.rs`, written with the
+  declarative `ballista_sdk::template` API. Each compiles to the same bytes as the TypeScript one.
+- Rust runs are in `clients/rust/examples/protocol_templates_run.rs`. They also name every input
+  and account, and the run builder puts them in the template's order.
 
 ## Getting a Jupiter route {#jupiter-routes}
 

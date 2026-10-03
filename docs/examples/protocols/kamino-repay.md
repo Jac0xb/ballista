@@ -48,15 +48,15 @@ It does not read the debt. Kamino repays at most what is owed, and the rest stay
 
 :::
 
-The Rust tabs' `program`, `anchor` and account flags are
-[shared helpers](/examples/protocols/#rust-helpers).
+The Rust template takes its program addresses, `token_account()`, `balance_of()` and
+`jupiter_route_data()` from the [shared helpers](/examples/protocols/#rust-helpers).
 
 ## Run it
 
 `route` starts its account list with the token program, the signer, and the signer's source and
 destination token accounts: here `collateralAta` and `borrowedAssetAta`. The template passes those
 four itself; the rest of the route's accounts arrive as the `routeAccounts`
-[account group](/guide/account-groups).
+[account group](/guide/accounts-and-cpis#account-groups).
 [Getting a Jupiter route](/examples/protocols/#jupiter-routes) says how to request one.
 
 Kamino's v2 repayment takes 13 accounts: 9 the template passes, then a second group,

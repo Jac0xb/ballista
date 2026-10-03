@@ -105,7 +105,8 @@ pub fn rule_verifier_error_codes_are_distinct_and_in_range() {
         29 => TemplateError::InvalidLoop(nondet()),
         30 => TemplateError::InvalidOutput(nondet()),
         31 => TemplateError::InvalidIntrospection(nondet()),
-        _ => TemplateError::InvalidRegistry(nondet()),
+        32 => TemplateError::InvalidRegistry(nondet()),
+        _ => TemplateError::InvalidAccountGroup(nondet()),
     };
     let (code, _) = error.code();
     cvlr_assert!(code == VERIFIER_ERROR_BASE + index as u32);

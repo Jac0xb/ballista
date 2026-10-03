@@ -52,21 +52,22 @@ import { liquidateOnlyWhenUnhealthy, runLiquidateOnlyWhenUnhealthy } from './liq
 import { listedCallersOnly, runListedCallersOnly } from './listed-callers-only.js';
 import { maximumLamportSpend, runMaximumLamportSpend } from './maximum-lamport-spend.js';
 import { encodeNamedInputs, namedInputs } from './named-inputs.js';
+import { paymentAgent, runPaymentAgent } from './payment-agent.js';
 import { nestedSwapThenDeposit, runNestedSwapThenDeposit } from './nested-swap-then-deposit.js';
 import { oraclePriceBand, runOraclePriceBand } from './oracle-price-band.js';
 import { pinnedProgramAndOwner, runPinnedProgramAndOwner } from './pinned-program-and-owner.js';
 import { primaryOrFallbackRoute, runPrimaryOrFallbackRoute } from './primary-or-fallback-route.js';
 import { rebalanceThreeSwaps, runRebalanceThreeSwaps } from './rebalance-three-swaps.js';
-import { repayExactlyWhatIsOwed, runRepayExactlyWhatIsOwed } from './repay-exactly-what-is-owed.js';
 import { reservePreservingSweep, runReservePreservingSweep } from './reserve-preserving-sweep.js';
 import { rowAmounts, runRowAmounts } from './row-amounts.js';
 import { runSplitWhatArrived, splitWhatArrived } from './split-what-arrived.js';
 import { runSwapAndReturnWhatArrived, swapAndReturnWhatArrived } from './swap-and-return-what-arrived.js';
 import { runSweepAboveAReserve, sweepAboveAReserve } from './sweep-above-a-reserve.js';
+import { runSwapThroughACheckedRoute, swapThroughACheckedRoute } from './swap-through-a-checked-route.js';
 import { runSwapThenDeposit, swapThenDeposit } from './swap-then-deposit.js';
 import { runTimeGatedGovernanceExecution, timeGatedGovernanceExecution } from './time-gated-governance-execution.js';
 import { runTokenTransfer, tokenTransferTemplate } from './token-transfer.js';
-import { runTopUpOnlyWhenLow, topUpOnlyWhenLow } from './top-up-only-when-low.js';
+import { runTopUpToATarget, topUpToATarget } from './top-up-to-a-target.js';
 import { runWaterfallUntilTheMoneyRunsOut, waterfallUntilTheMoneyRunsOut } from './waterfall-until-the-money-runs-out.js';
 
 const BENCHMARKS_PATH = fileURLToPath(new URL('../../../../fixtures/benchmarks.json', import.meta.url));
@@ -119,11 +120,6 @@ const cases: Case[] = [
       runForwardTheWholeTokenBalance({ templateAddress: TEMPLATE, source: key(1), destination: key(2), authority: key(3) }),
   },
   {
-    name: 'repay-exactly-what-is-owed',
-    template: repayExactlyWhatIsOwed,
-    run: () => runRepayExactlyWhatIsOwed({ templateAddress: TEMPLATE, loan: key(1), borrower: key(2), pool: key(3) }),
-  },
-  {
     name: 'split-what-arrived',
     template: splitWhatArrived,
     run: () =>
@@ -155,10 +151,9 @@ const cases: Case[] = [
       }),
   },
   {
-    name: 'top-up-only-when-low',
-    template: topUpOnlyWhenLow,
-    run: () =>
-      runTopUpOnlyWhenLow({ templateAddress: TEMPLATE, funder: key(1), bot: key(2), floor: 2_000_000_000n, topUp: 10_000n }),
+    name: 'top-up-to-a-target',
+    template: topUpToATarget,
+    run: () => runTopUpToATarget({ templateAddress: TEMPLATE, funder: key(1), bot: key(2), target: 2_000_000_000n }),
   },
   {
     name: 'initialize-only-if-missing',
@@ -500,6 +495,20 @@ const cases: Case[] = [
       }),
   },
   {
+    name: 'swap-through-a-checked-route',
+    template: swapThroughACheckedRoute,
+    docsOnlyRows: 0,
+    run: () =>
+      runSwapThroughACheckedRoute({
+        templateAddress: TEMPLATE,
+        user: key(10),
+        source: key(1),
+        destination: key(2),
+        route: new Uint8Array(40).fill(1),
+        pools: keys(20, 3).map((address) => ({ address, writable: true })),
+      }),
+  },
+  {
     name: 'crank-once-per-waiting-entry',
     template: crankOncePerWaitingEntry,
     docsOnlyRows: 0,
@@ -556,6 +565,12 @@ const cases: Case[] = [
     template: dailyLimitPerCaller,
     docsOnlyRows: 0,
     run: () => runDailyLimitPerCaller({ templateAddress: TEMPLATE, caller: key(1), recipient: key(2), amount: 1_000n }),
+  },
+  {
+    name: 'payment-agent',
+    template: paymentAgent,
+    docsOnlyRows: 0,
+    run: () => runPaymentAgent({ templateAddress: TEMPLATE, agent: key(1), recipient: key(2), amount: 1_000n }),
   },
   {
     name: 'listed-callers-only',
@@ -625,7 +640,7 @@ describe('docs examples', () => {
       output[item.name] = await record(item, item.docsOnlyRows!);
     }
     writeFileSync(DOCS_ONLY_PATH, `${JSON.stringify(output, null, 2)}\n`);
-    expect(Object.keys(output)).toHaveLength(14);
+    expect(Object.keys(output)).toHaveLength(16);
   });
 
   test('the budget example explains its labelled failure', () => {

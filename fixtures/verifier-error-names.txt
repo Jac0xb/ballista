@@ -31,3 +31,4 @@ InvalidLoop
 InvalidOutput
 InvalidIntrospection
 InvalidRegistry
+InvalidAccountGroup

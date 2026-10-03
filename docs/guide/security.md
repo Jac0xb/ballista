@@ -4,10 +4,9 @@ What protects a template, what does not, and what has and has not been reviewed.
 
 ## Audit status
 
-**Ballista is pre-release and unaudited.** No third party has reviewed the program or the SDKs,
-and the program isn't on mainnet.
+**Ballista is on mainnet, and unaudited.** No third party has reviewed the program or the SDKs.
+<AuditFund />
 
-- **The current build** runs only locally, in the test suite.
 - **The devnet build**, at the address the SDKs use by default, is an older pre-release that
   rejects templates from this repository. Its [upgrade authority](/guide/trust-model#deployments)
   can still change it.
@@ -22,27 +21,48 @@ lose.
 The Ballista program checks every template once, at finalization, and checks every run against it,
 whichever SDK built the template. [Finalization checks](/guide/trust-model#finalization-checks)
 lists both, and [Who controls what](/guide/trust-model#who-controls-what) covers what they leave to
-you: the transaction builder, the rest of the transaction, the called programs and their upgrade
-authorities, and replay.
+you: the transaction builder, the rest of the transaction, and the called programs and their
+upgrade authorities.
 
-## Checked only by the TypeScript compiler
+## Checked by the SDK compilers, not the program
 
-These rules help you write a safe template, but the program does not enforce them. A template built
-with the Rust builder, or by hand, can skip them, so check them when you
-[inspect a template](/guide/inspecting-templates) someone else wrote.
+Both SDK compilers, TypeScript `compileTemplate` and Rust `Template::compile`, enforce these rules,
+but the program does not. A template built by hand or with other tools can skip them, so check them
+before you run a template you did not compile yourself.
 
 - A called program must pin its `address`, so the caller cannot swap in another program.
 - An account whose data is read must pin its `owner` or `address`. An owner pin alone doesn't fix
   the account's type: see [Pins](/guide/trust-model#pins).
-- `unsafeUnpinned: true` turns both off for one account. The flag is not stored on chain.
-- The TypeScript caps on steps, rows and data parts. See [Limits](/reference/limits).
+- `unsafeUnpinned: true` in TypeScript, or `.unsafe_unpinned()` in Rust, turns both off for one
+  account. The flag is not stored on chain.
+- The SDK caps on steps, rows and data parts. See [Limits](/reference/limits).
 
 ## Formal verification
 
-15 rules are set up for the Certora Solana Prover: `u64` and `i64` arithmetic, comparisons, casts,
-error codes and the template parser. 14 more, covering `u128` arithmetic, `multiplyDivide`, account
-checks, the template lifecycle and type safety, are written but blocked, so they are not proved.
-[Formal verification](/guide/formal-verification) has the details.
+A formal verifier proves a rule for every possible input, not just the ones a test picks. Ballista's
+rules run on the Certora Solana Prover against the compiled program; they live in `certora/`, whose
+README covers setup.
+
+- **Set up to prove: 15 rules** (`certora/ballista-specs/run.conf`). `u64` and `i64` arithmetic
+  matches Rust's checked operations, comparisons and casts behave exactly, every error code decodes
+  back to what built it, and the template parser checks its header before anything else.
+- **Written but blocked: 14 rules** (`run-blocked.conf`), none proved, because of how the prover
+  models memory: `u128` arithmetic, `multiplyDivide`, account checks, the template lifecycle, and
+  type preservation, the rule that a finalized template never fails because of its structure.
+- **Not covered:** what called programs do, Solana's system calls, a whole template run end to
+  end, and the libraries and runtime underneath, which are trusted.
+- **Found so far:** two stack overflows, in the CPI path and the return-data read, that the
+  standard build tools didn't report. Both are fixed.
+- **In CI:** the prover runs only when the repository has a `CERTORAKEY` secret; otherwise CI just
+  checks that the rules compile.
+
+To run it yourself, with a key from Certora:
+
+```bash
+cd certora/ballista-specs
+cargo certora-sbf --tools-version v1.53
+certoraSolanaProver run.conf
+```
 
 ## Strengths
 
@@ -50,14 +70,6 @@ checks, the template lifecycle and type safety, are written but blocked, so they
   Ballista's own range. So a code alone doesn't say which program raised it: a callee's `6001` is
   also Ballista's `InvalidTemplateAccount`, and only the logs tell them apart. See
   [Which program failed](/guide/errors-and-events#which-program-failed).
-- **Flat heap.** A run allocates its buffers once and reuses them for every call, so memory use does
-  not grow with the number of calls.
-- **Few `unsafe` blocks.** The release program uses `unsafe` only:
-  - around Solana system calls (logs, return data, hashing, the curve check and the CPI itself);
-  - to fill a CPI's account list in place;
-  - to read the Instructions sysvar and read-only accounts without copying them;
-  - to read and write registry entries in place;
-  - to build a PDA's seed buffer in place when deriving an address.
 - **No authority of its own.** Ballista never signs a template's calls, so a template can do only
   what the transaction's signers could do directly. See [Signing](/guide/trust-model#signing).
 - **State only in registry entries.** Only a template's own runs can change its

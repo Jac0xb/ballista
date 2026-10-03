@@ -57,8 +57,9 @@ a few thousand is safer. One floor applies to both fees, each counted in its own
 :::
 
 The offsets come from Orca's `Position` account and the SPL Token account; see
-[reading offsets](/examples/protocols/#reading-offsets-from-an-account). The Rust tabs' `program`,
-`anchor` and account flags are [shared helpers](/examples/protocols/#rust-helpers).
+[reading offsets](/examples/protocols/#reading-offsets-from-an-account). The Rust template takes
+its program addresses, offsets, discriminators and `token_account()` from the
+[shared helpers](/examples/protocols/#rust-helpers).
 
 ## Run it
 

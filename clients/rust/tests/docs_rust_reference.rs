@@ -1,5 +1,6 @@
 //! Runs the examples on the Rust SDK reference page, `examples/docs_rust_reference.rs`: the
-//! templates verify, the instructions carry what the page says, and every upload transaction fits.
+//! templates compile and verify, the instructions carry what the page says, and every upload
+//! transaction fits.
 
 #[path = "../examples/docs_rust_reference.rs"]
 mod reference;
@@ -15,30 +16,31 @@ use solana_program::{instruction::Instruction, pubkey::Pubkey};
 fn the_templates_verify() {
     let templates = [
         ("author", reference::payroll()),
+        ("output", reference::log_and_return(reference::payroll())),
         ("introspection", reference::after_an_ed25519_instruction()),
         ("registry", reference::capped_total()),
         ("own-program", reference::deposit_into(Pubkey::new_unique())),
     ];
-    for (name, payload) in templates {
-        let payload = payload.unwrap_or_else(|error| panic!("{name}: {error}"));
-        let program = ProgramView::parse(&payload).unwrap();
+    for (name, template) in templates {
+        let compiled = template
+            .compile()
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let program = ProgramView::parse(&compiled.bytes).unwrap();
         program
             .verify()
             .unwrap_or_else(|error| panic!("{name}: {error}"));
+        if name == "output" {
+            assert_eq!(program.header.flags(), PROGRAM_FLAG_EMIT_EVENT);
+        }
     }
-
-    let mut builder = ProgramBuilder::new();
-    let total = builder.const_u64(5);
-    reference::log_and_return(&mut builder, total);
-    let payload = builder.build().unwrap();
-    let program = ProgramView::parse(&payload).unwrap();
-    assert_eq!(program.header.flags(), PROGRAM_FLAG_EMIT_EVENT);
-    program.verify().unwrap();
 }
 
 #[test]
 fn the_call_to_your_own_program_starts_with_its_discriminator() {
-    let payload = reference::deposit_into(Pubkey::new_unique()).unwrap();
+    let payload = reference::deposit_into(Pubkey::new_unique())
+        .compile()
+        .unwrap()
+        .bytes;
     let discriminator = anchor_discriminator("deposit");
     assert!(
         payload.windows(8).any(|window| window == discriminator),
@@ -55,7 +57,7 @@ fn addresses_and_runs_are_the_sdk_s() {
     );
     let template = find_template_pda(&creator, 7).0;
     assert_eq!(
-        reference::addresses(&creator, 7, &other, &caller),
+        reference::addresses(&creator, 7, &other, &caller).unwrap(),
         [
             template,
             find_template_pda_for_program(&creator, 7, &other).0,
@@ -67,7 +69,7 @@ fn addresses_and_runs_are_the_sdk_s() {
         Pubkey::new_unique(),
         [Pubkey::new_unique(), Pubkey::new_unique()],
     );
-    let run = reference::run_payroll(template, treasury, &recipients, 5, 10);
+    let run = reference::run_payroll(template, treasury, &recipients, 5, 10).unwrap();
     let keys: Vec<(Pubkey, bool, bool)> = run
         .accounts
         .iter()
@@ -114,8 +116,20 @@ fn failures_and_template_accounts_decode() {
         Some("AccountConstraintFailed (runtime account index 2)")
     );
     assert_eq!(reference::describe(1), None);
+    // The payroll is the guide's budgeted payroll: the budget check is at program counter 8, as
+    // the TypeScript test of `explainRunError` finds.
+    let compiled = reference::payroll().compile().unwrap();
+    assert_eq!(
+        compiled.explain_error((8 << 16) | 6015).as_deref(),
+        Some("RequirementFailed at steps[2] (withinBudget)")
+    );
+    assert_eq!(
+        compiled.explain_error((3 << 16) | 6020).as_deref(),
+        Some("AccountConstraintFailed: account recipient in row 1 does not satisfy its constraint")
+    );
+    assert_eq!(compiled.explain_error(1), None);
 
-    let payload = reference::payroll().unwrap();
+    let payload = reference::payroll().compile().unwrap().bytes;
     let mut header = TemplateAccountHeader::new_uploading(
         [1; 32],
         7,

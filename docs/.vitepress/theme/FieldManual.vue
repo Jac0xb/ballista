@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AuditFund from './AuditFund.vue';
 import { withBase } from 'vitepress';
 import TemplateGallery from './TemplateGallery.vue';
 
@@ -24,9 +25,8 @@ const steps = [
           <a class="plain-link" :href="withBase('/guide/mental-model')">How it works</a>
         </div>
         <p class="cover-status">
-          <strong>Status: pre-release.</strong> The program hasn't been audited and isn't on mainnet.
-          The current build runs only locally, in the test suite; the older devnet build rejects
-          templates from this repository.
+          <strong>Not audited.</strong> Ballista is on mainnet, but no third party has audited the
+          program or the SDKs. <AuditFund />
           <a :href="withBase('/guide/security#audit-status')">Details</a>
         </p>
       </div>

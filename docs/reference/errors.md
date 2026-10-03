@@ -107,6 +107,7 @@ Raised by `CreateTemplate` or `FinalizeTemplate` when the template fails its che
 | 6130 | `0x17F2` | `InvalidOutput` | An `emit` or `setReturnData` breaks a rule in [Output](/reference/language#output) |
 | 6131 | `0x17F3` | `InvalidIntrospection` | A read of the transaction's instructions names an account not pinned to the Instructions sysvar |
 | 6132 | `0x17F4` | `InvalidRegistry` | A registry entry is opened in a loop, passed writable to a CPI, read as raw data, or otherwise breaks a rule in [Registries](/reference/language#registries) |
+| 6133 | `0x17F5` | `InvalidAccountGroup` | A group expression names an undeclared group, or its filter breaks a rule in [Account groups](/reference/language#account-groups) |
 
 The same names, in code order, are in `fixtures/runtime-error-names.txt` and
 `fixtures/verifier-error-names.txt`, which the program and both SDKs are tested against. The

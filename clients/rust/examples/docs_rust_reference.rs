@@ -1,200 +1,140 @@
 //! The examples on the Rust SDK reference page, `docs/reference/rust.md`, which includes each by its
-//! `#region` name. `tests/docs_rust_reference.rs` runs them: the templates verify, the instructions
-//! carry what the page says, and the upload sizes fit a transaction.
+//! `#region` name. `tests/docs_rust_reference.rs` runs them: the templates compile and verify, the
+//! instructions carry what the page says, and the upload sizes fit a transaction.
 
 #![allow(dead_code)]
 
-use ballista_sdk::{
-    ballista_common::template::{TemplateError, VerificationStats},
-    ProgramBuilder,
-};
+use ballista_sdk::ballista_common::template::VerificationStats;
+use ballista_sdk::template::Template;
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 
 fn main() {}
 
 // #region author
-/// Pays `amount` lamports to each batch row's recipient through the System Program, keeps a
-/// running total, and requires the total to stay within `budget`.
-pub fn payroll() -> Result<Vec<u8>, TemplateError> {
-    use ballista_sdk::{
-        ballista_common::template::{
-            ProgramView, ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_REG_U64,
-            OP_ADD, OP_LTE, VALUE_U64,
-        },
-        ProgramBuilder, Segment, SYSTEM_PROGRAM_ID,
-    };
+/// Pays `amount` lamports to each batch row's recipient, keeps a running total, and requires the
+/// total to stay within `budget`.
+pub fn payroll() -> Template {
+    use ballista_sdk::template::prelude::*;
 
-    let mut builder = ProgramBuilder::new();
-    let system = builder.account(
-        ACCOUNT_EXECUTABLE,
-        Some(SYSTEM_PROGRAM_ID.to_bytes()),
-        None,
-        0,
-    );
-    let treasury = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
-    let recipient = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
-    builder.batch(30, 1);
-
-    let amount_input = builder.input(VALUE_U64, 0);
-    let budget_input = builder.input(VALUE_U64, 0);
-    let amount = builder.load_input(amount_input);
-    let budget = builder.load_input(budget_input);
-    let total = builder.const_u64(0);
-    let discriminator = builder.blob(&[2, 0, 0, 0]); // System Program Transfer
-    let transfer = builder.cpi(
-        system,
-        &[
-            (treasury, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
-            (recipient, ACCOUNT_WRITABLE),
-        ],
-        &[
-            Segment::Literal(discriminator),
-            Segment::Register(DATA_REG_U64, amount),
-        ],
-    );
-    builder.for_each(1 << total, |body| {
-        body.invoke(transfer, None);
-        let sum = body.binary(OP_ADD, total, amount);
-        body.mov(total, sum);
-    });
-    let within = builder.binary(OP_LTE, total, budget);
-    builder.require(within);
-
-    let payload = builder.build()?;
-    ProgramView::parse(&payload)?.verify()?;
-    Ok(payload)
+    Template::new()
+        .input("amount", Type::U64)
+        .input("budget", Type::U64)
+        .account("systemProgram", account::program(SYSTEM_PROGRAM_ID))
+        .account("treasury", account::signer().writable())
+        .batch(
+            Batch::new(30)
+                .min_iterations(1)
+                .account("recipient", account::writable()),
+        )
+        .step(step::let_("total", u64(0)))
+        .step(
+            step::for_each()
+                .step(system_transfer(
+                    "systemProgram",
+                    "treasury",
+                    account::iteration("recipient"),
+                    input("amount"),
+                ))
+                .step(step::assign("total", var("total") + input("amount")))
+                .carry("total"),
+        )
+        .step(step::require(var("total").lte(input("budget"))).label("withinBudget"))
 }
 // #endregion author
 
 // #region output
 /// Ends a template like the payroll above: logs the tag `PAID` and `total`, and returns `total`
-/// to the caller. The flag makes every successful run log its run event as well.
-pub fn log_and_return(builder: &mut ProgramBuilder, total: u8) {
-    use ballista_sdk::{
-        ballista_common::template::{DATA_REG_U64, PROGRAM_FLAG_EMIT_EVENT},
-        Segment,
-    };
+/// to the caller. `emit_event` makes every successful run log its run event as well.
+pub fn log_and_return(template: Template) -> Template {
+    use ballista_sdk::template::prelude::*;
 
-    builder.flags(PROGRAM_FLAG_EMIT_EVENT);
-    let tag = builder.blob(b"PAID");
-    builder.emit_data(&[
-        Segment::Literal(tag),
-        Segment::Register(DATA_REG_U64, total),
-    ]);
-    builder.set_return_data(&[Segment::Register(DATA_REG_U64, total)]);
+    template
+        .emit_event()
+        .step(step::emit([
+            data::literal(b"PAID"),
+            data::u64(var("total")),
+        ]))
+        .step(step::set_return_data([data::u64(var("total"))]))
 }
 // #endregion output
 
 // #region introspection
 /// Requires the instruction just before the run's to call the Ed25519 program.
-pub fn after_an_ed25519_instruction() -> Result<Vec<u8>, TemplateError> {
-    use ballista_sdk::{
-        ballista_common::template::{
-            NO_INDEX, OP_EQ, OP_INSTRUCTION_INDEX, OP_INSTRUCTION_PROGRAM, OP_SUB,
-        },
-        ProgramBuilder, ED25519_PROGRAM_ID, INSTRUCTIONS_SYSVAR_ID,
-    };
+pub fn after_an_ed25519_instruction() -> Template {
+    use ballista_sdk::template::prelude::*;
 
-    let mut builder = ProgramBuilder::new();
-    let sysvar = builder.account(0, Some(INSTRUCTIONS_SYSVAR_ID.to_bytes()), None, 0);
-    let one = builder.const_u64(1);
-    let ed25519 = builder.const_pubkey(ED25519_PROGRAM_ID.to_bytes());
-
-    let current = builder.introspect(OP_INSTRUCTION_INDEX, sysvar, NO_INDEX, NO_INDEX);
-    let previous = builder.binary(OP_SUB, current, one);
-    let program = builder.introspect(OP_INSTRUCTION_PROGRAM, sysvar, previous, NO_INDEX);
-    let is_ed25519 = builder.binary(OP_EQ, program, ed25519);
-    builder.require(is_ed25519);
-    builder.build()
+    let previous = current_instruction_index("instructions") - u64(1);
+    Template::new()
+        .account(
+            "instructions",
+            account::readonly().address(INSTRUCTIONS_SYSVAR_ID),
+        )
+        .step(step::require(
+            instruction_program("instructions", previous).eq(pubkey(ED25519_PROGRAM_ID)),
+        ))
 }
 // #endregion introspection
 
 // #region registry
 /// Adds `amount` to the caller's running total, which must stay within 1 SOL. The total lives in
-/// registry 0, one `u64` keyed by the caller, who pays for the entry the first time.
-pub fn capped_total() -> Result<Vec<u8>, TemplateError> {
-    use ballista_sdk::{
-        ballista_common::template::{
-            ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, OP_ADD, OP_LTE, OP_READ_U64,
-            VALUE_U64,
-        },
-        ProgramBuilder, SYSTEM_PROGRAM_ID,
-    };
+/// an entry of `totals` keyed by the caller, who pays for the entry the first time.
+pub fn capped_total() -> Template {
+    use ballista_sdk::template::prelude::*;
 
-    let mut builder = ProgramBuilder::new();
-    let system = builder.account(
-        ACCOUNT_EXECUTABLE,
-        Some(SYSTEM_PROGRAM_ID.to_bytes()),
-        None,
-        0,
-    );
-    let caller = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
-    // The entry: declared writable and nothing else.
-    let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
-    let amount_input = builder.input(VALUE_U64, 0);
-    let amount = builder.load_input(amount_input);
-    let cap = builder.const_u64(1_000_000_000);
-
-    let key = builder.account_key(caller);
-    builder.open_registry(entry, Some(key), caller, 0, 8, system);
-    let sent = builder.read_registry(entry, 0, OP_READ_U64);
-    let total = builder.binary(OP_ADD, sent, amount);
-    let within = builder.binary(OP_LTE, total, cap);
-    builder.require(within);
-    builder.write_registry(entry, 0, OP_READ_U64, total);
-    builder.build()
+    let total = registry("callerTotal", "sent") + input("amount");
+    Template::new()
+        .input("amount", Type::U64)
+        .registry("totals", [("sent", Type::U64)])
+        .account("caller", account::signer().writable())
+        .account(
+            "callerTotal",
+            account::registry("totals", "caller").key(account_key("caller")),
+        )
+        .account("systemProgram", account::system_program())
+        .step(step::require(total.lte(u64(1_000_000_000))).label("withinCap"))
+        .step(step::set_registry("callerTotal", "sent", total))
 }
 // #endregion registry
 
 // #region own-program
 /// Calls `deposit(amount: u64)` on your own Anchor program, with the vault writable.
-pub fn deposit_into(my_program: Pubkey) -> Result<Vec<u8>, TemplateError> {
-    use ballista_sdk::{
-        anchor_discriminator,
-        ballista_common::template::{
-            ACCOUNT_EXECUTABLE, ACCOUNT_WRITABLE, DATA_REG_U64, VALUE_U64,
-        },
-        ProgramBuilder, Segment,
-    };
+pub fn deposit_into(my_program: Pubkey) -> Template {
+    use ballista_sdk::{anchor_discriminator, template::prelude::*};
 
-    let mut builder = ProgramBuilder::new();
-    // A template holds an address as its 32 bytes.
-    let program = builder.account(ACCOUNT_EXECUTABLE, Some(my_program.to_bytes()), None, 0);
-    let vault = builder.account(ACCOUNT_WRITABLE, None, None, 0);
-    let amount_input = builder.input(VALUE_U64, 0);
-    let amount = builder.load_input(amount_input);
-    // Anchor instruction data: the handler's discriminator, then its arguments in Borsh order.
-    let deposit = builder.blob(&anchor_discriminator("deposit"));
-    let call = builder.cpi(
-        program,
-        &[(vault, ACCOUNT_WRITABLE)],
-        &[
-            Segment::Literal(deposit),
-            Segment::Register(DATA_REG_U64, amount),
-        ],
-    );
-    builder.invoke(call, None);
-    builder.build()
+    Template::new()
+        .input("amount", Type::U64)
+        .account("myProgram", account::program(my_program))
+        .account("vault", account::writable())
+        .step(
+            step::invoke("myProgram")
+                .writable("vault")
+                // Anchor instruction data: the handler's discriminator, then its arguments in
+                // Borsh order.
+                .data(data::literal(anchor_discriminator("deposit")))
+                .data(data::u64(input("amount"))),
+        )
 }
 // #endregion own-program
 
 // #region addresses
 /// The template `creator` publishes as `template_id`, the same ID under another deployment, and
-/// `caller`'s entry of the template's registry 0.
+/// `caller`'s entry of the template's registry `totals`.
 pub fn addresses(
     creator: &Pubkey,
     template_id: u16,
     other_program_id: &Pubkey,
     caller: &Pubkey,
-) -> [Pubkey; 3] {
+) -> Result<[Pubkey; 3], Box<dyn std::error::Error>> {
     use ballista_sdk::{
         find_registry_entry_address, find_template_pda, find_template_pda_for_program,
     };
 
     let (template, _bump) = find_template_pda(creator, template_id);
     let (elsewhere, _) = find_template_pda_for_program(creator, template_id, other_program_id);
-    let (entry, _) = find_registry_entry_address(&template, 0, &caller.to_bytes());
-    [template, elsewhere, entry]
+    // A registry's index is its position among the template's registries.
+    let totals = capped_total().compile()?.registry_index("totals").unwrap();
+    let (entry, _) = find_registry_entry_address(&template, totals, &caller.to_bytes());
+    Ok([template, elsewhere, entry])
 }
 // #endregion addresses
 
@@ -236,17 +176,23 @@ pub fn run_payroll(
     recipients: &[Pubkey],
     amount: u64,
     budget: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
+) -> Result<Instruction, Box<dyn std::error::Error>> {
+    use ballista_sdk::{template::Row, SYSTEM_PROGRAM_ID};
 
-    let inputs = RunInputs::new().u64(amount).u64(budget).finish();
-    let mut accounts = vec![
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new(treasury, true),
-    ];
-    accounts.extend(recipients.iter().map(|key| AccountMeta::new(*key, false)));
-    run_instruction(template, accounts, &inputs)
+    let instruction = payroll()
+        .compile()?
+        .run(template)
+        .input("amount", amount)
+        .input("budget", budget)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("treasury", treasury)
+        .rows(
+            recipients
+                .iter()
+                .map(|recipient| Row::new().account("recipient", *recipient)),
+        )
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion run
 

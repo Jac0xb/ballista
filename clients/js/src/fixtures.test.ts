@@ -16,6 +16,7 @@ import {
   INSTRUCTIONS_SYSVAR_ADDRESS_BYTES,
   RUNTIME_ERROR_NAMES,
   SYSTEM_PROGRAM_ADDRESS_BYTES,
+  TOKEN_2022_PROGRAM_ADDRESS_BYTES,
   TOKEN_PROGRAM_ADDRESS_BYTES,
   VERIFIER_ERROR_NAMES,
   account,
@@ -292,6 +293,43 @@ export const fixtures: Record<string, () => Template> = {
         }),
       ],
     }),
+
+  // Run by the Mollusk suite, which sets the route's members up to match, miss, or sit in the except
+  // list, and reads the five results back from the return data. The Rust compiler's test compiles
+  // the same template and expects these bytes.
+  'group-filter': () => {
+    const userTokenAccounts = {
+      programs: [TOKEN_PROGRAM_ADDRESS_BYTES, TOKEN_2022_PROGRAM_ADDRESS_BYTES],
+      match: [
+        { offset: 0, equals: expression.input('mint') },
+        { offset: 32, equals: expression.accountKey('user') },
+      ],
+    };
+    return defineTemplate({
+      inputs: { mint: { type: 'pubkey' } },
+      accounts: { user: { signer: true }, destination: {} },
+      accountGroups: ['route'],
+      steps: [
+        step.setReturnData([
+          data.encode('u64', expression.groupLength('route')),
+          data.encode('u64', expression.groupCount('route', userTokenAccounts)),
+          data.encode('bool', expression.groupAny('route', userTokenAccounts)),
+          data.encode(
+            'u64',
+            expression.groupCount('route', { ...userTokenAccounts, exceptKeys: [expression.accountKey('destination')] }),
+          ),
+          data.encode(
+            'u64',
+            expression.groupCount('route', {
+              programs: [TOKEN_PROGRAM_ADDRESS_BYTES],
+              minDataLength: 165,
+              match: [{ offset: 64, equals: expression.u64(1_000) }],
+            }),
+          ),
+        ]),
+      ],
+    });
+  },
 
   'dynamic-read': () =>
     defineTemplate({

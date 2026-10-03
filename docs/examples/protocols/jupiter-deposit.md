@@ -52,15 +52,15 @@ It does not guard against:
 
 :::
 
-The Rust tabs' `program`, `anchor` and account flags are
-[shared helpers](/examples/protocols/#rust-helpers).
+The Rust template takes its program addresses, `token_account()`, `balance_of()` and
+`jupiter_route_data()` from the [shared helpers](/examples/protocols/#rust-helpers).
 
 ## Run it
 
 `route` starts its account list with the token program, the signing owner, and the owner's source
 and destination token accounts. The template passes those four itself, and the deposit draws from
 the destination it measured. The rest of Jupiter's list changes from route to route, so it arrives
-as the `routeAccounts` [account group](/guide/account-groups): a list of any length that the caller
+as the `routeAccounts` [account group](/guide/accounts-and-cpis#account-groups): a list of any length that the caller
 supplies at run time. Group members keep the writable flag (permission to be modified) that the
 transaction gave them, and are never passed as signers.
 

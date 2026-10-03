@@ -5,9 +5,12 @@ chain. Anyone can run the template later with new inputs, and either every step 
 whole transaction fails. This page explains when that is worth doing, what it costs, and when to
 write your own program instead.
 
-**Status: pre-release.** The program hasn't been audited and isn't on mainnet. The current build
-runs only locally, in the test suite; the older devnet build rejects templates from this
-repository. [Details](/guide/security#audit-status)
+::: warning Not audited
+Ballista is on mainnet, but no third party has audited the program or the SDKs. Use it at your own
+risk. [Details](/guide/security#audit-status)
+
+<AuditFund />
+:::
 
 Most Solana automation starts as client code that builds transactions. As it grows, the same
 account ordering, checks, instruction encoding, and sequence of program calls get copied into bots,
@@ -18,9 +21,9 @@ and every client runs the same checked version.
 ## What a transaction cannot say
 
 Putting many calls in one transaction is not the reason to use Ballista. Thirty plain SOL transfers
-fit in a single [version 1 transaction](/guide/transaction-v1) of 1,670 bytes, well inside its
-4,096-byte limit. Sent that way, they need no template, no rent for a template account, and none of
-the [compute units](/reference/glossary#compute-units) that a run uses.
+fit in a single version 1 transaction of 1,670 bytes, well inside its 4,096-byte limit. Sent that
+way, they need no template, no rent for a template account, and none of the
+[compute units](/reference/glossary#compute-units) that a run uses.
 
 The reason is what a transaction cannot express. Instruction data is fixed when the transaction is
 signed, so a transaction cannot move *whatever balance is there*, repay *exactly what is owed*,
@@ -35,14 +38,19 @@ chain, reads accounts as it goes, and decides:
 - [Safety guardrails](/guide/guardrails): check the result after a call returns, and undo
   everything if the check fails.
 
+A guardrail can also check a change, such as how much a balance dropped, more cheaply than
+[Lighthouse](https://github.com/Jac0xb/lighthouse). Lighthouse stores the before value in a memory
+account, which takes an extra instruction and rent; a template keeps it in the run with
+`step.snapshot`, so the check needs neither.
+
 ## What it removes
 
-- Rebuilding the same instruction sequence in every client.
-- Writing and deploying a custom program for a short, fixed workflow.
-- Relying on a simulation before sending (a preflight) for conditions the template can check while
-  the transaction executes.
-- Sending the workflow's logic with every run: a run carries only its inputs and accounts.
-- Client-side loops that add one top-level instruction per item until the transaction is too large.
+- **Repeated client code.** Every client stops rebuilding the same instruction sequence.
+- **A custom program.** A short, fixed workflow needs no program of your own.
+- **Preflight guesses.** Conditions are checked while the transaction runs, not in a simulation
+  beforehand.
+- **Logic in every transaction.** A run carries only its inputs and accounts.
+- **Oversized batches.** One instruction covers every item, instead of one per item.
 
 ## What it costs {#cost}
 
@@ -53,7 +61,7 @@ run. Rent is 5,080 lamports a byte at today's rate, counting 128 bytes of overhe
 
 - **Upload.** The creator pays for the template account, an 80-byte header plus the compiled
   template: (128 + 80 + template bytes) × 5,080 lamports. The 216-byte
-  [Getting started](/guide/getting-started) template locks 2,153,920 lamports, about 0.0022 SOL;
+  [Getting started](/guide/getting-started) template locks 2,153,920 lamports (about 0.0022 SOL);
   the [largest template allowed](/reference/limits) locks about 0.053 SOL. A
   [finalized](/reference/glossary#finalize) template is never closed, so its rent stays locked.
 - **Registry entries.** The run that creates an [entry](/guide/registries) pays for it, a 72-byte
@@ -89,7 +97,7 @@ runs without a user signing needs a delegate or authority model from another pro
 The template language is kept small so that the Ballista program can check a whole template once,
 when it is finalized, before anyone runs it. The trust model lists
 [what finalization checks](/guide/trust-model#finalization-checks). Pinning a called program's
-address is checked only by the TypeScript compiler; see [Pins](/guide/trust-model#pins).
+address is checked only by the SDK compilers, not the program; see [Pins](/guide/trust-model#pins).
 
 What finalization cannot decide is who may run the template. Every run still relies on the
 transaction's signers, and on the checks inside the programs it calls, for authorization.

@@ -46,8 +46,8 @@ The searcher is the wallet that signs, trades and pays the tip. The template:
 
 :::
 
-The Rust tabs' `program`, `anchor` and account flags are
-[shared helpers](/examples/protocols/#rust-helpers).
+The Rust template takes its program addresses, `token_account()`, `balance_of()` and
+`jupiter_route_data()` from the [shared helpers](/examples/protocols/#rust-helpers).
 
 The tip is a fixed input, not a share of the profit computed during the run. Jito's block engine,
 which runs the tip auction, is closed source, and it is unclear whether it ranks a computed tip by
@@ -59,7 +59,7 @@ be worse than none, so the template bids a fixed amount and only decides whether
 `route` starts its account list with the token program, the signer, and the source and destination
 token accounts. The template passes those four itself, with `wsolAccount` as both source and
 destination; the rest of the route's accounts arrive as the `strategyAccounts`
-[account group](/guide/account-groups).
+[account group](/guide/accounts-and-cpis#account-groups).
 
 Jupiter's Swap API won't quote a route from a token back to itself, so quote two legs, SOL to USDC
 and back, each a single step. `joinRoundTrip(first, second)`, in

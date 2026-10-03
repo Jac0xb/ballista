@@ -21,6 +21,7 @@ each step does when a template runs.
 | `expression.accountData(account, offset, type)` | Read account data at a fixed offset or at a `u64` expression offset |
 | `expression.accountKey(name)` | Read a fixed account's address; short for `accountField(account.fixed(name), 'key')` |
 | `expression.registry(entry, field)` | Read a field of the registry entry in fixed account `entry` |
+| `expression.groupLength(group)`, `groupAny(group, filter)`, `groupCount(group, filter)` | Count an account group's members, or test them against a filter; see [Account groups](/reference/language#account-groups) |
 | `expression.returnData(type, offset?)` | Read the return data (bytes a called program hands back) of the invoke just before; `offset` defaults to 0 |
 | `expression.rowInput(name)` | Read a row input of the current batch row, inside `forEach` only |
 | `step.require(condition, label?)` | Fail the run unless the condition is true |
@@ -47,7 +48,7 @@ A template document has these fields:
 | `accounts` | Named fixed accounts and their constraints |
 | `registries` | Optional: up to 8 named registries and their fields; see [Registries](#registries) |
 | `batch` | Optional: `maxIterations` (1 to 60), `minIterations` (default 0), `row` (1 to 8 named accounts with constraints), and `rowInputs` (up to 8 named inputs) |
-| `accountGroups` | Up to 8 names of caller-sized account lists; see [Account groups](/guide/account-groups) |
+| `accountGroups` | Up to 8 names of caller-sized account lists; see [Account groups](/guide/accounts-and-cpis#account-groups) |
 | `emitEvent` | Log a run event after each successful run; default `false` |
 | `steps` | 1 to 128 steps |
 | `version` | Optional; must be `1` |
@@ -97,7 +98,7 @@ maximum: `maxIterations` passes for `forEach` and `max` for `repeat`.
 `data.literal` and `data.encode` parts that `step.invoke` builds instruction data from, and an
 `emit`'s first part is its tag. `MIN_EMIT_TAG_LENGTH` and `RUN_EVENT_TAG_FAMILY` hold the tag rule's
 length and reserved prefix. Compilation fails when a step breaks a rule in
-[Output](/reference/language#output); [Logs and return data](/guide/errors-and-events#logs-and-return-data)
+[Output](/reference/language#output); [Run events and output](/guide/errors-and-events#run-events)
 reads both from a client.
 
 ```ts
@@ -387,8 +388,8 @@ Each helper takes one object naming the accounts and values involved, for exampl
 helpers also accept `when` and `label`; the assertions accept `bump` and `label`. The CPI helpers
 set `programAddress`, so compilation fails if the program account pins a different program.
 
-The byte constants `SYSTEM_PROGRAM_ADDRESS_BYTES`, `TOKEN_PROGRAM_ADDRESS_BYTES`, and
-`ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES` are exported for pinning those programs, and
+The byte constants `SYSTEM_PROGRAM_ADDRESS_BYTES`, `TOKEN_PROGRAM_ADDRESS_BYTES`,
+`TOKEN_2022_PROGRAM_ADDRESS_BYTES`, and `ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES` are exported for pinning those programs, and
 `INSTRUCTIONS_SYSVAR_ADDRESS_BYTES` and `ED25519_PROGRAM_ADDRESS_BYTES` for the Instructions
 sysvar and the Ed25519 program.
 
@@ -606,5 +607,5 @@ of accounts a transaction can lock; see [Transaction limits](/reference/limits#t
 
 Simulate the transaction before you ask a wallet to sign; it needs no signature.
 [Which program failed](/guide/errors-and-events#which-program-failed) explains a failure by the
-program that refused it, and [Logs and return data](/guide/errors-and-events#logs-and-return-data)
+program that refused it, and [Run events and output](/guide/errors-and-events#run-events)
 reads the run's events, its `emit` outputs, and its return data.

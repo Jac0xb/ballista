@@ -5,13 +5,12 @@ Rust. The template sweeps a vault: it sends everything above a minimum balance, 
 another account. The caller picks the reserve; the template reads the balance while the transaction
 runs and works out the amount.
 
-> **Status: pre-release.** The program hasn't been audited and isn't on mainnet. The current build
-> runs only locally, in the test suite; the older devnet build rejects templates from this
-> repository. [Details](/guide/security#audit-status)
+::: warning Not audited
+Ballista is on mainnet, but no third party has audited it. Use it at your own risk.
+[Details](/guide/security#audit-status)
+:::
 
-Steps 1 to 5 build one file, in order: in TypeScript a file such as `sweep.mts`, and in Rust the
-body of `fn main() -> Result<(), Box<dyn std::error::Error>>` in `src/main.rs`, ending with
-`Ok(())`. Pick a language on any code block and the others follow.
+Each step adds to the same file. Pick a language on any code block and the rest follow.
 
 ## Install {#install-the-workspace}
 
@@ -43,7 +42,7 @@ npm install ../ballista/clients/js/jac0xb-ballista-1.0.0.tgz @solana/kit@8
 cargo new sweep && cd sweep
 cargo add ballista-sdk --git https://github.com/Jac0xb/ballista
 cargo add solana-program@=4.1.0 solana-rpc-client@4 solana-keypair@3 solana-signer@3 \
-  solana-transaction@4 solana-transaction-error@3 solana-commitment-config@3 solana-message@4
+  solana-transaction@4 solana-transaction-error@3 solana-commitment-config@3
 ```
 
 :::
@@ -80,10 +79,11 @@ caller's account must be: `signer` means it must sign the transaction, `writable
 transaction must let it change, `executable` that it must be a program, and `address` fixes it to
 one exact address. The steps read the vault's balance in [lamports](/reference/glossary#lamports),
 stop the run unless it is above the reserve, and transfer the difference. The label
-`'aboveReserve'` names the check in error messages.
+`aboveReserve` names the check in error messages.
 
-Compiling is deterministic, and the Rust builder produces the same bytes; [Author it in
-Rust](#author-it-in-rust) explains the difference.
+Compiling is deterministic. The Rust tab compiles to the same bytes, with the same checks: every
+program the template calls must have a fixed address, and every account whose data it reads a
+fixed owner or address. A template built in either language can be uploaded and run from either.
 
 ## 3. Upload
 
@@ -110,8 +110,6 @@ each ([Limits](/reference/limits#transaction-ceilings)):
   template of up to 960 bytes. [Template lifecycle](/guide/template-lifecycle#upload) uploads larger
   ones in pieces.
 
-To read a stored template back, see [Inspecting a template](/guide/inspecting-templates).
-
 ## 4. Run
 
 ::: code-group
@@ -125,8 +123,8 @@ To read a stored template back, see [Inspecting a template](/guide/inspecting-te
 The vault and the creator are different wallets: anyone can run a finalized template, and the
 creator does not sign runs. The run instruction lists the template account first (both SDKs add
 it), then the template's accounts in the order it declares them, and carries the inputs in
-declaration order. The TypeScript builder takes them by name and checks them against `compiled`; in
-Rust you pass them in order yourself. The vault signs because the template declares it as a signer.
+declaration order. Both SDKs take them by name, put them in that order, and check them against
+`compiled`. The vault signs because the template declares it as a signer.
 The run leaves the vault with exactly the 2,000,000-lamport reserve.
 
 ## 5. Read a failure
@@ -146,10 +144,8 @@ says where the failure happened. For `RequirementFailed` the context is the prog
 index of the failing bytecode instruction. For other kinds it can be an account index or an input
 index instead; [Error codes](/reference/errors#context) lists which.
 
-`explainRunError` uses the compiled template's source map to name the step, `steps[1]`, and its
-label. Rust has no source map, and the builder's calls don't return program counters.
-`decode_ballista_error` splits the code the same way, and for program counter `n` the failing
-instruction is `ProgramView::parse(&payload)?.instructions[n]`: here the `require`, opcode 40.
+`explainRunError` in TypeScript and `compiled.explain_error` in Rust use the compiled template's
+source map to name the step, `steps[1]`, and its label.
 
 ## 6. Call your own program
 
@@ -168,44 +164,24 @@ instruction's 8-byte [discriminator](/reference/glossary#discriminator), then it
 `addressBytes` turns a Kit address or a base58 string into the 32 bytes a template takes; Kit's
 `getAddressEncoder().encode()` returns a read-only array, which the template's types reject.
 `anchorDiscriminator('deposit')` is the first 8 bytes of `sha256("global:deposit")`. In Rust,
-`Pubkey::to_bytes()` and `ballista_sdk::anchor_discriminator` do the same. Fixing the program's
+`account::program` takes a `Pubkey`, and `ballista_sdk::anchor_discriminator` gives the same 8
+bytes. Fixing the program's
 address, as here, stops a caller from passing a different program;
 [Accounts and CPIs](/guide/accounts-and-cpis#generic-cpi) covers the rest of a call.
 
-## Author it in Rust
-
-The Rust tab of step 2 builds the template with `ProgramBuilder`. It works at a lower level than
-the TypeScript compiler: you declare accounts and inputs in order, and each value lives in a
-[register](/reference/glossary#register), a numbered slot that holds a value during a run. For
-this template the builder's output is byte-identical to the compiler's.
-
-The TypeScript compiler also checks that every program the template calls has a fixed address and
-that every account whose data it reads has a fixed owner or address. It works out each account's
-minimum data length, and it records which step produced each instruction so that errors can name
-the step. With the Rust builder, those decisions are yours; see [Pins](/guide/trust-model#pins). A
-template built either way can be uploaded and run from either language.
-
 ## Run the shipped examples
 
-Run these from the repository you cloned, after `pnpm install` at its root:
+Steps 1 to 5 ship as runnable programs in both languages. With the validator from
+[Install](#install-the-workspace) running, run either from the repository you cloned. The
+TypeScript one needs `pnpm install && pnpm build:sdk` at its root first.
 
 ```bash
-pnpm --dir clients/js exec tsx examples/start/getting-started.ts   # this page, on the local validator
-pnpm --dir clients/js exec tsx examples/transfer.ts        # compile and print the payload
-pnpm --dir clients/js exec tsx examples/run-transfer.ts    # build a Solana Kit run instruction offline
-cargo run -p ballista-sdk --example author_template        # build two templates in Rust
-cargo run -p ballista-sdk --example run_template           # encode inputs and decode errors in Rust
+pnpm --dir clients/js exec tsx examples/start/getting-started.ts
+cargo run --manifest-path clients/rust/examples/getting-started/Cargo.toml
 ```
-
-The Rust `author_template` example also builds a payroll template that keeps a running total across
-rows and enforces a budget. [Batch execution](/guide/batching#carry-a-total-across-rows) shows the
-TypeScript version.
 
 ## Next
 
 - See [what templates can do](/guide/runtime-values) that a transaction cannot.
 - Learn the [template lifecycle](/guide/template-lifecycle).
 - Add [snapshots and assertions](/guide/assertions).
-- Build a [30-recipient payroll](/examples/payments#bounded-sol-payroll).
-- Send large runs in a [version 1 transaction](/guide/transaction-v1), which allows up to 4,096
-  bytes.

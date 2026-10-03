@@ -140,6 +140,9 @@ export const opcode = {
   openRegistry: 75,
   readRegistry: 76,
   writeRegistry: 77,
+  groupLength: 78,
+  groupAny: 79,
+  groupCount: 80,
 } as const;
 
 /** The conjuncts of a requirement: `and(and(a, b), c)` is three separate assertions. */
@@ -1142,6 +1145,12 @@ class Compiler {
         registryFieldImmediate(field),
       );
     }
+    if (current.kind === 'groupLength') {
+      return this.emit(opcode.groupLength, 'u64', 0, this.groupIndex(current.group));
+    }
+    if (current.kind === 'groupAny' || current.kind === 'groupCount') {
+      return this.compileGroupFilter(current, loop, bindings);
+    }
     if (current.kind === 'select') {
       const condition = this.compileExpression(current.condition, loop, bindings);
       const ifTrue = this.compileExpression(current.ifTrue, loop, bindings);
@@ -1183,7 +1192,57 @@ class Compiler {
     return this.emit(operation, 'bool', 0, left.register, right.register);
   }
 
-  compileSeedSegment(value: ExpressionResult): Uint8Array {
+  groupIndex(group: string): number {
+    const index = this.accountGroupIndices.get(group);
+    if (index === undefined) throw new TypeError(`Unknown account group: ${group}`);
+    return index;
+  }
+
+  /**
+   * `GROUP_ANY` or `GROUP_COUNT`. Every match value and except key compiles before any of the
+   * filter's segments is appended, as a step's data parts do (see `compileDataParts`): the match
+   * segments, then the except segments, one contiguous run the immediate names.
+   */
+  compileGroupFilter(
+    current: Extract<Expression, { kind: 'groupAny' | 'groupCount' }>,
+    loop: LoopKind | undefined,
+    bindings: Bindings,
+  ): ExpressionResult {
+    const group = this.groupIndex(current.group);
+    const { filter } = current;
+    const matches = filter.match.map(({ offset, equals }) => {
+      const value = this.compileExpression(equals, loop, bindings);
+      if (value.type === 'bytes') {
+        throw new TypeError(`${current.kind} match at offset ${offset}: a match value is a bool, u64, i64, u128 or pubkey, not bytes`);
+      }
+      return { offset, value, end: offset + fixedValueLength(value.type) };
+    });
+    const excepts = (filter.exceptKeys ?? []).map((key) => {
+      const value = this.compileExpression(key, loop, bindings);
+      requireType(value, 'pubkey', `${current.kind} exceptKeys`);
+      return value;
+    });
+    const floor = Math.max(...matches.map(({ end }) => end));
+    const minDataLength = filter.minDataLength ?? floor;
+    if (minDataLength < floor) {
+      throw new RangeError(`${current.kind}: minDataLength ${minDataLength} is shorter than the matches, which read to byte ${floor}`);
+    }
+    const segmentStart = this.dataSegments.length;
+    for (const { offset, value } of matches) this.dataSegments.push(this.compileSeedSegment(value, offset));
+    for (const value of excepts) this.dataSegments.push(this.compileSeedSegment(value));
+    const first = this.addPubkey(filter.programs[0]!);
+    const second = filter.programs[1] === undefined ? NO_INDEX : this.addPubkey(filter.programs[1]);
+    const immediate =
+      BigInt(segmentStart) |
+      (BigInt(matches.length) << 16n) |
+      (BigInt(excepts.length) << 24n) |
+      (BigInt(minDataLength) << 32n);
+    const [operation, type] = current.kind === 'groupAny' ? [opcode.groupAny, 'bool' as const] : [opcode.groupCount, 'u64' as const];
+    return this.emit(operation, type, 0, group, first, second, immediate);
+  }
+
+  /** A register segment of `value`'s own kind; a group filter's match puts its data offset in `offset`. */
+  compileSeedSegment(value: ExpressionResult, offset = 0): Uint8Array {
     const kind: Record<ValueType, number> = {
       bool: dataKind.bool,
       u64: dataKind.u64,
@@ -1195,7 +1254,7 @@ class Compiler {
     const writer = new Writer();
     writer.u8(kind[value.type]);
     writer.u8(value.register);
-    writer.u16(0);
+    writer.u16(offset);
     writer.u16(0);
     writer.raw([0, 0]);
     return writer.finish();
@@ -1548,6 +1607,11 @@ const REGISTER_OPERANDS: Record<keyof typeof opcode, readonly Operand[]> = {
   readRegistry: [],
   // The value written.
   writeRegistry: ['a'],
+  // `a` is the group, `b` and `c` pubkey-table indices. A filter's values are its data segments:
+  // see `segmentRange`.
+  groupLength: [],
+  groupAny: [],
+  groupCount: [],
 };
 
 const OPERANDS_BY_OPCODE = new Map<number, readonly Operand[]>(
@@ -1570,7 +1634,8 @@ function readOperands(record: Uint8Array): readonly Operand[] {
 
 /**
  * The data segments `record` reads when it runs, as `[start, end)`: a derivation's seeds and an
- * output's parts from its range immediate, and an invoke's data from its descriptor.
+ * output's parts from its range immediate, a group filter's values from its filter immediate, and
+ * an invoke's data from its descriptor.
  */
 function segmentRange(program: RegisterProgram, record: Uint8Array): [number, number] | undefined {
   const code = record[0]!;
@@ -1578,6 +1643,12 @@ function segmentRange(program: RegisterProgram, record: Uint8Array): [number, nu
     const descriptor = program.cpis[record[OPERAND_OFFSET.a]!]!;
     const start = descriptor[6]! | (descriptor[7]! << 8);
     return [start, start + descriptor[5]!];
+  }
+  if (code === opcode.groupAny || code === opcode.groupCount) {
+    // The segment start in bytes 0 and 1, the match count in byte 2, the except count in byte 3.
+    const immediate = Number(recordImmediate(record) & 0xffff_ffffn);
+    const start = immediate & 0xffff;
+    return [start, start + ((immediate >>> 16) & 0xff) + ((immediate >>> 24) & 0xff)];
   }
   if (code === opcode.derivePda || code === opcode.createPda || code === opcode.emit || code === opcode.setReturnData) {
     const immediate = recordImmediate(record);

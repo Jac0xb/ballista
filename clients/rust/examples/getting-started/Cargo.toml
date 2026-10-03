@@ -1,0 +1,20 @@
+# Getting started, steps 1 to 5, as a runnable crate. Its dependencies are the page's install
+# line, except that ballista-sdk comes from this repository by path.
+[package]
+name = "getting-started"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Not part of the repository's workspace: it builds against the real Solana client crates.
+[workspace]
+
+[dependencies]
+ballista-sdk = { path = "../.." }
+solana-program = "=4.1.0"
+solana-rpc-client = "4"
+solana-keypair = "3"
+solana-signer = "3"
+solana-transaction = "4"
+solana-transaction-error = "3"
+solana-commitment-config = "3"

@@ -9,6 +9,7 @@ mod profile;
 
 #[cfg(test)]
 mod tests {
+    mod account_groups;
     mod register_reuse;
 
     use std::{cell::RefCell, collections::HashMap, rc::Rc};

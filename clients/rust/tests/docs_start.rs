@@ -3,7 +3,8 @@
 //! The pages send each upload instruction in its own legacy transaction, which Solana caps at
 //! 1,232 bytes. These tests build every transaction the upload code sends, for each protocol
 //! template in `fixtures/protocol-examples.json` (several of them over 1 KB), and measure it. They
-//! also hold Getting started's template to the bytes the TypeScript compiler produces.
+//! also hold Getting started's template to the bytes the TypeScript compiler produces, and the
+//! runnable `examples/getting-started` crate to the page's regions.
 
 #[path = "../examples/docs_start.rs"]
 mod start;
@@ -124,6 +125,26 @@ fn getting_started_uploads_its_template_in_one_transaction() {
     let creator = Pubkey::new_unique();
     let create = create_template_instruction(creator, 7, &payload);
     assert!(legacy_transaction_size(&creator, &[create]) <= TRANSACTION_SIZE_LIMIT);
+}
+
+/// The runnable crate's `main` is Getting started's regions, steps 1 to 5, as the page shows them.
+#[test]
+fn the_runnable_crate_runs_the_pages_code() {
+    let source = include_str!("../examples/docs_start.rs");
+    let regions: Vec<&str> = ["connect", "define", "upload", "run", "failure"]
+        .iter()
+        .map(|name| {
+            let start = source.find(&format!("    // #region {name}\n")).unwrap();
+            let end_marker = format!("    // #endregion {name}\n");
+            let end = source[start..].find(&end_marker).unwrap() + end_marker.len();
+            &source[start..start + end]
+        })
+        .collect();
+
+    let main = include_str!("../examples/getting-started/src/main.rs");
+    let opening = "fn main() -> Result<(), Box<dyn std::error::Error>> {\n";
+    let body = &main[main.find(opening).unwrap() + opening.len()..];
+    assert_eq!(body, format!("{}\n    Ok(())\n}}\n", regions.join("\n")));
 }
 
 #[test]

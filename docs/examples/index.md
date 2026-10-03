@@ -45,7 +45,6 @@ Templates that pay out SOL.
 
 | Recipe | What it does | Plain transaction? |
 | --- | --- | --- |
-| [SOL payroll](/examples/payments#bounded-sol-payroll) | Pay up to 30 recipients in one instruction | Yes |
 | [Revenue split](/examples/payments#basis-point-revenue-split) | Split an amount by basis points, losing nothing to rounding | Yes, weaker |
 | [Weighted rewards](/examples/payments#index-weighted-rewards) | Pay the first recipient 1 × base, the second 2 × base, and so on | Yes, weaker |
 | [Deadline refund](/examples/payments#deadline-refund) | Refund only before a deadline | Yes, weaker |

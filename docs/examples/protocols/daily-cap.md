@@ -65,8 +65,8 @@ It does not guard against:
 
 :::
 
-The Rust tabs' `program`, `anchor` and account flags are
-[shared helpers](/examples/protocols/#rust-helpers).
+The Rust template takes its program addresses, `token_account()`, `balance_of()` and
+`jupiter_route_data()` from the [shared helpers](/examples/protocols/#rust-helpers).
 
 The Rust template writes out the steps that `rateLimit` returns.
 
@@ -75,7 +75,7 @@ The Rust template writes out the steps that `rateLimit` returns.
 `route` starts its account list with the token program, the signer, and the signer's source and
 destination token accounts. The template passes the first three itself; the rest of the route's
 accounts, from the destination token account on, arrive as the `actionAccounts`
-[account group](/guide/account-groups).
+[account group](/guide/accounts-and-cpis#account-groups).
 
 The Run tabs pass the six declared accounts, `actionProgram` (Jupiter), `tokenProgram`, `actor`,
 `sourceAta` (the actor's wSOL account), `spend` (the actor's entry) and `systemProgram`, then the

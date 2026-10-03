@@ -248,56 +248,6 @@ cases.push({
 });
 
 cases.push({
-  name: 'repay-exactly-what-is-owed',
-  page: 'runtime-values',
-  anchor: 'repay-exactly-what-is-owed',
-  standIn: true,
-  template: defineTemplate({
-    accounts: {
-      protocolProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
-      loan: { owner: SYSTEM_PROGRAM_ADDRESS_BYTES, minDataLength: 128 },
-      borrower: { signer: true, writable: true },
-      pool: { writable: true },
-    },
-    steps: [
-      step.let('owed', expression.accountData(account.fixed('loan'), 8, 'u64')),
-      step.let('available', expression.accountField(account.fixed('borrower'), 'lamports')),
-      step.invoke({
-        program: account.fixed('protocolProgram'),
-        accounts: [
-          { account: account.fixed('borrower'), signer: true, writable: true },
-          { account: account.fixed('pool'), signer: false, writable: true },
-        ],
-        data: [
-          data.literal(Uint8Array.of(2, 0, 0, 0)),
-          data.encode('u64', expression.min(expression.variable('owed'), expression.variable('available'))),
-        ],
-      }),
-    ],
-  }),
-  accounts: {
-    protocolProgram: 'system-program',
-    loan: 'state-account',
-    borrower: 'signer',
-    pool: 'recipient',
-  },
-  baseline: {
-    verdict: 'impossible',
-    note: 'Debt accrues every slot, so the figure the client quoted is stale by the time the transaction lands. Repaying a fixed amount leaves a remainder or overpays.',
-    instructions: [
-      {
-        program: 'system-program',
-        accounts: [
-          { index: 2, signer: true, writable: true },
-          { index: 3, signer: false, writable: true },
-        ],
-        data: transferData(AMOUNT),
-      },
-    ],
-  },
-});
-
-cases.push({
   name: 'split-what-arrived',
   page: 'runtime-values',
   anchor: 'split-what-arrived',
@@ -479,30 +429,31 @@ cases.push({
 });
 
 cases.push({
-  name: 'top-up-only-when-low',
+  name: 'top-up-to-a-target',
   page: 'conditional',
-  anchor: 'top-up-only-when-low',
+  anchor: 'top-up-to-a-target',
   template: defineTemplate({
-    inputs: { floor: { type: 'u64' }, topUp: { type: 'u64' } },
+    inputs: { target: { type: 'u64' } },
     accounts: { ...systemPrograms, funder: { signer: true, writable: true }, bot: { writable: true } },
     steps: [
+      step.let('botBalance', expression.accountField(account.fixed('bot'), 'lamports')),
       systemTransfer({
         systemProgram: account.fixed('systemProgram'),
         from: account.fixed('funder'),
         to: account.fixed('bot'),
-        lamports: expression.input('topUp'),
-        when: expression.lessThan(
-          expression.accountField(account.fixed('bot'), 'lamports'),
-          expression.input('floor'),
+        lamports: expression.subtract(
+          expression.input('target'),
+          expression.min(expression.variable('botBalance'), expression.input('target')),
         ),
+        when: expression.lessThan(expression.variable('botBalance'), expression.input('target')),
       }),
     ],
   }),
   accounts: { systemProgram: 'system-program', funder: 'signer', bot: 'recipient' },
-  inputs: { floor: 2_000_000_000n, topUp: AMOUNT },
+  inputs: { target: 2_000_000_000n },
   baseline: {
     verdict: 'impossible',
-    note: 'A scheduled job that always tops up drains the funder; one that checks first has read a balance that may have changed by the time the transfer lands.',
+    note: 'A plain transfer fixes its amount when the transaction is built, from a balance read off chain that may have changed by the time it lands.',
     instructions: [
       {
         program: 'system-program',

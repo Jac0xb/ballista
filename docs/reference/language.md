@@ -2,8 +2,9 @@
 
 Everything a template can contain. A template declares typed inputs, the accounts it expects, an
 optional batch of repeated rows, optional registries that keep state between runs, and an ordered
-list of steps. Function names are from the TypeScript SDK. The Rust `ProgramBuilder` produces the
-same bytecode at a lower level; see [Rust SDK](/reference/rust). Every maximum is on
+list of steps. Function names are from the TypeScript SDK. Rust's `ballista_sdk::template` mirrors
+them in snake_case, uses the same names for inputs, accounts and variables, and compiles to the same
+bytes; see [Rust SDK](/reference/rust). Every maximum is on
 [Limits](/reference/limits).
 
 The compiler turns a template into bytecode: a list of fixed-size instructions, each identified by
@@ -83,9 +84,10 @@ The compiler enforces two pinning rules:
 - An account whose data the template reads must pin its `owner` or its `address`. A byte offset
   only has a meaning when you know which program wrote the data.
 
-Setting `unsafeUnpinned: true` on an account waives both rules for that account. Use it when a
-template deliberately accepts a program or data that the caller chooses. Reading the transaction's
-other instructions has a stricter rule that nothing waives; see [Introspection](#introspection).
+Setting `unsafeUnpinned: true` on an account (`.unsafe_unpinned()` in Rust) waives both rules for
+that account. Use it when a template deliberately accepts a program or data that the caller
+chooses. Reading the transaction's other instructions has a stricter rule that nothing waives; see
+[Introspection](#introspection).
 
 Accounts are named in steps with `account.fixed(name)` for an account in the schema and
 `account.iteration(name)` for an account in the current batch row, inside a `forEach` loop. Two
@@ -223,6 +225,31 @@ that Solana fills with the transaction's instructions.
 | `expression.instructionDataBytes(sysvar, index, offset, length)` | `bytes`, exactly `length` long (1 to 1,024), used in place rather than copied |
 
 The [`ed25519Signature`](#assertions) helper uses these reads to check a signed message.
+
+### Account groups {#account-groups}
+
+A template can't read an [account group](/guide/accounts-and-cpis#account-groups) member's data
+freely, but it can count the members and test them against a filter.
+
+| Constructor | Result |
+| --- | --- |
+| `expression.groupLength(group)` | `u64`, how many members the caller passed |
+| `expression.groupAny(group, filter)` | `bool`, whether any member matches `filter` |
+| `expression.groupCount(group, filter)` | `u64`, how many members match `filter` |
+
+A member matches when all of these hold:
+
+- **`programs`**: one or two program addresses, fixed in the template. The member's owner is one
+  of them.
+- **`match`**: one to four `{ offset, equals }` entries. The member's data at `offset` (at most
+  65,535) holds `equals`, a `bool`, `u64`, `i64`, `u128` or `pubkey`, encoded as call data encodes
+  it: a `pubkey` as 32 bytes, a `u64` as 8 little-endian bytes.
+- **`minDataLength`**: the member holds at least this many bytes. It defaults to the end of the
+  furthest match, and can't be less.
+- **`exceptKeys`**: up to four `pubkey` values. A member at one of these addresses never matches.
+
+A member that fails a test simply doesn't match; the run goes on. The filter reads each member in
+place and costs about 15 to 90 compute units a member, more the further it gets.
 
 ## Computation
 
@@ -368,7 +395,7 @@ An invocation calls a program whose address the template pins.
 
 - **`accounts`** lists up to 64 accounts, each `{ account, signer?, writable? }`, with the flags the
   call needs, no more than each account's declaration allows.
-- **`accountGroup`** names one [account group](/guide/account-groups): a list of accounts the
+- **`accountGroup`** names one [account group](/guide/accounts-and-cpis#account-groups): a list of accounts the
   caller supplies at run time, passed after the listed accounts and never as signers.
 - **`data`** builds the instruction data from up to 64 parts, at most 4,096 bytes. The verifier
   checks the worst case when the template is finalized.
@@ -590,8 +617,9 @@ The language leaves these out on purpose:
   known to finish, and its worst case is known before it runs, rather than being cut off by the
   transaction's compute budget.
 - A template cannot discover accounts at run time. The only accounts outside the schema are
-  account group members, which a template can forward to a CPI but never read, check, or sign
-  with. Everything a template checks is fixed in the stored template, where anyone can review it.
+  account group members, which a template can forward to a CPI, count, and test against a pinned
+  [filter](#account-groups), but never read freely or sign with. Everything a template checks is
+  fixed in the stored template, where anyone can review it.
 - There is no hidden state. A template keeps state of its own only in its
   [registry entries](#registries), accounts anyone can read. What a run does depends only on its
   inputs, its accounts, the chain state it reads, and, if it reads them, the transaction's other

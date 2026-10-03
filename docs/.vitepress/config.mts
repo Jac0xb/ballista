@@ -7,9 +7,160 @@ const base = process.env.BALLISTA_DOCS_BASE ?? '/ballista/';
 const origin = process.env.BALLISTA_DOCS_ORIGIN ?? 'https://jac0xb.github.io';
 const { version } = JSON.parse(readFileSync(new URL('../../clients/js/package.json', import.meta.url), 'utf8'));
 const release = version.split('.').slice(0, 2).join('.');
+// A Solana address that takes donations toward an audit. Unset, the docs show no address.
+const auditFund = process.env.BALLISTA_AUDIT_FUND?.trim() || undefined;
+if (auditFund && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(auditFund)) {
+  throw new Error(`BALLISTA_AUDIT_FUND is not a base58 Solana address: ${auditFund}`);
+}
 const title = 'Ballista — execution, composed';
+
+// Numbers in prose and tables render as inline code chips (`.num` in style.css): a standalone
+// number such as 1,014, 4,096 or 0.5, and inline code that is only a number. A currency symbol or
+// unit next to the number goes in the same chip: $5, 1 SOL, 5,080 lamports, 80-byte, 64 KiB.
+// Headings, code blocks and numbers inside words (v1, ed25519) are left alone.
+const UNIT = String.raw`(?:%|-?bytes?\b|\s(?:SOL|USDC|USDT|lamports?|bytes?|KiB|MiB|seconds?|minutes?|hours?|days?|ms|CU|bps)\b)`;
+const NUMBER = new RegExp(String.raw`(?<![\w.#/-])\$?\d[\d,]*(?:\.\d+)?${UNIT}?(?![\w])`, 'g');
+const NUMBER_ONLY = new RegExp(String.raw`^\$?[\d,]+(?:\.\d+)?${UNIT}?$`);
+type MdToken = { type: string; content: string; children: MdToken[] | null; attrJoin?: (n: string, v: string) => void };
+function numberChips(state: { tokens: MdToken[]; Token: new (type: string, tag: string, nesting: number) => MdToken }) {
+  let inHeading = false;
+  for (const token of state.tokens) {
+    if (token.type === 'heading_open') inHeading = true;
+    if (token.type === 'heading_close') inHeading = false;
+    if (token.type !== 'inline' || inHeading || !token.children) continue;
+    const out: MdToken[] = [];
+    let inLink = 0;
+    for (const child of token.children) {
+      if (child.type === 'link_open') inLink++;
+      if (child.type === 'link_close') inLink--;
+      if (child.type === 'code_inline' && NUMBER_ONLY.test(child.content)) {
+        child.attrJoin?.('class', 'num');
+        out.push(child);
+        continue;
+      }
+      if (child.type !== 'text' || inLink) {
+        out.push(child);
+        continue;
+      }
+      let last = 0;
+      for (const match of child.content.matchAll(NUMBER)) {
+        const index = match.index ?? 0;
+        if (index > last) {
+          const text = new state.Token('text', '', 0);
+          text.content = child.content.slice(last, index);
+          out.push(text);
+        }
+        const code = new state.Token('code_inline', 'code', 0);
+        code.content = match[0];
+        code.attrJoin?.('class', 'num');
+        out.push(code);
+        last = index + match[0].length;
+      }
+      if (last === 0) {
+        out.push(child);
+        continue;
+      }
+      if (last < child.content.length) {
+        const text = new state.Token('text', '', 0);
+        text.content = child.content.slice(last);
+        out.push(text);
+      }
+    }
+    token.children = out;
+  }
+}
 const summary =
   'Ballista stores a sequence of Solana program calls, and the checks between them, as a template on chain. Anyone can run it later with new inputs.';
+
+// Examples live in the guide's sidebar: patterns first, then each protocol's templates in a group
+// of their own.
+const examplesSidebar = [
+  {
+    text: 'Examples',
+    items: [
+      { text: 'All examples', link: '/examples/' },
+      {
+        text: 'Payment patterns',
+        link: '/examples/payments',
+        collapsed: true,
+        items: [
+          { text: 'Revenue split', link: '/examples/payments#basis-point-revenue-split' },
+          { text: 'Weighted rewards', link: '/examples/payments#index-weighted-rewards' },
+          { text: 'Deadline refund', link: '/examples/payments#deadline-refund' },
+          { text: 'Reserve-preserving sweep', link: '/examples/payments#reserve-preserving-sweep' },
+          { text: 'Payment agent', link: '/examples/payments#payment-agent' },
+        ],
+      },
+      {
+        text: 'Token-account patterns',
+        link: '/examples/token-accounts',
+        collapsed: true,
+        items: [
+          { text: 'Create then transfer', link: '/examples/token-accounts#assert-create-then-transfer' },
+          { text: 'Token payroll', link: '/examples/token-accounts#existing-account-token-payroll' },
+          { text: 'Conditional ATA setup', link: '/examples/token-accounts#conditional-ata-setup' },
+          { text: 'Close empty accounts', link: '/examples/token-accounts#close-empty-token-accounts' },
+          { text: 'Exact token debit', link: '/examples/token-accounts#exact-token-debit' },
+        ],
+      },
+      {
+        text: 'Protocol composition',
+        link: '/examples/composition',
+        collapsed: true,
+        items: [
+          { text: 'Swap then deposit', link: '/examples/composition#swap-then-deposit' },
+          { text: 'Claim then distribute', link: '/examples/composition#claim-then-distribute' },
+          { text: 'Fallback route', link: '/examples/composition#primary-or-fallback-route' },
+          { text: 'Time-gated governance', link: '/examples/composition#time-gated-governance-execution' },
+          { text: 'Keeper crank', link: '/examples/composition#bounded-keeper-crank' },
+        ],
+      },
+    ],
+  },
+  {
+    text: 'Protocol templates',
+    items: [
+      { text: 'Overview', link: '/examples/protocols/' },
+      {
+        text: 'Jupiter',
+        collapsed: true,
+        items: [
+          { text: 'Deposit what a swap produced', link: '/examples/protocols/jupiter-deposit' },
+          { text: 'Swap checked against an oracle', link: '/examples/protocols/jupiter-oracle-swap' },
+          { text: 'Sell a whole balance', link: '/examples/protocols/token-sweep' },
+          { text: "Cap a caller's daily swaps", link: '/examples/protocols/daily-cap' },
+        ],
+      },
+      {
+        text: 'Kamino',
+        collapsed: true,
+        items: [
+          { text: 'Repay what a swap produced', link: '/examples/protocols/kamino-repay' },
+          { text: 'Liquidate with a minimum payout', link: '/examples/protocols/kamino-liquidate' },
+        ],
+      },
+      {
+        text: 'marginfi',
+        collapsed: true,
+        items: [
+          { text: 'Withdraw everything, with a minimum', link: '/examples/protocols/marginfi-withdraw' },
+          { text: 'Move a position into Kamino', link: '/examples/protocols/marginfi-to-kamino' },
+        ],
+      },
+      {
+        text: 'Orca',
+        collapsed: true,
+        items: [
+          { text: 'Compound collected fees', link: '/examples/protocols/orca-compound' },
+          { text: 'Harvest positions that earned', link: '/examples/protocols/orca-harvest' },
+        ],
+      },
+      { text: 'Pyth', collapsed: true, items: [{ text: 'Act only on a fresh price', link: '/examples/protocols/pyth-gate' }] },
+      { text: 'Jito', collapsed: true, items: [{ text: 'Tip only from profit', link: '/examples/protocols/jito-tip' }] },
+      { text: 'Ed25519', collapsed: true, items: [{ text: 'Settle at a signed quote', link: '/examples/protocols/signed-quote' }] },
+    ],
+  },
+];
 
 const guideSidebar = [
   {
@@ -33,98 +184,26 @@ const guideSidebar = [
   {
     text: 'Build templates',
     items: [
+      { text: 'Template lifecycle', link: '/guide/template-lifecycle' },
       { text: 'Inputs and expressions', link: '/guide/expressions' },
       { text: 'Accounts and CPIs', link: '/guide/accounts-and-cpis' },
       { text: 'Batch execution', link: '/guide/batching' },
-      { text: 'Account groups', link: '/guide/account-groups' },
       { text: 'Assertions and snapshots', link: '/guide/assertions' },
       { text: 'PDA and ATA assertions', link: '/guide/pda-assertions' },
       { text: 'Errors and events', link: '/guide/errors-and-events' },
     ],
   },
+  ...examplesSidebar,
   {
     text: 'Security',
     items: [
       { text: 'Trust model', link: '/guide/trust-model' },
       { text: 'Security posture', link: '/guide/security' },
-      { text: 'Inspecting a template', link: '/guide/inspecting-templates' },
       { text: 'Failure modes and recovery', link: '/guide/failure-modes' },
-      { text: 'Formal verification', link: '/guide/formal-verification' },
-    ],
-  },
-  {
-    // Last, so devnet's "next" link to the TypeScript SDK still follows the final guide page.
-    text: 'Upload and run',
-    items: [
-      { text: 'Template lifecycle', link: '/guide/template-lifecycle' },
-      { text: 'Transaction v1', link: '/guide/transaction-v1' },
-      { text: 'Devnet workflow', link: '/guide/devnet' },
     ],
   },
 ];
 
-const examplesSidebar = [
-  {
-    text: 'Examples',
-    items: [{ text: 'All examples', link: '/examples/' }],
-  },
-  {
-    text: 'Protocol templates',
-    link: '/examples/protocols/',
-    collapsed: true,
-    items: [
-      { text: 'Jupiter · Deposit what a swap produced', link: '/examples/protocols/jupiter-deposit' },
-      { text: 'Jupiter · Swap checked against an oracle', link: '/examples/protocols/jupiter-oracle-swap' },
-      { text: 'Jupiter · Sell a whole balance', link: '/examples/protocols/token-sweep' },
-      { text: "Jupiter · Cap a caller's daily swaps", link: '/examples/protocols/daily-cap' },
-      { text: 'Kamino · Repay what a swap produced', link: '/examples/protocols/kamino-repay' },
-      { text: 'Kamino · Liquidate with a minimum payout', link: '/examples/protocols/kamino-liquidate' },
-      { text: 'marginfi · Withdraw everything, with a minimum', link: '/examples/protocols/marginfi-withdraw' },
-      { text: 'marginfi · Move a position into Kamino', link: '/examples/protocols/marginfi-to-kamino' },
-      { text: 'Orca · Compound collected fees', link: '/examples/protocols/orca-compound' },
-      { text: 'Orca · Harvest positions that earned', link: '/examples/protocols/orca-harvest' },
-      { text: 'Pyth · Act only on a fresh price', link: '/examples/protocols/pyth-gate' },
-      { text: 'Jito · Tip only from profit', link: '/examples/protocols/jito-tip' },
-      { text: 'Ed25519 · Settle at a signed quote', link: '/examples/protocols/signed-quote' },
-    ],
-  },
-  {
-    text: 'Protocol composition',
-    link: '/examples/composition',
-    collapsed: true,
-    items: [
-      { text: 'Swap then deposit', link: '/examples/composition#swap-then-deposit' },
-      { text: 'Claim then distribute', link: '/examples/composition#claim-then-distribute' },
-      { text: 'Fallback route', link: '/examples/composition#primary-or-fallback-route' },
-      { text: 'Time-gated governance', link: '/examples/composition#time-gated-governance-execution' },
-      { text: 'Keeper crank', link: '/examples/composition#bounded-keeper-crank' },
-    ],
-  },
-  {
-    text: 'Payment patterns',
-    link: '/examples/payments',
-    collapsed: true,
-    items: [
-      { text: 'SOL payroll', link: '/examples/payments#bounded-sol-payroll' },
-      { text: 'Revenue split', link: '/examples/payments#basis-point-revenue-split' },
-      { text: 'Weighted rewards', link: '/examples/payments#index-weighted-rewards' },
-      { text: 'Deadline refund', link: '/examples/payments#deadline-refund' },
-      { text: 'Reserve-preserving sweep', link: '/examples/payments#reserve-preserving-sweep' },
-    ],
-  },
-  {
-    text: 'Token-account patterns',
-    link: '/examples/token-accounts',
-    collapsed: true,
-    items: [
-      { text: 'Create then transfer', link: '/examples/token-accounts#assert-create-then-transfer' },
-      { text: 'Token payroll', link: '/examples/token-accounts#existing-account-token-payroll' },
-      { text: 'Conditional ATA setup', link: '/examples/token-accounts#conditional-ata-setup' },
-      { text: 'Close empty accounts', link: '/examples/token-accounts#close-empty-token-accounts' },
-      { text: 'Exact token debit', link: '/examples/token-accounts#exact-token-debit' },
-    ],
-  },
-];
 
 const referenceSidebar = [
   {
@@ -187,8 +266,10 @@ export default defineConfig({
   markdown: {
     lineNumbers: true,
     theme: { light: 'github-light', dark: 'github-dark' },
+    config: (md) => md.core.ruler.push('number-chips', numberChips),
   },
   themeConfig: {
+    auditFund,
     logo: { light: '/ballista-mark.svg', dark: '/ballista-mark-dark.svg' },
     siteTitle: 'Ballista',
     search: {
@@ -209,15 +290,14 @@ export default defineConfig({
       text: 'Edit this page on GitHub',
     },
     nav: [
-      { text: 'Guide', link: '/guide/why-ballista', activeMatch: '^/guide/' },
-      { text: 'Examples', link: '/examples/' },
+      { text: 'Guide', link: '/guide/why-ballista', activeMatch: '^/(guide|examples)/' },
       { text: 'Reference', link: '/reference/typescript', activeMatch: '^/(reference/|scope)' },
     ],
     sidebar: {
       // Scope lives outside /reference/ but belongs with it.
       '/scope': referenceSidebar,
       '/guide/': guideSidebar,
-      '/examples/': examplesSidebar,
+      '/examples/': guideSidebar,
       '/reference/': referenceSidebar,
     },
     socialLinks: [{ icon: 'github', link: 'https://github.com/Jac0xb/ballista' }],

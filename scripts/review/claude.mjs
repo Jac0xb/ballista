@@ -3,7 +3,7 @@
 //   answer <set-id> <variants.json> [anchor]   stream variants into a set, one at a time
 //   snapshot <set-id> <file>...                 copy files before changing them
 //   applied <set-id>                            mark the kept variant applied, with line counts
-//   edit-applied <comment-id>                   mark a typed edit as in the source
+//   edit-applied <comment-id>                   mark a typed edit or a modify request as done
 //   close <set-id>                              remove a set (nothing to change)
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';

@@ -34,6 +34,7 @@ import { decoded, explained } from './decode-errors.js';
 import { runWithLookupTables } from './lookup-tables.js';
 import { relayedSweep } from './second-signer.js';
 import { returnedU64, runOutputs, simulate, whyItFails } from './simulate-run.js';
+import { reportedSweep } from './report-outputs.js';
 
 const JUPITER = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4';
 const SYSTEM = '11111111111111111111111111111111';
@@ -92,6 +93,13 @@ function payrollMessage(treasury: Address) {
     (m) => appendTransactionMessageInstruction(run, m),
   );
 }
+
+describe('a template that reports back', () => {
+  test('compiles with a run event, an emit and return data', () => {
+    const compiled = compileTemplate(reportedSweep);
+    expect(compiled.bytes.length).toBeGreaterThan(0);
+  });
+});
 
 describe('decoding an error code', () => {
   test('gives the values the page shows', () => {

@@ -67,14 +67,14 @@ It does not guard against:
 
 :::
 
-The Rust tabs' `program`, `anchor` and account flags are
+The Rust template takes its program addresses and `jupiter_route_data()` from the
 [shared helpers](/examples/protocols/#rust-helpers).
 
 ## Run it
 
 The swap is Jupiter's `route` instruction, which starts its account list with the token program and
 the signer. The template passes those two itself; the rest of the route's accounts, including its
-token accounts, arrive as the `actionAccounts` [account group](/guide/account-groups).
+token accounts, arrive as the `actionAccounts` [account group](/guide/accounts-and-cpis#account-groups).
 
 The Run tabs pass the four declared accounts, `priceUpdate`, `actionProgram`, `tokenProgram` and
 `actor`, then the inputs `feedId`, `exponent`, `maximumAge`, `maximumConfidence`, `floorPrice`,

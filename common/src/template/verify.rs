@@ -545,6 +545,25 @@ impl ProgramView<'_> {
                     return Err(invalid);
                 }
             }
+            OP_GROUP_LENGTH => {
+                if usize::from(instruction.a) >= self.header.account_group_count()
+                    || instruction.b != NO_INDEX
+                    || instruction.c != NO_INDEX
+                    || instruction.immediate() != 0
+                {
+                    return Err(TemplateError::InvalidAccountGroup(instruction_index));
+                }
+                self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
+            }
+            OP_GROUP_ANY | OP_GROUP_COUNT => {
+                self.verify_group_filter(instruction, instruction_index, registers)?;
+                let value_type = if instruction.opcode == OP_GROUP_ANY {
+                    VALUE_BOOL
+                } else {
+                    VALUE_U64
+                };
+                self.write_register(registers, instruction.dst, scalar(value_type))?;
+            }
             OP_EQ | OP_NE => {
                 let left = self.read_register(registers, instruction.a)?;
                 let right = self.read_register(registers, instruction.b)?;
@@ -739,6 +758,64 @@ impl ProgramView<'_> {
         }
         if max_len > MAX_RETURN_DATA_LEN {
             return Err(TemplateError::InvalidOutput(instruction_index));
+        }
+        Ok(())
+    }
+
+    /// `GROUP_ANY` and `GROUP_COUNT`, every structural rule `InvalidAccountGroup`: `a` a declared
+    /// group; `b` a pubkey-table index and `c` another or `NO_INDEX`, the programs a member's
+    /// owner must be, constants a reader of the template can see; a [`GroupScan`] with 1 to
+    /// [`MAX_GROUP_MATCHES`] matches and at most [`MAX_GROUP_EXCEPTS`] excepts whose segments are
+    /// in range. A match segment holds a fixed-width value (`bool`, `u64`, `i64`, `u128` or
+    /// `pubkey`, the kind matching the register's type exactly) at a data offset, and the
+    /// data-length floor covers every match's bytes, so the run compares only bytes a member it
+    /// tests has. An except segment is a `pubkey` at offset zero. A register of the wrong type is
+    /// `TypeMismatch`, and an unset one `RegisterNotInitialized`, as for every opcode.
+    fn verify_group_filter(
+        &self,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
+        registers: &[Option<RegisterInfo>; MAX_REGISTERS],
+    ) -> Result<(), TemplateError> {
+        let invalid = TemplateError::InvalidAccountGroup(instruction_index);
+        let pubkeys = self.pubkeys.len();
+        if usize::from(instruction.a) >= self.header.account_group_count()
+            || usize::from(instruction.b) >= pubkeys
+            || (instruction.c != NO_INDEX && usize::from(instruction.c) >= pubkeys)
+        {
+            return Err(invalid);
+        }
+        let filter = GroupScan::decode(instruction.immediate());
+        let matches = usize::from(filter.matches);
+        if !(1..=MAX_GROUP_MATCHES).contains(&matches)
+            || usize::from(filter.excepts) > MAX_GROUP_EXCEPTS
+        {
+            return Err(invalid);
+        }
+        let (start, end) = filter.segment_range();
+        let segments = self.data_segments.get(start..end).ok_or(invalid)?;
+        let mut floor = 0usize;
+        for (position, segment) in segments.iter().enumerate() {
+            if segment.reserved != [0; 2] || segment.len() != 0 {
+                return Err(invalid);
+            }
+            let (value_type, width) = match segment.kind {
+                DATA_REG_BOOL => (VALUE_BOOL, 1),
+                DATA_REG_U64 => (VALUE_U64, 8),
+                DATA_REG_I64 => (VALUE_I64, 8),
+                DATA_REG_U128 => (VALUE_U128, 16),
+                DATA_REG_PUBKEY => (VALUE_PUBKEY, 32),
+                _ => return Err(invalid),
+            };
+            if position < matches {
+                floor = floor.max(segment.offset() + width);
+            } else if segment.kind != DATA_REG_PUBKEY || segment.offset() != 0 {
+                return Err(invalid);
+            }
+            self.require_type(registers, segment.register, value_type)?;
+        }
+        if (filter.min_data_len as usize) < floor {
+            return Err(invalid);
         }
         Ok(())
     }
@@ -1538,7 +1615,7 @@ mod tests {
             (OP_BYTES_LEN, Some(VALUE_U64), None, Err(TemplateError::TypeMismatch)),
             (OP_BYTES_LEN, Some(VALUE_PUBKEY), None, Err(TemplateError::TypeMismatch)),
             (OP_BYTES_LEN, None, None, Err(TemplateError::RegisterNotInitialized(0))),
-            (OP_WRITE_REGISTRY + 1, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
+            (OP_GROUP_COUNT + 1, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
             (39, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
             (0xfe, Some(VALUE_U64), Some(VALUE_U64), Err(TemplateError::InvalidInstruction(2))),
         ];
@@ -4382,6 +4459,204 @@ mod tests {
         builder.batch(2, 0);
         let rows = cpi(&mut builder, &[(row, ACCOUNT_WRITABLE)], 0);
         builder.for_each(0, |body| body.invoke(rows, None));
+        assert!(verify_builder(&builder).is_ok());
+    }
+
+    const TOKEN: [u8; 32] = [6; 32];
+    const TOKEN_2022: [u8; 32] = [7; 32];
+
+    /// A program with one account group and a `pubkey` and a `u64` register, then `build` adds a
+    /// group opcode. Returns the outcome and the type the opcode's destination took, read back by
+    /// comparing it with a constant of each type.
+    fn group_outcome(
+        build: impl Fn(&mut ProgramBuilder, u8, u8) -> u8,
+    ) -> Result<u8, TemplateError> {
+        let mut outcome = Err(TemplateError::TypeMismatch);
+        for witness in [VALUE_BOOL, VALUE_U64] {
+            let mut builder = ProgramBuilder::new();
+            builder.account_groups(1);
+            let key = builder.const_pubkey([1; 32]);
+            let amount = builder.const_u64(5);
+            let result = build(&mut builder, key, amount);
+            let other = typed_register(&mut builder, Some(witness));
+            builder.binary(OP_EQ, result, other);
+            match verify_builder(&builder) {
+                Ok(_) => return Ok(witness),
+                Err(TemplateError::TypeMismatch) => {}
+                Err(error) => outcome = Err(error),
+            }
+        }
+        outcome
+    }
+
+    #[test]
+    fn group_opcodes_type_their_results() {
+        assert_eq!(group_outcome(|builder, _, _| builder.group_length(0)), Ok(VALUE_U64));
+        assert_eq!(
+            group_outcome(|builder, key, _| {
+                builder.group_filter(false, 0, &[TOKEN], &[(32, DATA_REG_PUBKEY, key)], &[], 64)
+            }),
+            Ok(VALUE_BOOL)
+        );
+        assert_eq!(
+            group_outcome(|builder, key, amount| {
+                builder.group_filter(
+                    true,
+                    0,
+                    &[TOKEN, TOKEN_2022],
+                    &[(32, DATA_REG_PUBKEY, key), (64, DATA_REG_U64, amount)],
+                    &[key],
+                    165,
+                )
+            }),
+            Ok(VALUE_U64)
+        );
+    }
+
+    #[test]
+    fn group_length_names_a_declared_group_and_nothing_else() {
+        let invalid = Err(TemplateError::InvalidAccountGroup(2));
+        let mut builder = ProgramBuilder::new();
+        builder.group_length(0);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(TemplateError::InvalidAccountGroup(0)), "no group");
+        let set = |patch: fn(&mut InstructionRecord)| {
+            group_outcome(move |builder, _, _| {
+                let result = builder.group_length(0);
+                patch(builder.instructions_mut().last_mut().unwrap());
+                result
+            })
+        };
+        assert_eq!(set(|record| record.a = 1), invalid, "an undeclared group");
+        assert_eq!(set(|record| record.b = 0), invalid, "b set");
+        assert_eq!(set(|record| record.c = 0), invalid, "c set");
+        assert_eq!(set(|record| record.immediate_le = 1u64.to_le_bytes()), invalid, "an immediate");
+        assert_eq!(
+            set(|record| record.flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET),
+            Err(TemplateError::InvalidFlags(2))
+        );
+    }
+
+    #[test]
+    fn group_filters_pin_their_programs_and_bound_their_entries() {
+        let invalid = Err(TemplateError::InvalidAccountGroup(2));
+        let filter = |programs: &'static [[u8; 32]],
+                      matches: &'static [(u16, u8)],
+                      excepts: usize,
+                      min_data_len: u32| {
+            group_outcome(move |builder, key, amount| {
+                let matches: Vec<_> = matches
+                    .iter()
+                    .map(|&(offset, kind)| {
+                        let register = if kind == DATA_REG_U64 { amount } else { key };
+                        (offset, kind, register)
+                    })
+                    .collect();
+                builder.group_filter(false, 0, programs, &matches, &vec![key; excepts], min_data_len)
+            })
+        };
+        let owner = &[(32, DATA_REG_PUBKEY)][..];
+        assert_eq!(filter(&[TOKEN], owner, 0, 64), Ok(VALUE_BOOL));
+        assert_eq!(filter(&[TOKEN], owner, 4, 64), Ok(VALUE_BOOL), "four excepts");
+        assert_eq!(filter(&[TOKEN], owner, 5, 64), invalid, "five excepts");
+        assert_eq!(filter(&[], owner, 0, 64), invalid, "no program");
+        assert_eq!(filter(&[TOKEN], &[], 0, 64), invalid, "no match");
+        let four = &[(0, DATA_REG_PUBKEY), (32, DATA_REG_PUBKEY), (64, DATA_REG_U64), (72, DATA_REG_U64)][..];
+        assert_eq!(filter(&[TOKEN], four, 0, 80), Ok(VALUE_BOOL), "four matches");
+        let five = &[(0, DATA_REG_PUBKEY), (32, DATA_REG_PUBKEY), (64, DATA_REG_U64), (72, DATA_REG_U64), (80, DATA_REG_U64)][..];
+        assert_eq!(filter(&[TOKEN], five, 0, 88), invalid, "five matches");
+        // The floor covers every match's bytes, exactly or more.
+        assert_eq!(filter(&[TOKEN], owner, 0, 63), invalid, "a floor one byte short");
+        assert_eq!(filter(&[TOKEN], four, 0, 79), invalid, "a floor short of the last match");
+        assert_eq!(filter(&[TOKEN], owner, 0, u32::MAX), Ok(VALUE_BOOL), "any floor above");
+        // Narrow and byte-string kinds are not match values.
+        for kind in [DATA_REG_U8, DATA_REG_U16, DATA_REG_U32, DATA_REG_BYTES, DATA_LITERAL, 0x7f] {
+            let kinds: &'static [(u16, u8)] = Box::leak(vec![(0, kind)].into_boxed_slice());
+            assert_eq!(filter(&[TOKEN], kinds, 0, 64), invalid, "kind {kind}");
+        }
+
+        // The programs are pubkey-table indices: `b` always, `c` when it is not `NO_INDEX`.
+        let patched = |patch: fn(&mut InstructionRecord)| {
+            group_outcome(move |builder, key, _| {
+                let result = builder.group_filter(false, 0, &[TOKEN], &[(32, DATA_REG_PUBKEY, key)], &[], 64);
+                patch(builder.instructions_mut().last_mut().unwrap());
+                result
+            })
+        };
+        assert_eq!(patched(|record| record.c = 1), Ok(VALUE_BOOL), "c names the second pubkey");
+        assert_eq!(patched(|record| record.b = 2), invalid, "b past the table");
+        assert_eq!(patched(|record| record.b = NO_INDEX), invalid, "b unset");
+        assert_eq!(patched(|record| record.c = 2), invalid, "c past the table");
+        assert_eq!(patched(|record| record.a = 1), invalid, "an undeclared group");
+        assert_eq!(
+            patched(|record| record.immediate_le[0] = 9),
+            invalid,
+            "segments past the table"
+        );
+    }
+
+    #[test]
+    fn group_filter_segments_are_checked_like_every_other_segment() {
+        let invalid = Err(TemplateError::InvalidAccountGroup(2));
+        let patched = |excepts: bool, patch: fn(&mut DataSegment)| {
+            group_outcome(move |builder, key, _| {
+                let excepts: &[u8] = if excepts { &[0] } else { &[] };
+                let result = builder.group_filter(false, 0, &[TOKEN], &[(32, DATA_REG_PUBKEY, key)], excepts, 64);
+                patch(builder.segments_mut().last_mut().unwrap());
+                let _ = key;
+                result
+            })
+        };
+        assert_eq!(patched(false, |segment| segment.reserved = [1, 0]), invalid, "reserved");
+        assert_eq!(patched(false, |segment| segment.len_le = [1, 0]), invalid, "a length");
+        assert_eq!(patched(true, |segment| segment.offset_le = [1, 0]), invalid, "an except offset");
+        assert_eq!(patched(true, |segment| segment.kind = DATA_REG_U64), invalid, "an except u64");
+        assert_eq!(patched(true, |_| {}), Ok(VALUE_BOOL));
+
+        // A value of another type than its kind, and an unset register.
+        assert_eq!(
+            patched(false, |segment| segment.register = 1),
+            Err(TemplateError::TypeMismatch)
+        );
+        assert_eq!(
+            patched(true, |segment| segment.register = 1),
+            Err(TemplateError::TypeMismatch)
+        );
+        assert_eq!(
+            patched(false, |segment| segment.register = 9),
+            Err(TemplateError::InvalidRegister(9))
+        );
+        let mut builder = ProgramBuilder::new();
+        builder.account_groups(1);
+        let unset = builder.register();
+        builder.group_filter(false, 0, &[TOKEN], &[(32, DATA_REG_PUBKEY, unset)], &[], 64);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(TemplateError::RegisterNotInitialized(0)));
+
+        // Every fixed-width kind matches a register of its own type.
+        for (kind, value_type, width) in [
+            (DATA_REG_BOOL, VALUE_BOOL, 1),
+            (DATA_REG_U64, VALUE_U64, 8),
+            (DATA_REG_I64, VALUE_I64, 8),
+            (DATA_REG_U128, VALUE_U128, 16),
+            (DATA_REG_PUBKEY, VALUE_PUBKEY, 32),
+        ] {
+            let mut builder = ProgramBuilder::new();
+            builder.account_groups(2);
+            let value = typed_register(&mut builder, Some(value_type));
+            builder.group_filter(true, 1, &[TOKEN], &[(10, kind, value)], &[], 10 + width);
+            assert!(verify_builder(&builder).is_ok(), "kind {kind}");
+        }
+    }
+
+    #[test]
+    fn group_opcodes_run_in_every_scope() {
+        let mut builder = ProgramBuilder::new();
+        builder.account_groups(1);
+        let key = builder.const_pubkey([1; 32]);
+        let count = builder.const_u64(2);
+        builder.repeat(count, 2, 0, |body| {
+            body.group_length(0);
+            body.group_filter(true, 0, &[TOKEN], &[(32, DATA_REG_PUBKEY, key)], &[key], 64);
+        });
         assert!(verify_builder(&builder).is_ok());
     }
 }

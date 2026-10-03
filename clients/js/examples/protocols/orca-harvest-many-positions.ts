@@ -1,41 +1,5 @@
-/**
- * Harvest fees from a page of Orca positions, skipping the ones that earned nothing.
- *
- * A liquidity manager holds dozens of positions. Most have earned something since the last
- * harvest and some have not, and which is which depends on trades that land after the transaction
- * is signed.
- *
- * So each row first calls `update_fees_and_rewards`, which folds the pool's fee growth into the
- * position. Without it, `fee_owed_a` and `fee_owed_b` hold only what the last update recorded, and
- * a row that had earned would look empty. Then the row collects if either fee is above
- * `dustFloor`. The update is skipped for a position without liquidity, where it fails with
- * `LiquidityZero` (6012) and has nothing to record.
- *
- * Skipping a row saves compute, about 13,300 units per collect, and leaves dust alone. It does not
- * prevent reverts: `collect_fees` with nothing owed succeeds and moves nothing. What reverts the
- * whole harvest is a row Whirlpools refuses, such as a position the signer does not hold
- * (`MissingOrInvalidDelegate`, 6019) or one from another pool (`ConstraintHasOne`, 2001). Those do
- * not depend on trades, so filter them out before building the run.
- *
- * A row is the position, the token account holding its NFT, and the tick arrays holding its lower
- * and upper ticks. A row that collects costs about 24,000 compute units, so eight fit the default
- * limit of 200,000 and more need a compute budget. Rows share keys when they share tick arrays: then
- * about ten fit a legacy transaction, and twelve, the template's limit, need a lookup table.
- *
- * `tokenOwnerAccountA` and `tokenOwnerAccountB` must belong to whoever holds each row's position
- * NFT, read from that row's `positionTokenAccount`, not to `positionAuthority`, which only has to
- * sign for the position. Whirlpools lets `positionAuthority` be a delegate approved on
- * `positionTokenAccount` rather than the NFT's real owner (`MissingOrInvalidDelegate`, 6019, is
- * what guards that), so binding the fee destination to the signer would pay a delegate keeper
- * instead of each position's real owner. Whirlpools' `collect_fees` checks only the fee accounts'
- * mint, never who owns them, so nothing else stops a run built by someone else from pointing them
- * anywhere. The fee accounts are fixed and shared by every row, so their owner is read once for
- * the whole batch; each row still checks its own position against that one holder
- * (`positionBelongsToTheFeeOwner`).
- *
- * Offsets come from `Position`, `LEN = 8 + 136 + 72`: `liquidity` at 72, `fee_owed_a` at 112 and
- * `fee_owed_b` at 136.
- */
+/** Harvest positions that earned: docs/examples/protocols/orca-harvest.md. */
+// #region template
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
@@ -73,7 +37,7 @@ export const orcaHarvestManyPositions = defineTemplate({
     positionAuthority: { signer: true },
     /** Written by each row's `update_fees_and_rewards`. */
     whirlpool: { writable: true },
-    /** Must belong to each row's position holder: see the header (`positionBelongsToTheFeeOwner`). */
+    /** Must belong to each row's position holder (`positionBelongsToTheFeeOwner`). */
     tokenOwnerAccountA: {
       writable: true,
       owner: TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -132,6 +96,8 @@ export const orcaHarvestManyPositions = defineTemplate({
           ),
           'readPositionHolder',
         ),
+        // Whirlpools checks only the fee accounts' mints. The holder is the NFT account's owner, not
+        // `positionAuthority`, which may be a delegate.
         step.require(
           expression.and(
             expression.equal(expression.variable('positionHolder'), expression.variable('feeOwnerA')),
@@ -139,6 +105,8 @@ export const orcaHarvestManyPositions = defineTemplate({
           ),
           'positionBelongsToTheFeeOwner',
         ),
+        // Folds the pool's fee growth into the position, so the owed fees are current. Whirlpools
+        // refuses it for a position without liquidity, which earns nothing.
         step.invoke({
           program: account.fixed('whirlpoolProgram'),
           accounts: [
@@ -179,3 +147,4 @@ export const orcaHarvestManyPositions = defineTemplate({
 });
 
 export const compiled = compileTemplate(orcaHarvestManyPositions);
+// #endregion template

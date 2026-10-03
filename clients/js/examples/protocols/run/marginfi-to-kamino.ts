@@ -1,3 +1,4 @@
+// #region run
 import type { Address, Instruction } from '@solana/kit';
 
 import { buildKitRunInstruction } from '../../../src/kit.js';
@@ -64,3 +65,4 @@ export function buildMarginfiToKaminoRun(input: {
     },
   });
 }
+// #endregion run

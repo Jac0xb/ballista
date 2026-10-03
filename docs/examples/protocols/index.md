@@ -2,62 +2,58 @@
 
 Thirteen example templates. Twelve work with real Solana protocols: Jupiter, Kamino, marginfi,
 Orca, Pyth and Jito, and one of those, the daily cap, also keeps state between runs. The thirteenth
-settles a trade at a price someone signed off chain. Each one works with a
-value that only exists while the transaction runs, such as what a swap returned or what a position
-has earned. The source files are in `clients/js/examples/protocols/`.
+settles a trade at a price someone signed off chain. Each one works with a value that only exists
+while the transaction runs, such as what a swap returned or what a position has earned. The source
+files are in `clients/js/examples/protocols/`.
 
-The twelve protocol templates have been run as real transactions against the protocols' own
-programs, copied from mainnet, and the signed quote against Solana's own Ed25519 and token
-programs. [What has been tested](#what-has-been-tested) has the details. Treat them as starting
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against copies of the
+protocols' mainnet programs and accounts; not yet run on devnet or mainnet.
+[What has been tested](#what-has-been-tested) has the details. Treat the templates as starting
 points, and check them against the protocols' current programs before you use them.
 
 | Template | Protocol | Decided during the run |
 | --- | --- | --- |
-| [Deposit exactly what a swap produced](/examples/protocols/jupiter-deposit) | Jupiter → Kamino | How much the swap produced |
+| [Deposit what a swap produced](/examples/protocols/jupiter-deposit) | Jupiter → Kamino | How much the swap produced |
 | [Swap checked against an oracle](/examples/protocols/jupiter-oracle-swap) | Jupiter + Pyth | Whether the swap paid at least the oracle price, less a tolerance |
 | [Sell a whole balance](/examples/protocols/token-sweep) | SPL Token → Jupiter | How much there is to sell |
-| [Cap a caller's daily swaps](/examples/protocols/daily-cap) | Jupiter + registry | How much wrapped SOL this caller can still sell today |
-| [Pay a Jito tip only from profit](/examples/protocols/jito-tip) | Jupiter → Jito | Whether the trade's profit covered the tip |
-| [Settle at a signed quote](/examples/protocols/signed-quote) | Ed25519 → SPL Token | Whether the maker signed this quote for this taker, and it hasn't expired |
-| [Act only on a fresh price](/examples/protocols/pyth-gate) | Pyth → Jupiter | Whether the price is recent, precise and in range |
-| [Compound the fees you collected](/examples/protocols/orca-compound) | Orca | How much the position had earned |
-| [Harvest only the positions that earned](/examples/protocols/orca-harvest) | Orca | Which positions have earned enough to collect |
-| [Repay what the swap produced](/examples/protocols/kamino-repay) | Jupiter → Kamino | How much the swap produced |
+| [Cap a caller's daily swaps](/examples/protocols/daily-cap) | Jupiter + registry | How much wrapped SOL this caller can sell now, as its cap refills |
+| [Repay what a swap produced](/examples/protocols/kamino-repay) | Jupiter → Kamino | How much the swap produced |
 | [Liquidate with a minimum payout](/examples/protocols/kamino-liquidate) | Kamino | How much collateral the liquidator received |
 | [Withdraw everything, with a minimum](/examples/protocols/marginfi-withdraw) | marginfi | How much the withdrawal returned |
-| [Move a marginfi position into Kamino](/examples/protocols/marginfi-to-kamino) | marginfi → Kamino | How much marginfi released, to deposit in Kamino |
+| [Move a position into Kamino](/examples/protocols/marginfi-to-kamino) | marginfi → Kamino | How much marginfi released, to deposit in Kamino |
+| [Compound collected fees](/examples/protocols/orca-compound) | Orca | How much the position had earned |
+| [Harvest positions that earned](/examples/protocols/orca-harvest) | Orca | Which positions have earned enough to collect |
+| [Act only on a fresh price](/examples/protocols/pyth-gate) | Pyth → Jupiter | Whether the price is recent, precise and in range |
+| [Tip only from profit](/examples/protocols/jito-tip) | Jupiter → Jito | Whether the trade's profit covered the tip |
+| [Settle at a signed quote](/examples/protocols/signed-quote) | Ed25519 → SPL Token | Whether the maker signed this quote for this taker, and it hasn't expired |
 
 ## What has been tested
 
 - **Compiling and verifying.** CI compiles every template
   (`clients/js/src/protocol-examples.test.ts`) and checks the result with the same verifier the
   Ballista program runs before it stores a template (`common/src/template/verify.rs`).
+- **Reading the templates.** A test reads each template and checks its calls: the program, the
+  instruction and the accounts in the order the callee expects, which account each check reads, and
+  the amount each call passes (`clients/js/src/protocol-semantics.test.ts`).
 - **Rust.** Each Rust template is byte-identical to the TypeScript one, and each Rust run passes
-  the accounts, flags and inputs its template declares (`clients/rust/tests/protocol_templates.rs`).
-- **Running against the protocols.** The twelve protocol templates run as real signed transactions
-  against the protocols' own programs in [LiteSVM](https://github.com/LiteSVM/litesvm), a local
-  Solana runtime. The programs and accounts are copied from mainnet at a single slot, so the tests
-  never touch the network (`tests/protocols/`). The signed quote runs the same way against mainnet's
-  Token program and the real Ed25519 precompile, and also in Mollusk, a harness that runs Solana
-  programs without a validator (`tests/ballista/`). Each page's "What has been tested" says what its
-  runs showed.
+  the accounts, flags and inputs its template declares, right after any instructions it needs before
+  it: Kamino's refreshes, or the Ed25519 instruction (`clients/rust/tests/protocol_templates.rs`).
+- **Running against copies of the protocols.** The twelve protocol templates run as signed
+  transactions in LiteSVM, a local Solana runtime, against the protocols' programs and accounts
+  copied from mainnet at a single slot. The tests never touch the network (`tests/protocols/`). The
+  signed quote runs the same way against a copy of mainnet's Token program, with the Ed25519
+  precompile, and also in Mollusk, a harness that runs Solana programs without a validator
+  (`tests/ballista/`). None has run on devnet or mainnet. Each page says what its runs showed.
 - **Account offsets.** The Orca, Pyth and SPL Token offsets are also checked against real devnet
   accounts by an opt-in test; see [reading offsets](#reading-offsets-from-an-account). The Kamino
   and marginfi templates don't read those protocols' accounts. They read SPL token accounts: their
   balances before and after each call and, where it matters, who owns them.
-- **Jupiter calls.** Seven templates call Jupiter's `route` instruction:
-  [deposit](/examples/protocols/jupiter-deposit), [oracle swap](/examples/protocols/jupiter-oracle-swap),
-  [sell](/examples/protocols/token-sweep), [daily cap](/examples/protocols/daily-cap),
-  [repay](/examples/protocols/kamino-repay), [price gate](/examples/protocols/pyth-gate) and
-  [Jito tip](/examples/protocols/jito-tip). Each
-  sends the `route` discriminator and passes the first accounts of `route` itself, in the order
-  Jupiter's published interface lists them: the token program, the signer and, where the template
-  measures them, the source and destination token accounts. The rest of the route's accounts
-  arrive as an account group. A test that reads the templates checks this
-  (`clients/js/src/protocol-semantics.test.ts`), and the protocol tests send real routes, recorded
-  from Jupiter's API, through Jupiter's own program. Each also caps the route's platform fee at
-  `MAX_PLATFORM_FEE_BPS`, 0 unless its author raises it. Request routes from Jupiter's Swap API with `useSharedAccounts: false`; the default,
-  `shared_accounts_route`, is a different instruction with its accounts in a different order.
+- **Jupiter calls.** The seven templates that call Jupiter send its `route` instruction, with
+  `route`'s first accounts in the order Jupiter's published interface lists them and the rest as an
+  account group. The semantics test checks this, and the protocol tests send real routes, recorded
+  from Jupiter's API, through Jupiter's own program. Each template caps the route's platform fee at
+  `MAX_PLATFORM_FEE_BPS`, 0 unless its author raises it. [Getting a Jupiter route](#jupiter-routes)
+  says how to request one.
 
 ## Reading offsets from an account
 
@@ -101,11 +97,51 @@ account.
 
 ::: warning Check before you upload
 The tests use a copy of mainnet from one slot. They can't tell you whether a protocol has changed
-since. Before you upload one of these templates, check each call's accounts, arguments and offsets
-against the protocol's current IDL (its published interface description). Require every account a
-template reads to be owned by the program you expect and long enough for the fields you read. If a
-template measures a token account, also require that account's `owner` field to be the signer.
-Prefer fields the protocol documents as public.
+since. Before you upload one of these templates:
+
+- check each call's accounts, arguments and offsets against the protocol's current IDL (its
+  published interface description), and prefer fields the protocol documents as public;
+- check each account's type, not just its owner, by its Anchor discriminator or its exact data
+  length. An owner pin is not a type pin: see [pins](/guide/trust-model#pins).
+:::
+
+## Refreshing Kamino {#kamino-refreshes}
+
+Kamino's v2 deposit, repayment and liquidation work only against reserves and an obligation
+refreshed in the same slot, and no template refreshes them. A reserve is Kamino's pool for one
+token, and an obligation is a borrower's record of deposits and debts. Put the refreshes before the
+run, in the same transaction:
+
+1. `refresh_reserve` for each reserve the obligation holds, deposits then borrows, in the order the
+   obligation lists them. Each names the reserve's Scope price account last. The main market prices
+   by Scope alone, so the Pyth and Switchboard slots before it hold the Kamino program, which Kamino
+   reads as "none".
+2. `refresh_obligation`, with the same reserves in the same order.
+
+`buildKaminoRefreshes` and `kamino_refreshes` build both. Beside them, `kaminoFarmPair` and
+`kamino_farm_pair` fill a farm's two slots in a v2 instruction's `farmAccounts`, with the Kamino
+program standing in for a farm the reserve doesn't have.
+
+:::: details The refresh helpers
+::: code-group
+
+<<< @/../clients/js/examples/protocols/run/kamino.ts#kamino-refreshes [TypeScript]
+
+<<< @/../clients/rust/examples/protocol_templates_run.rs#kamino-refreshes [Rust]
+
+:::
+::::
+
+## Rust helpers {#rust-helpers}
+
+The Rust templates share these helpers and constants: the account flags, the program addresses and
+account offsets, `anchor` for an Anchor instruction's discriminator, `program` to declare a pinned
+program, and the token-account declarations and checks.
+
+::: details The Rust helpers
+
+<<< @/../clients/rust/examples/protocol_templates.rs#helpers
+
 :::
 
 ## Running them

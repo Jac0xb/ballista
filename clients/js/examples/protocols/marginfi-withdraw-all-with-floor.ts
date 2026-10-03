@@ -1,30 +1,5 @@
-/**
- * Withdraw everything from a marginfi bank, then refuse the run unless enough came out.
- *
- * `lending_account_withdraw(amount: u64, withdraw_all: Option<bool>)` will empty a position, but
- * it does not tell the caller how much that was, and the caller cannot condition on it. A
- * withdrawal that returns far less than expected (the bank was drained, the position had been
- * liquidated, utilization capped it) still succeeds, and anything sequenced after it proceeds
- * on a false assumption.
- *
- * Here the amount that landed is measured and has to clear a floor before the run continues.
- * `withdraw_all` is passed as `Some(true)`, so marginfi withdraws the whole position and ignores
- * `amount`.
- *
- * marginfi pays whichever token account it is given, and the sweep pays whichever treasury the
- * run names. So the authority must own both: `destinationAta` (`withdrawalGoesToTheAuthority`) and
- * `treasuryAta` (`sweepGoesToTheAuthority`). Otherwise a run could pay the position to someone
- * else.
- *
- * marginfi then checks the account's health against every balance it still holds, and reads
- * those balances' banks and oracles from the accounts after withdraw's eight. `healthAccounts`
- * carries them: for each remaining balance, its bank and then its oracle, by bank address from
- * highest to lowest. It is empty when the withdrawn balance was the account's only one; without
- * it, any other balance fails the withdrawal (`InvalidBankAccount`). The vault authority is a PDA
- * marginfi signs for, so it is passed read-only.
- *
- * SPL Token banks only: `tokenProgram` and the token accounts' owner are pinned to SPL Token.
- */
+/** Withdraw everything, with a minimum: docs/examples/protocols/marginfi-withdraw.md. */
+// #region template
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
@@ -57,6 +32,7 @@ export const marginfiWithdrawAllWithFloor = defineTemplate({
     authority: { signer: true },
     bank: { writable: true },
     bankLiquidityVault: { writable: true },
+    /** A PDA marginfi signs for, so it is passed read-only. */
     bankLiquidityVaultAuthority: {},
     destinationAta: {
       writable: true,
@@ -70,9 +46,14 @@ export const marginfiWithdrawAllWithFloor = defineTemplate({
       minDataLength: TOKEN_ACCOUNT_LENGTH,
     },
   },
-  /** What marginfi's health check reads, described above. */
+  /**
+   * What marginfi's health check reads after the withdrawal: for each balance still open, its bank
+   * and then its oracle, by bank address from highest to lowest. Empty if this was the only one.
+   */
   accountGroups: ['healthAccounts'],
   steps: [
+    // marginfi pays whichever token account it is given, and the sweep pays whichever treasury the
+    // run names.
     step.require(
       expression.equal(
         expression.accountData(account.fixed('destinationAta'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
@@ -143,3 +124,4 @@ export const marginfiWithdrawAllWithFloor = defineTemplate({
 });
 
 export const compiled = compileTemplate(marginfiWithdrawAllWithFloor);
+// #endregion template

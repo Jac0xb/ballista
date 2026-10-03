@@ -1,3 +1,4 @@
+// #region run
 import { getAddressDecoder, getAddressEncoder, type Address, type Instruction } from '@solana/kit';
 
 import { ED25519_PROGRAM_ADDRESS_BYTES, INSTRUCTIONS_SYSVAR_ADDRESS_BYTES } from '../../../src/index.js';
@@ -109,3 +110,4 @@ export function buildSignedQuoteRun(input: {
   });
   return [verify, run];
 }
+// #endregion run

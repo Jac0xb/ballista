@@ -147,8 +147,10 @@ fn deposits_into_kamino_exactly_what_marginfi_released() {
     let run = run(&svm, &scene, 1);
     let outcome = send_run(&mut svm, &scene, run).unwrap_or_else(|failure| panic!("{failure:?}"));
     eprintln!(
-        "{NAME}: {} CU, {} bytes",
-        outcome.compute_units, outcome.size
+        "{NAME}: {} CU, {} of them Ballista's own, {} bytes",
+        outcome.compute_units,
+        outcome.own_compute_units_of(&ballista_sdk::ID).unwrap(),
+        outcome.size
     );
 
     let released = vault_before - wallet::token_balance(&svm, &marginfi_vault);

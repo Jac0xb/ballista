@@ -1,9 +1,13 @@
-# Move a marginfi position into Kamino
+# Move a position into Kamino
 
 <p class="protocol-line">marginfi · Kamino</p>
 
-**Status:** Run as real transactions against marginfi and Kamino, copied from mainnet at one slot
-into LiteSVM, a local Solana runtime. Not yet run on mainnet itself.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against marginfi and
+Kamino programs and accounts copied from mainnet; not yet run on devnet or mainnet.
+
+**Cost:** Ballista's own work took 6,438 of the tested transaction's 162,666
+[compute units](/reference/glossary#compute-units); the protocols took the rest. Ballista charges no
+fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -29,24 +33,25 @@ Kamino account that records their deposits and debts.
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/marginfi-to-kamino-rebalance.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/marginfi-to-kamino-rebalance.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#marginfi-to-kamino [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#marginfi-to-kamino [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/marginfi-to-kamino.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/marginfi-to-kamino.ts#run [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#marginfi-to-kamino [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#marginfi-to-kamino [Rust · Run]
 
 :::
+
+The Rust tabs' `program`, `anchor` and account flags are
+[shared helpers](/examples/protocols/#rust-helpers).
 
 ## Run it
 
 marginfi's withdrawal takes its eight accounts, then the `healthAccounts`
-[account group](/guide/account-groups). After the withdrawal, marginfi checks the account's
-health: whether what it still holds covers what it owes. For each balance still open once this one
-is emptied, the group holds its bank then its oracle, highest bank address first; it is empty if
-this was the only balance. `marginfiHealthAccounts` (TypeScript) and `marginfi_health_accounts`
-(Rust), next to the runs, build it.
+[account group](/guide/account-groups), filled as for
+[Withdraw everything, with a minimum](/examples/protocols/marginfi-withdraw#run-it). It is empty
+when the withdrawn balance was the account's only one.
 
 Kamino's v2 deposit takes 17 accounts: 14 the template passes, then a second group,
 `farmAccounts`, of three. They are the obligation's user state in the reserve's collateral farm,
@@ -62,32 +67,24 @@ The Run tabs pass the 19 declared accounts in order (`marginfi`, `kamino`, `toke
 
 Before the run:
 
-- **Refresh Kamino in the same transaction:** `refresh_reserve` for each reserve the obligation
-  holds, then `refresh_obligation`. A refresh brings a reserve's interest and price, or an
-  obligation's values, up to date. Kamino deposits only into an obligation refreshed in the same
-  slot, and the template doesn't refresh. `buildKaminoRefreshes` (TypeScript) and
-  `kamino_refreshes` (Rust), next to the runs, build them.
+- **Refresh Kamino in the same transaction.** Kamino deposits only into an obligation refreshed in
+  the same slot, and the template doesn't refresh; see
+  [Refreshing Kamino](/examples/protocols/#kamino-refreshes).
 - **Create the farm user state once,** with `init_obligation_farms_for_reserve`, before an
   obligation's first deposit into a reserve with a collateral farm. The main market's SOL and USDC
   reserves both have one.
 
 ## What has been tested
 
-- **Against the real programs.** `tests/protocols/tests/marginfi_to_kamino_rebalance.rs` moves a
-  100 USDC marginfi balance, the account's only one, into Kamino's USDC reserve, which has a
-  collateral farm, behind Kamino's refreshes. Kamino was asked for exactly what marginfi released
-  and kept back no more than its cToken rounding, and the marginfi balance closed. The whole
-  transaction took 162,666 compute units (Solana's measure of execution cost) and 1,009 bytes.
+- **In LiteSVM.** `tests/protocols/tests/marginfi_to_kamino_rebalance.rs` moves a 100 USDC marginfi
+  balance, the account's only one, into Kamino's USDC reserve, which has a collateral farm, behind
+  Kamino's refreshes. Kamino was asked for exactly what marginfi released and kept back no more than
+  its cToken rounding, and the marginfi balance closed. The whole transaction took 162,666 compute
+  units and 1,009 bytes.
 - **Failures.** A `minimumMoved` one unit above the deposit fails at `worthRebalancing`, with
   nothing moved.
-- **Not tested.** Mainnet itself, a marginfi account with other balances, a reserve without a
+- **Not tested.** Devnet and mainnet, a marginfi account with other balances, a reserve without a
   collateral farm, a `walletAta` that isn't `owner`'s, and Token-2022 tokens: the template accepts
   SPL Token accounts only. The input is the run builder's choice.
-- A test reads the template and checks that the deposit is v2, of exactly the amount it measured,
-  with `farmAccounts` as its group, and that the withdrawal passes `healthAccounts` after its eight
-  accounts (`clients/js/src/protocol-semantics.test.ts`).
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares, right after Kamino's refreshes
-  (`clients/rust/tests/protocol_templates.rs`).
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

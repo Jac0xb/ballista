@@ -227,8 +227,11 @@ fn two_sided_fees_are_collected_and_compounded() {
         [UPDATE_FEES, COLLECT_FEES, UNNAMED]
     );
     println!(
-        "two-sided: {} CU, {} bytes; fees ({owed_a}, {owed_b}), kept ({kept_a}, {kept_b})",
-        outcome.compute_units, outcome.size
+        "two-sided: {} CU, {} of them Ballista's own, {} bytes; fees ({owed_a}, {owed_b}), kept \
+         ({kept_a}, {kept_b})",
+        outcome.compute_units,
+        outcome.own_compute_units_of(&ballista_sdk::ID).unwrap(),
+        outcome.size
     );
 }
 

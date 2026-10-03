@@ -2,8 +2,12 @@
 
 <p class="protocol-line">marginfi</p>
 
-**Status:** Run as real transactions against marginfi, copied from mainnet at one slot into
-LiteSVM, a local Solana runtime. Not yet run on mainnet itself.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against marginfi's
+program and accounts copied from mainnet; not yet run on devnet or mainnet.
+
+**Cost:** Ballista's own work took 5,472 of the tested transaction's 60,030
+[compute units](/reference/glossary#compute-units); marginfi and the token transfer took the rest.
+Ballista charges no fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -29,15 +33,18 @@ The template:
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/marginfi-withdraw-all-with-floor.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/marginfi-withdraw-all-with-floor.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#marginfi-withdraw [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#marginfi-withdraw [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/marginfi-withdraw.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/marginfi-withdraw.ts#run [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#marginfi-withdraw [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#marginfi-withdraw [Rust · Run]
 
 :::
+
+The Rust tabs' `program`, `anchor` and account flags are
+[shared helpers](/examples/protocols/#rust-helpers).
 
 The last two bytes of the withdrawal's instruction data are `Option::Some(true)` for
 `withdraw_all`. In that mode marginfi ignores `amount`, but the field still has to be there,
@@ -48,8 +55,7 @@ because Borsh (the binary format Anchor programs use for instruction arguments) 
 The Run tabs pass the 10 declared accounts in order (`marginfi`, `tokenProgram`, `marginfiGroup`,
 `marginfiAccount`, `authority`, `bank`, `bankLiquidityVault`, `bankLiquidityVaultAuthority`,
 `destinationAta`, `treasuryAta`), then the input `minimumWithdrawn`, then the `healthAccounts`
-[account group](/guide/account-groups). `authority` signs but is not writable. Nothing has to go
-before the run.
+[account group](/guide/account-groups). `authority` signs but is not writable.
 
 After the withdrawal, marginfi checks the account's health: whether what it still holds covers
 what it owes, at each bank's oracle price. It reads the banks and oracles from the accounts after
@@ -59,27 +65,24 @@ leave a balance out and marginfi refuses the withdrawal. `marginfiHealthAccounts
 `marginfi_health_accounts` (Rust), next to the runs, build it, for banks priced by one oracle
 account.
 
+Nothing has to go before the run while the account owes nothing. Once it owes something, the health
+check needs current prices for every balance left: marginfi counts an asset with a stale price as
+zero and refuses a debt with one. Update those oracles earlier in the transaction.
+
 ## What has been tested
 
-- **Against the real programs.** `tests/protocols/tests/marginfi_withdraw_all_with_floor.rs`
-  empties a 100 USDC marginfi balance and sweeps it to the treasury: all of it, less at most the
-  one base unit marginfi's rounding can keep. With 1 SOL also deposited, `healthAccounts` carried
-  the SOL bank and its oracle, and the USDC came out, leaving the SOL. The whole transaction took
-  60,030 compute units (Solana's measure of execution cost) and 550 bytes, or 77,924 and 616 with
-  the SOL balance.
+- **In LiteSVM.** `tests/protocols/tests/marginfi_withdraw_all_with_floor.rs` empties a 100 USDC
+  marginfi balance and sweeps it to the treasury: all of it, less at most the one base unit
+  marginfi's rounding can keep. With 1 SOL also deposited, `healthAccounts` carried the SOL bank and
+  its oracle, and the USDC came out, leaving the SOL. The whole transaction took 60,030 compute
+  units and 550 bytes, or 77,924 and 616 with the SOL balance.
 - **Failures.** A `minimumWithdrawn` one unit above the deposit fails at `withdrawalMetItsFloor`.
   An attacker's account as `treasuryAta` fails at `sweepGoesToTheAuthority`, and as both
   `destinationAta` and `treasuryAta` at `withdrawalGoesToTheAuthority`, before marginfi is called.
   Called directly without the SOL bank and oracle, marginfi refuses the same withdrawal
   (`InvalidBankAccount`, in `tests/protocols/tests/marginfi_contract.rs`).
-- **Not tested.** Mainnet itself, more than one remaining balance, banks priced by more than one
+- **Not tested.** Devnet and mainnet, more than one remaining balance, banks priced by more than one
   account (staked, Kamino), and Token-2022 tokens: the template accepts SPL Token accounts only. No
-  test holds a marginfi debt or updates marginfi's oracles, and the health check values an asset
-  with a stale price at zero.
-- A test reads the template and checks that the owner checks come first, and that the withdrawal
-  passes `healthAccounts` after its eight accounts, with the vault authority read-only
-  (`clients/js/src/protocol-semantics.test.ts`).
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
+  test holds a marginfi debt or updates marginfi's oracles.
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

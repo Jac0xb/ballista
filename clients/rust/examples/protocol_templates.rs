@@ -20,6 +20,7 @@ use ballista_sdk::{
 };
 use solana_program::{pubkey, pubkey::Pubkey};
 
+// #region helpers
 // Account flags, for both account declarations and CPI account lists.
 const READ: u8 = 0;
 const WRITE: u8 = ACCOUNT_WRITABLE;
@@ -59,21 +60,6 @@ const ORCA_POSITION_LEN: u32 = 216;
 const ORCA_LIQUIDITY: u64 = 72;
 const ORCA_FEE_OWED_A: u64 = 112;
 const ORCA_FEE_OWED_B: u64 = 136;
-// The signed quote: 128 bytes, integers little-endian, keys as their 32 raw bytes.
-const QUOTE_LEN: u16 = 128;
-const QUOTE_TAG: [u8; 8] = *b"BLSTQT01";
-const QUOTE_PRICE: u64 = 8;
-const QUOTE_MAX_AMOUNT: u64 = 16;
-const QUOTE_EXPIRY: u64 = 24;
-const QUOTE_TAKER: u64 = 32;
-const QUOTE_BASE_MINT: u64 = 64;
-const QUOTE_QUOTE_MINT: u64 = 96;
-/// Quote prices carry six decimals: 1,000,000 is one quote unit per base unit.
-const PRICE_SCALE: u64 = 1_000_000;
-// An Ed25519 precompile instruction's header: a u8 signature count and a padding byte, then the
-// signature's u16 offsets. These are byte offsets into the instruction's data.
-const ED25519_PUBLIC_KEY_OFFSET: u64 = 6;
-const ED25519_MESSAGE_DATA_OFFSET: u64 = 10;
 
 /// The route's platform fee account and rate are chosen by whoever builds the run: cap the rate.
 /// Each Jupiter template requires `platform_fee_bps` to be at most this before it calls `route`.
@@ -91,14 +77,17 @@ fn anchor(handler: &str) -> [u8; 8] {
     hash[..8].try_into().unwrap()
 }
 
+/// Declares a program the template calls, pinned to `address`.
 fn program(builder: &mut ProgramBuilder, address: Pubkey) -> u8 {
     builder.account(PROGRAM, Some(address.to_bytes()), None, 0)
 }
 
+/// Declares a writable account that SPL Token owns, long enough to be a token account.
 fn token_account(builder: &mut ProgramBuilder) -> u8 {
     builder.account(WRITE, None, Some(TOKEN_PROGRAM_ID.to_bytes()), TOKEN_ACCOUNT_LEN)
 }
 
+/// Declares a read-only account that SPL Token owns, long enough to be a mint.
 fn mint(builder: &mut ProgramBuilder) -> u8 {
     builder.account(READ, None, Some(TOKEN_PROGRAM_ID.to_bytes()), MINT_LEN)
 }
@@ -116,26 +105,6 @@ fn require_owner(builder: &mut ProgramBuilder, token_account: u8, owner: u8) {
     require_key_at(builder, token_account, TOKEN_OWNER, owner);
 }
 
-/// The first 16 bytes of an Ed25519 precompile instruction holding one signature whose key,
-/// signature and message are in its own data, over `message_len` bytes, as `(mask, expected)`:
-/// the signature count, the three instruction indexes (`u16::MAX` names the precompile
-/// instruction itself) and the message size, compared as one masked `u128`.
-fn ed25519_header(message_len: u16) -> (u128, u128) {
-    let fields = [
-        (0, 1, 1),                   // signature count
-        (4, 2, 0xffff),              // signature instruction index
-        (8, 2, 0xffff),              // public key instruction index
-        (12, 2, message_len.into()), // message data size
-        (14, 2, 0xffff),             // message instruction index
-    ];
-    let (mut mask, mut expected) = (0u128, 0u128);
-    for (offset, width, value) in fields {
-        mask |= ((1u128 << (8 * width)) - 1) << (8 * offset);
-        expected |= value << (8 * offset);
-    }
-    (mask, expected)
-}
-
 /// Requires the route's `platform_fee_bps` to be at most `cap`, the [`MAX_PLATFORM_FEE_BPS`]
 /// constant: the fee account sits in the route's own accounts, so any nonzero rate pays whoever
 /// chose it.
@@ -148,6 +117,7 @@ fn require_platform_fee_within_cap(builder: &mut ProgramBuilder, platform_fee_bp
 fn require_mint(builder: &mut ProgramBuilder, token_account: u8, mint: u8) {
     require_key_at(builder, token_account, TOKEN_MINT, mint);
 }
+// #endregion helpers
 
 // #region jupiter-deposit
 /// Swap on Jupiter, then deposit exactly what the swap produced into Kamino.
@@ -1159,6 +1129,42 @@ pub fn marginfi_to_kamino_rebalance() -> Vec<u8> {
 // #endregion marginfi-to-kamino
 
 // #region signed-quote
+// The signed quote: 128 bytes, integers little-endian, keys as their 32 raw bytes.
+const QUOTE_LEN: u16 = 128;
+const QUOTE_TAG: [u8; 8] = *b"BLSTQT01";
+const QUOTE_PRICE: u64 = 8;
+const QUOTE_MAX_AMOUNT: u64 = 16;
+const QUOTE_EXPIRY: u64 = 24;
+const QUOTE_TAKER: u64 = 32;
+const QUOTE_BASE_MINT: u64 = 64;
+const QUOTE_QUOTE_MINT: u64 = 96;
+/// Quote prices carry six decimals: 1,000,000 is one quote unit per base unit.
+const PRICE_SCALE: u64 = 1_000_000;
+// An Ed25519 precompile instruction's header: a u8 signature count and a padding byte, then the
+// signature's u16 offsets. These are byte offsets into the instruction's data.
+const ED25519_PUBLIC_KEY_OFFSET: u64 = 6;
+const ED25519_MESSAGE_DATA_OFFSET: u64 = 10;
+
+/// The first 16 bytes of an Ed25519 precompile instruction holding one signature whose key,
+/// signature and message are in its own data, over `message_len` bytes, as `(mask, expected)`:
+/// the signature count, the three instruction indexes (`u16::MAX` names the precompile
+/// instruction itself) and the message size, compared as one masked `u128`.
+fn ed25519_header(message_len: u16) -> (u128, u128) {
+    let fields = [
+        (0, 1, 1),                   // signature count
+        (4, 2, 0xffff),              // signature instruction index
+        (8, 2, 0xffff),              // public key instruction index
+        (12, 2, message_len.into()), // message data size
+        (14, 2, 0xffff),             // message instruction index
+    ];
+    let (mut mask, mut expected) = (0u128, 0u128);
+    for (offset, width, value) in fields {
+        mask |= ((1u128 << (8 * width)) - 1) << (8 * offset);
+        expected |= value << (8 * offset);
+    }
+    (mask, expected)
+}
+
 /// Settle a maker's Ed25519-signed quote: the taker pays the signed price for what it takes, and
 /// the maker delivers it, within the quote's size, before its expiry, in its mints.
 ///

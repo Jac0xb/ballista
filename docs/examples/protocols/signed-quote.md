@@ -2,10 +2,14 @@
 
 <p class="protocol-line">Ed25519 · Instructions sysvar · SPL Token</p>
 
-**Status:** Run as real transactions against mainnet's Token program, the real USDC and wrapped SOL
-mints and Solana's Ed25519 precompile, copied from mainnet at one slot into LiteSVM, a local Solana
-runtime. Also run in Mollusk, a harness that runs Solana programs without a validator. Not yet run
-on devnet or mainnet itself.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against the Token
+program and the USDC and wrapped SOL mints copied from mainnet, with Solana's Ed25519 precompile,
+and in Mollusk, a harness that runs Solana programs without a validator; not yet run on devnet or
+mainnet.
+
+**Cost:** Ballista's own work took 8,733 of the tested transaction's 8,892
+[compute units](/reference/glossary#compute-units); the two token transfers took the rest. Ballista
+charges no fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -65,20 +69,21 @@ nonce in a [registry entry](/guide/registries).
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/signed-quote-settlement.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/signed-quote-settlement.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#signed-quote [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#signed-quote [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/signed-quote.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/signed-quote.ts#run [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#signed-quote [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#signed-quote [Rust · Run]
 
 :::
 
 The first steps come from the SDK's `ed25519Signature` helper, which returns them with a `field`
 reader for the signed message. `field` refuses a read past the message, and a template that uses
-`field` without the steps doesn't compile. The Rust template has no helper: it writes the same
-checks out with `ProgramBuilder` and compiles to the same bytes.
+`field` without the steps doesn't compile. The Rust template has no such helper: it writes the same
+checks out with `ProgramBuilder` and its own `ed25519_header`, and compiles to the same bytes. Its
+`program`, `token_account` and account flags are [shared helpers](/examples/protocols/#rust-helpers).
 
 The helper's `signer` must be a key the transaction's builder can't choose. With an input, or the
 key of an account nothing constrains, the builder could sign a quote with a key of their own. Here
@@ -107,20 +112,21 @@ SPL Token program must own them, so Token-2022 accounts are rejected.
 ::: warning The Ed25519 instruction goes directly before the run
 The template reads the signature from the instruction just before its own. With nothing before the
 run, it fails at `quoteInstructionIndex`. With any other instruction in between, even a memo, it
-fails at `quoteIsEd25519`.
+fails at `quoteIsEd25519`. `currentInstructionIndex` gives the top-level instruction's index, so if
+another program calls the run through a CPI, the signature must sit directly before that program's
+instruction.
 :::
 
 ## What has been tested
 
-- **Against the real programs.** `tests/protocols/tests/signed_quote.rs` runs it as real transactions
-  in LiteSVM, against mainnet's Token program, the real USDC and wrapped SOL mints and the Ed25519
-  precompile. Selling 1.5 SOL and a lamport pays 225,375,001 USDC units, rounded up. Settling at
-  exactly `expiry` lands and one second later fails; exactly `maxAmount` lands and one lamport more
-  fails; USDC named as the base mint fails at `deliversTheQuotedMint`. The same quote settled twice
-  in its window lands both times, 3 SOL against a `maxAmount` of 2 SOL. No failed run moves any
-  balance. A settlement costs 8,892 compute units, and the transaction is 783 bytes with a 15,000
-  lamport fee. The precompile uses no compute units: it adds one signature to the fee and 276 of the
-  783 bytes.
+- **In LiteSVM.** `tests/protocols/tests/signed_quote.rs` runs it against copies of mainnet's Token
+  program and the USDC and wrapped SOL mints, with the Ed25519 precompile. Selling 1.5 SOL and a
+  lamport pays 225,375,001 USDC units, rounded up. Settling at exactly `expiry` lands and one second
+  later fails; exactly `maxAmount` lands and one lamport more fails; USDC named as the base mint
+  fails at `deliversTheQuotedMint`. The same quote settled twice in its window lands both times, 3
+  SOL against a `maxAmount` of 2 SOL. No failed run moves any balance. A settlement costs 8,892
+  compute units, and the transaction is 783 bytes with a 15,000 lamport fee. The precompile uses no
+  compute units: it adds one signature to the fee and 276 of the 783 bytes.
 - **End to end in Mollusk.** `tests/ballista/src/lib.rs` (`signed_quote_settles_only_as_the_maker_signed`)
   uploads the template as the TypeScript SDK compiles it and runs it in Mollusk after a real
   Ed25519 instruction. At a price of 2,500,000 (2.5 quote units per base unit), taking 3,000,001
@@ -139,14 +145,7 @@ fails at `quoteIsEd25519`.
 - **Not tested.** Devnet and mainnet. Both suites build their own Ed25519 instruction and run, in
   the same layout as the Run tabs (the LiteSVM test checks its copy against Solana's own builder),
   so no test runs the Run tabs' code against the program. The TypeScript run is only type-checked.
-- A test reads the template and checks that the signature must come from the Ed25519 program and
-  be by `maker`, that `maker` must sign, that the tag is `BLSTQT01`, that each check reads the
-  signed field it names, and which accounts each transfer uses and what it moves
-  (`clients/js/src/protocol-semantics.test.ts`).
 - `clients/js/src/compiler.test.ts` checks the `ed25519Signature` helper: its steps and header
   check, that it refuses an input as `signer`, and that `field` stays inside the message.
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares, right after one Ed25519 instruction
-  (`clients/rust/tests/protocol_templates.rs`).
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

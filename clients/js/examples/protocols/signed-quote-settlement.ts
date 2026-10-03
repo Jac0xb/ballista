@@ -1,26 +1,10 @@
 /**
- * Settle a maker's signed quote: the taker pays the quoted price, the maker delivers, and neither
- * side can stretch the quote past what the maker signed.
+ * Settle at a signed quote: docs/examples/protocols/signed-quote.md.
  *
- * The maker signs a 128-byte quote off chain: a tag, a price, the most it will sell, an expiry,
- * the one taker the quote is for, and the two mints. The taker puts the Ed25519 precompile
- * instruction that carries the signature directly before this template's run. The precompile
- * verifies the signature as part of the transaction, so a bad one fails it. The template checks
- * that the signature is the maker's, over a quote of this shape, and then holds the fill to the
- * quote: before the expiry, for this taker, no more than the maximum, in these mints, paid into
- * an account the maker owns, at the signed price rounded up in the maker's favour.
- *
- * The tag, `BLSTQT01`, separates quotes from everything else the maker signs. A signature covers
- * bytes, not what they mean: without the tag, any 128 bytes the maker signed for another purpose
- * could settle here, and a quote could pass wherever else the same layout is accepted. The
- * template refuses a message without it.
- *
- * Ballista does not control the maker's tokens: the maker's authority co-signs the transaction.
- * Because the template enforces the terms, the service that co-signs checks only that the
- * transaction runs this template and nothing else that could spend the maker's accounts. Ballista
- * keeps no state, so it cannot count fills. A quote can be settled again until it expires unless
- * the co-signer refuses a second settlement of the same quote.
+ * This template keeps no state, so it can't count settlements: a quote can settle again until it
+ * expires. A template that must refuse a second settlement can count them in a registry entry.
  */
+// #region template
 import {
   INSTRUCTIONS_SYSVAR_ADDRESS_BYTES,
   TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -172,3 +156,4 @@ export const signedQuoteSettlement = defineTemplate({
 });
 
 export const compiled = compileTemplate(signedQuoteSettlement);
+// #endregion template

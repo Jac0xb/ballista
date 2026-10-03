@@ -121,6 +121,14 @@ impl Outcome {
     pub fn compute_units_of(&self, program: &Address) -> Option<u64> {
         units_of(&self.logs, program)
     }
+
+    /// The compute units `program`'s outermost invocation spent on its own work: its `consumed`
+    /// line less those of the programs it called directly. What a call costs its caller, such as
+    /// passing the accounts, stays in the caller's share, and so does a builtin callee, which logs
+    /// no `consumed` line. `None` if it never ran.
+    pub fn own_compute_units_of(&self, program: &Address) -> Option<u64> {
+        own_units_of(&self.logs, program)
+    }
 }
 
 impl Failure {
@@ -143,6 +151,43 @@ fn units_of(logs: &[String], program: &Address) -> Option<u64> {
                 .ok()
         })
         .max()
+}
+
+/// See [`Outcome::own_compute_units_of`].
+fn own_units_of(logs: &[String], program: &Address) -> Option<u64> {
+    let mut stack: Vec<Address> = Vec::new();
+    // The stack height of `program`'s outermost invocation, once it has started.
+    let mut outermost = None;
+    let mut callees = 0;
+    for line in logs {
+        let Some(rest) = line.strip_prefix("Program ") else {
+            continue;
+        };
+        if let Some((invoked, height)) = invocation(rest) {
+            stack.push(invoked);
+            if outermost.is_none() && invoked == *program {
+                outermost = Some(height);
+            }
+        } else if let Some((consumer, units)) = rest.split_once(" consumed ") {
+            // A program's own `Program log:` lines can contain the word too.
+            let (Ok(consumer), Some(height)) = (Address::from_str(consumer), outermost) else {
+                continue;
+            };
+            let units: u64 = units.split_once(" of ")?.0.parse().ok()?;
+            if stack.len() == height + 1 {
+                callees += units;
+            } else if stack.len() == height && consumer == *program {
+                return Some(units - callees);
+            }
+        } else if let Some((ended, outcome)) = rest.split_once(' ') {
+            if (outcome == "success" || outcome.starts_with("failed: "))
+                && Address::from_str(ended).is_ok()
+            {
+                stack.pop();
+            }
+        }
+    }
+    None
 }
 
 /// A transaction that failed in a program.
@@ -676,6 +721,40 @@ mod tests {
         assert_eq!(outcome.compute_units_of(&JUPITER), Some(41_000));
         assert_eq!(outcome.compute_units_of(&ballista_sdk::ID), Some(52_000));
         assert_eq!(outcome.compute_units_of(&SYSTEM_PROGRAM_ID), None);
+    }
+
+    /// A program's own work leaves out the programs it called directly, and only those: Ballista's
+    /// leaves out Jupiter's outer invocation, which includes Jupiter's call to itself, and a token
+    /// transfer. A `Program log:` line that mentions units is not a `consumed` line.
+    #[test]
+    fn a_program_s_own_compute_units_leave_out_its_callees() {
+        let outcome = Outcome {
+            logs: lines(&[
+                "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD invoke [1]",
+                "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 invoke [2]",
+                "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 invoke [3]",
+                "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 consumed 1500 of 90000 compute units",
+                "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 success",
+                "Program log: consumed 7 of 8 compute units",
+                "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 consumed 41000 of 130000 compute units",
+                "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 success",
+                "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]",
+                "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 76 of 88000 compute units",
+                "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success",
+                "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD consumed 52000 of 200000 compute units",
+                "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD success",
+            ]),
+            compute_units: 52_000,
+            fee: 5_000,
+            size: 700,
+            return_data: ReturnData::default(),
+        };
+        assert_eq!(
+            outcome.own_compute_units_of(&ballista_sdk::ID),
+            Some(52_000 - 41_000 - 76)
+        );
+        assert_eq!(outcome.own_compute_units_of(&JUPITER), Some(41_000 - 1_500));
+        assert_eq!(outcome.own_compute_units_of(&SYSTEM_PROGRAM_ID), None);
     }
 
     /// A `Program data:` line belongs to the innermost invocation open around it: here a nested

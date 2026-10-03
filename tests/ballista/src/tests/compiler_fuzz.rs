@@ -32,6 +32,9 @@ const TEMPLATE_ID: u16 = 7;
 /// Runtime errors a verified program must never reach: an invalid program, an unset or out-of-range
 /// register, a type mismatch, or CPI data longer than the verifier computed.
 const STRUCTURAL: [u32; 4] = [6002, 6011, 6012, 6016];
+/// Errors raised before the first instruction, whose context bits are an account or input index,
+/// or (`CpiAccountLimitExceeded`) an account count, rather than a program counter.
+const BEFORE_EXECUTION: [u32; 4] = [6008, 6010, 6020, 6021];
 
 type Context = MolluskContext<HashMap<Pubkey, Account>>;
 
@@ -256,15 +259,19 @@ fn differences(
 ) -> Vec<String> {
     let mut found = Vec::new();
     match (left.code, right.code) {
-        (Some(left_code), Some(right_code)) if !exact_pcs => {
+        // The same code is the same failure. Otherwise the context bits must be program counters
+        // of the same step: a failure before the first instruction (an account or input check)
+        // carries an index instead, which matches only itself.
+        (Some(left_code), Some(right_code)) if !exact_pcs && left_code != right_code => {
             let (left_step, right_step) = (
                 failure_step(left_code, left_paths),
                 failure_step(right_code, right_paths),
             );
-            if left_step != right_step {
+            if left_step != right_step || BEFORE_EXECUTION.contains(&(left_code & 0xffff)) {
                 found.push(format!("failure {left_step:?} vs {right_step:?}"));
             }
         }
+        (Some(_), Some(_)) if !exact_pcs => {}
         _ => {
             if left.result != right.result {
                 found.push(format!("result {} vs {}", left.result, right.result));

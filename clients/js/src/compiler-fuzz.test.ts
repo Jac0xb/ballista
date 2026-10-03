@@ -2350,7 +2350,14 @@ export function mutateDocument(original: TemplateInput, rng: Rng): { template: T
  */
 export function renameDocument(template: TemplateInput, rename: (name: string) => string): TemplateInput {
   const copy = structuredClone(template) as unknown as Mutable;
+  // Documents share expression objects (`max(x, y)` and `min(x, y)` read the same `x`), and the
+  // copy keeps the sharing, so a slot can be listed twice: rename each once.
+  const renamed = new Map<object, Set<string | number>>();
   for (const { slot } of collectSites(copy).names) {
+    const done = renamed.get(slot.parent) ?? new Set<string | number>();
+    if (done.has(slot.key)) continue;
+    done.add(slot.key);
+    renamed.set(slot.parent, done);
     const target = slot.parent as Record<string | number, unknown>;
     target[slot.key] = rename(String(target[slot.key]));
   }
@@ -2392,7 +2399,7 @@ function declaredNames(template: TemplateInput): string[] {
 }
 
 /** Oracle 2, for names: renamed, some to names an object already has, the document compiles the same. */
-export function renamingProblems(template: TemplateInput, compiled: Outcome, rng: Rng): string[] {
+export function renamingProblems(template: TemplateInput, compiled: Outcome, rng: Rng, verbose = false): string[] {
   const names = declaredNames(template);
   const tricky = rng.shuffle([...TRICKY_NAMES]);
   const mapping = new Map(names.map((name, index) => [name, index < tricky.length && rng.chance(0.5) ? tricky[index]! : `renamed${index}`]));
@@ -2404,6 +2411,7 @@ export function renamingProblems(template: TemplateInput, compiled: Outcome, rng
   }
   const renamed = renameDocument(template, (name) => mapping.get(name) ?? name);
   const outcome = compileOutcome(renamed);
+  if (verbose) console.log('mapping', JSON.stringify([...mapping]), '\nrenamed', 'ok' in outcome ? 'compiles' : describeError(outcome.error));
   const proto = [...mapping.values()].includes('__proto__');
   if ('ok' in compiled && 'ok' in outcome) {
     return sameBytes(compiled.ok.bytes, outcome.ok.bytes) ? [] : [`${proto ? 'known proto-name: ' : ''}renamed names compile to different bytes`];
@@ -2980,11 +2988,19 @@ describe('compiler fuzz', () => {
 
   // Triage: `FUZZ_SHOW=<seed>` prints a seed's document, world and disassembly.
   test.runIf(environment('FUZZ_SHOW') !== undefined)('show one case', () => {
-    const fuzzCase = generateCase(Number(environment('FUZZ_SHOW')));
+    let fuzzCase = generateCase(Number(environment('FUZZ_SHOW')));
+    // `FUZZ_SHOW_MUTANT=<index>` shows that mutant of the seed's document instead.
+    const mutantIndex = environment('FUZZ_SHOW_MUTANT');
+    if (mutantIndex !== undefined) {
+      const { template, mutations } = mutateDocument(fuzzCase.template, new Rng(fuzzCase.seed * 7_919 + Number(mutantIndex)));
+      console.log(`mutations: ${mutations.join(', ')}`);
+      fuzzCase = { ...fuzzCase, template };
+    }
     console.log(showDocument(fuzzCase));
     const outcome = compileOutcome(fuzzCase.template);
     if ('error' in outcome) console.log(`refused: ${describeError(outcome.error)}`);
     else console.log(disassemble(outcome.ok));
+    console.log(`renaming: ${renamingProblems(fuzzCase.template, outcome, new Rng(fuzzCase.seed ^ 0x0a11a5), true).join('; ') || 'same'}`);
   });
 
   test('the generator covers the language', () => {

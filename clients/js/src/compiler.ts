@@ -341,8 +341,8 @@ export interface CompileStats {
 }
 
 /**
- * Test-only options for `compileTemplate`; not part of the supported API, and no template needs
- * them.
+ * Test-only options for `compileTemplateWithOptions`; not part of the supported API, and no
+ * template needs them.
  * @internal
  */
 export interface CompileOptions {
@@ -706,10 +706,16 @@ class Compiler {
         this.instructions[loopPc] = instructionRecord(operation, NO_INDEX, bodyLength, count, max, carry);
       } else if (current.kind === 'let') {
         if (bindings.has(current.name)) throw new TypeError(`Variable already defined: ${current.name}`);
-        const value =
+        let value =
           current.value.kind === 'returnData'
             ? this.compileReturnData(current.value, previous)
             : this.compileExpression(current.value, loop, bindings);
+        // A binding keeps the value it was made with, but `assign` rewrites a carried variable's
+        // register in place. A binding in the body that would share that register (a `let` or
+        // `snapshot` of the variable) takes a copy in one of its own instead.
+        if (loop && [...carried].some((name) => bindings.get(name)?.register === value.register)) {
+          value = this.emit(opcode.move, value.type, value.maxLength, value.register);
+        }
         bindings.set(current.name, value);
       } else if (current.kind === 'assign') {
         if (!loop) throw new TypeError('assign is only valid inside a loop');
@@ -1402,7 +1408,16 @@ class Compiler {
   }
 }
 
-export function compileTemplate(input: TemplateInput | Template, options?: CompileOptions): CompiledTemplate {
+export function compileTemplate(input: TemplateInput | Template): CompiledTemplate {
+  return new Compiler(TemplateSchema.parse(input)).compile();
+}
+
+/**
+ * `compileTemplate` with test-only options. Not part of the supported API: a separate function, so
+ * `compileTemplate` keeps one parameter and `templates.map(compileTemplate)` type-checks.
+ * @internal
+ */
+export function compileTemplateWithOptions(input: TemplateInput | Template, options: CompileOptions): CompiledTemplate {
   return new Compiler(TemplateSchema.parse(input), options).compile();
 }
 

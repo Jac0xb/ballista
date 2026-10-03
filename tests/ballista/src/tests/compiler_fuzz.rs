@@ -325,7 +325,9 @@ struct Tally {
     forced_compared: usize,
     materialized_compared: usize,
     verified_only: usize,
-    known: std::collections::BTreeMap<String, usize>,
+    /// Materialized comparisons of cases that use a fixed finding's pattern, by pattern. They must
+    /// match like any other.
+    patterns: std::collections::BTreeMap<String, usize>,
     /// Each finding's category and message: `verifier rejects`, `upload refused`, `structural
     /// error`, `forced differs` or `materialized differs`.
     findings: Vec<(&'static str, String)>,
@@ -446,14 +448,12 @@ fn run_corpus(corpus: &str) -> Tally {
                 tally.forced_compared += 1;
             } else {
                 tally.materialized_compared += 1;
+                for hazard in &hazards {
+                    *tally.patterns.entry((*hazard).to_owned()).or_default() += 1;
+                }
             }
             let found = differences(natural, outcome, natural_paths, other_paths, exact);
             if found.is_empty() {
-                continue;
-            }
-            // A known finding, with its own ignored regression test: counted, not failed.
-            if !exact && hazards.contains(&"carried-alias") {
-                *tally.known.entry("carried-alias".to_owned()).or_default() += 1;
                 continue;
             }
             tally.finding(
@@ -479,7 +479,7 @@ fn compiler_fuzz_corpus_runs_the_same_with_and_without_register_reuse() {
     });
     let tally = run_corpus(external.as_deref().unwrap_or(COMMITTED));
     eprintln!(
-        "compiler fuzz corpus: {} cases, {} payloads verified ({} of them not run: mutated documents their world no longer fits), {} runs; natural runs: {} succeeded, failures {:?}; {} forced-reuse and {} materialized comparisons; known findings {:?}",
+        "compiler fuzz corpus: {} cases, {} payloads verified ({} of them not run: mutated documents their world no longer fits), {} runs; natural runs: {} succeeded, failures {:?}; {} forced-reuse and {} materialized comparisons, of which fixed-finding patterns {:?}",
         tally.cases,
         tally.payloads,
         tally.verified_only,
@@ -488,7 +488,7 @@ fn compiler_fuzz_corpus_runs_the_same_with_and_without_register_reuse() {
         tally.failures,
         tally.forced_compared,
         tally.materialized_compared,
-        tally.known,
+        tally.patterns,
     );
     assert!(
         tally.cases > 0 && tally.forced_compared > 0,
@@ -504,26 +504,35 @@ fn compiler_fuzz_corpus_runs_the_same_with_and_without_register_reuse() {
 
 const FINDINGS: &str = include_str!("../../../../fixtures/compiler-fuzz-findings.json");
 
-/// Finding `carried-alias` (`carriedAliasDocument` in `clients/js/src/compiler-fuzz.test.ts`):
-/// inside a loop body, a `snapshot` of a carried variable shares the variable's register, so the
-/// `assign` after it changes the snapshot too. Each pass of the minimized template snapshots the
-/// total, adds one, and requires that the total grew by one from the snapshot. By the language's
-/// rules a run of two passes succeeds and returns 2; the compiled program compares the new total
-/// plus one with itself and fails the first pass with `RequirementFailed`. With the fix,
-/// regenerate the fixture (`UPDATE_COMPILER_FUZZ_CORPUS=1`) and remove the `ignore`.
-#[test]
-#[ignore = "compiler bug carried-alias: a let of a carried variable in a loop body aliases its register"]
-fn a_snapshot_of_a_carried_value_keeps_its_value_after_the_assignment() {
+/// Finding `name` of the findings fixture.
+fn finding(name: &str) -> Value {
     let findings: Value = serde_json::from_str(FINDINGS).expect("the findings fixture is JSON");
-    let finding = &findings["carried-alias"];
+    findings[name].clone()
+}
+
+/// Uploads `finding`'s payload as a fresh template and runs it with the run data in its field
+/// `data`.
+fn run_finding(finding: &Value, data: &str) -> mollusk_svm::result::InstructionResult {
     let payload = decode(finding["payload"].as_str().expect("payload"));
     let creator = Pubkey::new_unique();
     let context = context(funded_accounts([creator], 10_000_000_000));
     let created = context.process_instruction(&create_template_instruction(creator, 1, &payload));
     assert!(created.program_result.is_ok(), "{created:#?}");
     let (template, _) = find_template_pda(&creator, 1);
-    let data = decode(finding["data"].as_str().expect("data"));
-    let result = context.process_instruction(&run_instruction(template, vec![], &data));
+    let data = decode(finding[data].as_str().expect("run data"));
+    context.process_instruction(&run_instruction(template, vec![], &data))
+}
+
+/// Fixed finding `carried-alias` (`carriedAliasDocument` in `clients/js/src/compiler-fuzz.test.ts`):
+/// inside a loop body, a `snapshot` of a carried variable shared the variable's register, so the
+/// `assign` after it changed the snapshot too. Each pass of the minimized template snapshots the
+/// total, adds one, and requires that the total grew by one from the snapshot. By the language's
+/// rules a run of two passes succeeds and returns 2; the aliased program compared the new total
+/// plus one with itself and failed the first pass with `RequirementFailed`.
+#[test]
+fn a_snapshot_of_a_carried_value_keeps_its_value_after_the_assignment() {
+    let finding = finding("carried-alias");
+    let result = run_finding(&finding, "data");
     let failure = custom_code(&result).map(|code| (code >> 16, code & 0xffff));
     assert!(
         result.program_result.is_ok(),
@@ -532,5 +541,28 @@ fn a_snapshot_of_a_carried_value_keeps_its_value_after_the_assignment() {
     assert_eq!(
         result.return_data,
         decode(finding["returns"].as_str().expect("returns"))
+    );
+}
+
+/// The check `carried-alias` bypassed (`perPassCapDocument`): each pass snapshots what has been
+/// spent, spends an amount and a fee, and requires `spent - before` to be at most 10. Aliased, the
+/// difference was zero on every pass, so a pass could spend any amount.
+#[test]
+fn a_per_pass_cap_measured_from_a_snapshot_is_enforced() {
+    let finding = finding("per-pass-cap");
+    // Passes that spend the cap exactly succeed and return the total.
+    let within = run_finding(&finding, "data");
+    assert!(within.program_result.is_ok(), "{within:#?}");
+    assert_eq!(
+        within.return_data,
+        decode(finding["returns"].as_str().expect("returns"))
+    );
+    // A pass that spends past it fails with `RequirementFailed` at the cap's require.
+    let over = run_finding(&finding, "overCap");
+    let cap = finding["failsAt"].as_u64().expect("failsAt");
+    assert_eq!(
+        custom_code(&over).map(|code| (u64::from(code >> 16), code & 0xffff)),
+        Some((cap, 6015)),
+        "a pass over the cap must fail at the cap: {over:#?}"
     );
 }

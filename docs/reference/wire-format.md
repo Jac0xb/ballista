@@ -4,33 +4,22 @@ The bytes of a compiled template, of the data a caller sends to run it, and of t
 a template keeps between runs. This is bytecode version 1, the only version the program accepts.
 The Rust definitions in `common/src/template/wire.rs` are the source of truth.
 
-Terms used on this page:
+This page gives the bytes. What each construct means, and when a run fails, is in the
+[language reference](/reference/language). Terms such as [register](/reference/glossary#register),
+[PDA](/reference/glossary#pda), [verifier](/reference/glossary#verifier),
+[runtime accounts](/reference/glossary#runtime-accounts) and
+[Instructions sysvar](/reference/glossary#instructions-sysvar) are in the
+[Glossary](/reference/glossary). This page adds:
 
 - **Payload:** the compiled template. The program stores it in the template account, after the
   account's own header.
 - **Record:** one fixed-size item in a table.
-- **Register:** a numbered slot that holds one value during a run. A template uses at most 64.
 - **Opcode:** the number that says what an instruction does.
-- **Blob:** the literal bytes at the end of the payload, such as instruction discriminators (the
-  leading bytes that tell a program which instruction to run) and `bytes` constants. Other records
-  point into it by offset and length.
-- **Verifier:** the part of the Ballista program that checks a payload, once, when the template is
-  created in one step or finalized after a chunked upload.
-- **CPI:** cross-program invocation, a call from the template to another program.
-- **PDA:** program-derived address, an address computed from a program ID and a list of seeds,
-  the byte strings it is derived from. The bump is one extra seed byte that makes the result a
-  valid program address; the canonical bump is the highest value that does.
-- **Runtime accounts:** the accounts passed to a run after the template account. Fixed accounts
-  are passed once. Batch rows are sets of accounts, one set per row, that `FOREACH` loops run over.
-  An account group is a list of accounts, sized by the caller, that a CPI forwards without the
-  template reading them.
+- **Blob:** the literal bytes at the end of the payload, such as instruction
+  [discriminators](/reference/glossary#discriminator) and `bytes` constants. Other records point
+  into it by offset and length.
 - **Loop:** a `FOREACH` or `REPEAT` instruction and the body of instructions that follows it. A
   pass is one run of the body.
-- **Instructions sysvar:** the read-only account at `Sysvar1nstructions1111111111111111111111111`
-  in which Solana lists the transaction's instructions. Opcodes 64 to 72 read it.
-- **Registry entry:** an account Ballista owns that keeps one template's state between runs, one
-  per template, registry, and key. Opcodes 75 to 77 open, read, and write it. See
-  [Registry entries](#registry-entries).
 
 ## Template account {#template-account}
 
@@ -252,7 +241,7 @@ Every other instruction writes its result to the destination register.
 | 62 | `EMIT` | immediate: packed range of data segments, the first a literal tag | none; logs the encoded bytes as one `Program data:` field |
 | 63 | `SET_RETURN_DATA` | immediate: packed range of data segments | none; sets the encoded bytes as the run's return data |
 | 64 | `INSTRUCTION_COUNT` | `a`: the Instructions sysvar account | `u64`, the number of instructions in the transaction |
-| 65 | `INSTRUCTION_INDEX` | as `INSTRUCTION_COUNT` | `u64`, the index of the instruction running this template |
+| 65 | `INSTRUCTION_INDEX` | as `INSTRUCTION_COUNT` | `u64`, the index of the top-level instruction this run is part of |
 | 66 | `INSTRUCTION_PROGRAM` | `a`: the sysvar account; `b`: a `u64` register, the instruction index | `pubkey`, that instruction's program |
 | 67 | `INSTRUCTION_ACCOUNT_COUNT` | as `INSTRUCTION_PROGRAM` | `u64`, how many accounts it names |
 | 68 | `INSTRUCTION_ACCOUNT` | as `INSTRUCTION_PROGRAM`, plus `c`: a `u64` register, the account position | `pubkey`, that account's key |
@@ -287,25 +276,25 @@ the read width must fit inside the account's declared minimum data length.
 
 #### Outputs
 
-- `EMIT` and `SET_RETURN_DATA` encode their data segments the way a CPI encodes its data. `dst`,
-  `a`, `b`, and `c` must be `0xff`, the range must name at least one segment, and the worst-case
-  length, counting a `bytes` register at its maximum, must be at most 1,024 bytes.
-- An `EMIT`'s first segment must be a literal of at least 4 bytes that does not start with `BEV`,
-  the run event's tag family.
-- `SET_RETURN_DATA` may appear once, outside every loop, with no `INVOKE` at a later index, because
-  invoking a program clears return data.
-- The verifier rejects a template that breaks these rules with `InvalidOutput`.
+The verifier holds `EMIT` and `SET_RETURN_DATA` to the [output rules](/reference/language#output),
+and rejects a break with `InvalidOutput`:
+
+- Both encode their data segments the way a CPI encodes its data. `dst`, `a`, `b`, and `c` must be
+  `0xff`, the range must name at least one segment, and the worst-case length, counting a `bytes`
+  register at its maximum, must be at most 1,024 bytes.
+- An `EMIT`'s first segment is a literal of at least 4 bytes that does not start with `BEV`.
+- `SET_RETURN_DATA` appears once, outside every loop, with no `INVOKE` at a later index.
 
 #### Introspection and byte reads
 
+What these read, and when a run fails, is under [Introspection](/reference/language#introspection).
+In the bytecode:
+
 - Opcodes 64 to 72 name, in `a`, a fixed account whose constraint pins its address to the
   Instructions sysvar. The verifier rejects any other account with `InvalidIntrospection`.
-- Indexes, positions, and offsets are `u64` registers. An index, position, or byte range that the
-  transaction or account does not hold fails the run with `InstructionOutOfRange`.
+- Indexes, positions, and offsets are `u64` registers.
 - `READ_ACCOUNT_BYTES` may name any declared account, including a row account inside `FOREACH`,
   but only one that is read-only in this instruction.
-- Byte reads return slices of the sysvar's or the account's data rather than copies. Neither can
-  change while the instruction runs.
 
 #### Registries
 
@@ -329,8 +318,8 @@ A `READ_REGISTRY` or `WRITE_REGISTRY` immediate packs one field:
 The verifier checks:
 
 - `OPEN_REGISTRY` sits at the top level, never in a loop body, and never after a
-  `SET_RETURN_DATA`. A template holds at most 8, opens each entry account once, and gives every
-  open of one registry index the same size.
+  `SET_RETURN_DATA`. A template holds at most 8, opens each entry account at most once, and gives
+  every open of one registry index the same size.
 - The entry account is a fixed account declared writable and nothing else: no signer or executable
   flag, no address or owner pin, and a minimum data length of 0. The payer is a fixed account
   declared signer and writable. The System program account is a fixed account pinned to the System
@@ -352,16 +341,10 @@ The verifier rejects a template that breaks these rules with `InvalidRegistry` (
 counts each open as 3 CPIs toward the limit of 64, since creating an entry whose address already
 holds lamports takes a transfer, an allocate, and an assign.
 
-At run time:
-
-- An entry account passed read-only fails before the first instruction, at account validation,
-  with `AccountConstraintFailed` (6020).
-- An open checks the entry, or creates it, as described under
-  [Registry entries](#registry-entries). An account that is not the entry fails with
-  `InvalidRegistryEntry` (6025).
-- An open entry stays marked as borrowed for the rest of the run. A CPI that passes it writable,
-  which only a batch-row account or group member can still do, fails with `RegistryReentry`
-  (6026).
+At run time, an open checks the entry or creates it, as [Registry entries](#registry-entries)
+describes, and marks it borrowed for the rest of the run, so a CPI that passes it writable fails
+with `RegistryReentry` (6026). The run-time rules and errors are under
+[Registries](/reference/language#registries).
 
 ## CPI descriptors
 
@@ -463,13 +446,15 @@ An open handles two cases:
   writes an entry's header, and only at the address that header derives.
 - **The account has no data and is owned by the System program.** It must be at the derived
   address. With no lamports there, the System program's `CreateAccount` makes it, funded by the
-  payer with the rent-exempt minimum for its size (the balance an account needs to stay on chain).
+  payer with the [rent](/reference/glossary#rent)-exempt minimum for its size.
   If the address already holds lamports, the payer transfers only what is missing, then `Allocate`
   and `Assign` make the account Ballista's. Ballista then writes the header.
 
-Anything else fails with `InvalidRegistryEntry`. Ballista signs `CreateAccount`, `Allocate`, and
-`Assign` with the entry's seeds. No other call in a run carries a Ballista signature, and nothing
-closes an entry, so its rent stays locked.
+Anything else fails with `InvalidRegistryEntry`, and so does a second open of an account already
+open in this run: two entry accounts whose keys come out equal are one account. Ballista signs
+`CreateAccount`, `Allocate`, and `Assign` with the entry's seeds, and no other call in a run
+([When Ballista signs](/guide/trust-model#signing)). Nothing closes an entry, so its rent stays
+locked.
 
 ## Error codes
 
@@ -494,8 +479,8 @@ When the header sets `PROGRAM_FLAG_EMIT_EVENT`, a successful run logs this 47-by
 | `executed` | Bitmask, one bit per invoke reached, in order and counting from bit 0. A bit is set when that invoke ran, and clear when its guard skipped it |
 | `template address` | The template account that ran |
 
-Each `EMIT` also logs a `Program data:` line. Its tag cannot start with `BEV`, so an `EMIT` line
-cannot be mistaken for this event.
+Each `EMIT` also logs a `Program data:` line, which its tag keeps from passing for this event; see
+[Output](/reference/language#output).
 
 ## Why this is zero-copy
 

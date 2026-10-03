@@ -433,6 +433,12 @@ fn ninth_open(program: &Program, out: &mut Vec<Break>) {
     if missing == 0 || fixed + missing >= ROW_BIT as usize || program.instrs.len() + missing > checker::limit::INSTRUCTIONS {
         return;
     }
+    // A CPI account record nothing invokes can name a slot past the fixed accounts, since such
+    // records go unchecked. Declared as an entry, that slot would turn the record into an entry
+    // passed writable, a second broken rule, so such programs are left alone.
+    if program.cpi_accounts.iter().any(|record| (fixed..fixed + missing).contains(&(record.account as usize))) {
+        return;
+    }
     let mut broken = program.clone();
     let template = program.instrs[first];
     for added in 0..missing {

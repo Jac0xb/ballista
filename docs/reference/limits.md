@@ -101,9 +101,9 @@ makes.
 
 `compileTemplate(template).stats.registers` gives the count. `stats.instructions` counts VM
 instructions, at most 128: each value above takes one, and so do most other steps, such as a
-`require` or a call. Compilation fails when a template needs more than either limit. In Rust, each builder call
-that returns a register takes a new one, and `ProgramView::parse(&bytes)?.verify()?` reports both
-counts.
+`require` or a call. Compilation fails when a template needs more than either limit. In Rust, each
+builder call that returns a register takes a new one, and `ProgramView::parse(&bytes)?.verify()?`
+reports both counts.
 
 ## TypeScript SDK limits
 

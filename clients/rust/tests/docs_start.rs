@@ -127,6 +127,13 @@ fn getting_started_uploads_its_template_in_one_transaction() {
 }
 
 #[test]
+fn calling_your_own_program_matches_the_typescript_bytes() {
+    // Written by `clients/js/examples/start/start.test.ts` from the TypeScript compiler's output.
+    let expected = include_str!("fixtures/own-program.hex");
+    assert_eq!(start::own_program().unwrap(), decode_hex(expected.trim()));
+}
+
+#[test]
 fn the_upload_in_pieces_fits_every_transaction_for_every_protocol_template() {
     let templates = protocol_templates();
     let over_1_kb = templates

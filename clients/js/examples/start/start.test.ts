@@ -6,7 +6,7 @@
  * is built for each protocol template, several of them over 1 KB, encoded as it goes on the wire,
  * and checked against Solana's 1,232-byte limit. So is every transaction of a resumed upload.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -27,6 +27,7 @@ import { describe, expect, test } from 'vitest';
 import { compileTemplate, TEMPLATE_STATE_UPLOADING, type CompiledTemplate } from '../../src/index.js';
 import { buildKitResumeTemplateUploadPlan, buildKitTemplateUploadPlan } from '../../src/kit.js';
 import * as protocols from '../protocols/index.js';
+import { compiled as ownProgram } from './own-program.js';
 import { compiled as sweep } from './sweep.js';
 
 /** The most a legacy or version 0 transaction can hold. */
@@ -117,5 +118,14 @@ describe('Getting started and Template lifecycle', () => {
       readFileSync(fileURLToPath(new URL('../../../../fixtures/benchmarks.json', import.meta.url)), 'utf8'),
     ) as Record<string, { templateHex: string }>;
     expect(Buffer.from(sweep.bytes).toString('hex')).toBe(benchmarks['sweep-above-a-reserve']!.templateHex);
+  });
+
+  // The Rust twin in `clients/rust/examples/docs_start.rs` is checked against the same file by
+  // `clients/rust/tests/docs_start.rs`. `UPDATE_FIXTURES=1` rewrites it.
+  test("step 6's template matches the bytes its Rust twin is held to", () => {
+    const path = fileURLToPath(new URL('../../../rust/tests/fixtures/own-program.hex', import.meta.url));
+    const hex = Buffer.from(ownProgram.bytes).toString('hex');
+    if (process.env.UPDATE_FIXTURES === '1') writeFileSync(path, `${hex}\n`);
+    expect(hex).toBe(readFileSync(path, 'utf8').trim());
   });
 });

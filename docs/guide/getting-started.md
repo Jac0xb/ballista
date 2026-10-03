@@ -9,7 +9,7 @@ runs and works out the amount.
 > runs only locally, in the test suite; the older devnet build rejects templates from this
 > repository. [Details](/guide/security#audit-status)
 
-The five steps build one file, in order: in TypeScript a file such as `sweep.mts`, and in Rust the
+Steps 1 to 5 build one file, in order: in TypeScript a file such as `sweep.mts`, and in Rust the
 body of `fn main() -> Result<(), Box<dyn std::error::Error>>` in `src/main.rs`, ending with
 `Ok(())`. Pick a language on any code block and the others follow. The TypeScript imports the SDK
 from this repository's source; in your file, change `../../src/index.js` to `@jac0xb/ballista` and
@@ -140,6 +140,27 @@ index instead; [Error codes](/reference/errors#context) lists which.
 label. Rust has no source map, and the builder's calls don't return program counters.
 `decode_ballista_error` splits the code the same way, and for program counter `n` the failing
 instruction is `ProgramView::parse(&payload)?.instructions[n]`: here the `require`, opcode 40.
+
+## 6. Call your own program
+
+The sweep calls the System program. To call your own program, give the template the program's
+address as 32 bytes and build the instruction data it expects. For an Anchor program, that is the
+instruction's 8-byte [discriminator](/reference/glossary#discriminator), then its arguments.
+
+::: code-group
+
+<<< @/../clients/js/examples/start/own-program.ts#own-program [TypeScript]
+
+<<< @/../clients/rust/examples/docs_start.rs#own-program [Rust]
+
+:::
+
+`addressBytes` turns a Kit address or a base58 string into the 32 bytes a template takes; Kit's
+`getAddressEncoder().encode()` returns a read-only array, which the template's types reject.
+`anchorDiscriminator('deposit')` is the first 8 bytes of `sha256("global:deposit")`. In Rust,
+`Pubkey::to_bytes()` and `ballista_sdk::anchor_discriminator` do the same. Fixing the program's
+address, as here, stops a caller from passing a different program;
+[Accounts and CPIs](/guide/accounts-and-cpis#generic-cpi) covers the rest of a call.
 
 ## Author it in Rust
 

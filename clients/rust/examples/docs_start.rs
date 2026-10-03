@@ -268,6 +268,46 @@ pub fn send_in_version_1(
     Ok(())
 }
 
+/// Getting started, step 6: a template that calls your own program. `tests/docs_start.rs` holds
+/// it to the bytes the TypeScript compiler produces for `examples/start/own-program.ts`.
+pub fn own_program() -> Result<Vec<u8>, Box<dyn Error>> {
+    // #region own-program
+    use ballista_sdk::{
+        anchor_discriminator,
+        ballista_common::template::{
+            ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_REG_U64, VALUE_U64,
+        },
+        ProgramBuilder, Segment,
+    };
+    use solana_program::pubkey::Pubkey;
+
+    // Your program's address. This one is a placeholder.
+    let my_program = Pubkey::from_str_const("MyProgram1111111111111111111111111111111111");
+
+    let mut builder = ProgramBuilder::new();
+    let program = builder.account(ACCOUNT_EXECUTABLE, Some(my_program.to_bytes()), None, 0);
+    let vault = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+    let authority = builder.account(ACCOUNT_SIGNER, None, None, 0);
+    let amount_input = builder.input(VALUE_U64, 0);
+
+    let amount = builder.load_input(amount_input);
+    // An Anchor instruction's data: its 8-byte discriminator, then its arguments.
+    let discriminator = builder.blob(&anchor_discriminator("deposit"));
+    let deposit = builder.cpi(
+        program,
+        &[(vault, ACCOUNT_WRITABLE), (authority, ACCOUNT_SIGNER)],
+        &[
+            Segment::Literal(discriminator),
+            Segment::Register(DATA_REG_U64, amount),
+        ],
+    );
+    builder.invoke(deposit, None);
+
+    let payload = builder.build()?;
+    // #endregion own-program
+    Ok(payload)
+}
+
 // ------------------------------------------------------- stand-ins for the Solana client crates
 //
 // Only the items the regions use, with the real crates' signatures. A stand-in never talks to a

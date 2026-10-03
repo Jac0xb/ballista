@@ -32,8 +32,12 @@ points, and check them against the protocols' current programs before you use th
 - **Compiling and verifying.** CI compiles every template
   (`clients/js/src/protocol-examples.test.ts`) and checks the result with the same verifier the
   Ballista program runs before it stores a template (`common/src/template/verify.rs`).
+- **Reading the templates.** A test reads each template and checks its calls: the program, the
+  instruction and the accounts in the order the callee expects, which account each check reads, and
+  the amount each call passes (`clients/js/src/protocol-semantics.test.ts`).
 - **Rust.** Each Rust template is byte-identical to the TypeScript one, and each Rust run passes
-  the accounts, flags and inputs its template declares (`clients/rust/tests/protocol_templates.rs`).
+  the accounts, flags and inputs its template declares, right after any instructions it needs before
+  it: Kamino's refreshes, or the Ed25519 instruction (`clients/rust/tests/protocol_templates.rs`).
 - **Running against copies of the protocols.** The twelve protocol templates run as signed
   transactions in LiteSVM, a local Solana runtime, against the protocols' programs and accounts
   copied from mainnet at a single slot. The tests never touch the network (`tests/protocols/`). The
@@ -49,12 +53,12 @@ points, and check them against the protocols' current programs before you use th
 - **Jupiter calls.** The seven templates in the table that call Jupiter use its `route` instruction.
   Each sends the `route` discriminator and passes the first accounts of `route` itself, in the order
   Jupiter's published interface lists them: the token program, the signer and, where the template
-  measures them, the source and destination token accounts. The rest of the route's accounts
-  arrive as an account group. A test that reads the templates checks this
+  measures them, the source and destination token accounts. The rest of the route's accounts arrive
+  as an account group. A test that reads the templates checks this
   (`clients/js/src/protocol-semantics.test.ts`), and the protocol tests send real routes, recorded
   from Jupiter's API, through Jupiter's own program. Each also caps the route's platform fee at
-  `MAX_PLATFORM_FEE_BPS`, 0 unless its author raises it. Request routes from Jupiter's Swap API with `useSharedAccounts: false`; the default,
-  `shared_accounts_route`, is a different instruction with its accounts in a different order.
+  `MAX_PLATFORM_FEE_BPS`, 0 unless its author raises it. [Getting a Jupiter route](#jupiter-routes)
+  says how to request one.
 
 ## Reading offsets from an account
 
@@ -99,10 +103,9 @@ account.
 ::: warning Check before you upload
 The tests use a copy of mainnet from one slot. They can't tell you whether a protocol has changed
 since. Before you upload one of these templates, check each call's accounts, arguments and offsets
-against the protocol's current IDL (its published interface description). Require every account a
-template reads to be owned by the program you expect and long enough for the fields you read. If a
-template measures a token account, also require that account's `owner` field to be the signer.
-Prefer fields the protocol documents as public.
+against the protocol's current IDL (its published interface description), and prefer fields the
+protocol documents as public. The [trust model](/guide/trust-model#pins) says what an account
+declaration can pin and what it can't.
 :::
 
 ## Refreshing Kamino {#kamino-refreshes}

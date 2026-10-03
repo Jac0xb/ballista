@@ -84,10 +84,5 @@ zero and refuses a debt with one. Update those oracles earlier in the transactio
 - **Not tested.** Mainnet itself, more than one remaining balance, banks priced by more than one
   account (staked, Kamino), and Token-2022 tokens: the template accepts SPL Token accounts only. No
   test holds a marginfi debt or updates marginfi's oracles.
-- A test reads the template and checks that the owner checks come first, and that the withdrawal
-  passes `healthAccounts` after its eight accounts, with the vault authority read-only
-  (`clients/js/src/protocol-semantics.test.ts`).
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

@@ -57,6 +57,7 @@ The Rust tabs' `program`, `anchor` and account flags are
 destination token accounts: here `collateralAta` and `borrowedAssetAta`. The template passes those
 four itself; the rest of the route's accounts arrive as the `routeAccounts`
 [account group](/guide/account-groups).
+[Getting a Jupiter route](/examples/protocols/#jupiter-routes) says how to request one.
 
 Kamino's v2 repayment takes 13 accounts: 9 the template passes, then a second group,
 `farmAccounts`, of four. They are the obligation's user state in the reserve's debt farm, that
@@ -66,19 +67,14 @@ as on the main market's SOL and USDC reserves, both farm slots hold the Kamino p
 
 The Run tabs pass the 12 declared accounts in order (`jupiter`, `kamino`, `tokenProgram`,
 `instructionsSysvar`, `borrower`, `collateralAta`, `borrowedAssetAta`, then Kamino's five from
-`obligation` to `reserveLiquiditySupply`), then the inputs `routePlan`, `inAmount`, `quotedOutAmount`, `slippageBps`, `platformFeeBps` and
-`minimumRepayment`, then `routeAccounts` and `farmAccounts`.
+`obligation` to `reserveLiquiditySupply`), then the inputs `routePlan`, `inAmount`,
+`quotedOutAmount`, `slippageBps`, `platformFeeBps` and `minimumRepayment`, then `routeAccounts` and
+`farmAccounts`.
 
 Before the run, **refresh Kamino in the same transaction.** Kamino repays only against a reserve
 and an obligation refreshed in the same slot, and the template doesn't refresh.
 [Refreshing Kamino](/examples/protocols/#kamino-refreshes) has the order and the helpers that build
 it.
-
-::: tip Requesting the route
-Ask Jupiter's Swap API for `useSharedAccounts: false`. The template always sends Jupiter's `route`
-instruction. The API's default, `shared_accounts_route`, is a different instruction whose accounts
-are in a different order.
-:::
 
 ## What has been tested
 
@@ -93,11 +89,5 @@ are in a different order.
 - **Not tested.** Mainnet itself, a reserve with a debt farm, and Token-2022 tokens: the template
   accepts SPL Token accounts only. Only `borrowedAssetAta` is tied to the borrower; the route's
   accounts and the inputs are the run builder's choice, apart from the capped platform fee.
-- A test reads the template and checks that it calls `route` with its accounts in `route`'s order,
-  and repays through Kamino's v2 handler exactly what the swap produced, with `farmAccounts` as its
-  group (`clients/js/src/protocol-semantics.test.ts`).
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares, right after Kamino's refreshes
-  (`clients/rust/tests/protocol_templates.rs`).
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

@@ -86,11 +86,5 @@ Before the run:
 - **Not tested.** Mainnet itself, a marginfi account with other balances, a reserve without a
   collateral farm, a `walletAta` that isn't `owner`'s, and Token-2022 tokens: the template accepts
   SPL Token accounts only. The input is the run builder's choice.
-- A test reads the template and checks that the deposit is v2, of exactly the amount it measured,
-  with `farmAccounts` as its group, and that the withdrawal passes `healthAccounts` after its eight
-  accounts (`clients/js/src/protocol-semantics.test.ts`).
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares, right after Kamino's refreshes
-  (`clients/rust/tests/protocol_templates.rs`).
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

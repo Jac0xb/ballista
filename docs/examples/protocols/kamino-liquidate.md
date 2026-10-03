@@ -93,11 +93,5 @@ it.
 - **Not tested.** Mainnet itself, a repaid reserve with a debt farm, the health gate above, and
   Token-2022 tokens: the template accepts SPL Token accounts only. The inputs are the run
   builder's choice.
-- A test reads the template and checks that the liquidation is v2 with `farmAccounts` as its group,
-  and that the bounty is measured on `userDestinationLiquidity`, not the cToken account
-  (`clients/js/src/protocol-semantics.test.ts`).
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares, right after Kamino's refreshes
-  (`clients/rust/tests/protocol_templates.rs`).
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

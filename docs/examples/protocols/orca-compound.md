@@ -71,7 +71,7 @@ The Run tabs pass the template's 15 accounts in the order it declares them: `whi
 
 - `memoProgram` is SPL Memo, which Whirlpools' v2 instructions take.
 - `tickArrayLower` and `tickArrayUpper` hold the position's lower and upper ticks, the prices its
-  range starts and ends at. Whirlpools keeps a pool's ticks in accounts of 88, called tick arrays.
+  range starts and ends at. Whirlpools stores a pool's ticks 88 to an account, in tick arrays.
 - Both pool mints must be SPL Token mints, as SOL and USDC are.
 
 The inputs are `dustFloor` (a `u64`), then `minSqrtPrice` and `maxSqrtPrice` (`u128`s), the lowest
@@ -112,11 +112,6 @@ spend those accounts outside this template too.
   (`tests/protocols/tests/orca_setup.rs`).
 - Every Whirlpools call passes the same accounts, in the same order and with the same signer and
   writable flags, as Orca's own Rust client (`tests/protocols/tests/orca_cpis.rs`).
-- A test reads the template and checks that `feesGoToThePositionHolder` compares the fee accounts'
-  owners with `positionTokenAccount`'s owner, never with `positionAuthority`
-  (`clients/js/src/protocol-semantics.test.ts`).
 - An opt-in test checks the Orca offsets against devnet accounts.
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

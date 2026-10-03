@@ -145,14 +145,7 @@ fails at `quoteIsEd25519`.
 - **Not tested.** Devnet and mainnet. Both suites build their own Ed25519 instruction and run, in
   the same layout as the Run tabs (the LiteSVM test checks its copy against Solana's own builder),
   so no test runs the Run tabs' code against the program. The TypeScript run is only type-checked.
-- A test reads the template and checks that the signature must come from the Ed25519 program and
-  be by `maker`, that `maker` must sign, that the tag is `BLSTQT01`, that each check reads the
-  signed field it names, and which accounts each transfer uses and what it moves
-  (`clients/js/src/protocol-semantics.test.ts`).
 - `clients/js/src/compiler.test.ts` checks the `ed25519Signature` helper: its steps and header
   check, that it refuses an input as `signer`, and that `field` stays inside the message.
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares, right after one Ed25519 instruction
-  (`clients/rust/tests/protocol_templates.rs`).
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

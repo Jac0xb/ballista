@@ -65,8 +65,9 @@ then the input `dustFloor`. A row is:
 - `position`;
 - `positionTokenAccount`, the token account holding the position's NFT;
 - `tickArrayLower` and `tickArrayUpper`, which hold the position's lower and upper ticks, the prices
-  its range starts and ends at. Whirlpools keeps a pool's ticks in accounts of 88, called tick
-  arrays. The TypeScript run's `getOrcaTickArrayAddress` finds the one holding a tick.
+  its range starts and ends at. Whirlpools stores a pool's ticks 88 to an account, in tick arrays.
+  `getOrcaTickArrayAddress`, in the TypeScript run, finds the one holding a tick; a test checks it
+  against mainnet's tick arrays.
 
 Pass 1 to 12 rows; the row count comes from the account list, so there is no count to pass. Every
 row must be a position in `whirlpool`, held by the owner of the fee accounts. Another holder's
@@ -83,7 +84,8 @@ for more, add a compute-budget instruction that raises the limit. Rows that shar
 about ten to a transaction; more need an address lookup table.
 
 Whirlpools numbers its errors from 6000, as Ballista does, so a failed run's code alone can't say
-which program refused. The TypeScript run's `describeFailure` reads the logs to tell.
+which program refused ([error attribution](/guide/trust-model#error-attribution)). The TypeScript
+run's `describeFailure` reads the logs to tell.
 
 ## What has been tested
 
@@ -109,12 +111,6 @@ which program refused. The TypeScript run's `describeFailure` reads the logs to 
   (`tests/protocols/tests/orca_setup.rs`).
 - Every Whirlpools call passes the same accounts, in the same order and with the same signer and
   writable flags, as Orca's own Rust client (`tests/protocols/tests/orca_cpis.rs`).
-- A test reads the template and checks that each row compares its `positionTokenAccount`'s owner
-  with the fee accounts' owners, never with `positionAuthority`. Others check that the TypeScript
-  run passes each row's four accounts in order, finds tick arrays as mainnet derives them, and names
-  the program that refused (`clients/js/src/protocol-semantics.test.ts`).
 - An opt-in test checks the Orca offsets against devnet accounts.
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

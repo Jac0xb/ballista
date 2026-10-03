@@ -7,6 +7,9 @@ Kit instructions, derives addresses, and talks to an RPC node. Import it only wh
 
 ## Authoring
 
+Each `step.*` call builds one step; [the template language](/reference/language#steps) says what
+each step does when a template runs.
+
 | API | Purpose |
 | --- | --- |
 | `defineTemplate(document)` | Validate a template document with Zod (a TypeScript schema library) and fill in defaults |
@@ -26,7 +29,7 @@ Kit instructions, derives addresses, and talks to an RPC node. Import it only wh
 | `step.assign(name, value, label?)` | Reassign a carried variable inside a loop |
 | `step.invoke(descriptor)` | Perform a CPI (a call to another program); `when` makes it conditional, `programAddress` names the intended program, and `accountGroup` forwards an account group |
 | `step.forEach(steps, { carry?, label? })` | Run the steps once per batch row; see [Loops](#loops) |
-| `step.repeat(count, steps, { max, carry?, label? })` | Run the steps `count` times, at most `max`; see [Loops](#loops) |
+| `step.repeat(count, steps, { max, carry?, label? })` | Run the steps `count` times; a `count` above `max` fails the run; see [Loops](#loops) |
 | `step.emit(parts, label?)` | Log the parts for indexers; see [Output](#output) |
 | `step.setReturnData(parts, label?)` | Set the parts as the run's return data; see [Output](#output) |
 | `step.setRegistry(entry, field, value, label?)` | Write a field of the registry entry in fixed account `entry` |

@@ -60,10 +60,9 @@ account's requirements and the signers each call passes. The byte layout is on
 
 ## What to look for
 
-- **Signers and writable accounts.** A declared account's flags are the most any call can ask of
-  it, but one signer declaration lets every call pass it as a signer, so check each call that
-  does. [Account group](/guide/account-groups) members have no declaration: a call passes each one
-  as writable whenever the transaction marks it writable.
+- **Signers and writable accounts.** Check each call that passes a declared signer, and each
+  account group a call forwards. A declaration bounds the account, not the calls; see
+  [Privileges](/guide/trust-model#privileges).
 - **Called programs.** Each call names a program account. Check that the account pins an address
   you recognise, and that you trust whoever can upgrade that program. The Ballista program does
   not require the pin; only the TypeScript compiler does.

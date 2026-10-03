@@ -20,7 +20,7 @@ must be uploaded again under it.
 
 | Build | Program | Status |
 | --- | --- | --- |
-| Pre-release | [`BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD`](https://explorer.solana.com/address/BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD?cluster=devnet) | On devnet. Built before the current template format and before templates could derive program addresses on chain (`assertPda`, `assertAta`). Has an upgrade authority, so you trust its holder: that key can change what every template on this build does. |
+| Pre-release | [`BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD`](https://explorer.solana.com/address/BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD?cluster=devnet) | On devnet. Built before the current template format and before templates could derive program addresses on chain (`assertPda`, `assertAta`). Has an [upgrade authority](/guide/trust-model#deployments), which you trust while you use it. |
 | Current | Not deployed yet | Run it locally with the test suite |
 
 ::: warning Templates from this repository need the final deployment

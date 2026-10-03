@@ -10,11 +10,9 @@ the account's exact `address`, the program that owns it (`owner`), and a minimum
 (`minDataLength`). A run rejects any account that does not meet its declaration.
 
 The declaration is also a ceiling. A CPI in the template may pass an account as a signer or as
-writable only if the account's declaration requires that privilege. Finalization, the one-time
-check that locks the template on chain, enforces this, so the declarations tell you the most a run
-can ask of each declared account. They don't say which calls get it: a declared signer can be
-passed as a signer to every CPI in the template. [Account group](#account-groups) members are
-outside the ceiling, since they have no declaration.
+writable only if the account's declaration requires that privilege, and finalization, the one-time
+check that locks the template on chain, enforces it. The ceiling bounds accounts, not calls, and
+[account group](#account-groups) members have none; see [Privileges](/guide/trust-model#privileges).
 
 Ballista passes on only the signatures the transaction already carries and never signs a
 template's calls, so a template cannot create authority the transaction did not already have. See

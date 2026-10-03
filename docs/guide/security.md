@@ -9,8 +9,8 @@ and the program isn't on mainnet.
 
 - **The current build** runs only locally, in the test suite.
 - **The devnet build**, at the address the SDKs use by default, is an older pre-release that
-  rejects templates from this repository. It still has an upgrade authority: whoever holds that
-  key can change what every template on that build does, so while you use it, you trust that key.
+  rejects templates from this repository. Its [upgrade authority](/guide/trust-model#deployments)
+  can still change it.
 - **Each release will be immutable**, deployed with no upgrade authority. See
   [Deployments](/guide/trust-model#deployments).
 

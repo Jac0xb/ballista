@@ -46,6 +46,9 @@ pub fn breaks(program: &Program) -> Vec<Break> {
     guarded_return_data(program, &mut out);
     read_bounds(program, &mut out);
     sysvar_pin(program, &mut out);
+    ninth_loop(program, &mut out);
+    ninth_open(program, &mut out);
+    open_after_return_data(program, &mut out);
     out
 }
 
@@ -393,4 +396,79 @@ fn sysvar_pin(program: &Program, out: &mut Vec<Break>) {
     let mut broken = program.clone();
     broken.pubkeys[pin][31] ^= 1;
     out.push(Break { rule: "sysvar-pin", program: broken, expected: TemplateError::InvalidIntrospection(pc) });
+}
+
+/// Loops appended at the end of the root until there are nine: each a `REPEAT` of one pass over a
+/// one-instruction body, counted by a new `u64` register. A template holds at most eight loops,
+/// so the ninth header is refused with `InvalidLoop`.
+fn ninth_loop(program: &Program, out: &mut Vec<Break>) {
+    let loops = program.instrs.iter().filter(|instr| matches!(instr.op, op::FOREACH | op::REPEAT)).count();
+    let missing = 9usize.saturating_sub(loops);
+    let registers = program.header.registers as usize;
+    if missing == 0 || program.instrs.len() + 1 + 2 * missing > checker::limit::INSTRUCTIONS || registers + 2 > 64 {
+        return;
+    }
+    let mut broken = program.clone();
+    let (count, scratch) = (registers as u8, registers as u8 + 1);
+    broken.header.registers += 2;
+    broken.instrs.push(Instr::new(op::CONST_U64, count, NONE, NONE, NONE, 1));
+    let mut ninth = 0;
+    for _ in 0..missing {
+        ninth = broken.instrs.len();
+        broken.instrs.push(Instr::new(op::REPEAT, NONE, 1, count, 1, 0));
+        broken.instrs.push(Instr::new(op::CONST_BOOL, scratch, 1, NONE, NONE, 0));
+    }
+    broken.sync_counts();
+    out.push(Break { rule: "ninth-loop", program: broken, expected: TemplateError::InvalidLoop(ninth) });
+}
+
+/// Opens added after the first one until there are nine, each on a new entry account of the
+/// same registry and the same payer and System program. A template opens at most eight entries, so
+/// the ninth open is refused with `InvalidRegistry`, before the CPI count is checked.
+fn ninth_open(program: &Program, out: &mut Vec<Break>) {
+    let Some(first) = program.instrs.iter().position(|instr| instr.op == op::OPEN_REGISTRY) else { return };
+    let opens = program.instrs.iter().filter(|instr| instr.op == op::OPEN_REGISTRY).count();
+    let missing = 9usize.saturating_sub(opens);
+    let fixed = program.header.fixed_accounts as usize;
+    if missing == 0 || fixed + missing >= ROW_BIT as usize || program.instrs.len() + missing > checker::limit::INSTRUCTIONS {
+        return;
+    }
+    let mut broken = program.clone();
+    let template = program.instrs[first];
+    for added in 0..missing {
+        // A new fixed account, declared writable and nothing else, goes after the fixed accounts;
+        // row accounts follow and are named by their offset, so no reference moves.
+        let entry = (fixed + added) as u8;
+        broken.accounts.insert(fixed + added, crate::model::Account { flags: WRITABLE, address: NONE, owner: NONE, reserved: 0, min_len: 0 });
+        broken.header.fixed_accounts += 1;
+        broken.instrs.insert(first + 1 + added, Instr { a: entry, b: NONE, ..template });
+    }
+    broken.sync_counts();
+    // The ninth in pc order: opens the program already had after the first now sit after the
+    // added ones.
+    let Some(ninth) = broken.instrs.iter().enumerate().filter(|(_, instr)| instr.op == op::OPEN_REGISTRY).nth(8) else {
+        return;
+    };
+    let ninth = ninth.0;
+    out.push(Break { rule: "ninth-open", program: broken, expected: TemplateError::InvalidRegistry(ninth) });
+}
+
+/// A `SET_RETURN_DATA` of one empty literal before the first registry open, which may not follow
+/// one, since creating an entry calls the System program. If an invoke comes later, the output's
+/// own placement check refuses it first, with `InvalidOutput`.
+fn open_after_return_data(program: &Program, out: &mut Vec<Break>) {
+    let Some(open) = program.instrs.iter().position(|instr| instr.op == op::OPEN_REGISTRY) else { return };
+    if program.instrs.len() >= checker::limit::INSTRUCTIONS
+        || program.instrs.iter().any(|instr| instr.op == op::SET_RETURN_DATA)
+    {
+        return;
+    }
+    let mut broken = program.clone();
+    let segment = broken.segments.len() as u64;
+    broken.segments.push(crate::model::Segment { kind: 0, register: NONE, offset: 0, len: 0, reserved: [0; 2] });
+    broken.instrs.insert(open, Instr::new(op::SET_RETURN_DATA, NONE, NONE, NONE, NONE, segment | 1 << 32));
+    broken.sync_counts();
+    let invoke_later = broken.instrs[open + 1..].iter().any(|instr| instr.op == op::INVOKE);
+    let expected = if invoke_later { TemplateError::InvalidOutput(open) } else { TemplateError::InvalidRegistry(open + 1) };
+    out.push(Break { rule: "open-after-return-data", program: broken, expected });
 }

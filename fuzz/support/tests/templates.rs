@@ -97,6 +97,9 @@ fn every_break_of_every_template_is_refused_with_its_error() {
         "guarded-return-data",
         "read-bounds",
         "sysvar-pin",
+        "ninth-loop",
+        "ninth-open",
+        "open-after-return-data",
     ] {
         assert!(counts.contains_key(rule), "no template exercises the break {rule}");
     }

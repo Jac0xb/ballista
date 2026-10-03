@@ -6,26 +6,14 @@ named set of fields. The values live in **entries**. An entry is an account that
 the registry's fields, and a **key**, 32 bytes the template computes, picks which entry a run uses.
 Key the entry by the caller's address, and each caller gets one of their own.
 
-This page covers entries and how to declare, read and write them, then works through two examples:
-a daily spending limit per caller, and an allowlist.
+An entry is an account Ballista owns. The first run to open it creates it, and a payer the template
+names pays its [rent](/reference/glossary#rent), about 0.0015 SOL for 16 bytes of fields. Nothing
+closes an entry, so the rent is never returned. Only runs of its template can change it, anyone can
+read it, and the same template published at a new address starts with no entries.
 
-## Entries
-
-- **An account Ballista owns.** Its address is a [PDA](/reference/glossary#pda) of the Ballista
-  program, derived from `"registry"`, the template's address, the registry's index (its position
-  in `registries`, from 0) and the key.
-- **A header, then the fields.** The first 72 bytes hold `BREG`, a version, the registry index, the
-  template's address and the key. The fields follow, all zero at first.
-- **Created on first use.** Every run opens the entries its template declares, before the first
-  step. The first run to open an entry creates its account, and the payer, a signing account the
-  template names, pays the [rent](/reference/glossary#rent): the
-  [lamports](/reference/glossary#lamports) Solana requires an account to hold for its size. An
-  entry with 16 bytes of fields is 88 bytes and needs 1,503,360 lamports, about 0.0015 SOL.
-- **Never closed.** Nothing closes an entry, so its rent is never returned.
-- **Written only by its template.** Only runs of the template an entry belongs to can change it.
-  Anyone can read it, as with any account.
-- **Tied to one template address.** The same template published at a new address starts with no
-  entries, so its counters and limits start again from zero.
+This page works through three examples: a run counter, a daily spending limit per caller, and an
+allowlist. Every rule is under [Registries](/reference/language#registries) in the language
+reference.
 
 ## Declare a registry
 
@@ -60,33 +48,24 @@ export const countRuns = defineTemplate({
 
 :::
 
-- `registries` names each registry and its fields, in order. A field is a `bool`, `u64`, `i64`,
-  `u128` or `pubkey`, and a registry's fields take 1 to 512 bytes in all.
-- `account.registry('runs', { key, payer })` declares the account that holds one entry of `runs`.
-  Before the first step, every run checks that this account is the entry for this template,
-  registry and key, or creates it if it does not exist yet.
-- `key` picks the entry. `expression.accountKey('caller')` is the caller's address, and the caller
-  must sign, so a caller can open only their own entry. Leave `key` out for one entry that every
-  run shares; its key is 32 zero bytes.
-- `payer` names an account declared signer and writable. It pays the rent when a run creates the
-  entry, and nothing after that.
-- `account.systemProgram()` declares the System program, which creating an entry calls. A template
-  with registry accounts must declare it.
+- `registries` names each registry and its fields: here `runs`, with one `u64`, `count`.
+- `account.registry('runs', { key, payer })` declares the account that holds the caller's entry of
+  `runs`. Before the first step, every run checks that account, or creates it.
+- `key` is the caller's address, and the caller must sign, so a caller can open only their own
+  entry. Leave `key` out for one entry that every run shares.
+- `payer` pays the rent when a run creates the entry, and nothing after that.
+- `account.systemProgram()` is there because creating an entry calls the System program.
+- The step reads the field with `expression.registry` and writes it with `step.setRegistry`. Both
+  name the entry's account, `callerRuns`, not the registry, so a template can open two entries of
+  one registry, such as a sender's and a receiver's. If their keys come out equal, the run fails;
+  see [Opening an entry](/reference/language#opening-an-entry).
+- A write lands at once, so later steps read the new value. If the run fails, Solana undoes it.
 
 ::: warning Don't let the caller choose the key
 The caller sets every input. An entry keyed by an input is one the caller chooses, so a caller
 could open a fresh entry, with a fresh limit, on every run. Key an entry that limits callers by a
 signer's address, or leave the key out.
 :::
-
-## Read and write fields
-
-- `expression.registry('callerRuns', 'count')` reads a field, typed as declared.
-- `step.setRegistry('callerRuns', 'count', value)` writes one. The value must have the field's type.
-- Both name the entry's account (`callerRuns`), not the registry (`runs`). A template can open two
-  entries of one registry, such as a sender's and a receiver's, and the account says which.
-- A write lands at once, so later steps read the new value. If the run fails, Solana undoes the
-  write along with the rest of the transaction.
 
 ## A daily limit per caller
 
@@ -174,22 +153,16 @@ export async function runDailyLimitPerCaller(run: {
   to about 2 SOL: the full 1 SOL, plus what refills in that time.
 - A run over the limit fails with `RequirementFailed` (6015) at the step labeled
   `withinRateLimit`, and the transfer does not happen.
-- The first run for a caller creates their entry, and the caller pays its rent.
 - The Run tabs derive the caller's entry with `findRegistryEntryAddress` (from
   `@jac0xb/ballista/kit`) or `find_registry_entry_address` (Rust), from the template address, the
-  registry's index and the caller's address, and pass it with the other accounts.
-  `registryIndex(compiled, 'limits')` gives the index, here 0.
+  registry's index and the caller's address. `registryIndex(compiled, 'limits')` gives the index,
+  here 0.
 
-Three rules keep the limit out of the caller's hands. `rateLimit` enforces the first:
-
-- **`cap` and `refillPerSecond` are constants,** built from literals and arithmetic on them.
-  `rateLimit` throws if either comes from an input, a variable, or a read of an account or of the
-  transaction. The caller controls all of these, and a cap the caller sets is no cap.
-- **A registry field is the one exception,** so that the author can change a cap later. `rateLimit`
-  can't tell who wrote the field, so write it only in a branch that only the author's runs take,
-  like the one in the next example.
-- **The key is a signer's address,** as here, or absent, for one limit that every caller shares.
-  `rateLimit` can't see the key, so it can't check this for you.
+`rateLimit` refuses a `cap` or `refillPerSecond` that the caller could set, such as an input. It
+can't see the key, so key the entry by a signer's address, as here, or leave the key out for one
+limit that every caller shares. Give each `rateLimit` in a template its own `name`: it names the
+requirement, `within<Name>`, so a failure says which limit was hit. The full rules are under
+[Spending limits](/reference/language#spending-limits).
 
 ## An allowlist
 
@@ -300,7 +273,8 @@ export async function runListedCallersOnly(run: {
 - **One entry per run.** The key is `member` in the author's runs and the caller's own address in
   everyone else's, so only the author's runs take the key from an input.
 - **Setting a flag.** In the author's runs, the first step writes `allow` into the member's entry.
-  In anyone else's, it writes back the flag already there, which changes nothing.
+  A write can't be skipped, so in anyone else's it writes back the flag already there, which
+  changes nothing.
 - **The check.** The `require` passes for the author, and for callers whose flag is set. Anyone
   else's run fails at `listed` with `RequirementFailed` (6015). The whole transaction fails, so the
   entry that run created is undone too, and the caller pays no rent.
@@ -309,37 +283,3 @@ export async function runListedCallersOnly(run: {
 - **Inputs.** Every run must pass `member` and `allow`, but only the author's runs read them. The
   Run tabs derive the entry from the same key the template computes.
 - **Removing a member** sets their flag to `false`. The entry stays, since entries are never closed.
-
-## Rules and limits
-
-- A template declares up to 8 registries and opens up to 8 entries. A registry's fields take 1 to
-  512 bytes.
-- Registry accounts are fixed accounts, declared in `accounts` rather than in a batch row. Every
-  run opens all of them before the first step, outside any loop, so there is no entry per row.
-- Each open counts as 3 of the 64 [CPIs](/reference/glossary#cpi) a run may make, since creating an
-  entry can take three calls to the System program.
-- No CPI may pass an entry writable. The compiler refuses it, and Ballista refuses the template
-  when it is created or [finalized](/reference/glossary#finalize), with `InvalidRegistry` (6132).
-  If a batch-row account or an account group member turns out to be an open entry, a CPI that
-  passes it writable fails the run with `RegistryReentry` (6026).
-- A template reads an entry only through its fields: `accountData` and `accountDataBytes` of an
-  entry are refused. Its address, owner, lamports and data length stay readable.
-- An account that isn't the entry for this template, registry and key fails the run with
-  `InvalidRegistryEntry` (6025). An entry passed read-only fails before the first step with
-  `AccountConstraintFailed` (6020).
-
-The full rules are in the language reference under [Registries](/reference/language#registries),
-the numbers in [Limits](/reference/limits#registries), and the codes in
-[Errors and events](/guide/errors-and-events).
-
-## What the registry does not do
-
-- **Close entries.** An entry's rent stays in it for good.
-- **Open entries in a loop.** A template opens at most 8, once each, before its first step.
-- **Write another template's entries.** Each entry's header names its template, and only that
-  template's runs can change it.
-- **Resize an entry or change its layout.** Both are fixed when the template is finalized.
-- **Hide anything.** Anyone can read an entry.
-- **Decide who may run a template.** Access control is a step you write, as in the allowlist.
-- **Give a template a signature.** Ballista signs only to create an entry's account, never for a
-  template's own calls.

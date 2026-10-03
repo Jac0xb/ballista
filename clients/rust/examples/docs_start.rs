@@ -164,8 +164,9 @@ pub fn getting_started() -> Result<Vec<u8>, Box<dyn Error>> {
             println!("{code}: {} (context {})", decoded.name, decoded.context);
             // 202623: RequirementFailed (context 3)
 
-            // For RequirementFailed the context is the failing instruction's program counter.
-            let failing = ProgramView::parse(&payload)?.instructions[usize::from(decoded.context)];
+            // For RequirementFailed, the context is the program counter.
+            let pc = usize::from(decoded.context);
+            let failing = ProgramView::parse(&payload)?.instructions[pc];
             println!("failed at opcode {}", failing.opcode); // 40, the require
         }
     }
@@ -189,19 +190,20 @@ pub fn chunked_upload(
         write_template_chunk_instruction,
     };
 
-    // Each instruction goes in its own legacy transaction, which fits a write of at most 1,023
-    // bytes of template.
+    // Each instruction goes in its own legacy transaction, which fits a write of at most
+    // 1,023 bytes of template.
     const CHUNK: usize = 1_000;
-    let (template, _) = find_template_pda(&creator.pubkey(), 42);
-    let hash = template_hash(&payload);
-    let begin = begin_template_instruction(creator.pubkey(), 42, payload.len() as u32, hash);
+    let creator_key = creator.pubkey();
+    let (template, _) = find_template_pda(&creator_key, 42);
+    let (length, hash) = (payload.len() as u32, template_hash(&payload));
+    let begin = begin_template_instruction(creator_key, 42, length, hash);
     send(&creator, &[begin])?;
     for (index, chunk) in payload.chunks(CHUNK).enumerate() {
         let offset = (index * CHUNK) as u32;
-        let write = write_template_chunk_instruction(creator.pubkey(), template, offset, chunk);
+        let write = write_template_chunk_instruction(creator_key, template, offset, chunk);
         send(&creator, &[write])?;
     }
-    let finalize = finalize_template_instruction(creator.pubkey(), template);
+    let finalize = finalize_template_instruction(creator_key, template);
     send(&creator, &[finalize])?;
     // #endregion chunked
     Ok(())
@@ -223,15 +225,16 @@ pub fn resume_upload(
     use ballista_sdk::ballista_common::template::TemplateAccount;
 
     // Write only the bytes the account doesn't have yet, then finalize.
-    let (template, _) = find_template_pda(&creator.pubkey(), 42);
+    let creator_key = creator.pubkey();
+    let (template, _) = find_template_pda(&creator_key, 42);
     let data = rpc.get_account_data(&template)?;
     let written = TemplateAccount::parse(&data)?.header().written_len();
     for (index, chunk) in payload[written..].chunks(CHUNK).enumerate() {
         let offset = (written + index * CHUNK) as u32;
-        let write = write_template_chunk_instruction(creator.pubkey(), template, offset, chunk);
+        let write = write_template_chunk_instruction(creator_key, template, offset, chunk);
         send(&creator, &[write])?;
     }
-    let finalize = finalize_template_instruction(creator.pubkey(), template);
+    let finalize = finalize_template_instruction(creator_key, template);
     send(&creator, &[finalize])?;
     // #endregion resume
     Ok(())
@@ -251,12 +254,15 @@ pub fn send_in_version_1(
     use solana_transaction::versioned::VersionedTransaction;
 
     // Both limits default to zero, so set each one.
-    let config = v1::TransactionConfig::empty()
-        .with_compute_unit_limit(measured_compute_units)
-        .with_loaded_accounts_data_size_limit(measured_loaded_bytes);
-    let blockhash = rpc.get_latest_blockhash()?;
-    let message = v1::Message::try_compile_with_config(&payer.pubkey(), &[run], blockhash, config)?;
-    let transaction = VersionedTransaction::try_new(VersionedMessage::V1(message), &[&payer])?;
+    let message = VersionedMessage::V1(v1::Message::try_compile_with_config(
+        &payer.pubkey(),
+        &[run],
+        rpc.get_latest_blockhash()?,
+        v1::TransactionConfig::empty()
+            .with_compute_unit_limit(measured_compute_units)
+            .with_loaded_accounts_data_size_limit(measured_loaded_bytes),
+    )?);
+    let transaction = VersionedTransaction::try_new(message, &[&payer])?;
     rpc.send_and_confirm_transaction(&transaction)?;
     // #endregion v1
     Ok(())

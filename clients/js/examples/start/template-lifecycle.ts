@@ -1,11 +1,13 @@
 /**
  * Template lifecycle (`docs/guide/template-lifecycle.md`): upload a template too large for one
- * transaction, and resume an upload that stopped partway. It uses Getting started's helpers. Start
- * the local validator Getting started describes, then run:
+ * transaction, and resume an upload that stopped partway. The regions continue Getting started, so
+ * they use its helpers and don't import what it already imports. Start the local validator Getting
+ * started describes, then run:
  *
  *   pnpm --dir clients/js exec tsx examples/start/template-lifecycle.ts
  */
 import { compileTemplate } from '../../src/index.js';
+import { buildKitTemplateUploadPlan } from '../../src/kit.js';
 import { signedQuoteSettlement } from '../protocols/signed-quote-settlement.js';
 import { emptyMessage, fundedSigner, rpc, send } from './connect.js';
 
@@ -14,8 +16,6 @@ const compiled = compileTemplate(signedQuoteSettlement);
 const creator = await fundedSigner();
 
 // #region upload
-import { buildKitTemplateUploadPlan } from '../../src/kit.js';
-
 const plan = await buildKitTemplateUploadPlan({
   compiled,
   creator: creator.address,

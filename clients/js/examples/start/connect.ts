@@ -39,8 +39,8 @@ async function fundedSigner(): Promise<TransactionSigner> {
   return signer;
 }
 
-// The transaction `send` builds, before it adds instructions: version 0, signed and paid for by
-// `feePayer`.
+// The transaction `send` builds, before its instructions: version 0, signed and paid for
+// by `feePayer`.
 async function emptyMessage(feePayer: TransactionSigner) {
   const { value: blockhash } = await rpc.getLatestBlockhash().send();
   return pipe(
@@ -51,8 +51,9 @@ async function emptyMessage(feePayer: TransactionSigner) {
 }
 
 // Send instructions in one transaction that `feePayer` signs and pays for.
-async function send(feePayer: TransactionSigner, instructions: Instruction[]): Promise<void> {
-  const message = appendTransactionMessageInstructions(instructions, await emptyMessage(feePayer));
+async function send(feePayer: TransactionSigner, instructions: Instruction[]) {
+  const empty = await emptyMessage(feePayer);
+  const message = appendTransactionMessageInstructions(instructions, empty);
   const transaction = await signTransactionMessageWithSigners(message);
   assertIsTransactionWithBlockhashLifetime(transaction);
   await sendAndConfirm(transaction, { commitment: 'confirmed' });

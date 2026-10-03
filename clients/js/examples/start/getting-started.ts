@@ -64,7 +64,8 @@ try {
 } catch (error) {
   const cause = error instanceof Error ? error.cause : undefined;
   if (!isSolanaError(cause, SOLANA_ERROR__INSTRUCTION_ERROR__CUSTOM)) throw error;
-  console.log(cause.context.code, explainRunError(cause.context.code, compiled)?.message);
+  const { code } = cause.context;
+  console.log(code, explainRunError(code, compiled)?.message);
   // 202623 RequirementFailed at steps[1] (aboveReserve)
 }
 // #endregion failure

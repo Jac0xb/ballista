@@ -32,7 +32,10 @@ const sweep = defineTemplate({
       systemProgram: account.fixed('systemProgram'),
       from: account.fixed('vault'),
       to: account.fixed('destination'),
-      lamports: expression.subtract(expression.variable('balance'), expression.input('reserve')),
+      lamports: expression.subtract(
+        expression.variable('balance'),
+        expression.input('reserve'),
+      ),
     }),
   ],
 });

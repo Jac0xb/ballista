@@ -17,7 +17,7 @@ NAME=$1; shift
 SUITES=${*:-mollusk protocols host}
 OUT=$SP/mutants/$NAME
 mkdir -p "$OUT"; rm -f "$OUT"/summary.txt "$OUT"/*.log
-cd "$W"
+cd "$W" || exit 2
 git diff --quiet -- programs common || { echo "worktree dirty, refusing"; exit 2; }
 build() { cargo build-sbf --manifest-path programs/ballista/Cargo.toml > "$1" 2>&1; }
 [ -f target/deploy/ballista.so ] || build "$OUT/build-original.log"
@@ -45,6 +45,7 @@ AFTER=$(shasum -a 256 target/deploy/ballista.so | cut -d' ' -f1)
     echo "RESTORED BALLISTA.SO DIFFERS: before $BEFORE, after $AFTER"
   fi
 } >> "$OUT/summary.txt"
+# shellcheck disable=SC2086 # one argument per suite
 python3 "$W/scripts/critic/mutant_verdict.py" "$OUT" $SUITES >> "$OUT/summary.txt"
 status=$?
 cat "$OUT/summary.txt"

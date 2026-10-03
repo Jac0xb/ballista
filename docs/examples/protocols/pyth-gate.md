@@ -35,6 +35,20 @@ Pyth publishes a price as `price × 10^exponent`. `floorPrice`, `ceilingPrice` a
 10,000,000,000. If the feed's exponent changed, each would be off by a power of ten, so the
 exponent check fails the run instead.
 
+It does not guard against:
+
+- **The swap itself.** The route's token accounts arrive in the group, so nothing checks what the
+  swap paid or which account it paid. Only Jupiter's `slippageBps` bounds the fill, against the
+  route's own quote. [Swap checked against an oracle](/examples/protocols/jupiter-oracle-swap)
+  checks both.
+- **The run's builder.** The feed, exponent, age, confidence and band are run inputs. The gate
+  protects whoever builds the run from the price moving before the run lands, not the signer from
+  that builder.
+- **The choice of price within `maximumAge`.** Whoever posts the price update can pick any Pyth
+  price from that window.
+- **Spending the actor's other token accounts.** The actor signs `route`, and Jupiter passes that
+  authority to every step.
+
 ## Template
 
 ::: code-group
@@ -59,6 +73,12 @@ The Run tabs pass the four declared accounts, `priceUpdate`, `actionProgram`, `t
 `actor`, then the inputs `feedId`, `exponent`, `maximumAge`, `maximumConfidence`, `floorPrice`,
 `ceilingPrice`, `routePlan`, `inAmount`, `quotedOutAmount`, `slippageBps` and `platformFeeBps`,
 then the group. `exponent` is an `i64` input, though Pyth stores it as an `i32`.
+
+`priceUpdate` is a fully verified `PriceUpdateV2` for the feed: the account Pyth's push oracle keeps
+updated for it, or an update you post with Pyth's receiver earlier in the transaction. A partially
+verified update fails the first check. The tests pass SOL/USD's push-oracle account,
+`7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE`, whose feed id is
+`ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d`.
 
 [Getting a Jupiter route](/examples/protocols/#jupiter-routes) says how to request the route from
 Jupiter's Swap API and what to keep from its response.

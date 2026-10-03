@@ -48,7 +48,7 @@ export const pythFreshPriceGate = defineTemplate({
   inputs: {
     /**
      * The Pyth feed the price must come from, as its 32-byte id: SOL/USD's is
-     * `ef0d8b6f…c280b56d`.
+     * `ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d`.
      */
     feedId: { type: 'pubkey' },
     /**

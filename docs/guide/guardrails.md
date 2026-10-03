@@ -34,6 +34,9 @@ protect the output without trusting the caller, record the destination token acc
 with `step.snapshot` before the swap, and check how much it grew after the swap, as
 [swap then deposit](/examples/composition#swap-then-deposit) does.
 
+Also cap the route's platform fee: whoever builds the run picks its account and rate, so require
+`platformFeeBps` to be at most a constant.
+
 ## Pinned program and owner
 
 Fix the address of each program the template calls, and the owner of each protocol account, in

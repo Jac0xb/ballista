@@ -20,7 +20,8 @@ unwraps it after. A wSOL balance is in lamports (billionths of a SOL), the same 
 The searcher is the wallet that signs, trades and pays the tip. The template:
 
 1. requires `wsolAccount` to hold wSOL and to belong to the searcher;
-2. records its balance, then runs the round trip as one Jupiter `route` from that account back to
+2. records its balance, requires the route's `platformFeeBps` to be at most
+   `MAX_PLATFORM_FEE_BPS`, a constant that is 0 (`platformFeeWithinCap`), then runs the round trip as one Jupiter `route` from that account back to
    it;
 3. requires the balance to have grown by at least `tipLamports` plus `minimumEdge`, so a loss or a
    thin profit reverts before any tip is paid;
@@ -59,9 +60,9 @@ can be joined, and the SDK has no helper for it: `round_trip` in `tests/protocol
 is the only implementation.
 
 The Run tabs pass the six declared accounts, `systemProgram`, `strategyProgram`, `tokenProgram`,
-`searcher`, `wsolAccount` and `jitoTip`, then the inputs `strategyData`, `tipLamports` and
-`minimumEdge`, then the group. `strategyData` is the joined `route` data without its eight-byte
-discriminator; the template adds the `route` discriminator itself.
+`searcher`, `wsolAccount` and `jitoTip`, then the inputs `routePlan`, `inAmount`, `quotedOutAmount`,
+`slippageBps`, `platformFeeBps`, `tipLamports` and `minimumEdge`, then the group. The joined `route`
+data is split into the first five.
 
 ::: tip Requesting the route
 Ask Jupiter's Swap API for `useSharedAccounts: false`. The template always sends Jupiter's `route`

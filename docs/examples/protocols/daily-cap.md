@@ -29,8 +29,10 @@ account. The Swap API wraps SOL before `route` and unwraps it after. The templat
    count as 0.15 SOL;
 2. requires `sourceAta` to belong to the caller (`sourceBelongsToTheCaller`);
 3. charges `inAmount` to the entry, or fails at `withinRateLimit`;
-4. calls `route` with that same `inAmount`;
-5. requires exactly `inAmount` to have left `sourceAta` (`soldWhatTheCapCharged`), since Jupiter
+4. requires the route's `platformFeeBps` to be at most `MAX_PLATFORM_FEE_BPS`, a constant that is 0
+   (`platformFeeWithinCap`);
+5. calls `route` with that same `inAmount`;
+6. requires exactly `inAmount` to have left `sourceAta` (`soldWhatTheCapCharged`), since Jupiter
    doesn't require its steps to move the source account it is given. Without this check, a second
    wSOL account of the caller's at `sourceAta` passed the first two checks while the route sold
    150 USDC, charged as 0.15 SOL.

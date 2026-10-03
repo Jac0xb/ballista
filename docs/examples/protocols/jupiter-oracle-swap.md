@@ -26,6 +26,9 @@ The template requires, in order:
 - both token accounts to belong to the trader (`sellsTheTradersOwnTokens`, `proceedsGoToTheTrader`),
   since a route's step can pay any account of the output mint;
 - the price to be above zero (`oraclePriceIsPositive`);
+- the route's `platformFeeBps` to be at most `MAX_PLATFORM_FEE_BPS`, a constant that is 0
+  (`platformFeeWithinCap`), before Jupiter is called, since whoever builds the run picks the fee
+  account and rate;
 - after the swap, exactly `inAmount` to have left the source (`soldTheRouteInput`), since Jupiter
   doesn't require its steps to move the source account it is given;
 - the destination to have received at least that amount's value at the Pyth price, less
@@ -33,10 +36,9 @@ The template requires, in order:
 
 It does not guard against:
 
-- **Fees within the tolerance.** Whoever builds the run picks the route's platform fee account, and
-  nothing checks who owns it. The fill check holds the trader only to the oracle price less
-  `toleranceBps`, so set `toleranceBps` to what you would accept losing to the builder, not only
-  to the market.
+- **Venues' own fee accounts.** The cap covers the route's platform fee, not fees a venue takes
+  inside the route. The fill check bounds those to `toleranceBps`, so set it to what you would
+  accept losing to the builder, not only to the market.
 - **Spending the trader's other token accounts.** The trader signs `route`, and Jupiter passes that
   authority to every step.
 

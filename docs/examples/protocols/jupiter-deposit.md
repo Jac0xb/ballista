@@ -19,15 +19,17 @@ Kamino's `deposit_reserve_liquidity_and_obligation_collateral_v2` needs that num
 `liquidity_amount`. A plain transaction has to fix it before the swap runs. Guess too high and the
 deposit fails; guess too low and the rest stays in your token account.
 
-The template reads the destination balance before and after the swap, requires the difference to
+The template requires the route's `platformFeeBps` to be at most `MAX_PLATFORM_FEE_BPS`, a
+constant that is 0 (`platformFeeWithinCap`), before the swap. It reads the destination balance
+before and after the swap, requires the difference to
 be at least `minimumOut` (`swapMetItsFloor`), and asks Kamino to deposit exactly that difference.
 Kamino mints whole cTokens, its receipts for a deposit, and takes only what they are worth, so less
 than one cToken's worth (a base unit or so) can stay behind.
 
 It does not guard against:
 
-- **A bad route.** The route arrives whole, as `routeArgs`, so what it sells, its quote and its fee
-  account are up to whoever builds the run. Set `minimumOut` from your own quote.
+- **A bad route.** The route arrives as `routePlan`, `inAmount`, `quotedOutAmount` and `slippageBps`, so what
+  it sells and its quote are up to whoever builds the run. Set `minimumOut` from your own quote.
 - **Spending the owner's other token accounts.** The owner signs `route`, and Jupiter passes that
   authority to every step.
 
@@ -61,9 +63,8 @@ Kamino program, read-only.
 
 The Run tabs pass the 15 declared accounts in order (`jupiter`, `kamino`, `tokenProgram`,
 `instructionsSysvar`, `owner`, `sourceAta`, `destinationAta`, then Kamino's eight from `obligation`
-to `reserveDestinationDepositCollateral`), then the inputs `routeArgs` and `minimumOut`, then
-`routeAccounts` and `farmAccounts`. `routeArgs` is Jupiter's instruction data without its first
-eight bytes, the discriminator that names the instruction; the template adds it back itself.
+to `reserveDestinationDepositCollateral`), then the inputs `routePlan`, `inAmount`, `quotedOutAmount`, `slippageBps`, `platformFeeBps` and
+`minimumOut`, then `routeAccounts` and `farmAccounts`.
 
 Before the run:
 

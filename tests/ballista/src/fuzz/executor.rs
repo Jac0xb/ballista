@@ -63,6 +63,7 @@ struct Stats {
     compared_return_data: usize,
     compared_loop_passes: usize,
     predicted_failures: usize,
+    exact_failures: usize,
     classified_failures: usize,
     /// Why the model passed over successful runs.
     skipped: BTreeMap<String, usize>,
@@ -98,6 +99,7 @@ impl Stats {
         self.compared_return_data += other.compared_return_data;
         self.compared_loop_passes += other.compared_loop_passes;
         self.predicted_failures += other.predicted_failures;
+        self.exact_failures += other.exact_failures;
         self.classified_failures += other.classified_failures;
         for (key, count) in other.skipped {
             *self.skipped.entry(key).or_default() += count;
@@ -126,6 +128,7 @@ impl Stats {
         self.compared_return_data += usize::from(compared.return_data);
         self.compared_loop_passes += compared.loop_passes;
         self.predicted_failures += usize::from(compared.predicted_failure);
+        self.exact_failures += usize::from(compared.exact_failure);
         self.classified_failures += usize::from(compared.classified_failure);
     }
 }
@@ -142,15 +145,15 @@ struct Floor {
     count: fn(&Stats) -> usize,
 }
 
-const FLOORS: [Floor; 11] = [
+const FLOORS: [Floor; 12] = [
     // Measured per 1,000 at 20,000 seeds, normal / limits: 195 / 113.
     Floor { what: "successful runs the model compared", normal: 95, limits: 55, count: |s| s.compared_runs },
     // 284 / 1,008.
     Floor { what: "CPIs compared by program and accounts", normal: 140, limits: 500, count: |s| s.compared_cpis },
-    // 0 / 35.8, at 5,000 seeds: only limits mode names a program in a batch row.
-    Floor { what: "CPIs into a row-account program compared", normal: 0, limits: 18, count: |s| s.compared_row_program_cpis },
-    // 0 / 151, at 5,000 seeds: only limits mode passes 16 or more accounts.
-    Floor { what: "CPIs with 16 or more accounts compared", normal: 0, limits: 75, count: |s| s.compared_wide_cpis },
+    // 0 / 33: only limits mode names a program in a batch row.
+    Floor { what: "CPIs into a row-account program compared", normal: 0, limits: 16, count: |s| s.compared_row_program_cpis },
+    // 0 / 133: only limits mode passes 16 or more accounts.
+    Floor { what: "CPIs with 16 or more accounts compared", normal: 0, limits: 65, count: |s| s.compared_wide_cpis },
     // 270 / 958.
     Floor { what: "CPIs compared byte for byte", normal: 135, limits: 480, count: |s| s.compared_data },
     // 144 / 887.
@@ -163,6 +166,8 @@ const FLOORS: [Floor; 11] = [
     Floor { what: "loop passes on compared runs", normal: 130, limits: 580, count: |s| s.compared_loop_passes },
     // 358 / 384.
     Floor { what: "failures the model predicted", normal: 180, limits: 190, count: |s| s.predicted_failures },
+    // 93 / 42.5.
+    Floor { what: "predicted failures the run matched exactly", normal: 45, limits: 20, count: |s| s.exact_failures },
     // 405 / 391.
     Floor { what: "failed runs whose Ballista code was classified", normal: 200, limits: 195, count: |s| s.classified_failures },
 ];
@@ -329,10 +334,10 @@ fn fuzz_executor_differential() {
     );
     eprintln!(
         "compared: {} runs, {} CPIs ({} into row-account programs, {} with 16+ accounts), {} CPI data, {} probe flag sets, \
-         {} EMIT lines, {} return data, {} loop passes; {} predicted failures; {} failures classified",
+         {} EMIT lines, {} return data, {} loop passes; {} predicted failures ({} matched exactly); {} failures classified",
         stats.compared_runs, stats.compared_cpis, stats.compared_row_program_cpis, stats.compared_wide_cpis,
         stats.compared_data, stats.compared_flags, stats.compared_emits, stats.compared_return_data,
-        stats.compared_loop_passes, stats.predicted_failures, stats.classified_failures,
+        stats.compared_loop_passes, stats.predicted_failures, stats.exact_failures, stats.classified_failures,
     );
     eprintln!(
         "largest template: {} instructions, {} registers, {} accounts in one CPI, {} worst-case CPIs; {} CPIs into row-account programs",

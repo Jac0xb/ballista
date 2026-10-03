@@ -59,6 +59,9 @@ pub struct Compared {
     pub loop_passes: usize,
     /// The model predicted a failure from concrete values, and the run failed.
     pub predicted_failure: bool,
+    /// The model knew every value up to its predicted failure, and the run failed with exactly
+    /// that code at exactly that instruction.
+    pub exact_failure: bool,
     /// A failure with an in-run Ballista code, classified as structural or value-dependent.
     pub classified_failure: bool,
 }
@@ -560,24 +563,52 @@ fn reference_model(
         ballista: world.ballista,
     };
     let prediction = model::predict(&program, &accounts, &context);
+    // The Ballista code and pc of a failure inside execution, past the run's account and input
+    // checks: the only failures the model can speak to.
+    let executing = match &outcome.result.program_result {
+        TransactionProgramResult::Failure(index, ProgramError::Custom(raw)) if *index == outcome.top_index => {
+            let kind = raw & 0xffff;
+            ((6000..=6026).contains(&kind) && !matches!(kind, 6000..=6008 | 6010 | 6020)).then_some((kind, (raw >> 16) as usize))
+        }
+        _ => None,
+    };
     let (expected, emits, return_data, loop_passes) = match prediction {
+        Prediction::Calls { exact, .. } if !succeeded => {
+            // The model predicts only what the template computes; a run also fails for reasons it
+            // does not follow (account validation, a callee's refusal, compute). But when it knew
+            // every value and the run made no call, nothing inside execution can fail.
+            if let (true, Some((kind, pc))) = (exact, executing) {
+                report.hard(format!(
+                    "the model ran the template on known values without a call or a failure, but the run failed with {kind} at pc {pc}"
+                ));
+            }
+            return;
+        }
         Prediction::Calls { cpis, emits, return_data, loop_passes, .. } => (cpis, emits, return_data, loop_passes),
         Prediction::Indeterminate(reason) => return skip(report, reason),
-        Prediction::Fails(reason) => {
+        Prediction::Fails(failure) => {
             if succeeded {
-                report.hard(format!("the model predicted a failure ({reason}) but the run succeeded"));
-            } else {
-                report.compared.predicted_failure = true;
+                report.hard(format!(
+                    "the model predicted a failure ({}, {} at pc {}) but the run succeeded",
+                    failure.reason, failure.kind, failure.pc
+                ));
+                return;
+            }
+            report.compared.predicted_failure = true;
+            if let (true, Some((kind, pc))) = (failure.exact, executing) {
+                if (kind, pc) == (failure.kind, failure.pc) {
+                    report.compared.exact_failure = true;
+                } else {
+                    report.hard(format!(
+                        "the run failed with {kind} at pc {pc}, but the model, which knew every value up to it, \
+                         predicted {} at pc {} ({})",
+                        failure.kind, failure.pc, failure.reason
+                    ));
+                }
             }
             return;
         }
     };
-    if !succeeded {
-        // The model predicts only what the template computes; a run also fails for reasons it does
-        // not follow (account validation, a callee's refusal, compute), so a failure is no
-        // disagreement here. Its code was classified above.
-        return;
-    }
     let captured = captured_cpis(outcome);
     if captured.len() != expected.len() {
         let captured_programs: Vec<_> = captured.iter().map(|cpi| program_of(world, &cpi.program)).collect();

@@ -49,13 +49,44 @@ pub enum CpiData {
 pub enum Prediction {
     /// The model ran the whole template with concrete control flow: its CPIs in order, the bytes
     /// of every `EMIT` line in order, and the return data. `loop_passes` counts the loop passes it
-    /// made, so the harness knows how often a loop's register restore was compared.
-    Calls { cpis: Vec<ExpectedCpi>, emits: Vec<CpiData>, return_data: CpiData, sets_return_data: bool, loop_passes: usize },
+    /// made, so the harness knows how often a loop's register restore was compared. `exact` says
+    /// the model knew every value and made no call, so no instruction can have failed: a run that
+    /// gets past its account checks must not fail with a Ballista code while it executes.
+    Calls { cpis: Vec<ExpectedCpi>, emits: Vec<CpiData>, return_data: CpiData, sets_return_data: bool, loop_passes: usize, exact: bool },
     /// A control-flow decision depended on an opaque value; only the model-free checks apply.
     Indeterminate(&'static str),
     /// The model predicts the run fails, for a reason it computed from concrete values. A run that
     /// succeeds anyway disagrees with the model, and the harness fails the test.
-    Fails(&'static str),
+    Fails(Failure),
+}
+
+/// A failure the model predicts: the reason, the Ballista error code the executor raises for it,
+/// and the instruction that raises it.
+#[derive(Clone, Debug)]
+pub struct Failure {
+    pub reason: &'static str,
+    /// The error kind, 6000 to 6026 (`BallistaError`), without the pc the run encodes above it.
+    pub kind: u32,
+    /// The failing instruction's index.
+    pub pc: usize,
+    /// Whether the model knew every value up to the failure and no call or registry access came
+    /// before it. Then a run that gets past its account checks and fails while it executes must
+    /// fail exactly here, with exactly this code.
+    pub exact: bool,
+}
+
+const ARITHMETIC_OVERFLOW: u32 = 6013;
+const DIVISION_BY_ZERO: u32 = 6014;
+const REQUIREMENT_FAILED: u32 = 6015;
+const INVALID_RUNTIME_ACCOUNT: u32 = 6009;
+const TYPE_MISMATCH: u32 = 6012;
+const LOOP_COUNT_EXCEEDED: u32 = 6022;
+const INSTRUCTION_OUT_OF_RANGE: u32 = 6023;
+const WRITABLE_ACCOUNT_BYTES_READ: u32 = 6024;
+
+/// A failure with the code the executor raises; `Model::step` fills in where.
+fn fails(reason: &'static str, kind: u32) -> Prediction {
+    Prediction::Fails(Failure { reason, kind, pc: usize::MAX, exact: false })
 }
 
 /// What the model needs to know about one runtime account, by its index among the run's accounts
@@ -141,6 +172,9 @@ pub struct Model<'a, A: Accounts> {
     /// Every account a CPI so far was passed, the template's or an entry creation's: only those
     /// can have changed, since a program changes only accounts it is passed.
     touched: Vec<[u8; 32]>,
+    /// Set once an instruction produced a value the model does not know, or the run made a call or
+    /// touched a registry: from then on the run can fail where the model cannot tell.
+    uncertain: bool,
     cpis: Vec<ExpectedCpi>,
     emits: Vec<CpiData>,
     return_data: CpiData,
@@ -162,6 +196,7 @@ pub fn predict<A: Accounts>(program: &ProgramView, accounts: &A, context: &RunCo
         ballista: context.ballista,
         mutated: false,
         touched: Vec::new(),
+        uncertain: false,
         cpis: Vec::new(),
         emits: Vec::new(),
         return_data: CpiData::Concrete(Vec::new()),
@@ -176,6 +211,7 @@ pub fn predict<A: Accounts>(program: &ProgramView, accounts: &A, context: &RunCo
             return_data: model.return_data,
             sets_return_data: model.sets_return_data,
             loop_passes: model.loop_passes,
+            exact: !model.uncertain,
         },
         Err(stop) => stop,
     }
@@ -206,7 +242,7 @@ impl<A: Accounts> Model<'_, A> {
                         _ => return Err(Prediction::Indeterminate("repeat count not u64")),
                     };
                     if count > instruction.c as usize {
-                        return Err(Prediction::Fails("repeat count exceeds max"));
+                        return Err(self.locate(fails("repeat count exceeds max", LOOP_COUNT_EXCEEDED), pc));
                     }
                     self.run_loop(registers, body.clone(), count, false, instruction.immediate())?;
                     pc = body.end;
@@ -246,7 +282,33 @@ impl<A: Accounts> Model<'_, A> {
         Ok(())
     }
 
+    /// Runs one instruction, places a failure it predicts, and notes whether the model still knows
+    /// everything: an opaque result, a call or a registry access ends that.
     fn step(&mut self, registers: &mut [Val], pc: usize, loop_context: Option<(usize, usize)>) -> Flow {
+        let instruction = &self.program.instructions[pc];
+        if matches!(instruction.opcode, OP_INVOKE | OP_OPEN_REGISTRY | OP_READ_REGISTRY | OP_WRITE_REGISTRY) {
+            self.uncertain = true;
+        }
+        let result = self.execute(registers, pc, loop_context).map_err(|stop| self.locate(stop, pc));
+        let dst = instruction.dst as usize;
+        if dst < registers.len() && matches!(registers[dst], Val::Opaque) {
+            self.uncertain = true;
+        }
+        result
+    }
+
+    fn locate(&self, stop: Prediction, pc: usize) -> Prediction {
+        match stop {
+            Prediction::Fails(mut failure) if failure.pc == usize::MAX => {
+                failure.pc = pc;
+                failure.exact = !self.uncertain;
+                Prediction::Fails(failure)
+            }
+            other => other,
+        }
+    }
+
+    fn execute(&mut self, registers: &mut [Val], pc: usize, loop_context: Option<(usize, usize)>) -> Flow {
         let instruction = &self.program.instructions[pc];
         let dst = instruction.dst as usize;
         macro_rules! set {
@@ -315,7 +377,7 @@ impl<A: Accounts> Model<'_, A> {
             OP_REQUIRE => {
                 match &registers[instruction.a as usize] {
                     Val::Bool(true) => {}
-                    Val::Bool(false) => return Err(Prediction::Fails("require false")),
+                    Val::Bool(false) => return Err(fails("require false", REQUIREMENT_FAILED)),
                     Val::Opaque => return Err(Prediction::Indeterminate("require opaque")),
                     _ => return Err(Prediction::Indeterminate("require non-bool")),
                 }
@@ -414,7 +476,14 @@ impl<A: Accounts> Model<'_, A> {
             return Ok(Val::Opaque);
         }
         let index = self.resolve(instruction.a, loop_context)?;
-        if self.accounts.executable(index) != Some(false) {
+        // The executor refuses an account writable in this instruction before it looks at the
+        // range: its bytes could change under a CPI.
+        match self.accounts.is_writable(index) {
+            Some(true) => return Err(fails("account bytes of a writable account", WRITABLE_ACCOUNT_BYTES_READ)),
+            Some(false) => {}
+            None => return Ok(Val::Opaque),
+        }
+        if self.mutated || self.accounts.executable(index) != Some(false) {
             return Ok(Val::Opaque);
         }
         let Some(data) = self.accounts.data(index) else { return Ok(Val::Opaque) };
@@ -426,7 +495,7 @@ impl<A: Accounts> Model<'_, A> {
         let len = instruction.immediate() as usize;
         match offset.checked_add(len).and_then(|end| data.get(offset..end)) {
             Some(bytes) => Ok(Val::Bytes(bytes.to_vec())),
-            None => Err(Prediction::Fails("account bytes out of range")),
+            None => Err(fails("account bytes out of range", INSTRUCTION_OUT_OF_RANGE)),
         }
     }
 
@@ -449,7 +518,8 @@ impl<A: Accounts> Model<'_, A> {
                 };
                 match value {
                     Some(value) => $wrap(value),
-                    None => return Err(Prediction::Fails("arithmetic overflow or div0")),
+                    None if instruction.opcode == OP_DIV && $r == 0 => return Err(fails("division by zero", DIVISION_BY_ZERO)),
+                    None => return Err(fails("arithmetic overflow", ARITHMETIC_OVERFLOW)),
                 }
             }};
         }
@@ -490,7 +560,7 @@ impl<A: Accounts> Model<'_, A> {
                 };
                 match value {
                     Some(value) => $wrap(value),
-                    None => return Err(Prediction::Fails("rem by zero")),
+                    None => return Err(fails("rem by zero", DIVISION_BY_ZERO)),
                 }
             }};
         }
@@ -499,7 +569,8 @@ impl<A: Accounts> Model<'_, A> {
             (Val::U128(l), Val::U128(r)) => bit!(l, r, Val::U128),
             (Val::I64(l), Val::I64(r)) if opcode == OP_REM => match l.checked_rem(r) {
                 Some(value) => Val::I64(value),
-                None => return Err(Prediction::Fails("i64 rem overflow")),
+                None if r == 0 => return Err(fails("rem by zero", DIVISION_BY_ZERO)),
+                None => return Err(fails("i64 rem overflow", ARITHMETIC_OVERFLOW)),
             },
             _ => return Err(Prediction::Indeterminate("integer op type")),
         })
@@ -514,10 +585,11 @@ impl<A: Accounts> Model<'_, A> {
         }
         let ceil = instruction.opcode == OP_MUL_DIV_CEIL;
         match (a, b, c) {
+            (Val::U64(_), Val::U64(_), Val::U64(0)) => Err(fails("mul_div by zero", DIVISION_BY_ZERO)),
             (Val::U64(a), Val::U64(b), Val::U64(c)) => mul_div(a as u128, b as u128, c as u128, ceil)
                 .and_then(|value| u64::try_from(value).ok())
                 .map(Val::U64)
-                .ok_or(Prediction::Fails("mul_div u64")),
+                .ok_or(fails("mul_div u64 overflow", ARITHMETIC_OVERFLOW)),
             (Val::U128(a), Val::U128(b), Val::U128(c)) => mul_div_u128(a, b, c, ceil),
             _ => Err(Prediction::Indeterminate("mul_div type")),
         }
@@ -528,7 +600,7 @@ impl<A: Accounts> Model<'_, A> {
             Val::Opaque => Ok(Val::Opaque),
             Val::U64(exp) => {
                 if exp > 38 {
-                    Err(Prediction::Fails("pow10 overflow"))
+                    Err(fails("pow10 overflow", ARITHMETIC_OVERFLOW))
                 } else {
                     Ok(Val::U128(10u128.pow(exp as u32)))
                 }
@@ -602,7 +674,7 @@ impl<A: Accounts> Model<'_, A> {
         if matches!(value, Val::Opaque) {
             return Ok(Val::Opaque);
         }
-        let fail = |_| Prediction::Fails("cast out of range");
+        let fail = |_| fails("cast out of range", ARITHMETIC_OVERFLOW);
         Ok(match instruction.opcode {
             OP_CAST_U64 => Val::U64(match value {
                 Val::U64(v) => v,
@@ -782,7 +854,7 @@ impl<A: Accounts> Model<'_, A> {
 fn decode_read(opcode: u8, data: &[u8], offset: usize) -> Result<Val, Prediction> {
     let width = read_width(opcode);
     let Some(slice) = offset.checked_add(width).and_then(|end| data.get(offset..end)) else {
-        return Err(Prediction::Fails("typed read past the account data"));
+        return Err(fails("typed read past the account data", INVALID_RUNTIME_ACCOUNT));
     };
     Ok(match opcode {
         OP_READ_U8 => Val::U64(slice[0] as u64),
@@ -796,7 +868,7 @@ fn decode_read(opcode: u8, data: &[u8], offset: usize) -> Result<Val, Prediction
         OP_READ_BOOL => match slice[0] {
             0 => Val::Bool(false),
             1 => Val::Bool(true),
-            _ => return Err(Prediction::Fails("bool byte other than 0 or 1")),
+            _ => return Err(fails("bool byte other than 0 or 1", TYPE_MISMATCH)),
         },
         _ => Val::Opaque,
     })
@@ -813,18 +885,18 @@ fn encode_register(kind: u8, value: &Val) -> Result<Vec<u8>, Prediction> {
     Ok(match kind {
         DATA_REG_U8 => {
             let value = as_u128(value)?;
-            vec![u8::try_from(value).map_err(|_| Prediction::Fails("u8 narrow"))?]
+            vec![u8::try_from(value).map_err(|_| fails("u8 narrow", ARITHMETIC_OVERFLOW))?]
         }
         DATA_REG_U16 => {
-            let value = u16::try_from(as_u128(value)?).map_err(|_| Prediction::Fails("u16 narrow"))?;
+            let value = u16::try_from(as_u128(value)?).map_err(|_| fails("u16 narrow", ARITHMETIC_OVERFLOW))?;
             value.to_le_bytes().to_vec()
         }
         DATA_REG_U32 => {
-            let value = u32::try_from(as_u128(value)?).map_err(|_| Prediction::Fails("u32 narrow"))?;
+            let value = u32::try_from(as_u128(value)?).map_err(|_| fails("u32 narrow", ARITHMETIC_OVERFLOW))?;
             value.to_le_bytes().to_vec()
         }
         DATA_REG_U64 => {
-            let value = u64::try_from(as_u128(value)?).map_err(|_| Prediction::Fails("u64 narrow"))?;
+            let value = u64::try_from(as_u128(value)?).map_err(|_| fails("u64 narrow", ARITHMETIC_OVERFLOW))?;
             value.to_le_bytes().to_vec()
         }
         DATA_REG_I64 => match value {
@@ -854,13 +926,13 @@ fn encode_register(kind: u8, value: &Val) -> Result<Vec<u8>, Prediction> {
 fn shift_u128(value: u128, shift: u64, width: u32, opcode: u8) -> Result<u128, Prediction> {
     if opcode == OP_SHL {
         if shift >= width as u64 {
-            return if value == 0 { Ok(0) } else { Err(Prediction::Fails("shl drops a bit")) };
+            return if value == 0 { Ok(0) } else { Err(fails("shl drops a bit", ARITHMETIC_OVERFLOW)) };
         }
         let shifted = value << shift;
         // A set bit shifted past the width is lost.
         let mask = if width == 128 { u128::MAX } else { (1u128 << width) - 1 };
         if shifted & !mask != 0 || (shifted & mask) >> shift != value {
-            return Err(Prediction::Fails("shl drops a bit"));
+            return Err(fails("shl drops a bit", ARITHMETIC_OVERFLOW));
         }
         Ok(shifted & mask)
     } else {
@@ -886,7 +958,7 @@ fn mul_div(a: u128, b: u128, c: u128, ceil: bool) -> Option<u128> {
 
 fn mul_div_u128(a: u128, b: u128, c: u128, ceil: bool) -> Result<Val, Prediction> {
     if c == 0 {
-        return Err(Prediction::Fails("mul_div by zero"));
+        return Err(fails("mul_div by zero", DIVISION_BY_ZERO));
     }
     // The program holds `a * b` exactly in 256 bits and fails only if the quotient exceeds u128.
     // When the product already fits u128 the model computes it; when it overflows, the exact

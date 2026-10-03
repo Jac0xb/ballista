@@ -1,16 +1,15 @@
 # Examples
 
 Complete templates you can copy, grouped by what they do. Each one shows the template and the code
-that runs it.
+that runs it, in TypeScript and Rust.
 
 New to Ballista? [Getting started](/guide/getting-started) takes one template from definition to a
-run instruction in TypeScript, then [builds the same template in Rust](/guide/getting-started#author-it-in-rust). To
-see what a template can do that an ordinary transaction can't, read the guide pages on
+run. To see what a template can do that an ordinary transaction can't, read the guide pages on
 [amounts read at run time](/guide/runtime-values), [conditional calls](/guide/conditional),
 [loops](/guide/loops) and [guardrails](/guide/guardrails).
 
-Every example shows its template and the code that runs it in both TypeScript and Rust. The **Plain transaction?** column below says whether you can get the same
-result without Ballista:
+The **Plain transaction?** column in the tables below says whether you can get the same result
+without Ballista:
 
 - **Yes**: ordinary instructions in one transaction do the same thing. What the template adds is a
   single instruction and a sequence of calls that is stored on chain and was checked when it was
@@ -22,26 +21,10 @@ result without Ballista:
 
 ## Protocol templates {#live-protocols}
 
-Templates that work with Jupiter, Kamino, marginfi, Orca, Pyth and Jito, plus one that settles a
-trade at a signed quote. All of them have been run as real transactions: the protocol ones against
-the protocols' own programs, copied from mainnet. See
-[what has been tested](/examples/protocols/#what-has-been-tested).
-
-| Recipe | Protocol | Decided during the run |
-| --- | --- | --- |
-| [Deposit swap output](/examples/protocols/jupiter-deposit) | Jupiter → Kamino | How much the swap produced |
-| [Oracle-checked swap](/examples/protocols/jupiter-oracle-swap) | Jupiter + Pyth | Whether the swap paid at least the oracle price, less a tolerance |
-| [Sell whole balance](/examples/protocols/token-sweep) | SPL Token → Jupiter | How much there is to sell |
-| [Daily cap](/examples/protocols/daily-cap) | Jupiter + registry | How much wrapped SOL this caller can still sell today |
-| [Repay from swap](/examples/protocols/kamino-repay) | Jupiter → Kamino | How much the swap produced |
-| [Liquidate](/examples/protocols/kamino-liquidate) | Kamino | How much collateral the liquidator received |
-| [Withdraw](/examples/protocols/marginfi-withdraw) | marginfi | How much the withdrawal returned |
-| [Rebalance](/examples/protocols/marginfi-to-kamino) | marginfi → Kamino | How much marginfi released |
-| [Compound fees](/examples/protocols/orca-compound) | Orca | How much the position had earned |
-| [Harvest](/examples/protocols/orca-harvest) | Orca | Which positions have earned enough to collect |
-| [Price gate](/examples/protocols/pyth-gate) | Pyth → Jupiter | Whether the price is recent, precise and in range |
-| [Conditional tip](/examples/protocols/jito-tip) | Jupiter → Jito | Whether the trade's profit covered the tip |
-| [Signed quote](/examples/protocols/signed-quote) | Ed25519 → SPL Token | Whether the maker signed this quote for this taker, and it hasn't expired |
+[Thirteen templates](/examples/protocols/) work with Jupiter, Kamino, marginfi, Orca, Pyth and
+Jito, or settle a trade at a signed quote. Each acts on a value that exists only while the
+transaction runs, such as what a swap produced. They were tested locally in LiteSVM, against the
+programs they call and accounts copied from mainnet, and have not yet run on devnet or mainnet.
 
 ## Composition
 

@@ -61,15 +61,21 @@ writes to the template.
 
 ## Privileges
 
-A declaration is a ceiling. A call can pass a declared account as a signer or as writable only if
-its declaration requires that privilege and the transaction granted it. The ceiling has two gaps:
+A declaration is a ceiling for its slot. A call can pass the account in a slot as a signer or as
+writable only if the slot's declaration requires that privilege and the transaction granted it.
+The ceiling has three gaps:
 
 - **It bounds accounts, not calls.** A declared signer can be passed as a signer to every call in
   the template, with whatever data each call builds. A call whose data comes from an input can be
   any instruction the called program accepts from that signer.
+- **It bounds slots, not addresses.** The caller fills every slot, so one address can sit in a
+  read-only slot, even a pinned one, and in a writable slot too. A call that passes the writable
+  slot passes that address writable. Where it matters, require the two keys to differ, as in
+  [Aliased accounts](#aliased-accounts).
 - **Group members have no declaration.** A call passes each
-  [account group](/guide/account-groups) member as writable whenever the transaction marked it
-  writable, though never as a signer.
+  [account group](/guide/account-groups) member as writable whenever Ballista's instruction holds
+  it writable, though never as a signer. The transaction decides that at the top level, and the
+  calling program under a CPI.
 
 A template has no authority of its own: every call it makes, its signers could have made directly.
 What the template adds is that its steps and checks run together, in one transaction, exactly as
@@ -95,9 +101,10 @@ registry and a key the template computes, and only that template's runs can chan
 checks each entry against the template and the key before using it. Entries are never closed, and
 anyone can read them.
 
-Templates and registry entries are the only accounts Ballista owns. Each holds its rent plus
-anything someone sends it, and nothing withdraws those lamports from a finalized template or an
-entry.
+Ballista creates only templates and registry entries. Each holds its rent plus anything someone
+sends it, and nothing withdraws those lamports from a finalized template or an entry. Anyone can
+also make an account Ballista-owned through the System program, but it holds only zeros: every
+Ballista instruction refuses it, and nothing moves its lamports.
 
 ## Aliased accounts
 

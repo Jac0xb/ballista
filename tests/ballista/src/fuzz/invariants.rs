@@ -386,7 +386,7 @@ fn reference_model(
     }
     // The run's return data, when the template sets it and no later instruction (or a wrapping
     // probe) replaces it, is exactly what the model encoded.
-    if plan.sets_return_data && scenario.after.is_empty() && scenario.wrap.is_none() {
+    if plan.sets_return_data && scenario.after.is_empty() && !outcome.wrapped {
         if let CpiData::Concrete(bytes) = return_data {
             if bytes != outcome.result.return_data {
                 report.soft(format!(
@@ -460,7 +460,13 @@ fn output_rules(plan: &TemplatePlan, scenario: &Scenario, template: &Pubkey, out
                 || event[5] != iterations
                 || event[15..] != template.to_bytes()
             {
-                report.hard(format!("malformed run event {:02x?}", event));
+                report.hard(format!(
+                    "malformed run event {:02x?} (expected rows {iterations}, template {:02x?}, len {}, wrap {:?})",
+                    event,
+                    &template.to_bytes()[..4],
+                    event.len(),
+                    outcome.wrapped
+                ));
             }
         }
     } else if !events.is_empty() {

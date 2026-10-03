@@ -21,6 +21,11 @@ pub const BALLISTA_ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ck
 /// Mollusk maps the ELF to whichever id it is loaded under.
 pub const PROBE_ID: Pubkey = pubkey!("6QYQq7JmVu6vjCGkfovra3pBH5zv8o9HiC5uMrEW7PsF");
 
+/// How many accounts the probe forwards when it wraps a run (`MAX_FORWARD` in
+/// fuzz-executor/probe/src/lib.rs): the template plus this many minus one runtime accounts. A
+/// scenario with more runs unwrapped, so the run never silently receives a truncated account list.
+pub const PROBE_MAX_FORWARD: usize = 24;
+
 pub const CLOCK_TIMESTAMP: i64 = 1_800_000_000;
 pub const CLOCK_SLOT: u64 = 310_000_000;
 
@@ -49,6 +54,8 @@ pub struct RunOutcome {
     pub before_accounts: HashMap<Pubkey, Account>,
     /// The run transaction's log lines.
     pub logs: Vec<String>,
+    /// Whether the run actually ran wrapped in a probe CPI (the scenario's wrap, when it fits).
+    pub wrapped: bool,
 }
 
 /// One cross-program invocation the run made, decoded from the transaction's inner instructions.
@@ -151,7 +158,8 @@ impl Harness {
         }
         let top_index = instructions.len();
         let ballista_cpi_height;
-        if let Some(policy) = scenario.wrap {
+        let wrap = scenario.wrap.filter(|_| 1 + scenario.slots.len() <= PROBE_MAX_FORWARD);
+        if let Some(policy) = wrap {
             instructions.push(self.wrapped_run(scenario, template, policy));
             ballista_cpi_height = 3;
         } else {
@@ -165,7 +173,7 @@ impl Harness {
         self.clear_logs();
         let result = self.context.process_transaction_instructions(&instructions);
         let logs = self.logger.borrow().messages.clone();
-        RunOutcome { result, top_index, ballista_cpi_height, before_accounts, logs }
+        RunOutcome { result, top_index, ballista_cpi_height, before_accounts, logs, wrapped: wrap.is_some() }
     }
 
     /// Seeds the store with the scenario's accounts. Programs and the Instructions sysvar are left

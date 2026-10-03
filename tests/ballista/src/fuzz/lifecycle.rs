@@ -21,12 +21,15 @@ const INVALID_TEMPLATE_ACCOUNT: u32 = 6001;
 const TEMPLATE_NOT_UPLOADING: u32 = 6003;
 const TEMPLATE_NOT_FINALIZED: u32 = 6004;
 const INVALID_CHUNK_OFFSET: u32 = 6006;
+const HASH_MISMATCH: u32 = 6007;
 
 /// The model's view of one template account.
 #[derive(Clone, Debug, PartialEq)]
 enum State {
     Absent,
-    Uploading { len: usize, written: usize, hash: [u8; 32], payload: Vec<u8> },
+    /// `payload` is what the begin's hash commits to; `bytes` is what the writes actually put in
+    /// the account so far; `verifies` is whether `payload` passes the verifier.
+    Uploading { len: usize, written: usize, hash: [u8; 32], payload: Vec<u8>, bytes: Vec<u8>, verifies: bool },
     Finalized,
 }
 
@@ -65,12 +68,35 @@ struct Lifecycle<'a> {
     /// Model state keyed by (creator, id).
     state: HashMap<(Pubkey, u16), State>,
     failures: Vec<String>,
+    /// How often each lifecycle property was actually exercised, for the report.
+    seen: Seen,
+    /// The key the last step used. Steps mostly stay on it, so an upload gets written through
+    /// and finalized instead of being spread across every template at once.
+    last_key: Option<(Pubkey, u16)>,
+}
+
+#[derive(Default, Clone, Copy)]
+struct Seen {
+    successes: usize,
+    rejections: usize,
+    hash_mismatch: usize,
+    verifier_reject: usize,
+    wrong_address: usize,
+    non_creator: usize,
+    finalized_write_or_cancel: usize,
+    cancels: usize,
 }
 
 impl Lifecycle<'_> {
-    fn key(&self, g: &mut Gen) -> (Pubkey, u16) {
+    fn key(&mut self, g: &mut Gen) -> (Pubkey, u16) {
+        if let Some(key) = self.last_key {
+            if g.chance(3, 4) {
+                return key;
+            }
+        }
         let creator = self.creators[g.below(self.creators.len())];
         let id = self.ids[g.below(self.ids.len())];
+        self.last_key = Some((creator, id));
         (creator, id)
     }
 
@@ -116,6 +142,14 @@ impl Lifecycle<'_> {
     }
 
     fn expect(&mut self, label: &str, key: (Pubkey, u16), ok: bool, result_ok: bool, code: Option<u32>, want_code: Option<u32>) {
+        if result_ok { self.seen.successes += 1 } else { self.seen.rejections += 1 }
+        match code {
+            Some(HASH_MISMATCH) => self.seen.hash_mismatch += 1,
+            Some(kind) if (6100..=6132).contains(&kind) && label == "finalize" => self.seen.verifier_reject += 1,
+            Some(TEMPLATE_NOT_UPLOADING) if label == "write" || label == "cancel" => self.seen.finalized_write_or_cancel += 1,
+            Some(INVALID_TEMPLATE_ACCOUNT) if label == "begin" => self.seen.wrong_address += 1,
+            _ => {}
+        }
         if ok != result_ok {
             self.failures.push(format!(
                 "{label} on {:?}: model expected {}, program {} (code {:?})",
@@ -162,8 +196,12 @@ impl Lifecycle<'_> {
 
     fn begin(&mut self, g: &mut Gen) {
         let (creator, id) = self.key(g);
-        let template = template_pda(&creator, id);
-        let payload = good_payload();
+        // Sometimes pass an account that is not the template's PDA: the begin must refuse it.
+        let wrong_address = g.chance(1, 8);
+        let template = if wrong_address { template_pda(&creator, id.wrapping_add(100)) } else { template_pda(&creator, id) };
+        // Sometimes commit to a payload the verifier rejects; finalize must then refuse it.
+        let verifies = !g.chance(1, 5);
+        let payload = if verifies { good_payload() } else { bad_payload() };
         let len = payload.len();
         let hash = hash_of(&payload);
         let mut data = vec![IX_BEGIN_TEMPLATE];
@@ -172,11 +210,13 @@ impl Lifecycle<'_> {
         data.extend_from_slice(&hash);
         self.fund(&creator, 10_000_000_000);
         let state = self.state.entry((creator, id)).or_insert(State::Absent).clone();
-        let ok = state == State::Absent;
+        let ok = state == State::Absent && !wrong_address;
+        let want = wrong_address.then_some(INVALID_TEMPLATE_ACCOUNT);
         let result = self.harness.context.process_instruction(&self.instruction(data, creator, template, true));
-        self.expect("begin", (creator, id), ok, result.program_result.is_ok(), Self::code(&result), None);
+        self.expect("begin", (creator, id), ok, result.program_result.is_ok(), Self::code(&result), want);
         if result.program_result.is_ok() {
-            self.state.insert((creator, id), State::Uploading { len, written: 0, hash, payload });
+            let bytes = vec![0u8; len];
+            self.state.insert((creator, id), State::Uploading { len, written: 0, hash, payload, bytes, verifies });
         }
     }
 
@@ -193,8 +233,16 @@ impl Lifecycle<'_> {
                 let wrong_offset = g.chance(1, 5);
                 let offset = if wrong_offset { (*written + 1).min(*len) } else { *written };
                 let remaining = len.saturating_sub(offset);
-                let take = remaining.min(1 + g.below(remaining.max(1)));
-                let chunk = payload.get(offset..offset + take).unwrap_or(&[]).to_vec();
+                // Often the whole remainder, so uploads complete and finalize reaches the hash and
+                // verifier checks; otherwise a random prefix of it.
+                let take = if g.chance(1, 2) { remaining } else { remaining.min(1 + g.below(remaining.max(1))) };
+                let mut chunk = payload.get(offset..offset + take).unwrap_or(&[]).to_vec();
+                // Sometimes write bytes other than the committed payload: the write succeeds (writes
+                // are not hashed), and finalize must then fail on the hash.
+                if !chunk.is_empty() && g.chance(1, 6) {
+                    let at = g.below(chunk.len());
+                    chunk[at] ^= 0x5a;
+                }
                 let creator_ok = signer == creator;
                 let offset_ok = offset == *written && !chunk.is_empty();
                 let want = if !creator_ok {
@@ -218,9 +266,11 @@ impl Lifecycle<'_> {
         data.extend_from_slice(&chunk);
         let result = self.harness.context.process_instruction(&self.instruction(data, signer, template, false));
         let want = if signer == creator { want_code } else { None };
+        if signer != creator && !result.program_result.is_ok() { self.seen.non_creator += 1 }
         self.expect("write", (creator, id), ok, result.program_result.is_ok(), Self::code(&result), want);
         if result.program_result.is_ok() {
-            if let State::Uploading { written, .. } = self.state.get_mut(&(creator, id)).unwrap() {
+            if let State::Uploading { written, bytes, .. } = self.state.get_mut(&(creator, id)).unwrap() {
+                bytes[offset..offset + chunk.len()].copy_from_slice(&chunk);
                 *written = offset + chunk.len();
             }
         }
@@ -233,17 +283,22 @@ impl Lifecycle<'_> {
         self.fund(&signer, 10_000_000_000);
         let state = self.state.entry((creator, id)).or_insert(State::Absent).clone();
         let (ok, want) = match &state {
-            State::Uploading { len, written, .. } => {
+            State::Uploading { len, written, payload, bytes, verifies, .. } => {
                 let complete = written == len;
                 let creator_ok = signer == creator;
+                let intact = bytes == payload;
+                // The program checks, in order: every byte arrived, the bytes match the committed
+                // hash, then the verifier.
                 let code = if !creator_ok {
                     None
                 } else if !complete {
                     Some(INVALID_CHUNK_OFFSET)
+                } else if !intact {
+                    Some(HASH_MISMATCH)
                 } else {
-                    None // complete good payload verifies
+                    None
                 };
-                (creator_ok && complete, code)
+                (creator_ok && complete && intact && *verifies, code)
             }
             State::Absent => (false, Some(INVALID_TEMPLATE_ACCOUNT)),
             State::Finalized => (false, Some(TEMPLATE_NOT_UPLOADING)),
@@ -251,6 +306,15 @@ impl Lifecycle<'_> {
         let result = self.harness.context.process_instruction(&self.instruction(vec![IX_FINALIZE_TEMPLATE], signer, template, false));
         let want = if signer == creator { want } else { None };
         self.expect("finalize", (creator, id), ok, result.program_result.is_ok(), Self::code(&result), want);
+        // A complete, intact, creator-signed payload that does not verify fails with a verifier code.
+        if let State::Uploading { len, written, payload, bytes, verifies: false, .. } = &state {
+            if signer == creator && written == len && bytes == payload {
+                let code = Self::code(&result);
+                if !code.is_some_and(|kind| (6100..=6132).contains(&kind)) {
+                    self.failures.push(format!("finalize of a non-verifying payload on {:?} returned {:?}, not a verifier code", (creator, id), code));
+                }
+            }
+        }
         if result.program_result.is_ok() {
             self.state.insert((creator, id), State::Finalized);
         }
@@ -274,6 +338,7 @@ impl Lifecycle<'_> {
         let want = if signer == creator { want } else { None };
         self.expect("cancel", (creator, id), ok, result.program_result.is_ok(), Self::code(&result), want);
         if result.program_result.is_ok() {
+            self.seen.cancels += 1;
             self.state.insert((creator, id), State::Absent);
             // The rent returns to the creator, and the template account is emptied.
             let creator_after = self.template_account(&creator).map(|a| a.lamports).unwrap_or(0);
@@ -318,6 +383,7 @@ fn fuzz_lifecycle_sequences() {
     let ids = vec![1u16, 2];
 
     let mut all_failures = Vec::new();
+    let mut total = Seen::default();
     for seed in 0..cases {
         harness.reset();
         let mut source = SplitMix64::new(seed ^ 0xA5A5_0000);
@@ -328,10 +394,21 @@ fn fuzz_lifecycle_sequences() {
             ids: ids.clone(),
             state: HashMap::new(),
             failures: Vec::new(),
+            seen: Seen::default(),
+            last_key: None,
         };
         for _ in 0..steps {
             lifecycle.step(&mut g);
         }
+        let seen = lifecycle.seen;
+        total.successes += seen.successes;
+        total.rejections += seen.rejections;
+        total.hash_mismatch += seen.hash_mismatch;
+        total.verifier_reject += seen.verifier_reject;
+        total.wrong_address += seen.wrong_address;
+        total.non_creator += seen.non_creator;
+        total.finalized_write_or_cancel += seen.finalized_write_or_cancel;
+        total.cancels += seen.cancels;
         for failure in lifecycle.failures {
             all_failures.push(format!("seed {seed}: {failure}"));
         }
@@ -339,5 +416,12 @@ fn fuzz_lifecycle_sequences() {
             break;
         }
     }
+    eprintln!(
+        "lifecycle: {cases} sequences x {steps} steps; {} succeeded, {} refused; hash mismatches {}, \
+         verifier rejections {}, wrong-address begins {}, non-creator refusals {}, finalized \
+         write/cancel refusals {}, cancels {}",
+        total.successes, total.rejections, total.hash_mismatch, total.verifier_reject,
+        total.wrong_address, total.non_creator, total.finalized_write_or_cancel, total.cancels,
+    );
     assert!(all_failures.is_empty(), "lifecycle model mismatches:\n{}", all_failures.join("\n"));
 }

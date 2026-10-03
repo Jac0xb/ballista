@@ -71,7 +71,7 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) 
 
 /// How many accounts the probe forwards in a nested invoke. Small, to keep the meta array within
 /// the SBF stack frame; enough to forward an open registry entry and a couple of others.
-const MAX_FORWARD: usize = 12;
+const MAX_FORWARD: usize = 24;
 
 #[inline(never)]
 fn reinvoke(accounts: &[AccountView], rest: &[u8]) -> ProgramResult {

@@ -56,26 +56,7 @@ export const countRuns = defineTemplate({
 });
 ```
 
-```rust [Rust · Template]
-/// Count each caller's runs, in an entry of their own.
-pub fn count_runs() -> Vec<u8> {
-    use ballista_sdk::{ballista_common::template::*, ProgramBuilder};
-
-    let mut builder = ProgramBuilder::new();
-    let caller = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
-    let caller_runs = builder.account(ACCOUNT_WRITABLE, None, None, 0);
-    let system_program = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
-
-    let one = builder.const_u64(1);
-    // Registry 0 (`runs`, one u64: 8 bytes), keyed by the caller's address. The caller pays.
-    let key = builder.account_key(caller);
-    builder.open_registry(caller_runs, Some(key), caller, 0, 8, system_program);
-    let count = builder.read_registry(caller_runs, 0, OP_READ_U64);
-    let next = builder.binary(OP_ADD, count, one);
-    builder.write_registry(caller_runs, 0, OP_READ_U64, next);
-    builder.build().expect("template builds")
-}
-```
+<<< @/../clients/rust/examples/docs_language.rs#count-runs [Rust · Template]
 
 :::
 
@@ -177,82 +158,9 @@ export async function runDailyLimitPerCaller(run: {
 }
 ```
 
-```rust [Rust · Template]
-/// Send SOL, at most 1 SOL at once per caller, refilling over about a day.
-pub fn daily_limit_per_caller() -> Vec<u8> {
-    use ballista_sdk::{ballista_common::template::*, ProgramBuilder, Segment};
+<<< @/../clients/rust/examples/docs_language.rs#daily-limit-per-caller [Rust · Template]
 
-    let mut builder = ProgramBuilder::new();
-    let caller = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
-    let recipient = builder.account(ACCOUNT_WRITABLE, None, None, 0);
-    let caller_limit = builder.account(ACCOUNT_WRITABLE, None, None, 0);
-    let system_program = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
-    let amount_input = builder.input(VALUE_U64, 0);
-
-    let amount = builder.load_input(amount_input);
-    let refill_per_second = builder.const_u64(11_574); // 1 SOL over 86,400 seconds, rounded down
-    let cap = builder.const_u64(1_000_000_000); // 1 SOL
-    // Registry 0 (`limits`): `spent`, a u64 at offset 0, then `lastSpend`, an i64 at offset 8.
-    let key = builder.account_key(caller);
-    builder.open_registry(caller_limit, Some(key), caller, 0, 16, system_program);
-
-    // The steps `rateLimit` writes out.
-    let last = builder.read_registry(caller_limit, 8, OP_READ_I64);
-    let clock = builder.clock_timestamp();
-    let now = builder.binary(OP_MAX, clock, last);
-    let spent = builder.read_registry(caller_limit, 0, OP_READ_U64);
-    let spent = builder.cast(OP_CAST_U128, spent);
-    let elapsed = builder.binary(OP_SUB, now, last);
-    let elapsed = builder.cast(OP_CAST_U128, elapsed);
-    let rate = builder.cast(OP_CAST_U128, refill_per_second);
-    let refill = builder.binary(OP_MUL, elapsed, rate);
-    let refilled = builder.binary(OP_MIN, spent, refill);
-    let still_spent = builder.binary(OP_SUB, spent, refilled);
-    let amount_u128 = builder.cast(OP_CAST_U128, amount);
-    let total = builder.binary(OP_ADD, still_spent, amount_u128);
-    let cap = builder.cast(OP_CAST_U128, cap);
-    let within_rate_limit = builder.binary(OP_LTE, total, cap);
-    builder.require(within_rate_limit);
-    let total = builder.cast(OP_CAST_U64, total);
-    builder.write_registry(caller_limit, 0, OP_READ_U64, total);
-    builder.write_registry(caller_limit, 8, OP_READ_I64, now);
-
-    let transfer_ix = builder.blob(&[2, 0, 0, 0]);
-    let transfer = builder.cpi(
-        system_program,
-        &[(caller, ACCOUNT_SIGNER | ACCOUNT_WRITABLE), (recipient, ACCOUNT_WRITABLE)],
-        &[Segment::Literal(transfer_ix), Segment::Register(DATA_REG_U64, amount)],
-    );
-    builder.invoke(transfer, None);
-    builder.build().expect("template builds")
-}
-```
-
-```rust [Rust · Run]
-use ballista_sdk::{find_registry_entry_address, run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-use solana_program::{
-    instruction::{AccountMeta, Instruction},
-    pubkey::Pubkey,
-};
-
-pub fn run_daily_limit_per_caller(
-    template: Pubkey,
-    caller: Pubkey,
-    recipient: Pubkey,
-    amount: u64,
-) -> Instruction {
-    // The caller's entry: registry 0 (`limits`), keyed by the caller's address.
-    let (caller_limit, _) = find_registry_entry_address(&template, 0, &caller.to_bytes());
-    let inputs = RunInputs::new().u64(amount).finish();
-    let accounts = vec![
-        AccountMeta::new(caller, true),
-        AccountMeta::new(recipient, false),
-        AccountMeta::new(caller_limit, false),
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-    ];
-    run_instruction(template, accounts, &inputs)
-}
-```
+<<< @/../clients/rust/examples/docs_language.rs#run-daily-limit-per-caller [Rust · Run]
 
 :::
 
@@ -380,86 +288,9 @@ export async function runListedCallersOnly(run: {
 }
 ```
 
-```rust [Rust · Template]
-/// Only listed callers make the call. The author's runs add or remove a member instead.
-pub fn listed_callers_only() -> Vec<u8> {
-    use ballista_sdk::{ballista_common::template::*, ProgramBuilder, Segment, SYSTEM_PROGRAM_ID};
+<<< @/../clients/rust/examples/docs_language.rs#listed-callers-only [Rust · Template]
 
-    // The same stand-ins.
-    const AUTHOR: [u8; 32] = [7; 32];
-    const PROTOCOL_PROGRAM: [u8; 32] = SYSTEM_PROGRAM_ID.to_bytes();
-    const CALL_DATA: [u8; 12] = [2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];
-
-    let mut builder = ProgramBuilder::new();
-    let caller = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
-    let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
-    let system_program = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
-    let protocol_program = builder.account(ACCOUNT_EXECUTABLE, Some(PROTOCOL_PROGRAM), None, 0);
-    let pool = builder.account(ACCOUNT_WRITABLE, None, None, 0);
-    let member_input = builder.input(VALUE_PUBKEY, 0);
-    let allow_input = builder.input(VALUE_BOOL, 0);
-
-    let caller_key = builder.account_key(caller);
-    let author = builder.const_pubkey(AUTHOR);
-    let is_author = builder.binary(OP_EQ, caller_key, author);
-    // The author's runs open the member's entry. Everyone else's runs open their own.
-    let member = builder.load_input(member_input);
-    let key = builder.select(is_author, member, caller_key);
-    // Registry 0 (`allowed`, one bool: 1 byte).
-    builder.open_registry(entry, Some(key), caller, 0, 1, system_program);
-
-    // The author-only branch: set the member's flag. Other runs write back the flag already there.
-    let listed = builder.read_registry(entry, 0, OP_READ_BOOL);
-    let allow = builder.load_input(allow_input);
-    let flag = builder.select(is_author, allow, listed);
-    builder.write_registry(entry, 0, OP_READ_BOOL, flag);
-    // Everyone but the author must be listed.
-    let may_run = builder.binary(OP_OR, is_author, listed);
-    builder.require(may_run);
-    // The call the list guards. The author's runs skip it.
-    let not_author = builder.not(is_author);
-    let call_data = builder.blob(&CALL_DATA);
-    let call = builder.cpi(
-        protocol_program,
-        &[(caller, ACCOUNT_SIGNER | ACCOUNT_WRITABLE), (pool, ACCOUNT_WRITABLE)],
-        &[Segment::Literal(call_data)],
-    );
-    builder.invoke(call, Some(not_author));
-    builder.build().expect("template builds")
-}
-```
-
-```rust [Rust · Run]
-use ballista_sdk::{find_registry_entry_address, run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-use solana_program::{
-    instruction::{AccountMeta, Instruction},
-    pubkey::Pubkey,
-};
-
-const PROTOCOL_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in
-
-/// `set` is for the author's runs only: the member to add or remove, and the flag to set.
-pub fn run_listed_callers_only(
-    template: Pubkey,
-    caller: Pubkey,
-    pool: Pubkey,
-    set: Option<(Pubkey, bool)>,
-) -> Instruction {
-    // The key the template computes: the member in the author's runs, the caller in everyone else's.
-    let (member, allow) = set.unwrap_or((caller, false));
-    let (entry, _) = find_registry_entry_address(&template, 0, &member.to_bytes());
-    // Every run passes both inputs. Only the author's runs read them.
-    let inputs = RunInputs::new().pubkey(&member).bool(allow).finish();
-    let accounts = vec![
-        AccountMeta::new(caller, true),
-        AccountMeta::new(entry, false),
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new_readonly(PROTOCOL_PROGRAM, false),
-        AccountMeta::new(pool, false),
-    ];
-    run_instruction(template, accounts, &inputs)
-}
-```
+<<< @/../clients/rust/examples/docs_language.rs#run-listed-callers-only [Rust · Run]
 
 :::
 

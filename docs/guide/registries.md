@@ -7,9 +7,10 @@ the registry's fields, and a **key**, 32 bytes the template computes, picks whic
 Key the entry by the caller's address, and each caller gets one of their own.
 
 An entry is an account Ballista owns. The first run to open it creates it, and a payer the template
-names pays its [rent](/reference/glossary#rent), about 0.0015 SOL for 16 bytes of fields. Nothing
-closes an entry, so the rent is never returned. Only runs of its template can change it, anyone can
-read it, and the same template published at a new address starts with no entries.
+names pays its [rent](/reference/glossary#rent): 1,097,280 lamports, about 0.0011 SOL, for 16 bytes
+of fields ([What it costs](/guide/why-ballista#cost) gives the formula). Nothing closes an entry, so
+the rent is never returned. Only runs of its template can change it, anyone can read it, and the
+same template published at a new address starts with no entries.
 
 This page works through three examples: a run counter, a daily spending limit per caller, and an
 allowlist. Every rule is under [Registries](/reference/language#registries) in the language

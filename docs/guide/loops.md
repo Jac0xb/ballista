@@ -5,22 +5,13 @@ creditors in priority order, collect only the token accounts that hold a balance
 the queue entries that are due, and split a balance by weight. The last example repeats a call as
 many times as a count read during the run.
 
-A template declares its rows as a **batch**, one **row** per item. In `batch`, `row` names the
-accounts in each row, `rowInputs` declares values the caller supplies for each row, and
-`maxIterations` caps the number of rows. `step.forEach` holds the steps that run once per row.
-Inside it, `account.iteration('name')` is the current row's account and
-`expression.rowInput('name')` is the current row's value. [Batch execution](/guide/batching)
-covers the rules and limits.
-
-A template can hold up to eight loops. They run one after another, never one inside another, and
-every `forEach` runs over the same rows. `step.repeat` loops over a count instead of rows, as the
-[last example](#crank-once-per-waiting-entry) shows.
-
-The accounts the caller passes fix how many rows run. What each row does can still depend on what
-earlier rows spent, or on the row's own account. `when` skips a single call when its condition is
-false. In a run, the row accounts follow the fixed accounts, and the row inputs follow the fixed
-inputs. The examples that call another protocol use marked stand-ins (the System program and its
-Transfer data) so they compile and run as written.
+The row loops run over a [batch](/guide/batching): `step.forEach` runs its steps once per row,
+with `account.iteration('name')` as the row's account and `expression.rowInput('name')` as its
+value. Batch execution covers rows, row inputs, carried values and the limits. The accounts the
+caller passes fix how many rows run, but what each row does can depend on what earlier rows spent
+or on the row's own account, and `when` skips a single call. The examples that call another
+protocol use marked stand-ins (the System program and its Transfer data) so they compile and run
+as written.
 
 ## Waterfall until the money runs out
 
@@ -39,17 +30,13 @@ what is left, and what is left is known only when the transaction executes.
 
 :::
 
-Each row is one creditor account, marked writable (the transaction may change it) because it
-receives [lamports](/reference/glossary#lamports). `remaining` starts as the treasury's balance
-minus a reserve. Each row pays the smaller of `remaining` and that creditor's `owed` amount, then
-subtracts the payment.
-
-`carry: ['remaining']` is what passes the balance from one row to the next. A variable created
-before the loop and listed in `carry` can be updated with `step.assign` inside the loop, so row
-four sees what rows one to three paid. Variables created inside the loop, such as `pay`, start
-fresh on every row. Once the money runs out, `pay` is zero and `when` skips the transfer, so the
-later creditors get nothing and the transaction still succeeds. In Rust, the first argument to
-`for_each` is the carry: a bit mask with one bit per carried register.
+Each row is one creditor account, writable because it receives
+[lamports](/reference/glossary#lamports). `remaining` starts as the treasury's balance minus a
+reserve. Each row pays the smaller of `remaining` and that creditor's `owed` amount, then
+subtracts the payment. [`carry`](/guide/batching#carry-a-total-across-rows) passes `remaining`
+from row to row, so row four sees what rows one to three paid, while `pay` starts fresh on every
+row. Once the money runs out, `pay` is zero and `when` skips the transfer, so the later creditors
+get nothing and the transaction still succeeds.
 
 ## Consolidate only the funded accounts
 

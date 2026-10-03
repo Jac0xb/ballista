@@ -113,16 +113,19 @@ exist, and transfers tokens to it. The same template appears on
 The caller passes each row's accounts together, in the order `row` declares them: wallet, ATA,
 wallet, ATA, and so on.
 
-A row holds 1 to 8 accounts. The accounts passed for rows must make up a whole number of rows, and
-the row count must lie between `minIterations` and `maxIterations`. A template can have up to eight
-loops, run one after another. There are no nested loops, no backward jumps, and no `while` loops
-that run until a condition changes. Steps outside a loop can run before it and after it.
+## Rules and limits
 
-::: warning Count CPIs, not just rows
-A template can make at most 64 CPIs, counted for the worst case: the calls outside loops, plus
-each loop's calls times its maximum (`maxIterations` for `forEach`, `max` for `repeat`). Calls with
-a `when` condition count too. A 30-row
-loop with two calls counts as 60; a third call in the loop body would make 90, and finalization
-would reject the template. The stride-two example above makes two calls per row, so its 8 rows count
-as 16.
-:::
+- **Rows.** A row holds 1 to 8 accounts. The accounts passed for rows must make up a whole number
+  of rows, and the row count must lie between `minIterations` and `maxIterations`.
+- **Loops.** A template can have up to eight, `forEach` and
+  [`repeat`](/guide/loops#crank-once-per-waiting-entry) together, run one after another. There are
+  no nested loops, no backward jumps, and no `while` loops that run until a condition changes.
+  Steps outside a loop can run before it and after it. A ninth loop, or a `repeat` inside another
+  loop, fails finalization with `InvalidLoop` (6129).
+- **CPIs.** A template can make at most 64, counted for the worst case: the calls outside loops,
+  plus each loop's calls times its maximum (`maxIterations` for `forEach`, `max` for `repeat`),
+  calls with `when` included. A 30-row loop with two calls counts as 60; a third call would make
+  90, and finalization would reject the template.
+- **The trace.** Solana's [instruction trace](/reference/limits#instruction-trace) also counts the
+  run and the calls the called programs make themselves, and often runs out first. Size a loop to
+  it, not only to its maximum.

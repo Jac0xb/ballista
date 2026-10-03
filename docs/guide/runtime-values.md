@@ -5,8 +5,8 @@ known in advance. Many useful amounts are not: the balance to sweep, the debt to
 a deposit to pass on. They exist only when the transaction executes.
 
 A Ballista template can read a number from an account while it runs and pass it to the next call.
-This page shows four ways to use that: sweep a balance, forward a token balance, repay a debt, and
-split a deposit.
+[Getting started](/guide/getting-started) builds the simplest case: sweep everything above a
+reserve. This page shows three more: forward a token balance, repay a debt, and split a deposit.
 
 In the examples, `step.let` computes a value once and gives it a name, and `step.require` stops
 the whole transaction unless its condition holds. `systemTransfer` and `tokenTransfer` call the
@@ -14,27 +14,6 @@ System program and the Token program. Each example has a **Template** tab, the w
 a **Run** tab, the code that builds the instruction to run it, in TypeScript or Rust. Where an
 example calls another protocol, the code uses marked stand-ins (the System program and its
 Transfer data) so that it compiles and runs as written; replace them with the protocol's own.
-
-## Sweep above a reserve
-
-Move everything above a minimum balance (the reserve) from a vault to a destination, whatever the
-balance is when the transaction executes.
-
-::: code-group
-
-<<< @/../clients/js/examples/docs/sweep-above-a-reserve.ts#template [TypeScript · Template]
-
-<<< @/../clients/js/examples/docs/sweep-above-a-reserve.ts#run [TypeScript · Run]
-
-<<< @/../clients/rust/examples/docs_templates.rs#sweep-above-a-reserve [Rust · Template]
-
-<<< @/../clients/rust/examples/docs_runs.rs#sweep-above-a-reserve [Rust · Run]
-
-:::
-
-The template reads the vault's balance in [lamports](/reference/glossary#lamports) and transfers
-whatever is above the reserve. The caller passes only the reserve. If the balance is not above the
-reserve, the `require` stops the run before the subtraction.
 
 ## Forward the whole token balance
 

@@ -5,9 +5,19 @@
 //! holds a value of its recorded type and the verifier accepts an instruction against that typing,
 //! then executing the instruction returns either success or a value-dependent error, never a
 //! structural one, and the destination register ends up holding the type the verifier recorded.
-//! Induction over the instruction sequence then gives the whole-program guarantee.
+//! Induction over the instruction sequence then gives the whole-program guarantee. Which errors are
+//! value-dependent is `rules::oracle`'s documented split.
+//!
+//! Blocked on the prover's memory model: the spec programs are byte-stored constants the parser
+//! reads back as words. Suspected besides: the executor copies each operand register to its stack
+//! with eight-byte moves and reads its one-byte tag back, writes the destination by copying a stack
+//! temporary whose tag is one byte, and the verifier's helpers return their errors the same way.
+//! The prover rebuilds a stack word only from two four-byte halves, so it may lose those tags. `tests/typing_enumeration.rs` checks the same property on the
+//! host, exhaustively over the rules' structural inputs, and passes.
+//!
+//! Each rule has reachability rules for success and for a value-dependent failure, and a twin that
+//! must fail: it claims every accepted instruction succeeds.
 
-use ballista::error::BallistaError;
 use ballista::processor::execute::{execute_instruction, RunError, RuntimeValue, Scratch, NO_ROWS};
 use ballista_common::template::*;
 use cvlr::nondet::havoc::alloc_mut_ref_havoced;
@@ -15,35 +25,11 @@ use cvlr::prelude::*;
 use cvlr_pinocchio::nondet_account_views;
 use pinocchio::AccountView;
 
+use super::oracle;
 use super::util::{
     nondet_instruction, nondet_register_info, pick, runtime_type, runtime_value_for, spec_program,
     writes_destination, REGISTERS,
 };
-
-/// Errors an accepted instruction may raise because of the values it sees, not its shape.
-///
-/// `READ_ACCOUNT_BYTES` reaches the executor in the account rule, whose one account is
-/// unconstrained: the account may be writable, and the offset register may point past its data.
-/// The introspection opcodes never do, since neither spec program pins the Instructions sysvar,
-/// but an index past the transaction is value-dependent too.
-///
-/// The registry opcodes never reach the executor in either rule: neither spec program declares a
-/// fixed account pinned to the System program, so the verifier rejects every open, and a field
-/// read or write verified at pc 0 has no open before it. Their errors depend on the accounts a
-/// run passes, not on the template's shape, so they are value-dependent too.
-fn value_dependent(kind: BallistaError) -> bool {
-    matches!(
-        kind,
-        BallistaError::ArithmeticOverflow
-            | BallistaError::DivisionByZero
-            | BallistaError::RequirementFailed
-            | BallistaError::InvalidPdaDerivation
-            | BallistaError::InstructionOutOfRange
-            | BallistaError::WritableAccountBytesRead
-            | BallistaError::InvalidRegistryEntry
-            | BallistaError::RegistryReentry
-    )
-}
 
 /// One past the highest pass index a loop in `scope` reaches. A FOREACH makes one pass per batch
 /// row, and the rows' accounts are runtime accounts, so it makes fewer than
@@ -56,7 +42,20 @@ fn pass_bound(scope: LoopScope) -> usize {
     }
 }
 
-fn check_typing_preservation(with_account: bool, accounts: &[AccountView]) {
+/// What a typing rule, or one of its companions, checks at the end.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Check {
+    /// The property.
+    Preservation,
+    /// Reachability: an accepted instruction can succeed.
+    ReachSuccess,
+    /// Reachability: an accepted instruction can fail on its values.
+    ReachValueError,
+    /// Twin that must fail: every accepted instruction succeeds.
+    TwinAlwaysSucceeds,
+}
+
+fn check_typing_preservation(with_account: bool, accounts: &[AccountView], check: Check) {
     let program = ProgramView::parse(spec_program(with_account)).expect("spec program parses");
 
     // The verifier's register table lives on the heap so the prover can follow its symbolic
@@ -105,6 +104,23 @@ fn check_typing_preservation(with_account: bool, accounts: &[AccountView]) {
         loop_context,
     );
 
+    match check {
+        Check::Preservation => {}
+        Check::ReachSuccess => {
+            cvlr_satisfy!(outcome.is_ok());
+            return;
+        }
+        Check::ReachValueError => {
+            let value_error = matches!(outcome, Err(RunError::Vm(kind)) if oracle::value_dependent(kind, &instruction));
+            cvlr_satisfy!(value_error);
+            return;
+        }
+        Check::TwinAlwaysSucceeds => {
+            cvlr_assert!(outcome.is_ok());
+            return;
+        }
+    }
+
     match outcome {
         Ok(()) => {
             if writes_destination(instruction.opcode) {
@@ -125,12 +141,13 @@ fn check_typing_preservation(with_account: bool, accounts: &[AccountView]) {
                 }
             }
         }
-        Err(RunError::Vm(kind)) => cvlr_assert!(value_dependent(kind)),
-        Err(RunError::VmAt(_, _)) => cvlr_assert!(false),
-        // Clock reads go through a sysvar syscall the prover may model as failing; nothing else
-        // in the pure subset touches the runtime.
+        // The split of errors into structural and value-dependent is `rules::oracle`'s.
+        Err(RunError::Vm(kind)) => cvlr_assert!(oracle::value_dependent(kind, &instruction)),
+        Err(RunError::VmAt(kind, _)) => {
+            cvlr_assert!(oracle::may_fail_at_an_index(kind, &instruction))
+        }
         Err(RunError::Program(_)) => {
-            cvlr_assert!(matches!(instruction.opcode, OP_CLOCK_SLOT | OP_CLOCK_TIMESTAMP))
+            cvlr_assert!(oracle::may_return_program_errors(&instruction))
         }
     }
 }
@@ -144,15 +161,54 @@ pub fn rule_verified_pure_instructions_preserve_register_typing() {
     // this view is never reached. It exists so the account slice is heap memory rather than a
     // dangling empty-slice pointer, which the prover's pointer analysis cannot classify.
     let accounts = nondet_account_views::<1, 0>();
-    check_typing_preservation(false, &accounts[..]);
+    check_typing_preservation(false, &accounts[..], Check::Preservation);
+}
+
+#[rule]
+pub fn rule_verified_pure_instructions_reach_success() {
+    let accounts = nondet_account_views::<1, 0>();
+    check_typing_preservation(false, &accounts[..], Check::ReachSuccess);
+}
+
+#[rule]
+pub fn rule_verified_pure_instructions_reach_a_value_error() {
+    let accounts = nondet_account_views::<1, 0>();
+    check_typing_preservation(false, &accounts[..], Check::ReachValueError);
+}
+
+/// Twin that must fail: an overflow or a failed `REQUIRE` refutes it.
+#[rule]
+pub fn rule_verified_pure_instructions_twin_always_succeed() {
+    let accounts = nondet_account_views::<1, 0>();
+    check_typing_preservation(false, &accounts[..], Check::TwinAlwaysSucceeds);
 }
 
 /// The same property with one unconstrained runtime account, which admits the account header
-/// reads: key, owner, lamports, data length, and emptiness.
+/// reads (key, owner, lamports, data length, emptiness) and the typed reads at a dynamic offset.
+/// The account declares no minimum length, so the verifier admits no fixed-offset read.
 #[rule]
 pub fn rule_verified_account_reads_preserve_register_typing() {
     let accounts = nondet_account_views::<1, 64>();
-    check_typing_preservation(true, &accounts[..]);
+    check_typing_preservation(true, &accounts[..], Check::Preservation);
+}
+
+#[rule]
+pub fn rule_verified_account_reads_reach_success() {
+    let accounts = nondet_account_views::<1, 64>();
+    check_typing_preservation(true, &accounts[..], Check::ReachSuccess);
+}
+
+#[rule]
+pub fn rule_verified_account_reads_reach_a_value_error() {
+    let accounts = nondet_account_views::<1, 64>();
+    check_typing_preservation(true, &accounts[..], Check::ReachValueError);
+}
+
+/// Twin that must fail: a read past the account's data refutes it.
+#[rule]
+pub fn rule_verified_account_reads_twin_always_succeed() {
+    let accounts = nondet_account_views::<1, 64>();
+    check_typing_preservation(true, &accounts[..], Check::TwinAlwaysSucceeds);
 }
 
 #[cfg(test)]

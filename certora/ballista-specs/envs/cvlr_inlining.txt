@@ -178,3 +178,26 @@
 #[inline(never)] ^<ballista::processor::execute::FixedSink as ballista::processor::execute::ByteSink>::push_bytes$
 #[inline(never)] ^<alloc::vec::Vec<u8> as ballista::processor::execute::ByteSink>::push_bytes$
 #[inline(never)] ^<ballista::processor::execute::OutputSink as ballista::processor::execute::ByteSink>::push_bytes$
+
+;; Creating a registry entry makes up to three System program CPIs and derives the entry's address
+;; with a bump search; it stays external with a nondeterministic RunResult (see the summaries file).
+;; The registry rules are about entries that already exist, and about the borrow mark an open sets
+;; after any creation.
+#[inline(never)] ^ballista::processor::registry::create_entry$
+
+;; Ballista derives PDAs itself: up to 255 attempts, each one `sol_sha256` and one
+;; `sol_curve_validate_point`, neither of which the prover models. The search loop cannot be bounded
+;; by `loop_iter`, so the template address derivation stays external with a nondeterministic address
+;; and bump. No rule depends on the address being the canonical one; the template rules only need it
+;; compared. The registry derivation is only reached through create_entry, which is external.
+#[inline(never)] ^ballista::utils::pda::get_template_address$
+
+;; The executor's two heaviest helpers stay external in every rule. `derive_pda` hashes seeds and
+;; searches bumps through syscalls the prover does not model, and fills its seed arrays on the stack
+;; at loop-dependent offsets, which the pointer analysis rejects. `invoke_cpi` builds a 64-slot
+;; account list and calls the external bounded_invoke. Each returns a nondeterministic result (see
+;; the summaries file) and writes nothing a rule reads: `step` writes DERIVE_PDA's destination
+;; itself, and INVOKE writes no register. Opaque, a successful invoke no longer records the program
+;; it called, so a rule that needs one recorded sets it with Scratch::set_last_invoked_for_spec.
+#[inline(never)] ^ballista::processor::execute::derive_pda$
+#[inline(never)] ^ballista::processor::execute::invoke_cpi$

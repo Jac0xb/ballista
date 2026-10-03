@@ -3137,3 +3137,14 @@ mod tests {
         assert!(read_value(OP_READ_I32, &data, 5).is_err());
     }
 }
+
+/// Formal specifications only: the `spec-api` feature compiles this, and the program never does.
+/// It sits at the end of the file so it moves no line the release binary's panic locations record.
+#[cfg(feature = "spec-api")]
+impl<'data> Scratch<'data> {
+    /// Records `program` as the program the most recent CPI invoked, as a successful `INVOKE`
+    /// does, so a specification can check `RETURN_DATA` without modelling a CPI.
+    pub fn set_last_invoked_for_spec(&mut self, program: &'data Address) {
+        self.last_invoked = Some(program);
+    }
+}

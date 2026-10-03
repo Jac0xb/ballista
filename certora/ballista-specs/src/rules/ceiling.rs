@@ -14,7 +14,7 @@
 //!    cannot read those metas back (the two flags are copied as part of an eight-byte word built
 //!    from two one-byte stack stores), so this link stands on inspection and the Mollusk suite.
 //!
-//! The rule here proves link 1, the one a template's author controls, for any declarations, any
+//! The rule here states link 1, the one a template's author controls, for any declarations, any
 //! record and any descriptor. Forwarded account groups are outside it: their members carry the
 //! transaction's writable flag and are never signers, by construction in `invoke_cpi`.
 

@@ -39,8 +39,15 @@ pub fn rule_short_payloads_are_truncated_not_misparsed() {
 
 /// On success every section is exactly as long as the header says and the sections tile the
 /// payload: header, accounts (the fixed accounts and one batch row), inputs (the fixed inputs and
-/// one row's inputs), instructions, CPIs, CPI accounts, data segments, pubkeys, then the blob.
-/// The flag and reserved bytes the parser checks are clear.
+/// one row's inputs), instructions, CPIs, CPI accounts, data segments, pubkeys, then the blob. The
+/// flag and reserved bytes the parser checks are clear.
+///
+/// Asserts only. An earlier version also held `cvlr_satisfy!(true)` on the failure branch, and in a
+/// rule with a satisfy every assert is treated as an assumption, so it checked nothing. It also
+/// counted only the fixed inputs (`input_count`), which a 28-byte payload with one row input
+/// refutes; `rule_parsed_sections_twin_counts_only_fixed_inputs` keeps that statement as a twin
+/// the prover must refute. Kani checks the same tiling for payloads up to the 10,240-byte limit
+/// (track FV5); this rule covers payloads up to 96 bytes.
 #[rule]
 pub fn rule_parsed_sections_exactly_consume_the_payload() {
     let bytes: &[u8] = nondet_slice::<PAYLOAD>();
@@ -67,8 +74,31 @@ pub fn rule_parsed_sections_exactly_consume_the_payload() {
             + program.pubkeys.len() * 32
             + program.blob.len();
         cvlr_assert!(total == bytes.len());
-    } else {
-        cvlr_satisfy!(true);
+    }
+}
+
+/// Reachability of the rule's only asserting branch: some payload parses.
+#[rule]
+pub fn rule_parsed_sections_reach_a_parsed_payload() {
+    let bytes: &[u8] = nondet_slice::<PAYLOAD>();
+    cvlr_satisfy!(ProgramView::parse(bytes).is_ok());
+}
+
+/// Reachability of the case the rule used to get wrong: a parsed payload with a row input.
+#[rule]
+pub fn rule_parsed_sections_reach_a_row_input() {
+    let bytes: &[u8] = nondet_slice::<PAYLOAD>();
+    let row_inputs = ProgramView::parse(bytes).map_or(0, |program| program.header.row_input_count());
+    cvlr_satisfy!(row_inputs > 0);
+}
+
+/// Twin that must fail: the rule's old statement, that the inputs table holds only the fixed
+/// inputs. One row input descriptor and no fixed ones, 28 bytes, refutes it.
+#[rule]
+pub fn rule_parsed_sections_twin_counts_only_fixed_inputs() {
+    let bytes: &[u8] = nondet_slice::<PAYLOAD>();
+    if let Ok(program) = ProgramView::parse(bytes) {
+        cvlr_assert!(program.inputs.len() == program.header.input_count());
     }
 }
 

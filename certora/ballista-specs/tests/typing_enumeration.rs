@@ -24,7 +24,6 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use ballista::error::BallistaError;
 use ballista::processor::execute::{execute_instruction, RunError, RuntimeValue, Scratch, NO_ROWS};
 use ballista_common::template::*;
 use ballista_specs::rules::oracle;

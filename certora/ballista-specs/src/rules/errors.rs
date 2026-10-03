@@ -3,7 +3,7 @@
 //!
 //! `decode_ballista_error` itself has no rule: it reads the name table in the binary's data
 //! section at a symbolic index, which the prover's pointer analysis does not follow. Its behaviour
-//! is covered by the host tests in `ballista-common`; the range facts it relies on are proved here.
+//! is covered by the host tests in `ballista-common`; the range facts it relies on are stated here.
 
 use ballista::error::{vm_error, BallistaError};
 use ballista_common::template::*;

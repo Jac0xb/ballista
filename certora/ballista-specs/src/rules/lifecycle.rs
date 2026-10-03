@@ -2,8 +2,27 @@
 //!
 //! These rules call the program's entrypoint with a Ballista-owned template account holding the
 //! canonical SOL transfer template, so every handler is in scope. The two CPIs the program can make
-//! (creating the template account, and the template's own invocation) are opaque to the prover:
-//! see the inlining and summary files.
+//! (creating the template account, and the template's own invocation) and the template PDA
+//! derivation are opaque to the prover: see the inlining and summary files.
+//!
+//! All four are blocked:
+//!
+//! - The template account's data is a header copied from a stack struct and a payload written one
+//!   byte at a time, and the handlers read both back at other widths (the state and lengths, and
+//!   every field `parse_finalized` reads), which the prover models as unrelated values.
+//! - The instruction data is assembled the same way and parsed with wider loads.
+//! - `rule_run_never_writes_the_template_account` compares the whole data with a stack copy.
+//!
+//! Model limits, which hold even once those are fixed:
+//!
+//! - A CPI is an opaque call that touches no memory, and accounts never alias: each slot is its
+//!   own allocation. A run cannot write the template account in this model however the executor
+//!   behaves, so `rule_run_never_writes_the_template_account` cannot see the guard that matters on
+//!   chain, `bounded_invoke`'s `check_borrow_mut`, which refuses to pass the template's borrowed
+//!   data writable to a CPI. A mutant without that check passes the rule. Its regression test
+//!   belongs in the Mollusk suite.
+//! - A failed instruction's writes are rolled back by the runtime, so for the other three the
+//!   failure is the property; the data comparisons are a stronger check the model cannot carry.
 
 use ballista::process_instruction;
 use ballista_common::instruction::{IX_CANCEL_TEMPLATE, IX_RUN, IX_WRITE_TEMPLATE_CHUNK};
@@ -114,6 +133,9 @@ pub fn rule_uploading_templates_never_run() {
     cvlr_assert!(result.is_err());
 }
 
+/// A run leaves the template account's data and lamports as they were. In this model a CPI touches
+/// no memory and accounts never alias, so this holds whatever the executor does; it cannot catch
+/// the loss of `bounded_invoke`'s borrow check (see the module comment).
 #[rule]
 pub fn rule_run_never_writes_the_template_account() {
     let (template, _) = template_slot(TEMPLATE_STATE_FINALIZED);

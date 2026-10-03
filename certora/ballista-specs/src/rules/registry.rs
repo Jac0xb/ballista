@@ -9,8 +9,17 @@
 //! returned tag of a failed open is unknown to it. The byte is written with one-byte stores and read
 //! the same way everywhere.
 //!
-//! Creating an entry (the System program CPIs) is opaque here, with a nondeterministic result (see
-//! `envs/`); these rules are about entries that already exist.
+//! Model limits, which narrow what these rules cover:
+//!
+//! - Creating an entry (System program CPIs and a PDA search) is external, with a nondeterministic
+//!   result and no effect on memory. The rules are about entries that already exist, owned by
+//!   Ballista, except where a rule says otherwise.
+//! - Accounts never alias: each slot is its own allocation. Two account slots holding one entry,
+//!   the case the fix in `registry::open` is for, is modelled by an entry whose borrow byte an open
+//!   already set.
+//!
+//! Each rule has a twin that must fail. Rules whose assertions sit on a branch also have a
+//! reachability rule for it; branchless rules rely on the vacuity check (`rule_sanity`).
 
 use ballista::processor::execute::{execute_instruction, RuntimeValue, Scratch};
 use ballista::processor::registry::{open, EntryId};
@@ -35,84 +44,137 @@ fn word(data: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap())
 }
 
-/// An existing entry: Ballista owns it, it is unopened and writable, and its data is havoced.
+/// An existing entry: Ballista owns it, it is unopened and writable, its data is havoced and its
+/// length nondeterministic up to [`ENTRY_DATA`].
 fn existing_entry() -> &'static mut AccountSlot<ENTRY_DATA> {
     let entry = AccountSlot::<ENTRY_DATA>::nondet();
     entry.header.owner = ballista::ID;
     entry.header.borrow_state = NOT_BORROWED;
+    entry.header.is_writable = 1;
     entry
 }
 
-fn payer() -> &'static mut AccountSlot<0> {
-    AccountSlot::<0>::nondet()
+/// Opens `entry` for a nondeterministic template, registry and key, with `size` field bytes.
+/// Returns the template's address and the key, for rules that compare them with the entry.
+fn open_entry(entry: &mut AccountSlot<ENTRY_DATA>, size: usize) -> ([u8; 32], [u8; 32]) {
+    let payer = AccountSlot::<0>::nondet();
+    let template = nondet_address();
+    let key = nondet_address().to_bytes();
+    let id = EntryId { template: &template, index: nondet(), key };
+    let views = heap_views([entry.view(), payer.view()]);
+    let _ = open(&views[0], &views[1], &id, size);
+    (template.to_bytes(), key)
 }
 
-/// A read-only entry account never opens: its borrow byte is untouched.
-#[rule]
-pub fn rule_registry_open_requires_a_writable_entry() {
+/// Whether an open marked `entry`.
+fn opened(entry: &AccountSlot<ENTRY_DATA>) -> bool {
+    entry.header.borrow_state == 0
+}
+
+// ------------------------------------------------------------------------------------------------
+// A read-only entry never opens.
+
+/// A read-only entry account: Ballista's or, nondeterministically, anyone's.
+fn read_only_entry() -> &'static mut AccountSlot<ENTRY_DATA> {
     let entry = existing_entry();
     entry.header.is_writable = 0;
-    // Any owner: creation is refused for a read-only account too.
     if nondet::<bool>() {
         entry.header.owner = nondet_address();
     }
-    let payer = payer();
-    let template = nondet_address();
-    let id = EntryId { template: &template, index: nondet(), key: nondet_address().to_bytes() };
-    let views = heap_views([entry.view(), payer.view()]);
-    let _ = open(&views[0], &views[1], &id, FIELDS);
-    cvlr_assert!(!views[0].is_borrowed_mut());
+    entry
+}
+
+/// A read-only entry account never opens: its borrow byte is untouched, whoever owns it.
+#[rule]
+pub fn rule_registry_open_requires_a_writable_entry() {
+    let entry = read_only_entry();
+    open_entry(entry, FIELDS);
+    cvlr_assert!(!opened(entry));
     cvlr_assert!(entry.header.borrow_state == NOT_BORROWED);
+}
+
+/// Twin that must fail: it claims a writable entry of the right size never opens either.
+#[rule]
+pub fn rule_registry_open_twin_refuses_a_writable_entry_too() {
+    let entry = existing_entry();
+    entry.header.data_len = ENTRY_DATA as u64;
+    open_entry(entry, FIELDS);
+    cvlr_assert!(!opened(entry));
+}
+
+// ------------------------------------------------------------------------------------------------
+// An entry of the wrong size never opens.
+
+/// An existing entry and a field size up to the largest a registry has.
+fn sized_entry() -> (&'static mut AccountSlot<ENTRY_DATA>, usize) {
+    let entry = existing_entry();
+    let size: u16 = nondet();
+    cvlr_assume!(usize::from(size) <= MAX_REGISTRY_SIZE);
+    clog!(size, entry.header.data_len);
+    (entry, usize::from(size))
 }
 
 /// An existing entry whose data length is not the header plus the registry's field size never
 /// opens, whatever its header holds.
 #[rule]
 pub fn rule_registry_open_checks_the_entry_size() {
-    let entry = existing_entry();
-    entry.header.is_writable = 1;
-    let size: u16 = nondet();
-    cvlr_assume!(usize::from(size) <= MAX_REGISTRY_SIZE);
-    clog!(size, entry.header.data_len);
-    let payer = payer();
-    let template = nondet_address();
-    let id = EntryId { template: &template, index: nondet(), key: nondet_address().to_bytes() };
-    let views = heap_views([entry.view(), payer.view()]);
-    let _ = open(&views[0], &views[1], &id, usize::from(size));
-    if entry.header.data_len != (REGISTRY_ENTRY_HEADER_LEN + usize::from(size)) as u64 {
-        cvlr_assert!(entry.header.borrow_state == NOT_BORROWED);
+    let (entry, size) = sized_entry();
+    let expected = (REGISTRY_ENTRY_HEADER_LEN + size) as u64;
+    open_entry(entry, size);
+    if entry.header.data_len != expected {
+        cvlr_assert!(!opened(entry));
     }
+}
+
+/// Reachability of the rule's asserting branch: an entry of the wrong size.
+#[rule]
+pub fn rule_registry_open_reaches_a_wrong_size() {
+    let (entry, size) = sized_entry();
+    cvlr_satisfy!(entry.header.data_len != (REGISTRY_ENTRY_HEADER_LEN + size) as u64);
+}
+
+/// Twin that must fail: it claims an entry of the right size never opens.
+#[rule]
+pub fn rule_registry_open_twin_refuses_the_right_size() {
+    let (entry, size) = sized_entry();
+    let expected = (REGISTRY_ENTRY_HEADER_LEN + size) as u64;
+    open_entry(entry, size);
+    if entry.header.data_len == expected {
+        cvlr_assert!(!opened(entry));
+    }
+}
+
+// ------------------------------------------------------------------------------------------------
+// An entry opens only if its header names the template and the key.
+//
+// These three need `-solanaOptimisticMemcmp true` (see `run-candidates-memcmp.conf`). The open
+// compares the 72-byte header it builds on its stack with one `memcmp`, and the first eight bytes
+// of that header are written with a four-byte, two one-byte and a two-byte store, which the prover
+// only compares word by word under that flag. The flag leaves that first word unconstrained, so
+// these rules say nothing about the magic, version and registry index in it.
+
+/// An existing entry of the right size, opened.
+fn opened_entry_of_the_right_size() -> (&'static mut AccountSlot<ENTRY_DATA>, [u8; 32], [u8; 32]) {
+    let entry = existing_entry();
+    entry.header.data_len = ENTRY_DATA as u64;
+    let (template, key) = open_entry(entry, FIELDS);
+    (entry, template, key)
 }
 
 /// An existing entry opens only if its header names the running template and the key: bytes
 /// 8..40 of its data are the template's address and bytes 40..72 the key. Another template's
 /// entry, or another key's, never opens.
-///
-/// Needs `-solanaOptimisticMemcmp true` (see `run-candidates-memcmp.conf`). The open compares the
-/// 72-byte header it builds on its stack with one `memcmp`, and the first eight bytes of that
-/// header are written with a four-byte, two one-byte and a two-byte store, which the prover only
-/// compares word by word under that flag. The flag leaves that first word unconstrained, so this
-/// rule says nothing about the magic, version and registry index in it.
 #[rule]
 pub fn rule_registry_open_binds_the_template_and_key() {
-    let entry = existing_entry();
-    entry.header.is_writable = 1;
-    entry.header.data_len = ENTRY_DATA as u64;
-    let payer = payer();
-    let template = nondet_address();
-    let key = nondet_address().to_bytes();
-    let id = EntryId { template: &template, index: nondet(), key };
-    let views = heap_views([entry.view(), payer.view()]);
-    let _ = open(&views[0], &views[1], &id, FIELDS);
-    if views[0].is_borrowed_mut() {
+    let (entry, template, key) = opened_entry_of_the_right_size();
+    if opened(entry) {
         // Written out rather than looped: every offset stays a constant, so the prover reads the
         // template and key words at known stack offsets.
         let data = &entry.data;
-        let template = template.as_array();
-        cvlr_assert!(word(data, 8) == word(template, 0));
-        cvlr_assert!(word(data, 16) == word(template, 8));
-        cvlr_assert!(word(data, 24) == word(template, 16));
-        cvlr_assert!(word(data, 32) == word(template, 24));
+        cvlr_assert!(word(data, 8) == word(&template, 0));
+        cvlr_assert!(word(data, 16) == word(&template, 8));
+        cvlr_assert!(word(data, 24) == word(&template, 16));
+        cvlr_assert!(word(data, 32) == word(&template, 24));
         cvlr_assert!(word(data, 40) == word(&key, 0));
         cvlr_assert!(word(data, 48) == word(&key, 8));
         cvlr_assert!(word(data, 56) == word(&key, 16));
@@ -120,52 +182,85 @@ pub fn rule_registry_open_binds_the_template_and_key() {
     }
 }
 
+/// Reachability of the rule's asserting branch: an existing entry opens.
+#[rule]
+pub fn rule_registry_open_reaches_an_open() {
+    let (entry, _, _) = opened_entry_of_the_right_size();
+    cvlr_satisfy!(opened(entry));
+}
+
+/// Twin that must fail: it claims the key sits where the template's address does.
+#[rule]
+pub fn rule_registry_open_twin_swaps_template_and_key() {
+    let (entry, _, key) = opened_entry_of_the_right_size();
+    if opened(entry) {
+        cvlr_assert!(word(&entry.data, 8) == word(&key, 0));
+    }
+}
+
+// ------------------------------------------------------------------------------------------------
+// An open of an open entry fails.
+
+/// An existing entry of the right size whose borrow byte an earlier open set, as when the
+/// transaction passed one entry in two slots.
+fn entry_open_already() -> &'static mut AccountSlot<ENTRY_DATA> {
+    let entry = existing_entry();
+    entry.header.data_len = ENTRY_DATA as u64;
+    entry.header.borrow_state = 0;
+    entry
+}
+
 /// Opening an entry that is open already fails. This is the fix in `registry::open`: two account
 /// slots that hold one entry (two keys of one registry that came out equal) can no longer both be
 /// open, so no template can read both and lose one write to the other.
 ///
 /// Blocked: the only difference between the two outcomes is the `RunResult` the second open
-/// returns, whose tag the prover cannot see (see the module comment). Both opens leave the borrow
-/// byte at 0. It proves once `RunError` is laid out without padding in its first word.
+/// returns, whose tag the prover cannot see (see the module comment). Both outcomes leave the
+/// borrow byte at 0. It can prove once `RunError` is laid out without padding in its first word.
 #[rule]
 pub fn rule_registry_open_refuses_an_open_entry() {
-    let entry = existing_entry();
-    entry.header.is_writable = 1;
-    entry.header.data_len = ENTRY_DATA as u64;
-    // Marked open, as an open earlier in this run leaves it.
-    entry.header.borrow_state = 0;
-    let payer = payer();
+    let entry = entry_open_already();
+    let payer = AccountSlot::<0>::nondet();
     let template = nondet_address();
     let id = EntryId { template: &template, index: nondet(), key: nondet_address().to_bytes() };
     let views = heap_views([entry.view(), payer.view()]);
     cvlr_assert!(open(&views[0], &views[1], &id, FIELDS).is_err());
 }
 
-/// `READ_REGISTRY` and `WRITE_REGISTRY` touch nothing unless an open in this run marked the entry:
-/// on an unmarked entry a read leaves its destination register as it was and a write leaves the
-/// entry's data as it was. Observed through the register's value word and the field's data word,
-/// both written with eight-byte stores.
+/// Twin that must fail: it claims the open of a fresh entry fails too.
 #[rule]
-pub fn rule_registry_fields_need_an_open_entry() {
+pub fn rule_registry_open_twin_refuses_a_fresh_entry() {
+    let entry = existing_entry();
+    entry.header.data_len = ENTRY_DATA as u64;
+    let payer = AccountSlot::<0>::nondet();
+    let template = nondet_address();
+    let id = EntryId { template: &template, index: nondet(), key: nondet_address().to_bytes() };
+    let views = heap_views([entry.view(), payer.view()]);
+    cvlr_assert!(open(&views[0], &views[1], &id, FIELDS).is_err());
+}
+
+// ------------------------------------------------------------------------------------------------
+// Field reads and writes need an open entry.
+
+/// Runs `READ_REGISTRY` (into register 1) or `WRITE_REGISTRY` (from register 0) on the `u64` field
+/// at offset 0 of an existing entry whose borrow byte is `borrow_state`. Returns register 1's value
+/// word and the field's data word, before and after.
+fn touch_field(borrow_state: u8) -> (u64, u64, u64, u64) {
     let program = symbolic::program(Shape {
         registers: REGISTERS,
         ..Shape::accounts(1)
     });
     assume_constraint(&program.accounts[0], ACCOUNT_WRITABLE, NO_INDEX, NO_INDEX, 0);
     let entry = existing_entry();
-    entry.header.is_writable = 1;
     entry.header.data_len = ENTRY_DATA as u64;
-    // Any state but open.
-    let borrow_state: u8 = nondet();
-    cvlr_assume!(borrow_state != 0);
     entry.header.borrow_state = borrow_state;
     let views = heap_views([entry.view()]);
 
     // Every register holds a u64, so the read and the write have operands of the right type.
     let registers = u64_registers();
-    let before_register = payload_words(&registers[1])[0];
+    let register_before = payload_words(&registers[1])[0];
     let field = REGISTRY_ENTRY_HEADER_LEN;
-    let before_field = word(&entry.data, field);
+    let field_before = word(&entry.data, field);
 
     let read: bool = nondet();
     let immediate = RegistryField { offset: 0, selector: OP_READ_U64 }.encode();
@@ -178,9 +273,32 @@ pub fn rule_registry_fields_need_an_open_entry() {
     let mut scratch = Scratch::new(&program);
     let inputs: &[RuntimeValue] = empty();
     let _ = execute_instruction(&program, inputs, &views[..], registers, &mut scratch, instruction, None);
+    (
+        register_before,
+        payload_words(&registers[1])[0],
+        field_before,
+        word(&entry.data, field),
+    )
+}
 
-    cvlr_assert!(payload_words(&registers[1])[0] == before_register);
-    cvlr_assert!(word(&entry.data, field) == before_field);
+/// `READ_REGISTRY` and `WRITE_REGISTRY` touch nothing unless an open in this run marked the entry:
+/// on an unmarked entry a read leaves its destination register as it was and a write leaves the
+/// entry's data as it was. Observed through the register's value word and the field's data word,
+/// both written with eight-byte stores.
+#[rule]
+pub fn rule_registry_fields_need_an_open_entry() {
+    let borrow_state: u8 = nondet();
+    cvlr_assume!(borrow_state != 0);
+    let (register_before, register_after, field_before, field_after) = touch_field(borrow_state);
+    cvlr_assert!(register_after == register_before);
+    cvlr_assert!(field_after == field_before);
+}
+
+/// Twin that must fail: it claims a read or write of an open entry changes nothing either.
+#[rule]
+pub fn rule_registry_fields_twin_unchanged_on_an_open_entry() {
+    let (register_before, register_after, field_before, field_after) = touch_field(0);
+    cvlr_assert!(register_after == register_before && field_after == field_before);
 }
 
 #[cfg(test)]

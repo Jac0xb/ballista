@@ -60,6 +60,28 @@ pub fn rule_return_data_comes_from_the_invoked_program() {
     cvlr_assert!(after == before || after == invoked);
 }
 
+/// Reachability: a read can succeed, and then changes the destination. A satisfy rule, which passes
+/// when the prover finds such a run.
+#[rule]
+pub fn rule_return_data_from_the_invoked_program_is_read() {
+    let (before, after, invoked) = read_pubkey_return_data(true);
+    cvlr_satisfy!(after != before && after == invoked);
+}
+
+/// Reachability: a read can be refused, when another program set the data or it is too short.
+#[rule]
+pub fn rule_return_data_reaches_a_refusal() {
+    let (before, after, _) = read_pubkey_return_data(true);
+    cvlr_satisfy!(after == before);
+}
+
+/// Twin that must fail: it claims a successful read never returns the invoked program's data.
+#[rule]
+pub fn rule_return_data_twin_reads_another_program() {
+    let (before, after, invoked) = read_pubkey_return_data(true);
+    cvlr_assert!(after == before || after != invoked);
+}
+
 /// With no successful CPI in the run, a return-data read is always refused.
 #[rule]
 pub fn rule_return_data_needs_an_invoke() {
@@ -67,10 +89,9 @@ pub fn rule_return_data_needs_an_invoke() {
     cvlr_assert!(after == before);
 }
 
-/// Non-vacuity of the first rule: a read can succeed, and then changes the destination. A satisfy
-/// rule, which passes when the prover finds such a run.
+/// Twin that must fail: it claims a read is refused even after a CPI.
 #[rule]
-pub fn rule_return_data_from_the_invoked_program_is_read() {
-    let (before, after, invoked) = read_pubkey_return_data(true);
-    cvlr_satisfy!(after != before && after == invoked);
+pub fn rule_return_data_twin_refuses_after_an_invoke() {
+    let (before, after, _) = read_pubkey_return_data(true);
+    cvlr_assert!(after == before);
 }

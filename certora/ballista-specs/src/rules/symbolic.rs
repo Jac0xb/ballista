@@ -15,7 +15,7 @@
 //!   fields it depends on with assumptions made through the program's own accessors, so the rule
 //!   and the program read each field at the same width. The shape a successful parse guarantees
 //!   (every section exactly as long as the header says) is assumed rather than parsed;
-//!   `rules::parser::rule_parsed_sections_exactly_consume_the_payload` proves it.
+//!   `rules::parser::rule_parsed_sections_exactly_consume_the_payload` states it.
 //! - An [`InstructionSlot`] is an instruction record on the stack written at the widths the
 //!   executor reads: one byte per operand, the immediate as one aligned eight-byte store. The
 //!   record stays on the stack so the prover's scalar analysis knows the opcode, and slices away

@@ -5,23 +5,12 @@
  * the commit cited beside it. A protocol upgrade can move a field, and a moved field is a
  * silently wrong read, so re-derive these from the current IDL before you upload a template.
  */
-import { sha256 } from '@noble/hashes/sha2.js';
-import { address, getAddressEncoder, type Address } from '@solana/kit';
+import { address, type Address } from '@solana/kit';
 
-const encoder = getAddressEncoder();
+import { addressBytes, anchorDiscriminator } from '../../src/index.js';
 
-/** A base58 program address as the 32 raw bytes a template schema pins. */
-export function addressBytes(value: string): Uint8Array<ArrayBuffer> {
-  return Uint8Array.from(encoder.encode(address(value)));
-}
-
-/**
- * An Anchor instruction discriminator: the first eight bytes of `sha256("global:<name>")`, where
- * `<name>` is the handler's snake_case name in the `#[program]` module.
- */
-export function anchorDiscriminator(name: string): Uint8Array<ArrayBuffer> {
-  return Uint8Array.from(sha256(new TextEncoder().encode(`global:${name}`)).slice(0, 8));
-}
+/** The SDK's address and Anchor discriminator helpers, which the examples import from here. */
+export { addressBytes, anchorDiscriminator };
 
 // ---------------------------------------------------------------- programs
 

@@ -8,7 +8,7 @@ import {
   type Instruction,
 } from '@solana/kit';
 
-import { explainRunError } from '../../src/index.js';
+import { explainRunError, failedProgram } from '../../src/index.js';
 import { BALLISTA_ADDRESS, buildKitRunInstruction, getTemplateAddress } from '../../src/kit.js';
 import { compiled } from './orca-harvest-many-positions.js';
 import { ORCA_WHIRLPOOL } from './shared.js';
@@ -98,15 +98,6 @@ export async function buildOrcaHarvestRun(input: {
   });
 }
 // #endregion run
-
-/** The program named by the first `Program <id> failed: …` log line: the innermost that failed. */
-export function failedProgram(logs: readonly string[]): string | undefined {
-  for (const line of logs) {
-    const match = /^Program ([1-9A-HJ-NP-Za-km-z]{32,44}) failed: /.exec(line);
-    if (match) return match[1];
-  }
-  return undefined;
-}
 
 /**
  * Says which program refused a harvest, and where, from the failed transaction's code and logs.

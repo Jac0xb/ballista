@@ -1,4 +1,5 @@
 import type { CompiledTemplate, SourceMapEntry } from './compiler.js';
+import { BALLISTA_PROGRAM_ADDRESS } from './instructions.js';
 
 /** First runtime error code; kinds follow `RUNTIME_ERROR_NAMES` in order. */
 export const RUNTIME_ERROR_BASE = 6000;
@@ -88,20 +89,59 @@ export interface DecodedBallistaError {
 }
 
 /**
- * Splits a Ballista custom error code into kind and context. Returns `undefined` for codes that
- * belong to another program, which pass through Ballista unchanged.
+ * Splits a Ballista custom error code into kind and context. The code can be a `bigint`, as Kit's
+ * RPC returns a simulation's `Custom` code. Returns `undefined` for codes outside Ballista's
+ * ranges, which belong to another program and pass through Ballista unchanged.
+ *
+ * A code inside the ranges can still be another program's: Anchor programs number their errors
+ * from 6000 too. `decodeBallistaFailure` checks the logs for which program failed.
  */
-export function decodeBallistaError(code: number): DecodedBallistaError | undefined {
-  if (!Number.isInteger(code) || code < 0 || code > 0xffff_ffff) return undefined;
-  const kind = code & 0xffff;
-  const context = code >>> 16;
+export function decodeBallistaError(code: number | bigint): DecodedBallistaError | undefined {
+  const value = typeof code === 'bigint' ? (code >= 0n && code <= 0xffff_ffffn ? Number(code) : -1) : code;
+  if (!Number.isInteger(value) || value < 0 || value > 0xffff_ffff) return undefined;
+  const kind = value & 0xffff;
+  const context = value >>> 16;
   if (kind >= RUNTIME_ERROR_BASE && kind < RUNTIME_ERROR_BASE + RUNTIME_ERROR_NAMES.length) {
-    return { code, kind, name: RUNTIME_ERROR_NAMES[kind - RUNTIME_ERROR_BASE]!, context, source: 'runtime' };
+    return { code: value, kind, name: RUNTIME_ERROR_NAMES[kind - RUNTIME_ERROR_BASE]!, context, source: 'runtime' };
   }
   if (kind >= VERIFIER_ERROR_BASE && kind < VERIFIER_ERROR_BASE + VERIFIER_ERROR_NAMES.length) {
-    return { code, kind, name: VERIFIER_ERROR_NAMES[kind - VERIFIER_ERROR_BASE]!, context, source: 'verifier' };
+    return { code: value, kind, name: VERIFIER_ERROR_NAMES[kind - VERIFIER_ERROR_BASE]!, context, source: 'verifier' };
   }
   return undefined;
+}
+
+/**
+ * The program whose failure ended a transaction, named by its first `Program <address> failed:`
+ * log line. The program that failed logs that line first, and every caller up the stack repeats
+ * the error after it, so the first names the program the transaction's error code belongs to.
+ *
+ * Returns `undefined` when no line names one: the runtime refused the transaction before a program
+ * ran, the program logs nothing (as a precompile does), or the logs were cut off at Solana's log
+ * limit, which leaves a `Log truncated` line.
+ */
+export function failedProgram(logs: readonly string[]): string | undefined {
+  for (const line of logs) {
+    const match = /^Program ([1-9A-HJ-NP-Za-km-z]{32,44}) failed: /.exec(line);
+    if (match) return match[1];
+  }
+  return undefined;
+}
+
+/**
+ * Decodes `code` as Ballista's only when the logs show that Ballista is the program that failed.
+ * Anchor programs number their errors from 6000 too, so a Jupiter route's 6001 would otherwise
+ * read as Ballista's `InvalidTemplateAccount`.
+ *
+ * Returns `undefined` when another program failed, and when the logs name no failed program;
+ * `failedProgram` tells the two apart. `programAddress` is Ballista's unless you pass another
+ * deployment's.
+ */
+export function decodeBallistaFailure(
+  code: number | bigint,
+  logs: readonly string[],
+  programAddress: string = BALLISTA_PROGRAM_ADDRESS,
+): DecodedBallistaError | undefined {
+  return failedProgram(logs) === programAddress ? decodeBallistaError(code) : undefined;
 }
 
 export interface RunErrorExplanation {
@@ -115,12 +155,30 @@ export interface RunErrorExplanation {
   message: string;
 }
 
+/** Where `explainRunError` checks which program failed. */
+export interface ExplainRunErrorOptions {
+  /** The failed transaction's logs. With them, a code is explained only if Ballista failed. */
+  logs?: readonly string[];
+  /** The Ballista deployment to expect in the logs. Defaults to `BALLISTA_PROGRAM_ADDRESS`. */
+  programAddress?: string;
+}
+
 /**
  * Maps a failed run's custom error code back to the template that produced it: the step for VM
  * failures, the account for constraint failures, or the input for decoding failures.
+ *
+ * Pass the transaction's `logs` to explain the code only when Ballista is the program that
+ * failed, as `decodeBallistaFailure` decodes it; without them, a called program's code in
+ * Ballista's ranges is explained as Ballista's.
  */
-export function explainRunError(code: number, compiled: CompiledTemplate): RunErrorExplanation | undefined {
-  const error = decodeBallistaError(code);
+export function explainRunError(
+  code: number | bigint,
+  compiled: CompiledTemplate,
+  options: ExplainRunErrorOptions = {},
+): RunErrorExplanation | undefined {
+  const error = options.logs
+    ? decodeBallistaFailure(code, options.logs, options.programAddress)
+    : decodeBallistaError(code);
   if (!error) return undefined;
   if (error.source === 'verifier') {
     return { error, message: `${error.name} (verifier context ${error.context})` };

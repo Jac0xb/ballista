@@ -7,7 +7,8 @@ mainnet at one slot into LiteSVM, a local Solana runtime. Not yet run on mainnet
 
 ## What it does
 
-Sells SOL through Jupiter, and limits each caller to 1.728 SOL a day.
+Sells SOL through Jupiter, and limits each caller to 1.728 SOL at once, refilling daily. A caller
+who spends it all can spend it again as it refills, so about 3.456 SOL can move in any 24 hours.
 
 A daily limit has to remember earlier sales, and a run's values are gone when it ends. So the
 template keeps each caller's total in a [registry](/guide/registries) entry: an account that

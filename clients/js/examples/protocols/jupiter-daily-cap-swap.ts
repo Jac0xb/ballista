@@ -40,9 +40,9 @@ import {
 
 const sourceBalance = expression.accountData(account.fixed('sourceAta'), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64');
 
-/** 1.728 SOL, in lamports. */
+/** 1.728 SOL, in lamports: the most a caller can sell at once. */
 export const DAILY_CAP = 1_728_000_000n;
-/** The cap over 86,400 seconds. */
+/** The cap over 86,400 seconds, so a caller can sell about twice the cap in any 24 hours. */
 export const REFILL_PER_SECOND = 20_000n;
 
 /** The route's platform fee account and rate are chosen by whoever builds the run: cap the rate. */

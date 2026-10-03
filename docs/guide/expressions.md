@@ -29,14 +29,7 @@ one byte (0 or 1), and a `bytes` input is a little-endian `u16` length followed 
 
 ::: code-group
 
-```ts [TypeScript encoding]
-const data = encodeRunInputs(compiled, {
-  amount: 25_000n,
-  deadline: 1_800_000_000n,
-  enabled: true,
-  routeData: quote.swapInstructionData,
-});
-```
+<<< @/../clients/js/examples/docs/named-inputs.ts#encode [TypeScript encoding]
 
 <<< @/../clients/rust/examples/docs_limits.rs#encode-run-inputs [Rust encoding]
 

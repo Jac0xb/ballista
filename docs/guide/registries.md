@@ -22,28 +22,7 @@ This template counts each caller's runs.
 
 ::: code-group
 
-```ts [TypeScript · Template]
-import { account, defineTemplate, expression, step } from '@jac0xb/ballista';
-
-/** Count each caller's runs, in an entry of their own. */
-export const countRuns = defineTemplate({
-  registries: { runs: { count: 'u64' } },
-  accounts: {
-    caller: { signer: true, writable: true },
-    // The caller's entry in `runs`, keyed by the caller's address. The caller pays to create it.
-    callerRuns: account.registry('runs', { key: expression.accountKey('caller'), payer: 'caller' }),
-    // Creating an entry calls the System program.
-    systemProgram: account.systemProgram(),
-  },
-  steps: [
-    step.setRegistry(
-      'callerRuns',
-      'count',
-      expression.add(expression.registry('callerRuns', 'count'), expression.u64(1)),
-    ),
-  ],
-});
-```
+<<< @/../clients/js/examples/docs/count-runs.ts#template [TypeScript · Template]
 
 <<< @/../clients/rust/examples/docs_language.rs#count-runs [Rust · Template]
 
@@ -75,68 +54,9 @@ Let each caller send at most 1 SOL at once, with the allowance refilling over ab
 
 ::: code-group
 
-```ts [TypeScript · Template]
-import { account, defineTemplate, expression, rateLimit, systemTransfer } from '@jac0xb/ballista';
+<<< @/../clients/js/examples/docs/daily-limit-per-caller.ts#template [TypeScript · Template]
 
-/** Send SOL, at most 1 SOL at once per caller, refilling over about a day. */
-export const dailyLimitPerCaller = defineTemplate({
-  inputs: { amount: { type: 'u64' } },
-  registries: { limits: { spent: 'u64', lastSpend: 'i64' } },
-  accounts: {
-    caller: { signer: true, writable: true },
-    recipient: { writable: true },
-    callerLimit: account.registry('limits', { key: expression.accountKey('caller'), payer: 'caller' }),
-    systemProgram: account.systemProgram(),
-  },
-  steps: [
-    ...rateLimit({
-      registry: 'callerLimit', // the entry's account, not the registry
-      cap: expression.u64(1_000_000_000), // 1 SOL
-      refillPerSecond: expression.u64(11_574), // 1 SOL over 86,400 seconds, rounded down
-      amount: expression.input('amount'),
-    }),
-    systemTransfer({
-      systemProgram: account.fixed('systemProgram'),
-      from: account.fixed('caller'),
-      to: account.fixed('recipient'),
-      lamports: expression.input('amount'),
-    }),
-  ],
-});
-```
-
-```ts [TypeScript · Run]
-import { type Address } from '@solana/kit';
-
-import { compileTemplate, registryIndex } from '@jac0xb/ballista';
-import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction, findRegistryEntryAddress } from '@jac0xb/ballista/kit';
-
-export async function runDailyLimitPerCaller(run: {
-  templateAddress: Address;
-  caller: Address;
-  recipient: Address;
-  amount: bigint;
-}) {
-  const compiled = compileTemplate(dailyLimitPerCaller);
-  // The caller's entry: registry `limits`, keyed by the caller's address, as the template keys it.
-  const [callerLimit] = await findRegistryEntryAddress(
-    run.templateAddress,
-    registryIndex(compiled, 'limits'),
-    run.caller,
-  );
-  return buildKitRunInstruction({
-    compiled,
-    templateAddress: run.templateAddress,
-    inputs: { amount: run.amount },
-    accounts: {
-      caller: { address: run.caller },
-      recipient: { address: run.recipient },
-      callerLimit: { address: callerLimit },
-      systemProgram: { address: SYSTEM_PROGRAM_ADDRESS },
-    },
-  });
-}
-```
+<<< @/../clients/js/examples/docs/daily-limit-per-caller.ts#run [TypeScript · Run]
 
 <<< @/../clients/rust/examples/docs_language.rs#daily-limit-per-caller [Rust · Template]
 
@@ -174,93 +94,9 @@ example runs as written.
 
 ::: code-group
 
-```ts [TypeScript · Template]
-import { SYSTEM_PROGRAM_ADDRESS_BYTES, account, data, defineTemplate, expression, step } from '@jac0xb/ballista';
+<<< @/../clients/js/examples/docs/listed-callers-only.ts#template [TypeScript · Template]
 
-// Stand-ins so the example runs as written: replace AUTHOR with the author's address, and the
-// program and data with the call the list guards.
-const AUTHOR = new Uint8Array(32).fill(7);
-const PROTOCOL_PROGRAM = SYSTEM_PROGRAM_ADDRESS_BYTES;
-const CALL_DATA = Uint8Array.of(2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0);
-
-// True only in the author's runs: `caller` must sign, so only the author can match AUTHOR.
-const isAuthor = expression.equal(expression.accountKey('caller'), expression.pubkey(AUTHOR));
-
-/** Only listed callers make the call. The author's runs add or remove a member instead. */
-export const listedCallersOnly = defineTemplate({
-  inputs: {
-    member: { type: 'pubkey' }, // author's runs: whose entry to set
-    allow: { type: 'bool' }, // author's runs: the flag to set
-  },
-  registries: { allowed: { ok: 'bool' } },
-  accounts: {
-    caller: { signer: true, writable: true },
-    // The author's runs open the member's entry. Everyone else's runs open their own.
-    entry: account.registry('allowed', {
-      key: expression.select(isAuthor, expression.input('member'), expression.accountKey('caller')),
-      payer: 'caller',
-    }),
-    systemProgram: account.systemProgram(),
-    protocolProgram: { executable: true, address: PROTOCOL_PROGRAM },
-    pool: { writable: true },
-  },
-  steps: [
-    // The author-only branch: set the member's flag. Other runs write back the flag already there.
-    step.setRegistry(
-      'entry',
-      'ok',
-      expression.select(isAuthor, expression.input('allow'), expression.registry('entry', 'ok')),
-    ),
-    // Everyone but the author must be listed.
-    step.require(expression.or(isAuthor, expression.registry('entry', 'ok')), 'listed'),
-    // The call the list guards. The author's runs skip it.
-    step.invoke({
-      program: account.fixed('protocolProgram'),
-      accounts: [
-        { account: account.fixed('caller'), signer: true, writable: true },
-        { account: account.fixed('pool'), signer: false, writable: true },
-      ],
-      data: [data.literal(CALL_DATA)],
-      when: expression.not(isAuthor),
-    }),
-  ],
-});
-```
-
-```ts [TypeScript · Run]
-import { getAddressEncoder, type Address } from '@solana/kit';
-
-import { compileTemplate, registryIndex } from '@jac0xb/ballista';
-import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction, findRegistryEntryAddress } from '@jac0xb/ballista/kit';
-
-const PROTOCOL_PROGRAM_ADDRESS = SYSTEM_PROGRAM_ADDRESS; // the same stand-in
-
-export async function runListedCallersOnly(run: {
-  templateAddress: Address;
-  caller: Address;
-  pool: Address;
-  /** The author's runs only: the member to add or remove. */
-  set?: { member: Address; allow: boolean };
-}) {
-  const compiled = compileTemplate(listedCallersOnly);
-  // The key the template computes: the member in the author's runs, the caller in everyone else's.
-  const key = run.set?.member ?? run.caller;
-  const [entry] = await findRegistryEntryAddress(run.templateAddress, registryIndex(compiled, 'allowed'), key);
-  return buildKitRunInstruction({
-    compiled,
-    templateAddress: run.templateAddress,
-    // Every run passes both inputs. Only the author's runs read them.
-    inputs: { member: Uint8Array.from(getAddressEncoder().encode(key)), allow: run.set?.allow ?? false },
-    accounts: {
-      caller: { address: run.caller },
-      entry: { address: entry },
-      systemProgram: { address: SYSTEM_PROGRAM_ADDRESS },
-      protocolProgram: { address: PROTOCOL_PROGRAM_ADDRESS },
-      pool: { address: run.pool },
-    },
-  });
-}
-```
+<<< @/../clients/js/examples/docs/listed-callers-only.ts#run [TypeScript · Run]
 
 <<< @/../clients/rust/examples/docs_language.rs#listed-callers-only [Rust · Template]
 

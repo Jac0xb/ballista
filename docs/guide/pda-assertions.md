@@ -17,62 +17,9 @@ see [Signing](/guide/trust-model#signing).
 
 ::: code-group
 
-```ts [TypeScript · Template]
-import {
-  account,
-  assertAta,
-  compileTemplate,
-  defineTemplate,
-  ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES,
-} from '@jac0xb/ballista';
+<<< @/../clients/js/examples/docs/assert-recipient-ata.ts#template [TypeScript · Template]
 
-const template = defineTemplate({
-  accounts: {
-    associatedTokenProgram: { executable: true, address: ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES },
-    tokenProgram: {},
-    recipient: {},
-    mint: {},
-    destinationAta: { writable: true },
-  },
-  steps: [
-    assertAta({
-      associatedTokenAccount: account.fixed('destinationAta'),
-      owner: account.fixed('recipient'),
-      mint: account.fixed('mint'),
-      tokenProgram: account.fixed('tokenProgram'),
-      associatedTokenProgram: account.fixed('associatedTokenProgram'),
-    }),
-  ],
-});
-
-const compiled = compileTemplate(template);
-```
-
-```ts [TypeScript · Run]
-import { address, getAddressEncoder, getProgramDerivedAddress } from '@solana/kit';
-import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
-
-const ASSOCIATED_TOKEN_PROGRAM = address('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
-
-// templateAddress, recipient, mint and tokenProgram are addresses you supply.
-const encoder = getAddressEncoder();
-const [destinationAta] = await getProgramDerivedAddress({
-  programAddress: ASSOCIATED_TOKEN_PROGRAM,
-  seeds: [encoder.encode(recipient), encoder.encode(tokenProgram), encoder.encode(mint)],
-});
-
-const run = buildKitRunInstruction({
-  compiled,
-  templateAddress,
-  accounts: {
-    associatedTokenProgram: { address: ASSOCIATED_TOKEN_PROGRAM },
-    tokenProgram: { address: tokenProgram },
-    recipient: { address: recipient },
-    mint: { address: mint },
-    destinationAta: { address: destinationAta },
-  },
-});
-```
+<<< @/../clients/js/examples/docs/assert-recipient-ata.ts#run [TypeScript · Run]
 
 <<< @/../clients/rust/examples/docs_security.rs#assert-ata-template [Rust · Template]
 

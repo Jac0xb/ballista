@@ -195,7 +195,9 @@ pub const OP_SET_RETURN_DATA: u8 = 63;
 /// The number of instructions in the transaction. `a` is the Instructions sysvar account, as for
 /// every opcode up to `OP_READ_INSTRUCTION_BYTES`.
 pub const OP_INSTRUCTION_COUNT: u8 = 64;
-/// The index of the instruction running this template.
+/// The index of the transaction instruction running this template, from the Instructions sysvar,
+/// which counts only the transaction's own instructions: under a CPI, such as a nested run, it is
+/// the outer instruction's.
 pub const OP_INSTRUCTION_INDEX: u8 = 65;
 /// The program of the instruction whose `u64` index is in register `b`.
 pub const OP_INSTRUCTION_PROGRAM: u8 = 66;

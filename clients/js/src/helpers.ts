@@ -19,6 +19,11 @@ export const TOKEN_PROGRAM_ADDRESS_BYTES = Uint8Array.of(
   6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91,
   55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
 );
+/** `TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb`, Token-2022. Its token accounts share the SPL Token layout's first 165 bytes. */
+export const TOKEN_2022_PROGRAM_ADDRESS_BYTES = Uint8Array.of(
+  6, 221, 246, 225, 238, 117, 143, 222, 24, 66, 93, 188, 228, 108, 205, 218, 182, 26, 252, 77, 131, 185, 13,
+  39, 254, 189, 249, 40, 216, 161, 139, 252,
+);
 /** `ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL` */
 export const ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES = Uint8Array.of(
   140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16,

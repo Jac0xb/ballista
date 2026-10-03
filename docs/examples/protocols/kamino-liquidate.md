@@ -56,8 +56,8 @@ You supply three inputs:
 
 :::
 
-The Rust tabs' `program`, `anchor` and account flags are
-[shared helpers](/examples/protocols/#rust-helpers).
+The Rust template takes its program addresses, discriminators, `token_account()` and
+`balance_of()` from the [shared helpers](/examples/protocols/#rust-helpers).
 
 If the obligation is healthy again when the run lands, say because another liquidator got there
 first, Kamino refuses and the run reverts. To skip instead, make both the liquidation and the
@@ -68,7 +68,7 @@ at least `unhealthy_borrow_value_sf` (byte 2256). No template reads them yet, so
 ## Run it
 
 Kamino's v2 liquidation takes 25 accounts: 20 the template passes, then the `farmAccounts`
-[account group](/guide/account-groups) of five. A reserve is Kamino's pool for one token, and a
+[account group](/guide/accounts-and-cpis#account-groups) of five. A reserve is Kamino's pool for one token, and a
 farm is a Kamino Farms rewards pool attached to one. The group holds:
 
 - the obligation's user state in the withdrawn reserve's collateral farm, and that farm;

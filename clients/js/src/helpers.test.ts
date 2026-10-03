@@ -3,6 +3,8 @@ import { describe, expect, test } from 'vitest';
 
 import {
   BALLISTA_PROGRAM_ADDRESS,
+  TOKEN_2022_PROGRAM_ADDRESS_BYTES,
+  TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
   addressBytes,
   anchorDiscriminator,
@@ -16,6 +18,11 @@ import {
 } from './index.js';
 
 describe('addressBytes', () => {
+  test('the token program constants are the bytes of their addresses', () => {
+    expect(TOKEN_PROGRAM_ADDRESS_BYTES).toEqual(addressBytes('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'));
+    expect(TOKEN_2022_PROGRAM_ADDRESS_BYTES).toEqual(addressBytes('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'));
+  });
+
   test('gives the 32 bytes Kit encodes, as a Uint8Array a template accepts', () => {
     const encoded = getAddressEncoder().encode(address(BALLISTA_PROGRAM_ADDRESS));
     const bytes = addressBytes(address(BALLISTA_PROGRAM_ADDRESS));

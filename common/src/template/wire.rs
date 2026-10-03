@@ -237,6 +237,63 @@ pub const OP_READ_REGISTRY: u8 = 76;
 /// [`RegistryField`]; the value has the type of its read opcode, one of the five whose width holds
 /// every value of that type.
 pub const OP_WRITE_REGISTRY: u8 = 77;
+/// The number of members the caller supplied in account group `a`, as a `u64`. `b` and `c` are
+/// [`NO_INDEX`] and the immediate is zero.
+pub const OP_GROUP_LENGTH: u8 = 78;
+/// Whether any member of account group `a` matches a filter, as a `bool`. `b` is the pubkey-table
+/// index of a program the member's owner must be, `c` a second one or [`NO_INDEX`], and the
+/// immediate a [`GroupScan`] naming the match and except segments and the data-length floor.
+/// Reads each member's data in place, for the length of the opcode only.
+pub const OP_GROUP_ANY: u8 = 79;
+/// As [`OP_GROUP_ANY`], but the number of members that match, as a `u64`.
+pub const OP_GROUP_COUNT: u8 = 80;
+
+/// Match entries a group filter holds at most.
+pub const MAX_GROUP_MATCHES: usize = 4;
+/// Except keys a group filter holds at most.
+pub const MAX_GROUP_EXCEPTS: usize = 4;
+
+/// What `OP_GROUP_ANY`'s and `OP_GROUP_COUNT`'s immediates pack: the first of the filter's data
+/// segments in bytes 0 and 1, the match count in byte 2, the except count in byte 3, and the
+/// data-length floor in bytes 4 to 7.
+///
+/// The segments run contiguously from `segment_start`: `matches` match segments, then `excepts`
+/// except segments. A match segment's kind is the `DATA_REG_*` kind of its value's type, its
+/// register holds the value, and its offset field is the account-data offset the value must
+/// appear at, encoded as invocation data is; its length field is zero. An except segment is a
+/// `DATA_REG_PUBKEY` naming a `pubkey` register, offset and length zero.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GroupScan {
+    pub segment_start: u16,
+    pub matches: u8,
+    pub excepts: u8,
+    pub min_data_len: u32,
+}
+
+impl GroupScan {
+    pub const fn encode(self) -> u64 {
+        self.segment_start as u64
+            | (self.matches as u64) << 16
+            | (self.excepts as u64) << 24
+            | (self.min_data_len as u64) << 32
+    }
+
+    /// Every bit of the immediate is a field, so any value decodes.
+    pub const fn decode(immediate: u64) -> Self {
+        Self {
+            segment_start: immediate as u16,
+            matches: (immediate >> 16) as u8,
+            excepts: (immediate >> 24) as u8,
+            min_data_len: (immediate >> 32) as u32,
+        }
+    }
+
+    /// The segments the filter names, `[start, end)`: its matches, then its excepts.
+    pub const fn segment_range(self) -> (usize, usize) {
+        let start = self.segment_start as usize;
+        (start, start + self.matches as usize + self.excepts as usize)
+    }
+}
 
 /// The first seed of a registry entry's address: `["registry", template, [index], key]`.
 pub const REGISTRY_SEED: &[u8] = b"registry";
@@ -819,6 +876,11 @@ pub enum TemplateError {
     /// field read or write with no open of its account before it, outside the registry, or of the
     /// wrong type.
     InvalidRegistry(usize),
+    /// A group opcode names an account group the header does not declare, or its filter breaks a
+    /// rule: no program or an unknown one, 1 to `MAX_GROUP_MATCHES` matches and at most
+    /// `MAX_GROUP_EXCEPTS` excepts, segments in range, each match a fixed-width value whose bytes
+    /// fit inside the data-length floor, and each except a `pubkey`.
+    InvalidAccountGroup(usize),
 }
 
 impl TemplateError {
@@ -862,6 +924,7 @@ impl TemplateError {
             TemplateError::InvalidOutput(index) => (30, clamp(index)),
             TemplateError::InvalidIntrospection(index) => (31, clamp(index)),
             TemplateError::InvalidRegistry(index) => (32, clamp(index)),
+            TemplateError::InvalidAccountGroup(index) => (33, clamp(index)),
         };
         (VERIFIER_ERROR_BASE + index, context)
     }
@@ -869,7 +932,7 @@ impl TemplateError {
 
 /// Verifier error names in code order, shared with the SDK through
 /// `fixtures/verifier-error-names.txt`.
-pub const VERIFIER_ERROR_NAMES: [&str; 33] = [
+pub const VERIFIER_ERROR_NAMES: [&str; 34] = [
     "Truncated",
     "PayloadTooLarge",
     "InvalidMagic",
@@ -903,6 +966,7 @@ pub const VERIFIER_ERROR_NAMES: [&str; 33] = [
     "InvalidOutput",
     "InvalidIntrospection",
     "InvalidRegistry",
+    "InvalidAccountGroup",
 ];
 
 /// Packs an error kind and a 16-bit context into one custom program error code.
@@ -1014,13 +1078,14 @@ mod tests {
             TemplateError::InvalidOutput(15),
             TemplateError::InvalidIntrospection(15),
             TemplateError::InvalidRegistry(15),
+            TemplateError::InvalidAccountGroup(15),
         ];
         let mut codes: Vec<u32> = variants.iter().map(|error| error.code().0).collect();
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(codes.len(), variants.len());
         assert_eq!(codes[0], VERIFIER_ERROR_BASE);
-        assert_eq!(*codes.last().unwrap(), VERIFIER_ERROR_BASE + 32);
+        assert_eq!(*codes.last().unwrap(), VERIFIER_ERROR_BASE + 33);
         for variant in &variants {
             let (code, _) = variant.code();
             let name = format!("{variant:?}");
@@ -1040,7 +1105,7 @@ mod tests {
         assert_eq!(TemplateError::InvalidOutput(9).code(), (VERIFIER_ERROR_BASE + 30, 9));
         let decoded = decode_ballista_error(encode_error(VERIFIER_ERROR_BASE + 30, 9));
         assert_eq!(decoded.map(|error| error.name), Some("InvalidOutput"));
-        assert_eq!(decode_ballista_error(VERIFIER_ERROR_BASE + 33), None);
+        assert_eq!(decode_ballista_error(VERIFIER_ERROR_BASE + 34), None);
     }
 
     #[test]
@@ -1058,5 +1123,14 @@ mod tests {
 
         assert_eq!(REGISTRY_ENTRY_HEADER_LEN, 4 + 1 + 1 + 2 + 32 + 32);
         assert_eq!(REGISTRY_ENTRY_HEADER_LEN + MAX_REGISTRY_SIZE, 584);
+    }
+
+    #[test]
+    fn group_filter_immediates_round_trip() {
+        let filter = GroupScan { segment_start: 0x0102, matches: 3, excepts: 4, min_data_len: 165 };
+        assert_eq!(filter.encode(), 0x0000_00a5_0403_0102);
+        assert_eq!(GroupScan::decode(filter.encode()), filter);
+        assert_eq!(filter.segment_range(), (0x0102, 0x0102 + 7));
+        assert_eq!(GroupScan::decode(u64::MAX).min_data_len, u32::MAX);
     }
 }

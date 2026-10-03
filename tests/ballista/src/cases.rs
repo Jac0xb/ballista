@@ -6,7 +6,7 @@
 use ballista_common::instruction::{IX_CREATE_TEMPLATE, IX_RUN};
 use ballista_common::template::{
     ProgramBuilder, Segment, TemplateAccountHeader, ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER,
-    ACCOUNT_WRITABLE, DATA_REG_U64, INSTRUCTIONS_SYSVAR_ID, NO_INDEX, OP_ADD, OP_AND, OP_BIT_AND,
+    ACCOUNT_WRITABLE, DATA_REG_PUBKEY, DATA_REG_U64, INSTRUCTIONS_SYSVAR_ID, NO_INDEX, OP_ADD, OP_AND, OP_BIT_AND,
     OP_BIT_OR, OP_BIT_XOR, OP_CAST_U64, OP_EQ, OP_GTE, OP_INSTRUCTION_ACCOUNT,
     OP_INSTRUCTION_ACCOUNT_COUNT, OP_INSTRUCTION_ACCOUNT_FLAGS, OP_INSTRUCTION_COUNT,
     OP_INSTRUCTION_DATA_LEN, OP_INSTRUCTION_INDEX, OP_INSTRUCTION_PROGRAM, OP_LT, OP_LTE,
@@ -89,6 +89,7 @@ pub fn cases() -> Vec<(&'static str, Case)> {
         ("run, count loop 30 passes, no cpi", count_loop(creator, 11, 30)),
         ("run, introspection, no cpi", introspection(creator, 13)),
         ("run, registry open and update", registry_update(creator, 14)),
+        ("run, group filter over 8 token accounts, no cpi", group_filter(creator, 15)),
     ]
 }
 
@@ -563,4 +564,46 @@ fn registry_update(creator: Pubkey, template_id: u16) -> Case {
         ],
         Vec::new(),
     )
+}
+
+/// The exclusion check a route needs: no member of the group is a Token account owned by the
+/// signer, other than the declared destination. Eight members, the destination among them and
+/// seven pool vaults owned by others, so every member reaches the owner-field comparison.
+fn group_filter(creator: Pubkey, template_id: u16) -> Case {
+    const TOKEN: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    let mut builder = ProgramBuilder::new();
+    let user = builder.account(ACCOUNT_SIGNER, None, None, 0);
+    let destination = builder.account(0, None, None, 0);
+    builder.account_groups(1);
+    let user_key = builder.account_key(user);
+    let destination_key = builder.account_key(destination);
+    let found = builder.group_filter(
+        false,
+        0,
+        &[TOKEN.to_bytes()],
+        &[(32, DATA_REG_PUBKEY, user_key)],
+        &[destination_key],
+        165,
+    );
+    let none = builder.not(found);
+    builder.require(none);
+
+    let token_account = |owner: Pubkey| {
+        let mut account = Account::new(2_039_280, 165, &TOKEN);
+        account.data[32..64].copy_from_slice(owner.as_ref());
+        account
+    };
+    let (user_key, user_account) = funded(template_id * 100 + 1);
+    let destination_key = key(template_id * 100 + 2);
+    let mut runtime = vec![
+        (AccountMeta::new_readonly(user_key, true), user_account),
+        (AccountMeta::new_readonly(destination_key, false), token_account(user_key)),
+        (AccountMeta::new(destination_key, false), token_account(user_key)),
+    ];
+    for index in 0..7 {
+        let vault = key(template_id * 100 + 10 + index);
+        let pool = key(template_id * 100 + 30 + index);
+        runtime.push((AccountMeta::new(vault, false), token_account(pool)));
+    }
+    run_case(creator, template_id, builder.build().expect("builds"), runtime, vec![8])
 }

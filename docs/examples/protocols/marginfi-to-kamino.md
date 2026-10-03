@@ -43,13 +43,13 @@ Kamino account that records their deposits and debts.
 
 :::
 
-The Rust tabs' `program`, `anchor` and account flags are
-[shared helpers](/examples/protocols/#rust-helpers).
+The Rust template takes its program addresses, discriminators, `token_account()` and
+`balance_of()` from the [shared helpers](/examples/protocols/#rust-helpers).
 
 ## Run it
 
 marginfi's withdrawal takes its eight accounts, then the `healthAccounts`
-[account group](/guide/account-groups), filled as for
+[account group](/guide/accounts-and-cpis#account-groups), filled as for
 [Withdraw everything, with a minimum](/examples/protocols/marginfi-withdraw#run-it). It is empty
 when the withdrawn balance was the account's only one.
 

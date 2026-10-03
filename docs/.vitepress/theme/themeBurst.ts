@@ -11,14 +11,23 @@ export function useThemeBurst() {
   const { isDark } = useData();
   provide('toggle-appearance', async (event?: MouseEvent) => {
     const root = document.documentElement;
-    // The circle comes out of the switch's knob: the one that was clicked, else the visible one.
-    const clicked = (event?.currentTarget ?? event?.target) as Element | null | undefined;
-    const knob =
-      clicked?.closest?.('.VPSwitchAppearance')?.querySelector('.check') ??
-      [...document.querySelectorAll('.VPSwitchAppearance .check')].find((element) => element.getBoundingClientRect().width > 0);
-    const box = knob?.getBoundingClientRect();
-    const x = box ? box.left + box.width / 2 : event?.clientX ?? window.innerWidth - 60;
-    const y = box ? box.top + box.height / 2 : event?.clientY ?? 38;
+    // The circle comes out of where the pointer clicked. A keyboard toggle has no pointer position
+    // (`detail` is 0), so it comes out of the switch's knob: the one that was clicked, else the
+    // visible one.
+    let x: number;
+    let y: number;
+    if (event && event.detail > 0) {
+      x = event.clientX;
+      y = event.clientY;
+    } else {
+      const clicked = (event?.currentTarget ?? event?.target) as Element | null | undefined;
+      const knob =
+        clicked?.closest?.('.VPSwitchAppearance')?.querySelector('.check') ??
+        [...document.querySelectorAll('.VPSwitchAppearance .check')].find((element) => element.getBoundingClientRect().width > 0);
+      const box = knob?.getBoundingClientRect();
+      x = box ? box.left + box.width / 2 : window.innerWidth - 60;
+      y = box ? box.top + box.height / 2 : 38;
+    }
     const toDark = !isDark.value;
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || typeof document.startViewTransition !== 'function') {
       isDark.value = toDark;

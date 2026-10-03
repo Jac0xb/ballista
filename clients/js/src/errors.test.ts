@@ -64,7 +64,8 @@ describe('error decoding', () => {
     expect(decodeBallistaError(6027)).toBeUndefined();
     expect(decodeBallistaError(6099)).toBeUndefined();
     expect(decodeBallistaError((5 << 16) | 6130)).toMatchObject({ name: 'InvalidOutput', context: 5, source: 'verifier' });
-    expect(decodeBallistaError(6133)).toBeUndefined();
+    expect(decodeBallistaError(6133)).toMatchObject({ name: 'InvalidAccountGroup', source: 'verifier' });
+    expect(decodeBallistaError(6134)).toBeUndefined();
     expect(decodeBallistaError(-1)).toBeUndefined();
   });
 

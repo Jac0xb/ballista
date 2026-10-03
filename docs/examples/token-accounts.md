@@ -25,9 +25,7 @@ owner, the token program and the mint. `assertAta` derives that address and fail
 passed in doesn't match. If any step fails, the whole run reverts.
 
 Each recipient is one row of a batch: two accounts, the recipient's wallet and its ATA.
-`step.forEach` runs the three steps once per row. The Rust template spells out what the two helpers
-compile to: a PDA derivation compared with the ATA's address, then the ATA program's `Create`
-guarded by `isEmpty`.
+`step.forEach` runs the three steps once per row.
 
 ::: code-group
 

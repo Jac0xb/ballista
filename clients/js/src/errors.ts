@@ -72,6 +72,7 @@ export const VERIFIER_ERROR_NAMES = [
   'InvalidOutput',
   'InvalidIntrospection',
   'InvalidRegistry',
+  'InvalidAccountGroup',
 ] as const;
 
 export type RuntimeErrorName = (typeof RUNTIME_ERROR_NAMES)[number];

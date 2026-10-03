@@ -135,6 +135,29 @@ export const AccountConstraintSchema = z
 export type AccountConstraint = z.infer<typeof AccountConstraintSchema>;
 export type AccountConstraintInput = z.input<typeof AccountConstraintSchema>;
 
+/**
+ * What `groupAny` and `groupCount` test each member of an account group against. A member matches
+ * when all of these hold:
+ *
+ * - its owner is one of `programs`, one or two program addresses (Token and Token-2022, say);
+ * - its data holds at least `minDataLength` bytes, by default just enough for every `match`;
+ * - for each `match` entry, its data at `offset` holds `equals`, encoded as invocation data
+ *   encodes a value of its type: a `pubkey` as 32 bytes, a `u64` or `i64` as 8 little-endian
+ *   bytes, a `u128` as 16, a `bool` as one byte;
+ * - its address is none of `exceptKeys`.
+ */
+export interface GroupFilter {
+  programs: Uint8Array[];
+  minDataLength?: number;
+  match: { offset: number; equals: Expression }[];
+  exceptKeys?: Expression[];
+}
+
+/** Match entries a group filter holds at most. Mirrors `MAX_GROUP_MATCHES` in `wire.rs`. */
+export const MAX_GROUP_MATCHES = 4;
+/** Except keys a group filter holds at most. Mirrors `MAX_GROUP_EXCEPTS` in `wire.rs`. */
+export const MAX_GROUP_EXCEPTS = 4;
+
 export type Expression =
   | { kind: 'input'; name: string }
   /** A batch row input of the current iteration; valid inside `forEach` only. */
@@ -247,7 +270,32 @@ export type Expression =
    * A field of the registry entry in fixed account `account`, which must be declared with
    * `account.registry`. Typed as the field.
    */
-  | { kind: 'registry'; account: string; field: string };
+  | { kind: 'registry'; account: string; field: string }
+  /** How many members the caller supplied in account group `group`, a `u64`. */
+  | { kind: 'groupLength'; group: string }
+  /** Whether any member of account group `group` matches `filter`, a `bool`. */
+  | { kind: 'groupAny'; group: string; filter: GroupFilter }
+  /** How many members of account group `group` match `filter`, a `u64`. */
+  | { kind: 'groupCount'; group: string; filter: GroupFilter };
+
+const groupFilterSchema = (): z.ZodType<GroupFilter> =>
+  z
+    .object({
+      programs: z
+        .array(bytes32)
+        .min(1)
+        .max(2)
+        .refine((programs) => programs.length < 2 || programs[0]!.some((byte, index) => byte !== programs[1]![index]), {
+          error: 'A group filter names two different programs',
+        }),
+      minDataLength: u32.optional(),
+      match: z
+        .array(z.object({ offset: z.number().int().min(0).max(0xffff), equals: ExpressionSchema }).strict())
+        .min(1)
+        .max(MAX_GROUP_MATCHES),
+      exceptKeys: z.array(ExpressionSchema).max(MAX_GROUP_EXCEPTS).optional(),
+    })
+    .strict();
 
 export const ExpressionSchema: z.ZodType<Expression> = z.lazy(() =>
   z.discriminatedUnion('kind', [
@@ -389,6 +437,9 @@ export const ExpressionSchema: z.ZodType<Expression> = z.lazy(() =>
       .strict(),
     z.object({ kind: z.literal('bytesLength'), value: ExpressionSchema }).strict(),
     z.object({ kind: z.literal('registry'), account: identifier, field: identifier }).strict(),
+    z.object({ kind: z.literal('groupLength'), group: identifier }).strict(),
+    z.object({ kind: z.literal('groupAny'), group: identifier, filter: groupFilterSchema() }).strict(),
+    z.object({ kind: z.literal('groupCount'), group: identifier, filter: groupFilterSchema() }).strict(),
   ]),
 );
 
@@ -575,8 +626,9 @@ export const TemplateSchema = z
     emitEvent: z.boolean().default(false),
     /**
      * Caller-sized groups of accounts, supplied at run time after the batch rows. A CPI names one
-     * to forward its members after the CPI's declared accounts. Members carry no constraints,
-     * cannot be read, and never sign.
+     * to forward its members after the CPI's declared accounts. Members carry no constraints and
+     * never sign; a template can count them and test them against a filter (`groupLength`,
+     * `groupAny`, `groupCount`), but not read them otherwise.
      */
     accountGroups: z
       .array(identifier)
@@ -832,6 +884,12 @@ export const expression = {
   registry: (accountName: string, field: string): Expression => ({ kind: 'registry', account: accountName, field }),
   /** Shorthand for `accountField(account.fixed(name), 'key')`. */
   accountKey: (name: string): Expression => ({ kind: 'accountField', account: { kind: 'account', name }, field: 'key' }),
+  /** How many members the caller supplied in account group `group`, a `u64`. */
+  groupLength: (group: string): Expression => ({ kind: 'groupLength', group }),
+  /** Whether any member of account group `group` matches `filter`, a `bool`. See `GroupFilter`. */
+  groupAny: (group: string, filter: GroupFilter): Expression => ({ kind: 'groupAny', group, filter }),
+  /** How many members of account group `group` match `filter`, a `u64`. See `GroupFilter`. */
+  groupCount: (group: string, filter: GroupFilter): Expression => ({ kind: 'groupCount', group, filter }),
 };
 
 export const data = {

@@ -67,8 +67,8 @@ It does not guard against:
 
 :::
 
-The Rust tabs' `program`, `anchor` and account flags are
-[shared helpers](/examples/protocols/#rust-helpers).
+The Rust template takes its program addresses, `token_account()`, `balance_of()` and
+`jupiter_route_data()` from the [shared helpers](/examples/protocols/#rust-helpers).
 
 SOL/USD prices the SOL sold in the USDC bought, counting a USDC as a dollar. Pyth publishes a price
 as `price × 10^exponent` per whole token. The template reads the exponent and both mints' decimals
@@ -79,7 +79,7 @@ on chain, and values what was sold, in the destination token's smallest units, a
 
 Jupiter's `route` starts its account list with the token program, the signer, and the signer's
 source and destination token accounts. The template passes those four itself; the rest of the
-route's accounts arrive as the `routeAccounts` [account group](/guide/account-groups).
+route's accounts arrive as the `routeAccounts` [account group](/guide/accounts-and-cpis#account-groups).
 
 The Run tabs pass the eight declared accounts, `jupiter`, `tokenProgram`, `priceUpdate`, `trader`,
 `sourceAta`, `destinationAta`, `sourceMint` (wrapped SOL's mint) and `destinationMint` (USDC's),

@@ -463,6 +463,75 @@
       }
     ]
   },
+  "group-filter": {
+    "hash": "18f56953c284849afff33171e78b29f865591b34404d36870af02bf7ca6d2a46",
+    "stats": {
+      "payloadBytes": 404,
+      "fixedAccounts": 2,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 11,
+      "instructions": 12,
+      "cpis": 0,
+      "maxExpandedCpis": 0,
+      "maxCpiDataLength": 0,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 1
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "inputs.mint"
+      },
+      {
+        "pc": 1,
+        "path": "constants[0]"
+      },
+      {
+        "pc": 2,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 3,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 4,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 5,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 6,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 7,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 8,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 9,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 10,
+        "path": "steps[0]"
+      },
+      {
+        "pc": 11,
+        "path": "steps[0]"
+      }
+    ]
+  },
   "dynamic-read": {
     "hash": "c8e98ec18749c9702e09f7bc7126d339c4cf51dbfe8d0d897c1bc9507e08e2bd",
     "stats": {

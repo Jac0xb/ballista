@@ -6,52 +6,37 @@ you know which parts the caller controls.
 
 ## Who controls what
 
-| Party | Controls | What limits them |
-| --- | --- | --- |
-| Template author | The declarations, inputs and steps | The [finalization checks](#finalization-checks); the template is fixed after them |
-| Caller | Every account, input value and signature in the run | The template's declarations, pins and checks |
-| Transaction builder | The caller's choices, when someone else builds the transaction, and its other instructions | The same, and what the signers check before signing |
-| Other instructions | Any account the signers allow, before and after the run | A template sees them only through [introspection](/reference/language#introspection) |
-| Called programs | What each call does with the accounts it gets | Their own checks, and the template's checks after the call |
-| Called programs' upgrade authorities | What those programs do after an upgrade | Nothing in the template. Call programs whose authority you trust |
-| Anyone, later (replay) | A second run, with the same inputs or the same signed message, given the signatures it needs | Solana refuses only an identical transaction. Use a deadline, or record each use in a [registry entry](/guide/registries) |
-| Ballista | Its checks, and the registry entries templates declare | It holds no authority of its own: see [Signing](#signing) and [State](#state) |
-| Ballista's upgrade authority | What every template on the pre-release devnet build does | Nothing yet. Releases will have none: see [Deployments](#deployments) |
+Several parties can shape what a run does. Here is what each one decides, and what keeps them in
+check.
 
-Treat the caller and the builder as hostile unless the template binds them: a value from an input,
-or an account nothing pins, is theirs to choose.
+- **The template's author** writes its accounts, inputs and steps. Once the template is
+  [finalized](#finalization-checks) it can never change, so the author has no further say.
+- **Whoever runs it** chooses every input and every account, and supplies the signatures. The
+  template's rules are the only limit: an input it doesn't check, or an account it doesn't fix by
+  address or owner, is the caller's to choose. Treat the caller as hostile unless the template
+  rules something out.
+- **Whoever builds the transaction**, if that isn't the signer (a wallet, an app or a bot), makes
+  the same choices, and can add other instructions before or after the run. The signer's review
+  before signing is the only check on those. A template can inspect the other instructions only
+  through [introspection](/reference/language#introspection).
+- **The programs a template calls** decide what each call does. Their own checks apply, and the
+  template can check the result after the call returns.
+- **Whoever can upgrade those programs** can change what they do later, and nothing in the template
+  can stop that. Call programs whose upgrade authority you trust, or that have none.
+- **Ballista** enforces the template and keeps its registry entries, but holds no authority of its
+  own; see [Signing](#signing) and [State](#state).
+- **Ballista's upgrade authority** can change the pre-release devnet build, and every template on
+  it. Releases will have no upgrade authority; see [Deployments](#deployments).
 
-## Finalization checks
+## Template finalization checks {#finalization-checks}
 
-Finalization is the one-time check that locks a template on chain, at the end of its upload. The
-Ballista program finalizes a template only if:
+Finalization is the one-time check, at the end of an upload, that makes a template immutable. Every
+template passes through these gates first:
 
-- **The bytes are sound.** The upload is complete and matches the hash recorded when it began, and
-  the bytes are well formed: a known format and version, no unknown instructions, and no reserved
-  bits or fields set.
-- **Every value is typed.** Each value is set before it is read and has the type each instruction
-  expects. A call's return data is read only straight after that call, and only if the call
-  always runs.
-- **Every account is declared.** Each account reference points at a declared account, and row
-  accounts and row inputs appear only inside a row loop.
-- **Calls stay within the declarations.** No call passes a declared account as a signer or as
-  writable unless its declaration requires that privilege (see [Privileges](#privileges)), and
-  every program the template calls, or derives a [PDA](/reference/glossary#pda) with, is declared
-  `executable`.
-- **Reads stay in bounds.** Each fixed-offset read stays within the account's declared minimum
-  length, and introspection reads only the Instructions sysvar, pinned to its address.
-- **The work is bounded.** Loops are never nested, and each has a fixed maximum, so even the worst
-  case stays within every [program limit](/reference/limits#program-limits): inputs, registers,
-  instructions, accounts, loops, calls, call data, seeds, output and registries.
-- **Registries and output follow their rules.** A
-  [registry entry](/reference/language#registries) is opened at the top level, before any call
-  and before it is used. It is read and written only through its declared fields, and never passed
-  writable to a call; a call that reaches it through another slot or an account group fails the
-  run. Return data is set at most once, after the last call, and every `emit` starts with a
-  literal tag ([output rules](/reference/language#output)).
+<FinalizationGates />
 
-Finalization does not check that a called program's address is pinned (only the TypeScript
-compiler requires that; see [Pins](#pins)), what the called programs do, or who may run the
+Finalization does not check that a called program's address is pinned (only the SDK compilers
+require that; see [Pins](#pins)), what the called programs do, or who may run the
 template.
 
 Each run then checks every account against its declaration (signer, writable, executable,
@@ -61,37 +46,26 @@ writes to the template.
 
 ## Privileges
 
-A declaration is a ceiling for its slot. A call can pass the account in a slot as a signer or as
-writable only if the slot's declaration requires that privilege and the transaction granted it.
-The ceiling has three gaps:
+A call can pass an account as a signer or writable only if its declaration asks for that and the
+transaction granted it. Three gaps remain:
 
-- **It bounds accounts, not calls.** A declared signer can be passed as a signer to every call in
-  the template, with whatever data each call builds. A call whose data comes from an input can be
-  any instruction the called program accepts from that signer.
+- **It bounds accounts, not calls.** A declared signer can sign for every call in the template,
+  including a call whose data comes from an input.
 - **It bounds slots, not addresses.** The caller fills every slot, so one address can sit in a
-  read-only slot, even a pinned one, and in a writable slot too. A call that passes the writable
-  slot passes that address writable. Where it matters, require the two keys to differ, as in
-  [Aliased accounts](#aliased-accounts).
-- **Group members have no declaration.** A call passes each
-  [account group](/guide/account-groups) member as writable whenever Ballista's instruction holds
-  it writable, though never as a signer. The transaction decides that at the top level, and the
-  calling program under a CPI.
+  read-only slot, even a pinned one, and in a writable slot that a call passes writable. Where it
+  matters, require the two keys to differ, as in [Aliased accounts](#aliased-accounts).
+- **Group members have no declaration.** [Account group](/guide/accounts-and-cpis#account-groups)
+  members are passed writable whenever the transaction marked them so (never as signers).
 
 A template has no authority of its own: every call it makes, its signers could have made directly.
-What the template adds is that its steps and checks run together, in one transaction, exactly as
-written.
+It only guarantees that its steps and checks run together, in one transaction, exactly as written.
 
 ## Signing
 
-Ballista signs with the seeds of its own PDAs in two places only:
-
-- **At upload**, to create the template's account at its address.
-- **When a run opens a registry entry that doesn't exist yet**, to create its account. A payer the
-  template names pays the rent.
-
-A template's own calls never carry seeds, so Ballista never signs them, and no template can sign
-as a PDA. [`assertPda`](/guide/pda-assertions) checks how an address was derived; it does not let
-Ballista sign for it.
+Ballista signs only to create its own accounts: a template's account at upload, and a registry
+entry the first time a run opens it (the template's named payer pays the rent). It never signs a
+template's calls, so no template can sign as a PDA; [`assertPda`](/guide/pda-assertions) only
+checks how an address was derived.
 
 ## State
 
@@ -136,19 +110,20 @@ template relies on an account's data, it should also check:
 - **the identity**: the address, a derivation ([`assertPda`](/guide/pda-assertions)), or fields
   that tie the account to the run, such as a token account's mint and owner.
 
-Only the TypeScript compiler requires pins, unless you opt out as described below. It refuses a
-template that calls a program without a pinned address, or that reads the data of an account that
-pins neither its owner nor its address; neither rule checks a type. The Ballista program checks no
-pins, so a template built with the Rust `ProgramBuilder`, or by hand, can leave a program unpinned
-and still be finalized. Check the pins of any template you did not compile yourself.
+Only the SDK compilers require pins, unless you opt out as described below. TypeScript
+`compileTemplate` and Rust `Template::compile` both refuse a template that calls a program without a
+pinned address, or that reads the data of an account that pins neither its owner nor its address;
+neither rule checks a type. The Ballista program checks no pins, so a template built by hand or with
+other tools can leave a program unpinned and still be finalized. Check the pins of any template you did not compile yourself.
 
 ## Opting out
 
-`unsafeUnpinned: true` on an account declaration turns off both compiler requirements for that
-account, so the template accepts whatever the caller passes. That suits a template only its caller
-relies on, such as a wallet's own maintenance template, and not one that someone else relies on as
-a safeguard: the caller could point a call at any program. The long name is meant to stand out in
-code review. The flag exists only in the TypeScript template document and is not stored on chain.
+`unsafeUnpinned: true` on an account declaration, or `.unsafe_unpinned()` in Rust, turns off both
+compiler requirements for that account, so the template accepts whatever the caller passes. That
+suits a template only its caller relies on, such as a wallet's own maintenance template, and not one
+that someone else relies on as a safeguard: the caller could point a call at any program. The long
+name is meant to stand out in code review. The flag exists only in the template you compile and is
+not stored on chain.
 
 ## Deployments
 
@@ -157,7 +132,7 @@ authority, so that nobody can change what a stored template means. No release ex
 pre-release build on devnet still has an upgrade authority: whoever holds it can change what every
 template on that build does, so while you use it, you trust that key. It also predates this
 repository's template format and rejects its templates. See
-[Audit status](/guide/security#audit-status) and [Devnet workflow](/guide/devnet).
+[Audit status](/guide/security#audit-status).
 
 A template's address is derived from the program that finalized it, so each template belongs to
 that one deployment. A new deployment is a different program, and templates must be uploaded again

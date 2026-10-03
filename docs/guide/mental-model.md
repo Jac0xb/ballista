@@ -66,8 +66,8 @@ Steps name accounts in two ways:
 | `account.fixed('treasury')` | An account from `accounts`, the same for the whole run |
 | `account.iteration('recipient')` | The current row's account, inside `forEach` only |
 
-Some templates also take an [account group](/guide/account-groups): a list of accounts, sized by
-the caller, passed along to one call without being read.
+Some templates also take an [account group](/guide/accounts-and-cpis#account-groups): a list of
+accounts, sized by the caller, passed along to one call without being read.
 
 ## Steps
 

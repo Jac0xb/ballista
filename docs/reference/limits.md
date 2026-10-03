@@ -18,6 +18,10 @@ The Ballista program enforces these, whichever SDK built the template.
 | Account groups per template | 8 |
 | Members per account group | 255 |
 | Accounts per CPI, including a forwarded account group | 64 |
+| Programs per group filter | 2 |
+| Matches per group filter | 4 (minimum 1) |
+| Except keys per group filter | 4 |
+| Group filter match offset | 65,535 |
 
 One transaction holds fewer: about 61 runtime accounts. See
 [accounts per transaction](#accounts-per-transaction).
@@ -88,7 +92,7 @@ in all. See [what it costs](/guide/why-ballista#cost). The rules are under
 ### Registers {#registers}
 
 A template has 64 [registers](/reference/glossary#register), each holding one value during a run.
-The TypeScript compiler gives each value its own register:
+Both SDK compilers give each value its own register:
 
 - each fixed input the steps read, and each distinct constant, loaded once before the first step;
 - each value an expression reads or computes: an account read, the clock, a row input, a sum, a
@@ -103,15 +107,13 @@ and constants hold theirs from the start of the run, and a value read inside a l
 register for the whole loop. Compilation fails only when more than 64 values are in use at once:
 `Template uses more than 64 registers: N values are in use at once at steps[k] (label)`.
 
-`compileTemplate(template).stats.registers` gives the count after reuse, and `stats.instructions`
-the VM instructions, at most 128: each value above takes one, and so do most other steps, such as
-a `require` or a call. The Rust `ProgramBuilder` doesn't reuse registers: each call that returns
-one takes a new one, so reuse one by hand, with `mov` or a raw `record`.
-`ProgramView::parse(&bytes)?.verify()?` reports both counts.
+`compileTemplate(template).stats.registers` (`compiled.stats.registers` in Rust) gives the count
+after reuse, and `stats.instructions` the VM instructions, at most 128: each value above takes one,
+and so do most other steps, such as a `require` or a call.
 
-## TypeScript SDK limits
+## SDK limits
 
-The TypeScript SDK adds its own maximums. A template built with the Rust `ProgramBuilder` is bound
+Both SDK compilers add their own maximums. A template built by hand or with other tools is bound
 only by the program limits above.
 
 | Limit | Maximum |
@@ -160,7 +162,7 @@ So a run alone in its transaction fits about **61 runtime accounts**:
 - every other instruction takes the accounts it adds, such as the Compute Budget program.
 
 Ballista's limit of 120 runtime accounts can't be reached in one transaction today. To carry 61
-accounts in bytes, use a [version 1 transaction](/guide/transaction-v1), up to 4,096 bytes, or a
+accounts in bytes, use a version 1 transaction, up to 4,096 bytes, or a
 version 0 transaction, up to 1,232 bytes, with an address lookup table.
 
 ### Instruction trace {#instruction-trace}

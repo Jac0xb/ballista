@@ -47,6 +47,10 @@ function tick() {
       while (end < was.length - start && end < now.length - start && was[was.length - 1 - end] === now[now.length - 1 - end]) end++;
       const before = was.slice(Math.max(0, start - 30), start), after = was.slice(was.length - end, was.length - end + 30);
       report(`EDIT ${record.id} | ${record.file} | § ${flat(record.heading, 80)} | …${flat(before, 40)}[${flat(was.slice(start, was.length - end), 400)} → ${flat(now.slice(start, now.length - end), 400)}]${flat(after, 40)}…`);
+    } else if (record.kind === 'modify') {
+      report(`MODIFY ${record.id} | ${record.file} | § ${flat(record.heading, 80)} | anchor ${record.selector} | "${flat(record.selection, 200)}" | ASK: ${flat(record.comment, 1000)}`);
+    } else if (record.kind === 'todo') {
+      report(`TODO ${record.id} | ${record.file} | § ${flat(record.heading, 80)} | "${flat(record.selection, 200)}" | NOTE: ${flat(record.comment, 1000)}`);
     } else {
       const setId = placeholder(record);
       report(`NEW ${record.id} | SET ${setId} | ${record.file} | § ${flat(record.heading, 80)} | anchor ${record.selector} | "${flat(record.selection, 200)}" | COMMENT: ${flat(record.comment, 1000)}`);

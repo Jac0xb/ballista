@@ -140,7 +140,8 @@ Each fixed account, then each account of the batch row, has one 8-byte constrain
 Instructions, CPI descriptors, and CPI account records name an account with a one-byte reference.
 A value below `0x80` is the index of a fixed account. A value with bit `0x80` set names the account
 at position `value & 0x7f` in the current batch row, and is valid only inside `FOREACH`, never
-inside `REPEAT`. Account group members have no references; only a CPI descriptor can forward them.
+inside `REPEAT`. Account group members have no references: a CPI descriptor forwards a group, and the group
+opcodes name one by its index.
 
 ## Input descriptors {#inputs-table-and-cpi-descriptors}
 
@@ -166,7 +167,7 @@ Every instruction is 16 bytes:
 | 1 | 1 | destination | The register that receives the result, or `0xff` for none |
 | 2 | 3 | a, b, c | Operands: registers, account references, table indices, or counts, depending on the opcode |
 | 5 | 1 | flags | Bit 0 on read opcodes: the offset comes from register `b`. Zero for every other opcode |
-| 6 | 8 | immediate | A constant, a packed range, a length, a read opcode, a loop's carry mask, or a packed registry open or field |
+| 6 | 8 | immediate | A constant, a packed range, a length, a read opcode, a loop's carry mask, a packed registry open or field, or a packed group filter |
 | 14 | 2 | reserved | Must be zero |
 
 A packed range holds a start (a blob offset or a first table index) in its low 32 bits and a length
@@ -182,7 +183,7 @@ A field an opcode doesn't use is fixed: the destination of an opcode that produc
 each operand and the immediate that its row below doesn't name. An unused destination or operand
 must be `0xff`, and an unused immediate zero. The verifier refuses anything else with
 `InvalidBatch` for `FOREACH`, `InvalidLoop` for `REPEAT`, `InvalidRegistry` for opcodes 75 to 77,
-and `InvalidInstruction` otherwise.
+`InvalidAccountGroup` for opcodes 78 to 80, and `InvalidInstruction` otherwise.
 
 | Opcode | Name | Operands | Result |
 | ---: | --- | --- | --- |
@@ -262,8 +263,11 @@ and `InvalidInstruction` otherwise.
 | 75 | `OPEN_REGISTRY` | `a`: the entry account; `b`: a `pubkey` register holding the key, or `0xff` for the zero key; `c`: the payer account; immediate: a packed registry open | none; checks the entry or creates it, then keeps it open for the rest of the run |
 | 76 | `READ_REGISTRY` | `a`: an entry account opened earlier; immediate: a packed field | The field, with the type its read opcode gives |
 | 77 | `WRITE_REGISTRY` | `a`: the value register; `b`: an entry account opened earlier; immediate: a packed field | none; writes the value into the field |
+| 78 | `GROUP_LENGTH` | `a`: an account group index | `u64`, how many members the caller passed |
+| 79 | `GROUP_ANY` | `a`: an account group index; `b`: a program, as a pubkey table index; `c`: a second program, or `0xff`; immediate: a packed group filter | `bool`, whether any member matches |
+| 80 | `GROUP_COUNT` | as `GROUP_ANY` | `u64`, how many members match |
 
-Opcodes 0 and 39 are unassigned, as is every number above 77.
+Opcodes 0 and 39 are unassigned, as is every number above 80.
 
 Read opcodes (13 to 16, 43 to 46, and 60) with the dynamic-offset flag take their offset from the
 `u64` register in `b`, and must have a zero immediate. Without the flag, `b` is unused, and the
@@ -303,6 +307,27 @@ In the bytecode:
 - Indexes, positions, and offsets are `u64` registers.
 - `READ_ACCOUNT_BYTES` may name any declared account, including a row account inside `FOREACH`,
   but only one that is read-only in this instruction.
+
+#### Account groups
+
+A `GROUP_ANY` or `GROUP_COUNT` immediate packs its filter:
+
+| Offset | Bytes | Field |
+| ---: | ---: | --- |
+| 0 | 2 | The filter's first data segment |
+| 2 | 1 | Match segments, 1 to 4 |
+| 3 | 1 | Except segments, 0 to 4 |
+| 4 | 4 | Minimum data length a member needs |
+
+The match segments come first, then the except segments, in one run. A match segment's kind is
+`DATA_REG_BOOL`, `DATA_REG_U64`, `DATA_REG_I64`, `DATA_REG_U128` or `DATA_REG_PUBKEY`, its register
+holds a value of exactly that type, its offset field is the account-data offset to compare at, and
+its length field is zero. An except segment is a `DATA_REG_PUBKEY` with offset and length zero.
+
+The verifier checks that `a` names a declared group, that `b` and any `c` are pubkey table indices,
+that the counts and segments are in range, and that the minimum length covers every match's bytes.
+It rejects a break with `InvalidAccountGroup` (6133). `GROUP_LENGTH` takes `b` and `c` as `0xff`
+and a zero immediate.
 
 #### Registries
 
@@ -386,9 +411,12 @@ Each record is 2 bytes:
 ### Data segments
 
 Each segment is 8 bytes. CPI descriptors use segments to build instruction data, `EMIT` and
-`SET_RETURN_DATA` use them to build their output, and `DERIVE_PDA` and `CREATE_PDA` use them as
-seeds. Every segment must have one of these uses, and every use checks the fields below alike. The
-verifier refuses a bad or unused segment with `InvalidDataSegment` and its index in this table.
+`SET_RETURN_DATA` use them to build their output, `DERIVE_PDA` and `CREATE_PDA` use them as seeds,
+and `GROUP_ANY` and `GROUP_COUNT` use them as filter entries. Every segment must have one of these
+uses. The first three check the fields below alike, and refuse a bad segment with
+`InvalidDataSegment` and its index in this table; a filter entry follows
+[Account groups](#account-groups). The verifier refuses an unused segment with
+`InvalidDataSegment`.
 
 | Offset | Bytes | Field |
 | ---: | ---: | --- |
@@ -503,6 +531,6 @@ number of CPIs, loops, or outputs a run performs. "Zero-copy" describes how the 
 read, not an execution engine that never allocates.
 
 The example payloads in `fixtures/` are produced by the TypeScript compiler. The Rust tests verify
-them and run them against the program, and check that the Rust builder reproduces
-`system-transfer.hex` byte for byte. Both SDKs derive entry addresses against
+them and run them against the program, and check that the Rust SDK compiles every docs template to
+the same bytes as the TypeScript compiler. Both SDKs derive entry addresses against
 `fixtures/registry-entry-addresses.txt`, vectors the program's own derivation produces.

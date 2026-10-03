@@ -38,7 +38,7 @@ repository with `InvalidTemplateProgram` (custom error 6002). It still has the u
 above, so using it means trusting whoever holds that key: they can change what every template on
 that build does. Each release will be deployed with no upgrade authority; until then, run templates
 locally with `pnpm build:program && pnpm test:integration`. See the
-[deployment policy](https://jac0xb.github.io/ballista/guide/devnet).
+[deployment policy](https://jac0xb.github.io/ballista/guide/trust-model#deployments).
 
 The checked-in [IDL](idl/ballista.json) is published through Solana's Program Metadata program.
 It describes Ballista's accounts and instructions for Explorer discovery; instruction fields marked
@@ -197,8 +197,8 @@ pnpm build:program      # Solana SBF program
 pnpm test:integration   # Agave-aligned Mollusk suite (build program first)
 pnpm docs:dev           # local documentation server
 
-cargo run -p ballista-sdk --example author_template   # author templates from Rust
-cargo run -p ballista-sdk --example run_template      # encode inputs and decode errors from Rust
+cargo run -p ballista-sdk --example docs_templates    # the guide's templates, authored in Rust
+cargo run -p ballista-sdk --example docs_runs         # a run of each, built by name
 ```
 
 ## Template lifecycle
@@ -222,6 +222,6 @@ pubkeys and literal bytes. See [the scope and limits](docs/scope.md) and the
 - `fixtures`: compiler output and error-name tables shared by the Rust and TypeScript suites.
 - `tests/ballista`: Mollusk integration suite against the compiled SBF program.
 - `certora`: Certora Solana Prover specifications and the `cvlr-pinocchio` adapter; see the
-  [formal verification guide](https://jac0xb.github.io/ballista/guide/formal-verification).
+  [formal verification guide](https://jac0xb.github.io/ballista/guide/security#formal-verification).
 
 Licensed under MIT.

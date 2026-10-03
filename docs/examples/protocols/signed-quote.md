@@ -79,11 +79,10 @@ nonce in a [registry entry](/guide/registries).
 
 :::
 
-The first steps come from the SDK's `ed25519Signature` helper, which returns them with a `field`
-reader for the signed message. `field` refuses a read past the message, and a template that uses
-`field` without the steps doesn't compile. The Rust template has no such helper: it writes the same
-checks out with `ProgramBuilder` and its own `ed25519_header`, and compiles to the same bytes. Its
-`program`, `token_account` and account flags are [shared helpers](/examples/protocols/#rust-helpers).
+The first steps come from the SDK's `ed25519Signature` helper (`ed25519_signature` in Rust), which
+returns them with a `field` reader for the signed message. `field` refuses a read past the message,
+and a template that uses `field` without the steps doesn't compile. The Rust template takes its
+`token_account()` from the [shared helpers](/examples/protocols/#rust-helpers).
 
 The helper's `signer` must be a key the transaction's builder can't choose. With an input, or the
 key of an account nothing constrains, the builder could sign a quote with a key of their own. Here

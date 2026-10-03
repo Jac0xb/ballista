@@ -161,87 +161,6 @@
       "accountGroups": 0
     }
   },
-  "repay-exactly-what-is-owed": {
-    "page": "runtime-values",
-    "anchor": "repay-exactly-what-is-owed",
-    "standIn": true,
-    "rowCount": 0,
-    "templateHex": "42564d3101040000000304010200020001000400000000000400ff000000000000ff00008000000003ffff000000000002ffff00000000000d0001ffff00080000000000000000000a0102ffff000000000000000000000020020001ff000000000000000000000029ff00ffff000000000000000000000000ff0000020200000c0000000203030200ff0000040000000402000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
-    "payloadBytes": 188,
-    "runtimeAccounts": [
-      "system-program",
-      "state-account",
-      "signer",
-      "recipient"
-    ],
-    "runData": "",
-    "ballistaTransactionBytes": 308,
-    "ballistaAccountKeys": 6,
-    "runtimeAccountFlags": [
-      {
-        "signer": false,
-        "writable": false
-      },
-      {
-        "signer": false,
-        "writable": false
-      },
-      {
-        "signer": true,
-        "writable": true
-      },
-      {
-        "signer": false,
-        "writable": true
-      }
-    ],
-    "baseline": {
-      "verdict": "impossible",
-      "note": "Debt accrues every slot, so the figure the client quoted is stale by the time the transaction lands. Repaying a fixed amount leaves a remainder or overpays.",
-      "instructions": [
-        {
-          "program": "system-program",
-          "accounts": [
-            {
-              "index": 2,
-              "signer": true,
-              "writable": true
-            },
-            {
-              "index": 3,
-              "signer": false,
-              "writable": true
-            }
-          ],
-          "data": "020000001027000000000000"
-        }
-      ],
-      "transactionBytes": 220,
-      "instructionCount": 1
-    },
-    "upload": {
-      "transactionCount": 1,
-      "transactionBytes": 464,
-      "accountBytes": 268,
-      "rentLamports": 2011680
-    },
-    "stats": {
-      "payloadBytes": 188,
-      "fixedAccounts": 4,
-      "batchStride": 0,
-      "batchMaxIterations": 0,
-      "batchMinIterations": 0,
-      "inputs": 0,
-      "registers": 3,
-      "instructions": 4,
-      "cpis": 1,
-      "maxExpandedCpis": 1,
-      "maxCpiDataLength": 12,
-      "emitEvent": false,
-      "rowInputs": 0,
-      "accountGroups": 0
-    }
-  },
   "split-what-arrived": {
     "page": "runtime-values",
     "anchor": "split-what-arrived",
@@ -501,20 +420,20 @@
       "accountGroups": 0
     }
   },
-  "top-up-only-when-low": {
+  "top-up-to-a-target": {
     "page": "conditional",
-    "anchor": "top-up-only-when-low",
+    "anchor": "top-up-to-a-target",
     "standIn": false,
     "rowCount": 0,
-    "templateHex": "42564d3101030000020405010200020001000400000000000400ff000000000003ffff000000000002ffff00000000000200000002000000010000ffff0000000000000000000000010101ffff00000000000000000000000a0202ffff000000000000000000000019030200ff000000000000000000000029ff0003ff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000401000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
-    "payloadBytes": 204,
+    "templateHex": "42564d3101030000010506010200020001000400000000000400ff000000000003ffff000000000002ffff000000000002000000010000ffff00000000000000000000000a0102ffff000000000000000000000020020100ff000000000000000000000014030002ff000000000000000000000019040100ff000000000000000000000029ff0004ff000000000000000000000000ff0000020200000c0000000103020200ff0000040000000403000000000000000000000000000000000000000000000000000000000000000000000000000002000000",
+    "payloadBytes": 216,
     "runtimeAccounts": [
       "system-program",
       "signer",
       "recipient"
     ],
-    "runData": "00943577000000001027000000000000",
-    "ballistaTransactionBytes": 291,
+    "runData": "0094357700000000",
+    "ballistaTransactionBytes": 283,
     "ballistaAccountKeys": 5,
     "runtimeAccountFlags": [
       {
@@ -532,7 +451,7 @@
     ],
     "baseline": {
       "verdict": "impossible",
-      "note": "A scheduled job that always tops up drains the funder; one that checks first has read a balance that may have changed by the time the transfer lands.",
+      "note": "A plain transfer fixes its amount when the transaction is built, from a balance read off chain that may have changed by the time it lands.",
       "instructions": [
         {
           "program": "system-program",
@@ -556,19 +475,19 @@
     },
     "upload": {
       "transactionCount": 1,
-      "transactionBytes": 480,
-      "accountBytes": 284,
-      "rentLamports": 2092960
+      "transactionBytes": 492,
+      "accountBytes": 296,
+      "rentLamports": 2153920
     },
     "stats": {
-      "payloadBytes": 204,
+      "payloadBytes": 216,
       "fixedAccounts": 3,
       "batchStride": 0,
       "batchMaxIterations": 0,
       "batchMinIterations": 0,
-      "inputs": 2,
-      "registers": 4,
-      "instructions": 5,
+      "inputs": 1,
+      "registers": 5,
+      "instructions": 6,
       "cpis": 1,
       "maxExpandedCpis": 1,
       "maxCpiDataLength": 12,

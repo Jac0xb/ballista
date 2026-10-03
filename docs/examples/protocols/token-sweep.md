@@ -51,8 +51,8 @@ It guards against the market moving after the quote. It does not guard against:
 
 :::
 
-The Rust tabs' `program`, `anchor` and account flags are
-[shared helpers](/examples/protocols/#rust-helpers).
+The Rust template takes its program addresses, `token_account()`, `balance_of()` and
+`jupiter_route_data()` from the [shared helpers](/examples/protocols/#rust-helpers).
 
 The route plan splits its input by percentage, so the same plan can sell more or less than it was
 quoted for. Above the quote, the extra size's price impact has to fit within `slippageBps`, and the
@@ -68,7 +68,7 @@ in the token account, its `owner` field at byte offset 32. The balance is its `a
 
 `route` starts its account list with the token program, the signer, and the signer's source and
 destination token accounts. The template passes those four itself; the rest of the route's
-accounts arrive as the `routeAccounts` [account group](/guide/account-groups).
+accounts arrive as the `routeAccounts` [account group](/guide/accounts-and-cpis#account-groups).
 
 The Run tabs pass the five declared accounts, `jupiter`, `tokenProgram`, `seller`, `sourceAta` and
 `destinationAta`, then the inputs `routePlan`, `quotedInAmount`, `quotedOutAmount`, `slippageBps`,

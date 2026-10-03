@@ -6,7 +6,7 @@ a deposit to pass on. They exist only when the transaction executes.
 
 A Ballista template can read a number from an account while it runs and pass it to the next call.
 [Getting started](/guide/getting-started) builds the simplest case: sweep everything above a
-reserve. This page shows three more: forward a token balance, repay a debt, and split a deposit.
+reserve. This page shows two more: forward a token balance and split a deposit.
 
 In the examples, `step.let` computes a value once and gives it a name, and `step.require` stops
 the whole transaction unless its condition holds. `systemTransfer` and `tokenTransfer` call the
@@ -46,34 +46,6 @@ fields that come before it in the program's account struct: an SPL Token account
 fields in order with their types, which is enough to add up the sizes, as long as every field
 before the one you want has a fixed size.
 :::
-
-## Repay exactly what is owed
-
-Repay a loan in full, or with everything the borrower holds if that is less. The debt grows with
-every slot (the interval in which Solana produces a block), so an amount the client computes
-before signing is already out of date when the transaction executes.
-
-::: code-group
-
-<<< @/../clients/js/examples/docs/repay-exactly-what-is-owed.ts#template [TypeScript · Template]
-
-<<< @/../clients/js/examples/docs/repay-exactly-what-is-owed.ts#run [TypeScript · Run]
-
-<<< @/../clients/rust/examples/docs_templates.rs#repay-exactly-what-is-owed [Rust · Template]
-
-<<< @/../clients/rust/examples/docs_runs.rs#repay-exactly-what-is-owed [Rust · Run]
-
-:::
-
-The template reads the debt from the loan account (a `u64` at `DEBT_OFFSET` in this example's
-layout) and the borrower's balance, then pays the smaller of the two. `step.invoke` makes a
-[CPI](/reference/glossary#cpi) into the lending program. `data.literal` writes fixed bytes, here
-the discriminator that selects the repay instruction, and `data.encode` appends the amount as a
-`u64`.
-
-A fixed amount would be wrong in one direction or the other: most lending programs reject an
-overpayment, and an underpayment leaves the loan open. `min` never pays more than is owed, and it
-pays the whole debt whenever the borrower can cover it.
 
 ## Split what arrived
 

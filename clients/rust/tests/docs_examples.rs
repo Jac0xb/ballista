@@ -2,9 +2,8 @@
 //! two to the same bytes, and the Rust runs to the same accounts and run data as the TypeScript
 //! runs.
 //!
-//! Most of the Rust is in `examples/docs_templates.rs` and `examples/docs_runs.rs`. A few pages keep
-//! theirs with the rest of the page's Rust: the registries page in `docs_language.rs`, the ATA
-//! assertion in `docs_security.rs`, and the input encoding in `docs_limits.rs`.
+//! The templates are in `examples/docs_templates.rs`, written with the declarative API, and the runs
+//! in `examples/docs_runs.rs`. The expressions page's input encoding is in `docs_limits.rs`.
 //!
 //! Expected values come from the TypeScript side: `fixtures/benchmarks.json` (written by
 //! `clients/js/src/benchmarks.test.ts`) for the examples the benchmarks measure, and
@@ -12,16 +11,15 @@
 //! for the examples only the guide pages use. Both record, per example, the compiled template, the
 //! encoded run data, the signer and writable flags of every runtime account, and the row count.
 
-#[path = "../examples/docs_language.rs"]
-mod language;
+// Both example files load `docs_templates.rs` as their own module.
+#![allow(clippy::duplicate_mod)]
+
 #[path = "../examples/docs_limits.rs"]
 mod limits;
 #[path = "../examples/docs_runs.rs"]
 mod runs;
-#[path = "../examples/docs_security.rs"]
-mod security;
-#[path = "../examples/docs_templates.rs"]
-mod templates;
+
+use runs::templates;
 
 use ballista_sdk::{ballista_common::instruction::IX_RUN, ballista_common::template::*};
 
@@ -152,25 +150,22 @@ fn first_difference(expected: &[u8], actual: &[u8]) -> String {
     "no table differs".into()
 }
 
-/// Every Rust template a page shows beside a TypeScript one.
-fn all_templates() -> impl Iterator<Item = &'static templates::Example> {
-    templates::ALL
-        .iter()
-        .chain(language::TEMPLATES)
-        .chain(security::TEMPLATES)
-}
-
-/// Every Rust run a page shows beside a TypeScript one.
-fn all_runs() -> impl Iterator<Item = &'static runs::ExampleRun> {
-    runs::ALL.iter().chain(language::RUNS).chain(security::RUNS)
-}
+/// Templates the pages show without a run: the expressions page's inputs, and the registries
+/// page's counter.
+const WITHOUT_A_RUN: [&str; 2] = ["named-inputs", "count-runs"];
 
 #[test]
 fn every_rust_template_matches_the_typescript_compiler_byte_for_byte() {
     let mut failures = Vec::new();
-    for (name, build) in all_templates() {
+    for (name, build) in templates::ALL {
+        let actual = match build().compile() {
+            Ok(compiled) => compiled.bytes,
+            Err(error) => {
+                failures.push(format!("{name}: does not compile: {error}"));
+                continue;
+            }
+        };
         let expected = expected(name).template;
-        let actual = build();
         if actual != expected {
             failures.push(format!("{name}: {}", first_difference(&expected, &actual)));
             continue;
@@ -182,17 +177,19 @@ fn every_rust_template_matches_the_typescript_compiler_byte_for_byte() {
 
 #[test]
 fn every_rust_run_matches_the_typescript_run() {
-    assert_eq!(
-        runs::ALL.len(),
-        templates::ALL.len(),
-        "one run per template"
-    );
+    let mut with_a_run: Vec<&str> = templates::ALL
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| !WITHOUT_A_RUN.contains(name))
+        .collect();
+    with_a_run.sort();
+    with_a_run.dedup();
+    let mut run_names: Vec<&str> = runs::ALL.iter().map(|(name, _)| *name).collect();
+    run_names.sort();
+    assert_eq!(run_names, with_a_run, "one run per template");
+
     let mut failures = Vec::new();
-    for (name, run) in all_runs() {
-        assert!(
-            all_templates().any(|(template, _)| template == name),
-            "{name} has no Rust template"
-        );
+    for (name, run) in runs::ALL {
         let expected = expected(name);
         let instruction = run(expected.rows);
 
@@ -229,7 +226,7 @@ fn every_rust_run_matches_the_typescript_run() {
 #[test]
 fn the_rust_input_encoding_matches_the_typescript_encoding() {
     let expected = expected("named-inputs").run_data;
-    let actual = limits::encode_run_inputs(&[1; 40]);
+    let actual = limits::encode_run_inputs(&[1; 40]).unwrap();
     assert!(
         actual == expected,
         "run data\n  expected {expected:02x?}\n  actual   {actual:02x?}"

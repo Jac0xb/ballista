@@ -10,18 +10,22 @@
 
 #![allow(dead_code)]
 
+#[path = "docs_templates.rs"]
+mod templates;
+
 fn main() {}
 
 // #region encode-run-inputs
 /// The run data for inputs `amount: u64`, `deadline: i64`, `enabled: bool` and `routeData: bytes`.
-pub fn encode_run_inputs(route_data: &[u8]) -> Vec<u8> {
-    use ballista_sdk::RunInputs;
-
-    RunInputs::new()
-        .u64(25_000)
-        .i64(1_800_000_000)
-        .bool(true)
-        .bytes(route_data) // a u16 length, then the bytes
-        .finish()
+pub fn encode_run_inputs(route_data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let bytes = templates::named_inputs()
+        .compile()?
+        .run_inputs()
+        .input("amount", 25_000u64)
+        .input("deadline", 1_800_000_000i64)
+        .input("enabled", true)
+        .input("routeData", route_data) // a u16 length, then the bytes
+        .encode_inputs()?;
+    Ok(bytes)
 }
 // #endregion encode-run-inputs

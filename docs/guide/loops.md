@@ -1,17 +1,13 @@
 # Loops over rows and counts
 
-This page shows loops in which each row decides what to do from state read during the run: pay
-creditors in priority order, collect only the token accounts that hold a balance, process only
-the queue entries that are due, and split a balance by weight. The last example repeats a call as
-many times as a count read during the run.
+In these loops each row decides what to do from what it reads during the run: pay creditors in
+order, collect only funded token accounts, process only due entries, split by weight. The last
+example repeats a call a number of times read during the run.
 
-The row loops run over a [batch](/guide/batching): `step.forEach` runs its steps once per row,
-with `account.iteration('name')` as the row's account and `expression.rowInput('name')` as its
-value. Batch execution covers rows, row inputs, carried values and the limits. The accounts the
-caller passes fix how many rows run, but what each row does can depend on what earlier rows spent
-or on the row's own account, and `when` skips a single call. The examples that call another
-protocol use marked stand-ins (the System program and its Transfer data) so they compile and run
-as written.
+Row loops run over a [batch](/guide/batching): `step.forEach` runs once per row, with
+`account.iteration('name')` as the row's account and `expression.rowInput('name')` as its value.
+The caller fixes how many rows run; each row can still act on what earlier rows spent, and `when`
+skips one call. Calls to other protocols use marked stand-ins.
 
 ## Waterfall until the money runs out
 

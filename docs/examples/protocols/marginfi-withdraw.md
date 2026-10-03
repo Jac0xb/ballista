@@ -43,8 +43,8 @@ The template:
 
 :::
 
-The Rust tabs' `program`, `anchor` and account flags are
-[shared helpers](/examples/protocols/#rust-helpers).
+The Rust template takes its program addresses, discriminators, `token_account()` and
+`balance_of()` from the [shared helpers](/examples/protocols/#rust-helpers).
 
 The last two bytes of the withdrawal's instruction data are `Option::Some(true)` for
 `withdraw_all`. In that mode marginfi ignores `amount`, but the field still has to be there,
@@ -55,7 +55,7 @@ because Borsh (the binary format Anchor programs use for instruction arguments) 
 The Run tabs pass the 10 declared accounts in order (`marginfi`, `tokenProgram`, `marginfiGroup`,
 `marginfiAccount`, `authority`, `bank`, `bankLiquidityVault`, `bankLiquidityVaultAuthority`,
 `destinationAta`, `treasuryAta`), then the input `minimumWithdrawn`, then the `healthAccounts`
-[account group](/guide/account-groups). `authority` signs but is not writable.
+[account group](/guide/accounts-and-cpis#account-groups). `authority` signs but is not writable.
 
 After the withdrawal, marginfi checks the account's health: whether what it still holds covers
 what it owes, at each bank's oracle price. It reads the banks and oracles from the accounts after

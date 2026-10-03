@@ -1,3 +1,17 @@
+//! The Ballista program.
+//!
+//! Memory: a run allocates its buffers once and reuses them for every call, so memory use does not
+//! grow with the number of calls.
+//!
+//! The release program uses `unsafe` only:
+//! - around Solana system calls (logs, return data, hashing, the curve check and the CPI itself);
+//! - to fill a CPI's account list in place;
+//! - to read the Instructions sysvar and read-only accounts without copying them;
+//! - to read and write registry entries in place;
+//! - to build a PDA's seed buffer in place when deriving an address.
+//!
+//! Keep this list current when adding `unsafe`.
+
 use ballista_common::{
     instruction::BallistaInstruction,
     template::{

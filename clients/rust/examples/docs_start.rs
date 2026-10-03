@@ -1,18 +1,22 @@
-//! The Rust code on the Getting started, Template lifecycle and Transaction v1 pages
-//! (`docs/guide/`), which include each region by name.
+//! The Rust code on the Getting started and Template lifecycle pages (`docs/guide/`), which
+//! include each region by name.
 //!
 //! On the pages the regions run in order, as the body of the reader's `main`: Getting started's,
-//! then Template lifecycle's, then Transaction v1's. Here each page's regions sit in a function
-//! whose first lines, outside the regions, bring in what the earlier pages defined.
+//! then Template lifecycle's. Here each page's regions sit in a function whose first lines,
+//! outside the regions, bring in what the earlier pages defined.
 //!
 //! The pages also use the Solana client crates that Getting started's install line adds:
 //! solana-rpc-client, solana-keypair, solana-signer, solana-transaction,
-//! solana-transaction-error, solana-commitment-config and solana-message. This crate doesn't depend
+//! solana-transaction-error and solana-commitment-config. This crate doesn't depend
 //! on them, so the modules at the end of this file stand in for them, with the same paths and
 //! signatures for every item the regions use. That way `cargo test` compiles each region exactly as
 //! the pages show it, and `tests/docs_start.rs` measures every transaction the upload code builds.
 //! Against the real crates, at the versions the install line pins, the same regions compile and
 //! run unchanged; keep the stand-ins' signatures the same as theirs.
+//!
+//! `getting-started/` is Getting started's steps 1 to 5 as a crate that runs against the real
+//! crates: its `main` is the connect, define, upload, run and failure regions, which
+//! `tests/docs_start.rs` holds to the ones here. Change them here, then copy them there.
 
 #![allow(dead_code)]
 
@@ -67,48 +71,34 @@ pub fn getting_started() -> Result<Vec<u8>, Box<dyn Error>> {
     // #endregion connect
 
     // #region define
-    use ballista_sdk::{
-        ballista_common::template::{
-            ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_REG_U64, OP_GT, OP_SUB,
-            VALUE_U64,
-        },
-        ProgramBuilder, Segment, SYSTEM_PROGRAM_ID,
-    };
+    use ballista_sdk::template::prelude::*;
 
-    let mut builder = ProgramBuilder::new();
-    let system = builder.account(
-        ACCOUNT_EXECUTABLE,
-        Some(SYSTEM_PROGRAM_ID.to_bytes()),
-        None,
-        0,
-    );
-    let vault = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
-    let destination = builder.account(ACCOUNT_WRITABLE, None, None, 0);
-    let reserve_input = builder.input(VALUE_U64, 0);
+    let sweep = Template::new()
+        // The caller picks the reserve, in lamports, on every run.
+        .input("reserve", Type::U64)
+        // Must be exactly the System program, so a caller can't swap in another.
+        .account("systemProgram", account::program(SYSTEM_PROGRAM_ID))
+        // The account swept. It signs, so only its owner can run the sweep.
+        .account("vault", account::signer().writable())
+        // Where the swept lamports go.
+        .account("destination", account::writable())
+        // Read the vault's balance while the transaction runs.
+        .step(step::let_("balance", lamports("vault")))
+        // Stop the whole run unless there is something above the reserve.
+        .step(step::require(var("balance").gt(input("reserve"))).label("aboveReserve"))
+        // Send everything above the reserve: balance minus reserve.
+        .step(system_transfer(
+            "systemProgram",
+            "vault",
+            "destination",
+            var("balance") - input("reserve"),
+        ));
 
-    let reserve = builder.load_input(reserve_input);
-    let balance = builder.account_lamports(vault);
-    let above_reserve = builder.binary(OP_GT, balance, reserve);
-    builder.require(above_reserve);
-    let amount = builder.binary(OP_SUB, balance, reserve);
-    let discriminator = builder.blob(&[2, 0, 0, 0]); // SystemInstruction::Transfer
-    let transfer = builder.cpi(
-        system,
-        &[
-            (vault, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
-            (destination, ACCOUNT_WRITABLE),
-        ],
-        &[
-            Segment::Literal(discriminator),
-            Segment::Register(DATA_REG_U64, amount),
-        ],
-    );
-    builder.invoke(transfer, None);
-
-    let payload = builder.build()?;
+    // Compile to the bytes you upload in step 3.
+    let compiled = sweep.compile()?;
     // #endregion define
     if cfg!(test) {
-        return Ok(payload);
+        return Ok(compiled.bytes);
     }
 
     // #region upload
@@ -116,7 +106,7 @@ pub fn getting_started() -> Result<Vec<u8>, Box<dyn Error>> {
 
     // The creator uploads the template and pays the rent for its account.
     let creator = funded_signer()?;
-    let create = create_template_instruction(creator.pubkey(), 7, &payload);
+    let create = create_template_instruction(creator.pubkey(), 7, &compiled.bytes);
     send(&creator, &[create])?;
     // A template's address comes from its creator's address and its template ID.
     let (template, _) = find_template_pda(&creator.pubkey(), 7);
@@ -124,55 +114,42 @@ pub fn getting_started() -> Result<Vec<u8>, Box<dyn Error>> {
     // #endregion upload
 
     // #region run
-    use ballista_sdk::{run_instruction, RunInputs};
-    use solana_program::instruction::AccountMeta;
-
     // The vault is the account the template sweeps. It signs the run and pays the fee.
-    let vault_keypair = funded_signer()?;
+    let vault = funded_signer()?;
     // Any account can receive the lamports; here, another new wallet.
-    let destination_pubkey = funded_signer()?.pubkey();
+    let destination = funded_signer()?.pubkey();
 
     // The caller picks the reserve; the template works out the amount.
     let sweep_instruction = |reserve: u64| {
-        run_instruction(
-            template,
-            vec![
-                AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-                AccountMeta::new(vault_keypair.pubkey(), true),
-                AccountMeta::new(destination_pubkey, false),
-            ],
-            &RunInputs::new().u64(reserve).finish(),
-        )
+        compiled
+            .run(template)
+            .input("reserve", reserve)
+            .account("systemProgram", SYSTEM_PROGRAM_ID)
+            .account("vault", vault.pubkey())
+            .account("destination", destination)
+            .instruction()
     };
 
-    send(&vault_keypair, &[sweep_instruction(2_000_000)])?;
+    send(&vault, &[sweep_instruction(2_000_000)?])?;
     // Prints 2000000: the vault keeps exactly the reserve.
-    println!("vault keeps {}", rpc.get_balance(&vault_keypair.pubkey())?);
+    println!("vault keeps {}", rpc.get_balance(&vault.pubkey())?);
     // #endregion run
 
     // #region failure
-    use ballista_sdk::{ballista_common::template::ProgramView, decode_ballista_error};
     use solana_program::instruction::InstructionError;
     use solana_transaction_error::TransactionError;
 
     // The vault now holds less than 5,000,000 lamports, so the check fails.
-    let error = send(&vault_keypair, &[sweep_instruction(5_000_000)]).unwrap_err();
+    let error = send(&vault, &[sweep_instruction(5_000_000)?]).unwrap_err();
     if let Some(TransactionError::InstructionError(_, InstructionError::Custom(code))) =
         error.get_transaction_error()
     {
-        if let Some(decoded) = decode_ballista_error(code) {
-            println!("{code}: {} (context {})", decoded.name, decoded.context);
-            // 202623: RequirementFailed (context 3)
-
-            // For RequirementFailed, the context is the program counter.
-            let pc = usize::from(decoded.context);
-            let failing = ProgramView::parse(&payload)?.instructions[pc];
-            println!("failed at opcode {}", failing.opcode); // 40, the require
-        }
+        println!("{code} {:?}", compiled.explain_error(code));
+        // 202623 Some("RequirementFailed at steps[1] (aboveReserve)")
     }
     // #endregion failure
 
-    Ok(payload)
+    Ok(compiled.bytes)
 }
 
 /// Template lifecycle's upload in pieces, after Getting started, with its `send`, `creator` and
@@ -240,72 +217,32 @@ pub fn resume_upload(
     Ok(())
 }
 
-/// Transaction v1: send `run`, a run instruction such as Getting started's
-/// `sweep_instruction(...)`, with limits measured by simulating the same transaction.
-pub fn send_in_version_1(
-    rpc: &RpcClient,
-    payer: Keypair,
-    run: Instruction,
-    measured_compute_units: u32,
-    measured_loaded_bytes: u32,
-) -> Result<(), Box<dyn Error>> {
-    // #region v1
-    use solana_message::{v1, VersionedMessage};
-    use solana_transaction::versioned::VersionedTransaction;
-
-    // Both limits default to zero, so set each one.
-    let message = VersionedMessage::V1(v1::Message::try_compile_with_config(
-        &payer.pubkey(),
-        &[run],
-        rpc.get_latest_blockhash()?,
-        v1::TransactionConfig::empty()
-            .with_compute_unit_limit(measured_compute_units)
-            .with_loaded_accounts_data_size_limit(measured_loaded_bytes),
-    )?);
-    let transaction = VersionedTransaction::try_new(message, &[&payer])?;
-    rpc.send_and_confirm_transaction(&transaction)?;
-    // #endregion v1
-    Ok(())
-}
-
 /// Getting started, step 6: a template that calls your own program. `tests/docs_start.rs` holds
 /// it to the bytes the TypeScript compiler produces for `examples/start/own-program.ts`.
 pub fn own_program() -> Result<Vec<u8>, Box<dyn Error>> {
     // #region own-program
-    use ballista_sdk::{
-        anchor_discriminator,
-        ballista_common::template::{
-            ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_REG_U64, VALUE_U64,
-        },
-        ProgramBuilder, Segment,
-    };
-    use solana_program::pubkey::Pubkey;
+    use ballista_sdk::{anchor_discriminator, template::prelude::*};
 
     // Your program's address. This one is a placeholder.
-    let my_program = Pubkey::from_str_const("MyProgram1111111111111111111111111111111111");
+    let my_program = pubkey!("MyProgram1111111111111111111111111111111111");
 
-    let mut builder = ProgramBuilder::new();
-    let program = builder.account(ACCOUNT_EXECUTABLE, Some(my_program.to_bytes()), None, 0);
-    let vault = builder.account(ACCOUNT_WRITABLE, None, None, 0);
-    let authority = builder.account(ACCOUNT_SIGNER, None, None, 0);
-    let amount_input = builder.input(VALUE_U64, 0);
+    let deposit = Template::new()
+        .input("amount", Type::U64)
+        .account("myProgram", account::program(my_program))
+        .account("vault", account::writable())
+        .account("authority", account::signer())
+        .step(
+            step::invoke("myProgram")
+                .writable("vault")
+                .signer("authority")
+                // An Anchor instruction's data: its 8-byte discriminator, then its arguments.
+                .data(data::literal(anchor_discriminator("deposit")))
+                .data(data::u64(input("amount"))),
+        );
 
-    let amount = builder.load_input(amount_input);
-    // An Anchor instruction's data: its 8-byte discriminator, then its arguments.
-    let discriminator = builder.blob(&anchor_discriminator("deposit"));
-    let deposit = builder.cpi(
-        program,
-        &[(vault, ACCOUNT_WRITABLE), (authority, ACCOUNT_SIGNER)],
-        &[
-            Segment::Literal(discriminator),
-            Segment::Register(DATA_REG_U64, amount),
-        ],
-    );
-    builder.invoke(deposit, None);
-
-    let payload = builder.build()?;
+    let compiled = deposit.compile()?;
     // #endregion own-program
-    Ok(payload)
+    Ok(compiled.bytes)
 }
 
 // ------------------------------------------------------- stand-ins for the Solana client crates
@@ -330,17 +267,6 @@ pub mod solana_signer {
     pub trait Signer {
         fn pubkey(&self) -> Pubkey;
     }
-
-    #[derive(Debug)]
-    pub struct SignerError;
-
-    impl std::fmt::Display for SignerError {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("signer error")
-        }
-    }
-
-    impl std::error::Error for SignerError {}
 }
 
 pub mod solana_keypair {
@@ -375,56 +301,6 @@ pub mod solana_transaction_error {
     }
 }
 
-pub mod solana_message {
-    #[derive(Debug)]
-    pub struct CompileError;
-
-    impl std::fmt::Display for CompileError {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("compile error")
-        }
-    }
-
-    impl std::error::Error for CompileError {}
-
-    pub enum VersionedMessage {
-        V1(v1::Message),
-    }
-
-    pub mod v1 {
-        use solana_program::{hash::Hash, instruction::Instruction, pubkey::Pubkey};
-
-        pub struct TransactionConfig;
-
-        impl TransactionConfig {
-            pub const fn empty() -> Self {
-                Self
-            }
-
-            pub const fn with_compute_unit_limit(self, _limit: u32) -> Self {
-                self
-            }
-
-            pub const fn with_loaded_accounts_data_size_limit(self, _limit: u32) -> Self {
-                self
-            }
-        }
-
-        pub struct Message;
-
-        impl Message {
-            pub fn try_compile_with_config(
-                _payer: &Pubkey,
-                _instructions: &[Instruction],
-                _recent_blockhash: Hash,
-                _config: TransactionConfig,
-            ) -> Result<Self, super::CompileError> {
-                unimplemented!("stand-in")
-            }
-        }
-    }
-}
-
 pub mod solana_transaction {
     use solana_program::{hash::Hash, instruction::Instruction, pubkey::Pubkey};
 
@@ -440,23 +316,6 @@ pub mod solana_transaction {
             _recent_blockhash: Hash,
         ) -> Self {
             unimplemented!("stand-in")
-        }
-    }
-
-    pub mod versioned {
-        use super::super::{
-            solana_keypair::Keypair, solana_message::VersionedMessage, solana_signer::SignerError,
-        };
-
-        pub struct VersionedTransaction;
-
-        impl VersionedTransaction {
-            pub fn try_new(
-                _message: VersionedMessage,
-                _keypairs: &[&Keypair],
-            ) -> Result<Self, SignerError> {
-                unimplemented!("stand-in")
-            }
         }
     }
 }
@@ -493,14 +352,12 @@ pub mod solana_rpc_client {
         use super::super::{
             solana_commitment_config::CommitmentConfig,
             solana_rpc_client_api::client_error::Result as ClientResult,
-            solana_signature::Signature,
-            solana_transaction::{versioned::VersionedTransaction, Transaction},
+            solana_signature::Signature, solana_transaction::Transaction,
         };
 
         /// What `send_and_confirm_transaction` accepts.
         pub trait SerializableTransaction {}
         impl SerializableTransaction for Transaction {}
-        impl SerializableTransaction for VersionedTransaction {}
 
         pub struct RpcClient;
 

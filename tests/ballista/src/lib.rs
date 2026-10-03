@@ -14,6 +14,7 @@ mod fuzz;
 
 #[cfg(test)]
 mod tests {
+    mod account_groups;
     mod compiler_fuzz;
     mod critic_loops;
     mod property_findings;

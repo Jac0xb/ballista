@@ -6,7 +6,7 @@ use ballista_common::instruction::IX_RUN;
 use ballista_common::template::*;
 
 use crate::source::Gen;
-use crate::template::{probe, KeySource, Program, Role, Slot, TemplatePlan, World, ALL_PROGRAMS};
+use crate::template::{probe, FilterValue, KeySource, Program, Role, Slot, TemplatePlan, World, ALL_PROGRAMS};
 
 /// Derives a PDA: `(seeds, program id) -> (address, bump)`. The harness supplies it.
 pub type Pda<'a> = &'a dyn Fn(&[&[u8]], &[u8; 32]) -> ([u8; 32], u8);
@@ -622,13 +622,25 @@ impl ScenarioGen<'_, '_> {
             }
         }
 
-        // Account groups: anything, entries and the template included, with random flags.
+        // Account groups, with random flags. A group a filter reads mostly gets members made for
+        // one of its filters (`filter_member`); the rest are anything, entries and the template
+        // included.
         let mut group_lengths = Vec::new();
-        for _ in 0..plan.groups {
-            let len = if !plan.friendly && self.g.chance(1, 30) { self.g.range(20, 66) } else { self.g.below(4) };
+        for group in 0..plan.groups {
+            let filters: Vec<usize> = (0..plan.group_filters.len()).filter(|&filter| plan.group_filters[filter].group == group).collect();
+            let len = if !plan.friendly && self.g.chance(1, 30) {
+                self.g.range(20, 66)
+            } else if filters.is_empty() {
+                self.g.below(4)
+            } else {
+                self.g.below(6)
+            };
             group_lengths.push(len as u8);
             for _ in 0..len {
-                let index = self.g.below(self.pool.len());
+                let index = match self.g.pick(&filters) {
+                    Some(filter) if self.g.chance(2, 3) => self.filter_member(filter, &inputs),
+                    _ => self.g.below(self.pool.len()),
+                };
                 let flags = if self.g.chance(1, 2) { ACCOUNT_WRITABLE } else { 0 }
                     | if self.g.chance(1, 6) { ACCOUNT_SIGNER } else { 0 };
                 self.grant(index, flags);
@@ -675,6 +687,97 @@ impl ScenarioGen<'_, '_> {
             wrap,
             mutation,
             entry_addresses,
+        }
+    }
+
+    /// A member for group filter `filter`: usually an account made to pass every test, or to fail
+    /// exactly one (another owner, data short of the floor, a match value off by a bit);
+    /// sometimes the account an except key names, made to pass every other test; sometimes the
+    /// entry account of an open, which the run holds borrowed once it opened it.
+    fn filter_member(&mut self, filter: usize, inputs: &[Value]) -> usize {
+        let filter = self.plan.group_filters[filter].clone();
+        let entries: Vec<usize> = self.plan.opens.iter().filter_map(|open| self.fixed.get(open.entry).copied()).collect();
+        let flaw = self.g.weighted(&[6, 1, 1, 2, 2, if entries.is_empty() { 0 } else { 1 }]);
+        if flaw == 5 {
+            return entries[self.g.below(entries.len())];
+        }
+        // The account at an except key; a key no account holds yet gets one made for the filter.
+        let mut address = None;
+        let except = if flaw == 4 { self.g.pick(&filter.excepts) } else { None };
+        if let Some(value) = except {
+            if let FilterValue::SlotKey(slot) = value {
+                return self.fixed[slot];
+            }
+            if let Some(key) = self.filter_bytes(&value, inputs).and_then(|bytes| <[u8; 32]>::try_from(bytes).ok()) {
+                match self.find(&key) {
+                    Some(index) => return index,
+                    None => address = Some(key),
+                }
+            }
+        }
+        let world = self.world;
+        let owner = if flaw == 1 {
+            let others: Vec<[u8; 32]> = [world.probe, SYSTEM_PROGRAM_ADDRESS, world.token, world.ballista]
+                .into_iter()
+                .filter(|owner| !filter.programs.contains(owner))
+                .collect();
+            others[self.g.below(others.len())]
+        } else {
+            filter.programs[self.g.below(filter.programs.len())]
+        };
+        let floor = filter.min_data_len as usize;
+        let len = if floor > 256 {
+            // A floor no account reaches: the usual size.
+            self.g.below(160)
+        } else if flaw == 2 {
+            floor.saturating_sub(1 + self.g.below(4))
+        } else if self.g.chance(1, 2) {
+            floor
+        } else {
+            floor + self.g.below(16)
+        };
+        let mut data = self.data(len);
+        let mut planted = Vec::new();
+        for (offset, value) in &filter.matches {
+            let Some(bytes) = self.filter_bytes(value, inputs) else { continue };
+            if let Some(target) = data.get_mut(*offset..offset + bytes.len()) {
+                target.copy_from_slice(&bytes);
+                planted.push(*offset..offset + bytes.len());
+            }
+        }
+        if flaw == 3 {
+            if let Some(range) = self.g.pick(&planted) {
+                let at = range.start + self.g.below(range.len());
+                data[at] ^= 1 << self.g.below(8);
+            }
+        }
+        let address = address.unwrap_or_else(|| self.fresh_address());
+        let kind = if owner == world.probe {
+            Kind::ProbeData
+        } else if owner == world.token {
+            Kind::TokenData
+        } else {
+            Kind::User
+        };
+        let lamports = (self.rent)(len) + self.g.below(5000) as u64;
+        self.add(AccountSpec { address, owner, lamports, data, executable: false, signer: false, writable: false, kind })
+    }
+
+    /// The bytes a filter value encodes to, when the account generator knows them: a constant, a
+    /// fixed input's value, or a fixed account's key.
+    fn filter_bytes(&self, value: &FilterValue, inputs: &[Value]) -> Option<Vec<u8>> {
+        match value {
+            FilterValue::Bytes(bytes) => Some(bytes.clone()),
+            FilterValue::Input(index) => match inputs.get(*index)? {
+                Value::Bytes(_) => None,
+                value => {
+                    let mut bytes = Vec::new();
+                    value.encode(&mut bytes);
+                    Some(bytes)
+                }
+            },
+            FilterValue::SlotKey(slot) => self.fixed.get(*slot).map(|&index| self.pool[index].address.to_vec()),
+            FilterValue::Unknown => None,
         }
     }
 

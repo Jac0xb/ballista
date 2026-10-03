@@ -64,6 +64,10 @@ pub struct Compared {
     pub exact_failure: bool,
     /// A failure with an in-run Ballista code, classified as structural or value-dependent.
     pub classified_failure: bool,
+    /// Group opcodes (`GROUP_LENGTH`, `GROUP_ANY`, `GROUP_COUNT`) the model evaluated to a
+    /// concrete value, on a successful run it compared in full or on the way to a failure the run
+    /// matched exactly.
+    pub group_values: usize,
 }
 
 impl Report {
@@ -572,7 +576,7 @@ fn reference_model(
         }
         _ => None,
     };
-    let (expected, emits, return_data, loop_passes) = match prediction {
+    let (expected, emits, return_data, loop_passes, group_values) = match prediction {
         Prediction::Calls { exact, .. } if !succeeded => {
             // The model predicts only what the template computes; a run also fails for reasons it
             // does not follow (account validation, a callee's refusal, compute). But when it knew
@@ -584,7 +588,9 @@ fn reference_model(
             }
             return;
         }
-        Prediction::Calls { cpis, emits, return_data, loop_passes, .. } => (cpis, emits, return_data, loop_passes),
+        Prediction::Calls { cpis, emits, return_data, loop_passes, group_values, .. } => {
+            (cpis, emits, return_data, loop_passes, group_values)
+        }
         Prediction::Indeterminate(reason) => return skip(report, reason),
         Prediction::Fails(failure) => {
             if succeeded {
@@ -598,6 +604,7 @@ fn reference_model(
             if let (true, Some((kind, pc))) = (failure.exact, executing) {
                 if (kind, pc) == (failure.kind, failure.pc) {
                     report.compared.exact_failure = true;
+                    report.compared.group_values = failure.group_values;
                 } else {
                     report.hard(format!(
                         "the run failed with {kind} at pc {pc}, but the model, which knew every value up to it, \
@@ -681,6 +688,7 @@ fn reference_model(
     }
     report.compared.run = true;
     report.compared.loop_passes = loop_passes;
+    report.compared.group_values = group_values;
 }
 
 /// The output rules (reference/language.md, Output; wire-format.md, Run event), checked against

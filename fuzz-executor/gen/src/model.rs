@@ -6,6 +6,8 @@
 //! Values the model cannot know without running the chain are tracked as [`Val::Opaque`]:
 //! - a CPI's return data,
 //! - any account field or data read after the first CPI, since a CPI may have changed it,
+//! - an account-group filter over a member a call was passed, or whose owner or data the scenario
+//!   does not mirror,
 //! - introspection reads.
 //!
 //! Opaque data taints the CPI data built from it, which the model marks [`CpiData::Opaque`] and the
@@ -52,7 +54,16 @@ pub enum Prediction {
     /// made, so the harness knows how often a loop's register restore was compared. `exact` says
     /// the model knew every value and made no call, so no instruction can have failed: a run that
     /// gets past its account checks must not fail with a Ballista code while it executes.
-    Calls { cpis: Vec<ExpectedCpi>, emits: Vec<CpiData>, return_data: CpiData, sets_return_data: bool, loop_passes: usize, exact: bool },
+    /// `group_values` counts the group opcodes it evaluated to a concrete value.
+    Calls {
+        cpis: Vec<ExpectedCpi>,
+        emits: Vec<CpiData>,
+        return_data: CpiData,
+        sets_return_data: bool,
+        loop_passes: usize,
+        exact: bool,
+        group_values: usize,
+    },
     /// A control-flow decision depended on an opaque value; only the model-free checks apply.
     Indeterminate(&'static str),
     /// The model predicts the run fails, for a reason it computed from concrete values. A run that
@@ -73,6 +84,8 @@ pub struct Failure {
     /// before it. Then a run that gets past its account checks and fails while it executes must
     /// fail exactly here, with exactly this code.
     pub exact: bool,
+    /// Group opcodes the model evaluated to a concrete value on the way to the failure.
+    pub group_values: usize,
 }
 
 const ARITHMETIC_OVERFLOW: u32 = 6013;
@@ -83,10 +96,14 @@ const TYPE_MISMATCH: u32 = 6012;
 const LOOP_COUNT_EXCEEDED: u32 = 6022;
 const INSTRUCTION_OUT_OF_RANGE: u32 = 6023;
 const WRITABLE_ACCOUNT_BYTES_READ: u32 = 6024;
+/// Not a Ballista code: a group filter that reaches a member an open holds borrowed fails with the
+/// runtime's `AccountBorrowFailed`, which carries no pc. Only a run that opened an entry meets it,
+/// so its prediction is never exact and the harness checks only that the run failed.
+const ACCOUNT_BORROW_FAILED: u32 = 0;
 
 /// A failure with the code the executor raises; `Model::step` fills in where.
 fn fails(reason: &'static str, kind: u32) -> Prediction {
-    Prediction::Fails(Failure { reason, kind, pc: usize::MAX, exact: false })
+    Prediction::Fails(Failure { reason, kind, pc: usize::MAX, exact: false, group_values: 0 })
 }
 
 /// What the model needs to know about one runtime account, by its index among the run's accounts
@@ -172,6 +189,11 @@ pub struct Model<'a, A: Accounts> {
     /// Every account a CPI so far was passed, the template's or an entry creation's: only those
     /// can have changed, since a program changes only accounts it is passed.
     touched: Vec<[u8; 32]>,
+    /// Each entry an open has marked, with its data length: Ballista's, and borrowed for the rest
+    /// of the run.
+    opened: Vec<([u8; 32], usize)>,
+    /// Group opcodes evaluated to a concrete value.
+    group_values: usize,
     /// Set once an instruction produced a value the model does not know, or the run made a call or
     /// touched a registry: from then on the run can fail where the model cannot tell.
     uncertain: bool,
@@ -196,6 +218,8 @@ pub fn predict<A: Accounts>(program: &ProgramView, accounts: &A, context: &RunCo
         ballista: context.ballista,
         mutated: false,
         touched: Vec::new(),
+        opened: Vec::new(),
+        group_values: 0,
         uncertain: false,
         cpis: Vec::new(),
         emits: Vec::new(),
@@ -212,6 +236,7 @@ pub fn predict<A: Accounts>(program: &ProgramView, accounts: &A, context: &RunCo
             sets_return_data: model.sets_return_data,
             loop_passes: model.loop_passes,
             exact: !model.uncertain,
+            group_values: model.group_values,
         },
         Err(stop) => stop,
     }
@@ -302,6 +327,7 @@ impl<A: Accounts> Model<'_, A> {
             Prediction::Fails(mut failure) if failure.pc == usize::MAX => {
                 failure.pc = pc;
                 failure.exact = !self.uncertain;
+                failure.group_values = self.group_values;
                 Prediction::Fails(failure)
             }
             other => other,
@@ -395,6 +421,8 @@ impl<A: Accounts> Model<'_, A> {
             OP_OPEN_REGISTRY => self.open_registry(instruction)?,
             OP_READ_REGISTRY => set!(Val::Opaque),
             OP_WRITE_REGISTRY => { self.mutated = true; }
+            OP_GROUP_LENGTH => set!(self.group_length(instruction)?),
+            OP_GROUP_ANY | OP_GROUP_COUNT => set!(self.group_filter(registers, instruction)?),
             _ => return Err(Prediction::Indeterminate("unknown opcode")),
         }
         Ok(())
@@ -769,6 +797,7 @@ impl<A: Accounts> Model<'_, A> {
         };
         self.touched.extend([payer, entry]);
         self.mutated = true;
+        self.opened.push((entry, REGISTRY_ENTRY_HEADER_LEN + open.size as usize));
         if owner == self.ballista {
             return Ok(());
         }
@@ -813,6 +842,130 @@ impl<A: Accounts> Model<'_, A> {
             start += len as usize;
         }
         ranges
+    }
+
+    /// `GROUP_LENGTH`: how many members the caller put in the group, its own number from the run
+    /// data's prefix.
+    fn group_length(&mut self, instruction: &InstructionRecord) -> Result<Val, Prediction> {
+        let (_, len) = self.group_ranges().get(instruction.a as usize).copied().ok_or(Prediction::Indeterminate("group range"))?;
+        self.group_values += 1;
+        Ok(Val::U64(len as u64))
+    }
+
+    /// `GROUP_ANY` and `GROUP_COUNT`, from the wire format: a member matches when its owner is one
+    /// of the one or two programs `b` and `c` name, its data holds at least the floor, its address
+    /// is none of the except keys, and its data holds every match value, encoded as invocation
+    /// data encodes it, at the match's offset. `GROUP_ANY` stops at the first match. A member that
+    /// passes the owner, floor and except tests while an open holds it borrowed fails the run,
+    /// since its data cannot be read: an open marks its entry for the rest of the run.
+    ///
+    /// The result is opaque when a member the model cannot follow could change it: one whose owner
+    /// it does not know (a program, which its loader owns, or the sysvar), one whose data it does
+    /// not know when the owner passes (the template, an account a probe instruction before the
+    /// run changed), one a call was passed since the run began (which may have reassigned,
+    /// resized or rewritten it), or one tested against a match value or except key it does not
+    /// know. A known match still decides `GROUP_ANY`: the scan stops there or earlier, true
+    /// either way.
+    fn group_filter(&mut self, registers: &[Val], instruction: &InstructionRecord) -> Result<Val, Prediction> {
+        let any = instruction.opcode == OP_GROUP_ANY;
+        let program = |index: u8| {
+            self.program.pubkeys.get(index as usize).map(|record| record.bytes).ok_or(Prediction::Indeterminate("group program"))
+        };
+        let first = program(instruction.b)?;
+        let second = if instruction.c == NO_INDEX { first } else { program(instruction.c)? };
+        let filter = GroupScan::decode(instruction.immediate());
+        let (start, end) = filter.segment_range();
+        let segments = self.program.data_segments.get(start..end).ok_or(Prediction::Indeterminate("group segments"))?;
+        let (match_segments, except_segments) = segments.split_at(filter.matches as usize);
+        // Each match's offset and its value's bytes, `None` when the value is opaque.
+        let mut matches = Vec::new();
+        for segment in match_segments {
+            let bytes = match &registers[segment.register as usize] {
+                Val::Opaque => None,
+                value => Some(encode_register(segment.kind, value)?),
+            };
+            matches.push((segment.offset(), bytes));
+        }
+        let mut excepts = Vec::new();
+        for segment in except_segments {
+            excepts.push(match &registers[segment.register as usize] {
+                Val::Pubkey(key) => Some(*key),
+                Val::Opaque => None,
+                _ => return Err(Prediction::Indeterminate("except key not a pubkey")),
+            });
+        }
+        let floor = filter.min_data_len as usize;
+        let (group_start, len) = self.group_ranges().get(instruction.a as usize).copied().ok_or(Prediction::Indeterminate("group range"))?;
+
+        let mut count = 0u64;
+        // Whether a member so far could have matched or not, as far as the model knows.
+        let mut unknown = false;
+        for index in group_start..group_start + len {
+            let address = self.accounts.key(index).ok_or(Prediction::Indeterminate("group account"))?;
+            let excepted = if excepts.contains(&Some(address)) {
+                Some(true)
+            } else if excepts.contains(&None) {
+                None
+            } else {
+                Some(false)
+            };
+            if let Some(&(_, data_len)) = self.opened.iter().find(|(entry, _)| *entry == address) {
+                // An opened entry is Ballista's and `data_len` long, and its mark stays.
+                if (self.ballista != first && self.ballista != second) || data_len < floor || excepted == Some(true) {
+                    continue;
+                }
+                // Whether the scan gets here depends on what the model does not know: an unknown
+                // except key, or for `any` an unknown member before it that may have matched.
+                if excepted.is_none() || (any && unknown) {
+                    return Err(Prediction::Indeterminate("group filter may reach an opened entry"));
+                }
+                return Err(fails("group filter reached an entry an open holds", ACCOUNT_BORROW_FAILED));
+            }
+            let owner = match self.accounts.executable(index) {
+                Some(false) if !self.touched.contains(&address) => self.accounts.owner(index),
+                _ => None,
+            };
+            let Some(owner) = owner else {
+                unknown = true;
+                continue;
+            };
+            if owner != first && owner != second {
+                continue;
+            }
+            let Some(data) = self.accounts.data(index) else {
+                unknown = true;
+                continue;
+            };
+            if data.len() < floor || excepted == Some(true) {
+                continue;
+            }
+            let mut holds = Some(true);
+            for (offset, bytes) in &matches {
+                match bytes {
+                    Some(bytes) if offset.checked_add(bytes.len()).and_then(|end| data.get(*offset..end)) != Some(bytes.as_slice()) => {
+                        holds = Some(false);
+                        break;
+                    }
+                    Some(_) => {}
+                    None => holds = None,
+                }
+            }
+            match (holds, excepted) {
+                (Some(false), _) => {}
+                (Some(true), Some(false)) => {
+                    count += 1;
+                    if any {
+                        break;
+                    }
+                }
+                _ => unknown = true,
+            }
+        }
+        if unknown && !(any && count > 0) {
+            return Ok(Val::Opaque);
+        }
+        self.group_values += 1;
+        Ok(if any { Val::Bool(count > 0) } else { Val::U64(count) })
     }
 
     fn build_cpi_data(&self, registers: &[Val], descriptor: &CpiDescriptor) -> Result<CpiData, Prediction> {

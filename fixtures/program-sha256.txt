@@ -1,4 +1,4 @@
 # SHA-256 of target/deploy/ballista.so as `pnpm build:program` builds it (cargo-build-sbf 4.1.0,
 # platform tools v1.54). Checked by scripts/program-hash.sh; change it only on purpose, with
 # scripts/program-hash.sh --update, in the commit that changes the binary.
-90e84b93cfa3b08179581ab4e45411cc7389bd624d81d8487811b292e438975f  ballista.so
+48e3080219c95c1cb08ca2be371fa2d2dce8b77776773ba530c897dd399d04e3  ballista.so

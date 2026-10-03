@@ -1,7 +1,7 @@
 //! Random templates that the verifier accepts by construction, covering every opcode family the
 //! executor runs: typed reads at fixed and computed offsets, byte reads, PDAs, introspection,
-//! outputs, registries, both loop kinds with carried values, and invocations of the System
-//! program, the probe program, the Token program and Ballista itself.
+//! outputs, registries, account-group lengths and filters, both loop kinds with carried values, and
+//! invocations of the System program, the probe program, the Token program and Ballista itself.
 //!
 //! Unlike `ballista_common::template::generate`, which avoids every value-dependent failure but
 //! overflow, these templates read account data the caller supplies and call programs, so runs fail
@@ -154,6 +154,33 @@ pub struct Input {
     pub max_len: u16,
 }
 
+/// Where a group filter's match value or except key comes from: what the account generator needs
+/// to supply a member that holds the value, or that sits at the key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FilterValue {
+    /// A constant, as invocation data encodes it.
+    Bytes(Vec<u8>),
+    /// The fixed input `n`, encoded as its type.
+    Input(usize),
+    /// The key of fixed account `n`.
+    SlotKey(usize),
+    /// A register whose value only the run knows.
+    Unknown,
+}
+
+/// One `GROUP_ANY` or `GROUP_COUNT`: what a member of `group` must be to match.
+#[derive(Clone, Debug)]
+pub struct GroupFilter {
+    pub group: usize,
+    /// The one or two programs a member's owner must be.
+    pub programs: Vec<[u8; 32]>,
+    pub min_data_len: u32,
+    /// `(data offset, value)` of each match.
+    pub matches: Vec<(usize, FilterValue)>,
+    /// The except keys: a member at one of them never matches.
+    pub excepts: Vec<FilterValue>,
+}
+
 /// A generated template and everything the account and invariant checks need to know about it.
 #[derive(Clone, Debug)]
 pub struct TemplatePlan {
@@ -165,6 +192,9 @@ pub struct TemplatePlan {
     pub inputs: Vec<Input>,
     pub row_inputs: Vec<Input>,
     pub groups: usize,
+    /// Every `GROUP_ANY` and `GROUP_COUNT`, so the account generator can supply members that pass
+    /// each of a filter's tests and members that fail one.
+    pub group_filters: Vec<GroupFilter>,
     pub opens: Vec<Open>,
     /// `(open, offset past the header, width)` of every `WRITE_REGISTRY`.
     pub registry_writes: Vec<(usize, u16, usize)>,
@@ -349,6 +379,7 @@ pub fn generate_template_with(g: &mut Gen, world: &World, config: &Config) -> Te
             inputs: Vec::new(),
             row_inputs: Vec::new(),
             groups: 0,
+            group_filters: Vec::new(),
             opens: Vec::new(),
             registry_writes: Vec::new(),
             emit_tags: Vec::new(),
@@ -395,6 +426,7 @@ fn minimal_plan() -> TemplatePlan {
         inputs: Vec::new(),
         row_inputs: Vec::new(),
         groups: 0,
+        group_filters: Vec::new(),
         opens: Vec::new(),
         registry_writes: Vec::new(),
         emit_tags: Vec::new(),
@@ -895,7 +927,10 @@ impl TemplateGen<'_, '_> {
     }
 
     fn value(&mut self) {
-        let choice = self.g.weighted(&[6, 4, 4, 3, 2, 2, 1, 6, 3, 2, 2, 2, 3, 2, 3, 1, 2, 2, 2]);
+        // Group expressions only where the template declares a group; a zero weight leaves every
+        // other template's draws as they were.
+        let group_weight = if self.plan.groups > 0 { 6 } else { 0 };
+        let choice = self.g.weighted(&[6, 4, 4, 3, 2, 2, 1, 6, 3, 2, 2, 2, 3, 2, 3, 1, 2, 2, 2, group_weight]);
         let before = self.b.instructions_mut().len();
         match choice {
             0 => {
@@ -938,7 +973,8 @@ impl TemplateGen<'_, '_> {
                 }
             }
             17 => self.mov(),
-            _ => self.read_registry(),
+            18 => self.read_registry(),
+            _ => self.group(),
         }
         if self.b.instructions_mut().len() != before {
             self.mark();
@@ -1275,6 +1311,168 @@ impl TemplateGen<'_, '_> {
         let target = self.b.register();
         self.b.mov(target, source);
         self.define(target, ty);
+    }
+
+    // ---- account groups ------------------------------------------------------------------------
+
+    /// An expression over a declared account group: its length, or a filter (`GROUP_ANY`,
+    /// `GROUP_COUNT`) whose programs, data floor, matches and excepts the plan records, so the
+    /// account generator can supply members that pass every test and members that fail one. The
+    /// result is usually logged at once, so the model's answer is compared byte for byte, and an
+    /// `any` is sometimes required, so a filter that finds nothing fails the run where the model
+    /// says it does.
+    fn group(&mut self) {
+        // A filter takes up to eight value registers and ten instructions with its log line.
+        if self.plan.groups == 0 || !self.room(12) || self.b.register_count() + 10 > self.register_limit {
+            return;
+        }
+        let group = self.g.below(self.plan.groups);
+        if self.g.chance(1, 5) {
+            let register = self.b.group_length(group as u8);
+            self.define(register, Ty::U64);
+            self.observe_group(register, false);
+            return;
+        }
+        let world = self.world;
+        let owners = [world.probe, SYSTEM_PROGRAM_ADDRESS, world.token, world.ballista];
+        // Ballista owns the entries a run opens: a filter for its accounts may meet one an open holds.
+        let weights = [4, 3, 2, if self.plan.opens.is_empty() { 1 } else { 3 }];
+        let mut programs = vec![owners[self.g.weighted(&weights)]];
+        if self.g.chance(1, 3) {
+            programs.push(owners[self.g.weighted(&weights)]);
+        }
+        let mut matches = Vec::new();
+        let mut planned_matches = Vec::new();
+        let mut floor = 0;
+        for _ in 0..=self.g.weighted(&[5, 3, 1, 1]) {
+            let (ty, kind, width) = [
+                (Ty::Bool, DATA_REG_BOOL, 1),
+                (Ty::U64, DATA_REG_U64, 8),
+                (Ty::I64, DATA_REG_I64, 8),
+                (Ty::U128, DATA_REG_U128, 16),
+                (Ty::Pubkey, DATA_REG_PUBKEY, 32),
+            ][self.g.weighted(&[1, 4, 1, 1, 3])];
+            // Mostly on a word boundary, as account layouts put their fields; sometimes anywhere.
+            let offset = if self.g.chance(3, 4) { 8 * self.g.below(9) } else { self.g.below(80) };
+            let (register, value) = self.filter_value(ty);
+            floor = floor.max(offset + width);
+            matches.push((offset as u16, kind, register));
+            planned_matches.push((offset, value));
+        }
+        let mut excepts = Vec::new();
+        let mut planned_excepts = Vec::new();
+        for _ in 0..self.g.weighted(&[5, 3, 1, 1, 1]) {
+            let (register, value) = self.filter_key();
+            excepts.push(register);
+            planned_excepts.push(value);
+        }
+        let min_data_len = match self.g.weighted(&[6, 3, 1]) {
+            0 => floor,
+            1 => floor + self.g.range(1, 40),
+            // A floor no account the generator makes reaches.
+            _ => floor + self.g.range(300, 1000),
+        } as u32;
+        let count = self.g.chance(1, 2);
+        let register = self.b.group_filter(count, group as u8, &programs, &matches, &excepts, min_data_len);
+        self.define(register, if count { Ty::U64 } else { Ty::Bool });
+        self.plan.group_filters.push(GroupFilter {
+            group,
+            programs,
+            min_data_len,
+            matches: planned_matches,
+            excepts: planned_excepts,
+        });
+        self.observe_group(register, !count);
+    }
+
+    /// A fresh register holding a match value of type `ty`, and where its value comes from: a
+    /// constant, a fixed input of that type, a fixed account's key; or an existing register of
+    /// that type, whose value only the run knows.
+    fn filter_value(&mut self, ty: Ty) -> (u8, FilterValue) {
+        let inputs: Vec<usize> = (0..self.plan.inputs.len())
+            .filter(|&index| Ty::from_value_type(self.plan.inputs[index].value_type, 0) == ty)
+            .collect();
+        let existing = self.of(|candidate| candidate == ty);
+        let key_weight = if ty == Ty::Pubkey && !self.plan.fixed.is_empty() { 3 } else { 0 };
+        match self.g.weighted(&[5, 2, key_weight, 2]) {
+            1 if !inputs.is_empty() => {
+                let input = inputs[self.g.below(inputs.len())];
+                let register = self.b.load_input(input as u8);
+                (self.define(register, ty), FilterValue::Input(input))
+            }
+            2 => {
+                let slot = self.g.below(self.plan.fixed.len());
+                let register = self.b.account_key(slot as u8);
+                (self.define(register, ty), FilterValue::SlotKey(slot))
+            }
+            3 if !existing.is_empty() => (existing[self.g.below(existing.len())], FilterValue::Unknown),
+            _ => {
+                // Zero often: friendly account data is mostly zeros, so a zero matches by chance.
+                let zero = self.g.chance(1, 3);
+                let friendly = self.plan.friendly;
+                let (register, bytes) = match ty {
+                    Ty::Bool => {
+                        let value = !zero && self.g.chance(1, 2);
+                        (self.b.const_bool(value), vec![u8::from(value)])
+                    }
+                    Ty::U64 => {
+                        let value = if zero { 0 } else if friendly { self.g.below(16) as u64 } else { self.g.interesting_u64() };
+                        (self.b.const_u64(value), value.to_le_bytes().to_vec())
+                    }
+                    Ty::I64 => {
+                        let value = if zero { 0 } else if friendly { self.g.below(16) as i64 } else { self.g.interesting_i64() };
+                        (self.b.const_i64(value), value.to_le_bytes().to_vec())
+                    }
+                    Ty::U128 => {
+                        let value = if zero { 0 } else if friendly { self.g.below(16) as u128 } else { self.g.interesting_u128() };
+                        (self.b.const_u128(value), value.to_le_bytes().to_vec())
+                    }
+                    _ => {
+                        let value = if zero { [0; 32] } else { self.interesting_pubkey() };
+                        (self.b.const_pubkey(value), value.to_vec())
+                    }
+                };
+                (self.define(register, ty), FilterValue::Bytes(bytes))
+            }
+        }
+    }
+
+    /// A `pubkey` register naming an except key, and where it comes from: a fresh key the account
+    /// generator may give a member that passes every other test, an account the world names, a
+    /// fixed account's key; or an existing `pubkey` register, whose value only the run knows.
+    fn filter_key(&mut self) -> (u8, FilterValue) {
+        let existing = self.of(|ty| ty == Ty::Pubkey);
+        let slot_weight = if self.plan.fixed.is_empty() { 0 } else { 3 };
+        let key = match self.g.weighted(&[4, 2, slot_weight, 1]) {
+            1 => self.interesting_pubkey(),
+            2 => {
+                let slot = self.g.below(self.plan.fixed.len());
+                let register = self.b.account_key(slot as u8);
+                return (self.define(register, Ty::Pubkey), FilterValue::SlotKey(slot));
+            }
+            3 if !existing.is_empty() => return (existing[self.g.below(existing.len())], FilterValue::Unknown),
+            _ => {
+                // Tagged apart from the world's accounts and the account generator's fresh ones.
+                let mut key = [0u8; 32];
+                key.copy_from_slice(&self.g.bytes(32));
+                key[0] = 0xd0 | (key[0] & 0x0f);
+                key[31] = 0xc3;
+                key
+            }
+        };
+        let register = self.b.const_pubkey(key);
+        (self.define(register, Ty::Pubkey), FilterValue::Bytes(key.to_vec()))
+    }
+
+    /// Makes a group expression's result observable: usually logged at once, and an `any`
+    /// sometimes required instead.
+    fn observe_group(&mut self, register: u8, any: bool) {
+        if any && self.g.chance(1, 6) {
+            self.mark();
+            self.b.require(register);
+        } else if self.g.chance(3, 4) {
+            self.emit_registers(&[register]);
+        }
     }
 
     fn read_registry(&mut self) {

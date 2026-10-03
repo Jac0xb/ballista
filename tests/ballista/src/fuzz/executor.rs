@@ -65,6 +65,12 @@ struct Stats {
     predicted_failures: usize,
     exact_failures: usize,
     classified_failures: usize,
+    /// Templates holding a group opcode, and how many they hold.
+    group_templates: usize,
+    group_opcodes: usize,
+    /// Group opcodes the model evaluated to a concrete value on a run it compared, and the runs.
+    compared_group_values: usize,
+    compared_group_runs: usize,
     /// Why the model passed over successful runs.
     skipped: BTreeMap<String, usize>,
     /// Ballista codes raised while instructions ran, by kind and the opcode at the code's pc.
@@ -101,6 +107,10 @@ impl Stats {
         self.predicted_failures += other.predicted_failures;
         self.exact_failures += other.exact_failures;
         self.classified_failures += other.classified_failures;
+        self.group_templates += other.group_templates;
+        self.group_opcodes += other.group_opcodes;
+        self.compared_group_values += other.compared_group_values;
+        self.compared_group_runs += other.compared_group_runs;
         for (key, count) in other.skipped {
             *self.skipped.entry(key).or_default() += count;
         }
@@ -130,6 +140,8 @@ impl Stats {
         self.predicted_failures += usize::from(compared.predicted_failure);
         self.exact_failures += usize::from(compared.exact_failure);
         self.classified_failures += usize::from(compared.classified_failure);
+        self.compared_group_values += compared.group_values;
+        self.compared_group_runs += usize::from(compared.group_values > 0);
     }
 }
 
@@ -193,6 +205,15 @@ fn run_seed(harness: &Harness, config: &Config, seed: u64) -> SeedResult {
             .iter()
             .filter(|cpi| cpi.program_account & ballista_common::template::ITERATION_ACCOUNT_BIT != 0)
             .count();
+        {
+            use ballista_common::template::{OP_GROUP_ANY, OP_GROUP_COUNT, OP_GROUP_LENGTH};
+            stats.group_opcodes = program
+                .instructions
+                .iter()
+                .filter(|record| matches!(record.opcode, OP_GROUP_LENGTH | OP_GROUP_ANY | OP_GROUP_COUNT))
+                .count();
+            stats.group_templates = usize::from(stats.group_opcodes > 0);
+        }
     }
 
     // A fixed creator and id: every seed runs in its own stateless Mollusk invocation, so there is
@@ -298,9 +319,10 @@ fn fuzz_executor_differential() {
         let s = &result.stats;
         eprintln!(
             "seed {seed}: succeeded={} compared run={} cpis={} data={} flags={} return_data={} loop_passes={} \
-             predicted_failure={} classified_failure={} skipped={:?} in_run={:?}",
+             group_values={} predicted_failure={} classified_failure={} skipped={:?} in_run={:?}",
             s.succeeded, s.compared_runs, s.compared_cpis, s.compared_data, s.compared_flags, s.compared_return_data,
-            s.compared_loop_passes, s.predicted_failures, s.classified_failures, s.skipped, s.in_run_failures
+            s.compared_loop_passes, s.compared_group_values, s.predicted_failures, s.classified_failures, s.skipped,
+            s.in_run_failures
         );
         assert!(result.hard.is_empty(), "findings:\n{}", result.hard.join("\n"));
         return;
@@ -338,6 +360,10 @@ fn fuzz_executor_differential() {
         stats.compared_runs, stats.compared_cpis, stats.compared_row_program_cpis, stats.compared_wide_cpis,
         stats.compared_data, stats.compared_flags, stats.compared_emits, stats.compared_return_data,
         stats.compared_loop_passes, stats.predicted_failures, stats.exact_failures, stats.classified_failures,
+    );
+    eprintln!(
+        "account groups: {} templates hold {} group opcodes; the model evaluated {} on {} compared runs",
+        stats.group_templates, stats.group_opcodes, stats.compared_group_values, stats.compared_group_runs,
     );
     eprintln!(
         "largest template: {} instructions, {} registers, {} accounts in one CPI, {} worst-case CPIs; {} CPIs into row-account programs",

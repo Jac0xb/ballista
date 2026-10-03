@@ -41,12 +41,12 @@ Ballista program finalizes a template only if:
 - **Reads stay in bounds.** Each fixed-offset read stays within the account's declared minimum
   length, and introspection reads only the Instructions sysvar, pinned to its address.
 - **The work is bounded.** Loops are never nested, and each has a fixed maximum, so even the worst
-  case stays within the [limits](/reference/limits) on accounts, calls, call data, seeds and
-  output.
+  case stays within every [program limit](/reference/limits#program-limits): inputs, registers,
+  instructions, accounts, loops, calls, call data, seeds, output and registries.
 - **Registries and output follow their rules.** A
   [registry entry](/reference/language#registries) is opened at the top level before it is used,
   read and written only through its declared fields, and never passed writable to a call. Return
-  data is set once, after the last call, and every `emit` starts with its tag
+  data is set at most once, after the last call, and every `emit` starts with a literal tag
   ([output rules](/reference/language#output)).
 
 Finalization does not check that a called program's address is pinned (only the TypeScript

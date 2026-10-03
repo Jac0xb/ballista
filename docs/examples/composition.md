@@ -134,8 +134,8 @@ and deposits exactly that.
 - **Pass the inner run's accounts as its own run would:** the inner template account, then its
   accounts in the order it declares them. An account the inner run needs as a signer must be
   declared and passed as one by the outer template.
-- **Read the return data in the step straight after the call,** and give that call no `when`.
-  The inner template sets its return data last, after every call it makes.
+- **Read the return data straight after the call,** which has no `when`, as the
+  [output rules](/reference/language#output) require.
 - **It costs a call frame.** The inner run is frame 2, so its own calls start at frame 3 of
   Solana's [5](/reference/limits#call-depth), and the inner run and its calls all count toward
   the transaction's [instruction trace](/reference/limits#instruction-trace). In return, the inner

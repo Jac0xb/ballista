@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet};
 
 use ballista_common::template::*;
-use ballista_fuzz_gen::model::{self, Accounts, CpiData, ExpectedMeta, InputVal, Prediction};
+use ballista_fuzz_gen::model::{self, Accounts, CpiData, ExpectedMeta, InputVal, Prediction, RunContext};
 use ballista_fuzz_gen::scenario::{Kind, Scenario};
 use ballista_fuzz_gen::template::{probe, Program, TemplatePlan, World, ALL_PROGRAMS};
 use mollusk_svm::result::types::{TransactionProgramResult, TransactionResult};
@@ -43,6 +43,10 @@ pub struct Compared {
     pub run: bool,
     /// CPIs compared by program and accounts.
     pub cpis: usize,
+    /// Of those, CPIs whose program a batch row named.
+    pub row_program_cpis: usize,
+    /// Of those, CPIs passing 16 or more accounts.
+    pub wide_cpis: usize,
     /// CPIs whose data the model knew and compared byte for byte.
     pub data: usize,
     /// Probe CPIs whose received signer and writable flags were compared.
@@ -503,9 +507,8 @@ fn received_flags(metas: &[ExpectedMeta]) -> Vec<u8> {
 }
 
 /// Compares the run with what the independent model predicts, whenever the model can follow the
-/// run with concrete control flow. Not for templates with registry opens (the model does not
-/// predict an entry's creation calls) or for scenarios with a deliberate mutation (which change the
-/// account layout or the run data the model reads).
+/// run with concrete control flow. Not for scenarios with a deliberate mutation, which change the
+/// account layout or the run data the model reads.
 ///
 /// A successful run must match a [`Prediction::Calls`] exactly: the same CPIs in the same order,
 /// each to the same program with the same accounts, the same data where the model knows it, and,
@@ -531,9 +534,6 @@ fn reference_model(
     if !harness.has_probe {
         return skip(report, "no probe");
     }
-    if !plan.opens.is_empty() {
-        return skip(report, "registry opens");
-    }
     if scenario.mutation.is_some() {
         return skip(report, "mutation");
     }
@@ -549,15 +549,17 @@ fn reference_model(
         }
     }
     let accounts = ScenarioAccounts::new(scenario, outcome);
-    let prediction = model::predict(
-        &program,
-        &accounts,
+    let rent = |len: usize| harness.rent_minimum(len);
+    let context = RunContext {
         inputs,
-        scenario.iterations,
-        &scenario.group_lengths,
-        super::harness::CLOCK_SLOT,
-        super::harness::CLOCK_TIMESTAMP,
-    );
+        iterations: scenario.iterations,
+        group_lengths: &scenario.group_lengths,
+        clock_slot: super::harness::CLOCK_SLOT,
+        clock_timestamp: super::harness::CLOCK_TIMESTAMP,
+        rent: &rent,
+        ballista: world.ballista,
+    };
+    let prediction = model::predict(&program, &accounts, &context);
     let (expected, emits, return_data, loop_passes) = match prediction {
         Prediction::Calls { cpis, emits, return_data, loop_passes, .. } => (cpis, emits, return_data, loop_passes),
         Prediction::Indeterminate(reason) => return skip(report, reason),
@@ -618,6 +620,8 @@ fn reference_model(
             }
         }
         report.compared.cpis += 1;
+        report.compared.row_program_cpis += usize::from(want.row_program);
+        report.compared.wide_cpis += usize::from(want.accounts.len() >= 16);
     }
     // Every EMIT line, in order: the run's own Program data lines other than the run event.
     let (lines, _) = run_data_lines(outcome);

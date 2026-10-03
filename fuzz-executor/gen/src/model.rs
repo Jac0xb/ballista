@@ -26,6 +26,9 @@ pub struct ExpectedCpi {
     /// One meta per listed account, then the forwarded group members.
     pub accounts: Vec<ExpectedMeta>,
     pub data: CpiData,
+    /// Whether the descriptor named a row account as the program, so the program may differ by
+    /// batch row.
+    pub row_program: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,17 +109,38 @@ impl InputVal {
     }
 }
 
+/// What a run meets besides its accounts: the run data's values and layout, the clock, the rent
+/// schedule and Ballista's own address.
+pub struct RunContext<'a> {
+    /// Decoded run input values, fixed first then one row per iteration.
+    pub inputs: &'a [InputVal],
+    /// Batch rows the run passes.
+    pub iterations: usize,
+    /// Each account group's length, from the run data's prefix.
+    pub group_lengths: &'a [u8],
+    pub clock_slot: u64,
+    pub clock_timestamp: i64,
+    /// The rent-exempt minimum balance for a data length, which an entry the run creates gets.
+    pub rent: &'a dyn Fn(usize) -> u64,
+    /// The program that owns the entries a run creates.
+    pub ballista: [u8; 32],
+}
+
 pub struct Model<'a, A: Accounts> {
     program: &'a ProgramView<'a>,
     accounts: &'a A,
     inputs: &'a [InputVal],
     iterations: usize,
-    /// Each account group's length, from the run data's prefix.
     group_lengths: &'a [u8],
     clock_slot: u64,
     clock_timestamp: i64,
+    rent: &'a dyn Fn(usize) -> u64,
+    ballista: [u8; 32],
     /// Once any CPI has run, account state may have changed, so reads become opaque.
     mutated: bool,
+    /// Every account a CPI so far was passed, the template's or an entry creation's: only those
+    /// can have changed, since a program changes only accounts it is passed.
+    touched: Vec<[u8; 32]>,
     cpis: Vec<ExpectedCpi>,
     emits: Vec<CpiData>,
     return_data: CpiData,
@@ -124,27 +148,20 @@ pub struct Model<'a, A: Accounts> {
     loop_passes: usize,
 }
 
-/// Runs the model: what a run of `program` over `accounts` with these inputs, batch rows, account
-/// group lengths and clock should do.
-#[allow(clippy::too_many_arguments)]
-pub fn predict<A: Accounts>(
-    program: &ProgramView,
-    accounts: &A,
-    inputs: &[InputVal],
-    iterations: usize,
-    group_lengths: &[u8],
-    clock_slot: u64,
-    clock_timestamp: i64,
-) -> Prediction {
+/// Runs the model: what a run of `program` over `accounts` in `context` should do.
+pub fn predict<A: Accounts>(program: &ProgramView, accounts: &A, context: &RunContext) -> Prediction {
     let mut model = Model {
         program,
         accounts,
-        inputs,
-        iterations,
-        group_lengths,
-        clock_slot,
-        clock_timestamp,
+        inputs: context.inputs,
+        iterations: context.iterations,
+        group_lengths: context.group_lengths,
+        clock_slot: context.clock_slot,
+        clock_timestamp: context.clock_timestamp,
+        rent: context.rent,
+        ballista: context.ballista,
         mutated: false,
+        touched: Vec::new(),
         cpis: Vec::new(),
         emits: Vec::new(),
         return_data: CpiData::Concrete(Vec::new()),
@@ -313,13 +330,7 @@ impl<A: Accounts> Model<'_, A> {
                 self.return_data = self.build_output(registers, instruction)?;
                 self.sets_return_data = true;
             }
-            OP_OPEN_REGISTRY => {
-                // Opening may create the entry (System CPIs), which the harness sees as inner
-                // instructions. The model does not predict those three calls; it records that the
-                // registry opens happened by leaving a gap the harness tolerates. Opening also
-                // touches chain state, so later reads are opaque.
-                self.mutated = true;
-            }
+            OP_OPEN_REGISTRY => self.open_registry(instruction)?,
             OP_READ_REGISTRY => set!(Val::Opaque),
             OP_WRITE_REGISTRY => { self.mutated = true; }
             _ => return Err(Prediction::Indeterminate("unknown opcode")),
@@ -657,8 +668,64 @@ impl<A: Accounts> Model<'_, A> {
             }
         }
         let data = self.build_cpi_data(registers, descriptor)?;
-        self.cpis.push(ExpectedCpi { program, accounts, data });
+        self.touched.extend(accounts.iter().map(|meta| meta.address));
+        let row_program = descriptor.program_account & ITERATION_ACCOUNT_BIT != 0;
+        self.cpis.push(ExpectedCpi { program, accounts, data, row_program });
         self.mutated = true;
+        Ok(())
+    }
+
+    /// `OPEN_REGISTRY` on a run that succeeds: an entry Ballista owns already is checked and costs
+    /// no call; a missing one is created from the payer's lamports, with one `create_account`
+    /// when its address holds none, or else a transfer of any shortfall to rent exemption, then
+    /// `allocate` and `assign` (`processor/registry.rs`, `create_entry`). The entry's address and
+    /// header are the run's to check; a run that gets past the open passed them.
+    fn open_registry(&mut self, instruction: &InstructionRecord) -> Flow {
+        let open = RegistryOpen::decode(instruction.immediate()).ok_or(Prediction::Indeterminate("open immediate"))?;
+        let entry_index = instruction.a as usize;
+        let payer_index = instruction.c as usize;
+        let entry = self.accounts.key(entry_index).ok_or(Prediction::Indeterminate("entry account"))?;
+        let payer = self.accounts.key(payer_index).ok_or(Prediction::Indeterminate("payer account"))?;
+        // The entry's state decides the calls. A call that was passed the entry may have changed it
+        // (a transfer to it, say), and so may an earlier open whose payer it was, so the model
+        // stops there.
+        if self.touched.contains(&entry) {
+            return Err(Prediction::Indeterminate("open of an account a call was passed"));
+        }
+        let (Some(owner), Some(lamports)) = (self.accounts.owner(entry_index), self.accounts.lamports(entry_index)) else {
+            return Err(Prediction::Indeterminate("entry state unknown"));
+        };
+        self.touched.extend([payer, entry]);
+        self.mutated = true;
+        if owner == self.ballista {
+            return Ok(());
+        }
+        let space = REGISTRY_ENTRY_HEADER_LEN + open.size as usize;
+        let required = (self.rent)(space);
+        let system = SYSTEM_PROGRAM_ADDRESS;
+        let meta = |address, signer, writable| ExpectedMeta { address, signer, writable };
+        let call = |accounts, data: Vec<u8>| ExpectedCpi { program: system, accounts, data: CpiData::Concrete(data), row_program: false };
+        let space_le = (space as u64).to_le_bytes();
+        if lamports == 0 {
+            let mut data = 0u32.to_le_bytes().to_vec();
+            data.extend_from_slice(&required.to_le_bytes());
+            data.extend_from_slice(&space_le);
+            data.extend_from_slice(&self.ballista);
+            self.cpis.push(call(vec![meta(payer, true, true), meta(entry, true, true)], data));
+        } else {
+            let shortfall = required.saturating_sub(lamports);
+            if shortfall > 0 {
+                let mut data = 2u32.to_le_bytes().to_vec();
+                data.extend_from_slice(&shortfall.to_le_bytes());
+                self.cpis.push(call(vec![meta(payer, true, true), meta(entry, false, true)], data));
+            }
+            let mut data = 8u32.to_le_bytes().to_vec();
+            data.extend_from_slice(&space_le);
+            self.cpis.push(call(vec![meta(entry, true, true)], data));
+            let mut data = 1u32.to_le_bytes().to_vec();
+            data.extend_from_slice(&self.ballista);
+            self.cpis.push(call(vec![meta(entry, true, true)], data));
+        }
         Ok(())
     }
 

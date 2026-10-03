@@ -240,7 +240,7 @@ impl ScenarioGen<'_, '_> {
         for user in self.world.users.clone() {
             let lamports = self.lamports();
             let len = if self.g.chance(1, 5) { self.g.range(1, 100) } else { 0 };
-            let data = self.g.bytes(len);
+            let data = self.data(len);
             self.add(AccountSpec {
                 address: user,
                 owner: SYSTEM_PROGRAM_ADDRESS,
@@ -254,7 +254,7 @@ impl ScenarioGen<'_, '_> {
         }
         for account in self.world.probe_data.clone() {
             let len = self.g.range(0, 140);
-            let data = self.g.bytes(len);
+            let data = self.data(len);
             let lamports = (self.rent)(len) + self.g.below(1000) as u64;
             self.add(AccountSpec {
                 address: account,
@@ -269,10 +269,20 @@ impl ScenarioGen<'_, '_> {
         }
     }
 
+    /// Account data: random bytes, or for a friendly plan mostly zeros, so a typed read of it gives
+    /// a value arithmetic seldom overflows on.
+    fn data(&mut self, len: usize) -> Vec<u8> {
+        if self.plan.friendly {
+            (0..len).map(|_| if self.g.chance(1, 4) { self.g.below(16) as u8 } else { 0 }).collect()
+        } else {
+            self.g.bytes(len)
+        }
+    }
+
     fn fresh(&mut self, owner: [u8; 32], min_len: usize) -> usize {
         let address = self.fresh_address();
         let len = min_len + if self.g.chance(1, 2) { 0 } else { self.g.below(48) };
-        let data = self.g.bytes(len);
+        let data = self.data(len);
         let kind = if owner == self.world.probe {
             Kind::ProbeData
         } else if owner == self.world.token {
@@ -340,13 +350,13 @@ impl ScenarioGen<'_, '_> {
                 return index;
             }
         }
-        if !assigned.is_empty() && self.g.chance(1, 40) {
+        if !self.plan.friendly && !assigned.is_empty() && self.g.chance(1, 40) {
             // A blind alias, which usually fails validation: exercises the rejection path.
             let index = assigned[self.g.below(assigned.len())];
             self.grant(index, slot.flags);
             return index;
         }
-        if self.g.chance(1, 40) {
+        if !self.plan.friendly && self.g.chance(1, 40) {
             // Anything at all.
             let index = self.g.below(self.pool.len());
             self.grant(index, slot.flags);
@@ -401,7 +411,10 @@ impl ScenarioGen<'_, '_> {
 
     fn value(&mut self, value_type: u8, max_len: u16) -> Value {
         match value_type {
-            VALUE_BOOL => Value::Bool(if self.g.chance(1, 40) { 2 } else { self.g.below(2) as u8 }),
+            VALUE_BOOL => Value::Bool(if !self.plan.friendly && self.g.chance(1, 40) { 2 } else { self.g.below(2) as u8 }),
+            VALUE_U64 if self.plan.friendly => Value::U64(self.g.below(1000) as u64),
+            VALUE_I64 if self.plan.friendly => Value::I64(self.g.below(2001) as i64 - 1000),
+            VALUE_U128 if self.plan.friendly => Value::U128(self.g.below(1000) as u128),
             VALUE_U64 => Value::U64(self.g.interesting_u64()),
             VALUE_I64 => Value::I64(self.g.interesting_i64()),
             VALUE_U128 => Value::U128(self.g.interesting_u128()),
@@ -416,7 +429,7 @@ impl ScenarioGen<'_, '_> {
                 }
             }
             _ => {
-                let len = if self.g.chance(1, 40) { max_len as usize + 1 } else { self.g.below(max_len as usize + 1) };
+                let len = if !self.plan.friendly && self.g.chance(1, 40) { max_len as usize + 1 } else { self.g.below(max_len as usize + 1) };
                 Value::Bytes(self.g.bytes(len))
             }
         }
@@ -436,7 +449,7 @@ impl ScenarioGen<'_, '_> {
         let ballista = self.world.ballista;
         let size = spec.size as usize;
         let address = key.map(|key| entry_address(self.pda, &ballista, &self.template_address, spec.index, &key));
-        let choice = self.g.weighted(&[30, 12, 30, 5, 4, 5, 3]);
+        let choice = if self.plan.friendly { self.g.weighted(&[30, 12, 30]) } else { self.g.weighted(&[30, 12, 30, 5, 4, 5, 3]) };
         let index = match (choice, address, key) {
             (0, Some(address), _) => self.add(AccountSpec {
                 address,
@@ -551,7 +564,7 @@ impl ScenarioGen<'_, '_> {
                 Role::Entry(_) => continue,
                 Role::Program(program) => {
                     let mut index = self.program_index(*program);
-                    if slot.address.is_none() && self.g.chance(1, 6) {
+                    if !plan.friendly && slot.address.is_none() && self.g.chance(1, 6) {
                         let other = ALL_PROGRAMS[self.g.below(ALL_PROGRAMS.len())];
                         index = self.program_index(other);
                     }
@@ -561,7 +574,7 @@ impl ScenarioGen<'_, '_> {
                 Role::Payer => {
                     let index = self.fresh(SYSTEM_PROGRAM_ADDRESS, 0);
                     self.pool[index].data.clear();
-                    self.pool[index].lamports = if self.g.chance(1, 20) { self.g.below(5000) as u64 } else { 10_000_000_000 };
+                    self.pool[index].lamports = if !plan.friendly && self.g.chance(1, 20) { self.g.below(5000) as u64 } else { 10_000_000_000 };
                     self.grant(index, slot.flags);
                     index
                 }
@@ -592,7 +605,7 @@ impl ScenarioGen<'_, '_> {
         // Rows.
         let iterations = if plan.batch_max == 0 {
             0
-        } else if self.g.chance(9, 10) {
+        } else if plan.friendly || self.g.chance(9, 10) {
             self.g.range(plan.batch_min, plan.batch_max)
         } else {
             self.g.below(plan.batch_max + 2)
@@ -612,7 +625,7 @@ impl ScenarioGen<'_, '_> {
         // Account groups: anything, entries and the template included, with random flags.
         let mut group_lengths = Vec::new();
         for _ in 0..plan.groups {
-            let len = if self.g.chance(1, 30) { self.g.range(20, 66) } else { self.g.below(4) };
+            let len = if !plan.friendly && self.g.chance(1, 30) { self.g.range(20, 66) } else { self.g.below(4) };
             group_lengths.push(len as u8);
             for _ in 0..len {
                 let index = self.g.below(self.pool.len());
@@ -642,7 +655,7 @@ impl ScenarioGen<'_, '_> {
         }
 
         let mut mutation = None;
-        if self.g.chance(1, 10) {
+        if !plan.friendly && self.g.chance(1, 10) {
             mutation = Some(self.mutate(&mut runtime, &mut run_data));
         }
 

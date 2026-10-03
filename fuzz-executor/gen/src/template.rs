@@ -176,6 +176,10 @@ pub struct TemplatePlan {
     pub reads_clock: bool,
     /// True when generation overran a limit and the minimal fallback template was returned.
     pub fell_back: bool,
+    /// Half the templates, and their runs, avoid the deliberate faults: small constants and inputs,
+    /// counts and offsets in range, no probe failures or junk calls, valid accounts and run data.
+    /// So more runs succeed and the model compares them; the other half keeps every fault.
+    pub friendly: bool,
 }
 
 impl TemplatePlan {
@@ -353,6 +357,7 @@ pub fn generate_template_with(g: &mut Gen, world: &World, config: &Config) -> Te
             calls: Vec::new(),
             reads_clock: false,
             fell_back: false,
+            friendly: false,
         },
         regs: vec![None; MAX_REGISTERS],
         scope: Scope::Root,
@@ -398,11 +403,13 @@ fn minimal_plan() -> TemplatePlan {
         calls: Vec::new(),
         reads_clock: false,
         fell_back: true,
+        friendly: false,
     }
 }
 
 impl TemplateGen<'_, '_> {
     fn run(&mut self) {
+        self.plan.friendly = self.g.chance(1, 2);
         self.declare_accounts();
         self.declare_inputs();
         // Each open counts as three calls: creating a pre-funded entry takes three.
@@ -444,6 +451,12 @@ impl TemplateGen<'_, '_> {
         }
         for _ in 0..self.g.below(3) {
             self.statement();
+        }
+        // Half the templates end by logging their latest values, so what the template computed,
+        // and not just what it passed to a call, is compared with the model.
+        if self.g.chance(1, 2) {
+            let latest: Vec<u8> = (0..self.b.register_count()).rev().filter(|&r| self.regs[r as usize].is_some()).take(4).collect();
+            self.emit_registers(&latest);
         }
         if self.limits {
             self.spend_cpi_budget();
@@ -769,18 +782,19 @@ impl TemplateGen<'_, '_> {
     }
 
     fn constant(&mut self, ty: Ty) -> u8 {
+        let friendly = self.plan.friendly;
         let register = match ty {
             Ty::Bool => self.b.const_bool(self.g.chance(2, 3)),
             Ty::U64 => {
-                let value = self.g.interesting_u64();
+                let value = if friendly { self.g.below(1000) as u64 } else { self.g.interesting_u64() };
                 self.b.const_u64(value)
             }
             Ty::I64 => {
-                let value = self.g.interesting_i64();
+                let value = if friendly { self.g.below(2001) as i64 - 1000 } else { self.g.interesting_i64() };
                 self.b.const_i64(value)
             }
             Ty::U128 => {
-                let value = self.g.interesting_u128();
+                let value = if friendly { self.g.below(1000) as u128 } else { self.g.interesting_u128() };
                 self.b.const_u128(value)
             }
             Ty::Pubkey => {
@@ -981,7 +995,14 @@ impl TemplateGen<'_, '_> {
         let candidates = self.readable();
         let Some((reference, slot)) = self.g.pick(&candidates) else { return };
         let read = READS[self.g.below(READS.len())];
-        let offset = if self.g.chance(3, 4) { self.small_u64(slot.min_len as usize + 40) } else { self.need(Ty::U64) };
+        let width = read_width(read);
+        let offset = if self.plan.friendly && slot.min_len as usize >= width {
+            self.small_u64(slot.min_len as usize - width + 1)
+        } else if self.g.chance(3, 4) {
+            self.small_u64(slot.min_len as usize + 40)
+        } else {
+            self.need(Ty::U64)
+        };
         let register = self.b.read_dynamic(read, reference, offset);
         self.define(register, Ty::from_read(read));
     }
@@ -995,8 +1016,14 @@ impl TemplateGen<'_, '_> {
             .filter(|(reference, slot)| reference & ITERATION_ACCOUNT_BIT != 0 || slot.flags & ACCOUNT_WRITABLE == 0)
             .collect();
         let Some((reference, slot)) = self.g.pick(&candidates) else { return };
-        let offset = if self.g.chance(3, 4) { self.small_u64(slot.min_len as usize + 24) } else { self.need(Ty::U64) };
         let len = self.g.range(1, 32) as u16;
+        let offset = if self.plan.friendly && slot.min_len >= len as u32 {
+            self.small_u64((slot.min_len - len as u32) as usize + 1)
+        } else if self.g.chance(3, 4) {
+            self.small_u64(slot.min_len as usize + 24)
+        } else {
+            self.need(Ty::U64)
+        };
         let register = self.b.read_account_bytes(reference, offset, len);
         self.define(register, Ty::Bytes(len));
     }
@@ -1166,7 +1193,7 @@ impl TemplateGen<'_, '_> {
         if !self.room(2) {
             return;
         }
-        let register = if self.g.chance(1, 2) {
+        let register = if !self.plan.friendly && self.g.chance(1, 2) {
             // A bump in range exercises `create_program_address`; occasionally an out-of-range
             // bump exercises the rejection path instead.
             let bump = if self.g.chance(9, 10) { self.small_u64(256) } else { self.need(Ty::U64) };
@@ -1378,7 +1405,7 @@ impl TemplateGen<'_, '_> {
                     probe::FAIL,
                     probe::INVOKE,
                     probe::TRANSFER,
-                ][self.g.weighted(&[4, 6, 2, 1, 1, 1, 2])];
+                ][self.g.weighted(&[4, 6, 2, 1, if self.plan.friendly { 0 } else { 1 }, 1, 2])];
                 let mut prefix = vec![op];
                 if matches!(op, probe::RESIZE_FIRST | probe::FAIL | probe::TRANSFER | probe::INVOKE) {
                     prefix.push(self.g.u8());
@@ -1430,6 +1457,10 @@ impl TemplateGen<'_, '_> {
                         segments.push(Segment::Register(DATA_REG_U64, amount));
                         max_len = 12;
                         vec![(from, ACCOUNT_SIGNER | ACCOUNT_WRITABLE), (to, ACCOUNT_WRITABLE)]
+                    }
+                    _ if self.plan.friendly => {
+                        self.value();
+                        return;
                     }
                     _ => {
                         // No transfer fits: send the System program junk, which it refuses.
@@ -1551,7 +1582,7 @@ impl TemplateGen<'_, '_> {
             // At the limits a third of the count loops may run up to 64 passes.
             let max = if self.limits && self.g.chance(1, 3) { self.g.range(1, 64) } else { self.g.range(1, 6) };
             let count = if self.g.chance(4, 5) {
-                let value = self.g.below(max + 2) as u64;
+                let value = if self.plan.friendly { self.g.below(max + 1) } else { self.g.below(max + 2) } as u64;
                 let register = self.b.const_u64(value);
                 self.define(register, Ty::U64)
             } else {

@@ -55,6 +55,8 @@ struct Stats {
     registry_entry_rejections: usize,
     compared_runs: usize,
     compared_cpis: usize,
+    compared_row_program_cpis: usize,
+    compared_wide_cpis: usize,
     compared_data: usize,
     compared_flags: usize,
     compared_emits: usize,
@@ -88,6 +90,8 @@ impl Stats {
         self.registry_entry_rejections += other.registry_entry_rejections;
         self.compared_runs += other.compared_runs;
         self.compared_cpis += other.compared_cpis;
+        self.compared_row_program_cpis += other.compared_row_program_cpis;
+        self.compared_wide_cpis += other.compared_wide_cpis;
         self.compared_data += other.compared_data;
         self.compared_flags += other.compared_flags;
         self.compared_emits += other.compared_emits;
@@ -114,6 +118,8 @@ impl Stats {
     fn record(&mut self, compared: Compared) {
         self.compared_runs += usize::from(compared.run);
         self.compared_cpis += compared.cpis;
+        self.compared_row_program_cpis += compared.row_program_cpis;
+        self.compared_wide_cpis += compared.wide_cpis;
         self.compared_data += compared.data;
         self.compared_flags += compared.flags;
         self.compared_emits += compared.emits;
@@ -124,10 +130,11 @@ impl Stats {
     }
 }
 
-/// A floor on one of the loop's counts, per 1,000 cases. Each is about half of what 20,000 seeds
-/// measured, in both modes, when it was set (fv7a; see the comment on each), so a change that cuts
-/// a comparison in half fails the test while seed-to-seed noise does not. A floor change, like a
-/// compute-unit ceiling change, is deliberate and reviewed.
+/// A floor on one of the loop's counts, per 1,000 cases, for normal and for limits mode. Each is
+/// about half of what 20,000 seeds from seed 0 measured when it was set (2026-10-03, both feature
+/// sets alike), so a change that halves a comparison fails the test while the noise between seed
+/// ranges does not. Changing a floor, like changing a compute-unit ceiling, is deliberate and
+/// reviewed.
 struct Floor {
     what: &'static str,
     normal: usize,
@@ -135,14 +142,29 @@ struct Floor {
     count: fn(&Stats) -> usize,
 }
 
-const FLOORS: [Floor; 7] = [
-    Floor { what: "successful runs the model compared", normal: 45, limits: 20, count: |s| s.compared_runs },
-    Floor { what: "CPIs compared by program and accounts", normal: 45, limits: 60, count: |s| s.compared_cpis },
-    Floor { what: "CPIs compared byte for byte", normal: 30, limits: 40, count: |s| s.compared_data },
-    Floor { what: "probe calls whose received flags were compared", normal: 20, limits: 30, count: |s| s.compared_flags },
-    Floor { what: "loop passes on compared runs", normal: 40, limits: 40, count: |s| s.compared_loop_passes },
-    Floor { what: "failures the model predicted", normal: 50, limits: 40, count: |s| s.predicted_failures },
-    Floor { what: "failed runs whose Ballista code was classified", normal: 150, limits: 150, count: |s| s.classified_failures },
+const FLOORS: [Floor; 11] = [
+    // Measured per 1,000 at 20,000 seeds, normal / limits: 195 / 113.
+    Floor { what: "successful runs the model compared", normal: 95, limits: 55, count: |s| s.compared_runs },
+    // 284 / 1,008.
+    Floor { what: "CPIs compared by program and accounts", normal: 140, limits: 500, count: |s| s.compared_cpis },
+    // 0 / 35.8, at 5,000 seeds: only limits mode names a program in a batch row.
+    Floor { what: "CPIs into a row-account program compared", normal: 0, limits: 18, count: |s| s.compared_row_program_cpis },
+    // 0 / 151, at 5,000 seeds: only limits mode passes 16 or more accounts.
+    Floor { what: "CPIs with 16 or more accounts compared", normal: 0, limits: 75, count: |s| s.compared_wide_cpis },
+    // 270 / 958.
+    Floor { what: "CPIs compared byte for byte", normal: 135, limits: 480, count: |s| s.compared_data },
+    // 144 / 887.
+    Floor { what: "probe calls whose received flags were compared", normal: 70, limits: 440, count: |s| s.compared_flags },
+    // 369 / 613.
+    Floor { what: "EMIT lines compared byte for byte", normal: 180, limits: 300, count: |s| s.compared_emits },
+    // 17.6 / 10.4.
+    Floor { what: "return data compared byte for byte", normal: 8, limits: 5, count: |s| s.compared_return_data },
+    // 264 / 1,178.
+    Floor { what: "loop passes on compared runs", normal: 130, limits: 580, count: |s| s.compared_loop_passes },
+    // 358 / 384.
+    Floor { what: "failures the model predicted", normal: 180, limits: 190, count: |s| s.predicted_failures },
+    // 405 / 391.
+    Floor { what: "failed runs whose Ballista code was classified", normal: 200, limits: 195, count: |s| s.classified_failures },
 ];
 
 /// Floors apply from this many cases; fewer are a smoke run whose counts are too noisy to judge.
@@ -306,10 +328,11 @@ fn fuzz_executor_differential() {
         stats.multi_open_successes,
     );
     eprintln!(
-        "compared: {} runs, {} CPIs, {} CPI data, {} probe flag sets, {} EMIT lines, {} return data, {} loop passes; \
-         {} predicted failures; {} failures classified",
-        stats.compared_runs, stats.compared_cpis, stats.compared_data, stats.compared_flags, stats.compared_emits,
-        stats.compared_return_data, stats.compared_loop_passes, stats.predicted_failures, stats.classified_failures,
+        "compared: {} runs, {} CPIs ({} into row-account programs, {} with 16+ accounts), {} CPI data, {} probe flag sets, \
+         {} EMIT lines, {} return data, {} loop passes; {} predicted failures; {} failures classified",
+        stats.compared_runs, stats.compared_cpis, stats.compared_row_program_cpis, stats.compared_wide_cpis,
+        stats.compared_data, stats.compared_flags, stats.compared_emits, stats.compared_return_data,
+        stats.compared_loop_passes, stats.predicted_failures, stats.classified_failures,
     );
     eprintln!(
         "largest template: {} instructions, {} registers, {} accounts in one CPI, {} worst-case CPIs; {} CPIs into row-account programs",
@@ -333,6 +356,9 @@ fn fuzz_executor_differential() {
     let mut short = Vec::new();
     for floor in &FLOORS {
         let per_thousand = if limits { floor.limits } else { floor.normal };
+        if per_thousand == 0 {
+            continue;
+        }
         let needed = per_thousand * stats.cases / 1000;
         let got = (floor.count)(&stats);
         eprintln!("floor: {} {got} (needs {needed})", floor.what);

@@ -531,6 +531,9 @@ impl<'p> Checker<'p> {
                 self.need(&state, instr.b, Some(pc), "the REPEAT count", |ty| ty == Ty::U64)?;
                 (Scope::Count, instr.c as usize)
             };
+            // The body is checked inside the pass loop below, so a loop must allow a pass. The
+            // header rules already imply it; stated here so the body can never go unchecked.
+            ensure(max_passes >= 1, "loops.no-pass", Some(pc), String::new)?;
 
             // Carried registers: created before the loop, and of the same type after each pass
             // (`docs/reference/language.md`, "Carried values").
@@ -866,11 +869,15 @@ impl<'p> Checker<'p> {
                 self.write(state, i.dst, Ty::Bool, pc)?;
             }
             op::SELECT => {
-                // The executor reads only the side the condition picks, so the result has either
-                // side's type; both must be set, since either can be picked.
+                // The executor reads only the side the condition picks, so either side can be the
+                // result, and both must be set. The wire format also requires "the same type as
+                // b" of `c`; a `bytes` result is as long as the longer side.
                 self.need(state, i.a, at, "the condition", |ty| ty == Ty::Bool)?;
                 let if_true = self.read(state, i.b, at, "if true")?;
                 let if_false = self.read(state, i.c, at, "if false")?;
+                ensure(if_true.same_kind(if_false), "types.mismatch", at, || {
+                    format!("select between {if_true:?} and {if_false:?}")
+                })?;
                 self.write(state, i.dst, if_true.join(if_false), pc)?;
             }
             op::CAST_U64 | op::CAST_I64 | op::CAST_U128 => {

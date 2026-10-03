@@ -99,9 +99,9 @@ reuses it. Writing the same read or sum twice computes it twice, so give a value
 once a `let`. A loop body compiles once, so its registers count once, however many passes it
 makes.
 
-`compileTemplate(template).stats.registers` gives the count. `stats.instructions` counts the 128
-VM instructions: each value above takes one, and so do most other steps, such as a `require` or a
-call. Compilation fails when a template needs more than either limit. In Rust, each builder call
+`compileTemplate(template).stats.registers` gives the count. `stats.instructions` counts VM
+instructions, at most 128: each value above takes one, and so do most other steps, such as a
+`require` or a call. Compilation fails when a template needs more than either limit. In Rust, each builder call
 that returns a register takes a new one, and `ProgramView::parse(&bytes)?.verify()?` reports both
 counts.
 
@@ -138,9 +138,9 @@ So a run alone in its transaction fits about **61 runtime accounts**:
 - the fee payer takes a third, unless it is also one of the run's accounts;
 - every other instruction takes the accounts it adds, such as the Compute Budget program.
 
-Ballista's 120 can't be reached in one transaction today. To carry 61 accounts in bytes, use a
-[version 1 transaction](/guide/transaction-v1), up to 4,096 bytes, or a version 0 transaction, up
-to 1,232 bytes, with an address lookup table.
+Ballista's limit of 120 runtime accounts can't be reached in one transaction today. To carry 61
+accounts in bytes, use a [version 1 transaction](/guide/transaction-v1), up to 4,096 bytes, or a
+version 0 transaction, up to 1,232 bytes, with an address lookup table.
 
 ### Instruction trace {#instruction-trace}
 
@@ -150,12 +150,11 @@ alone in its transaction a run can make at most 63 CPIs. Ballista's count can't 
 so size a loop to the trace, not only to its `max`.
 
 In a local test against copies of the mainnet programs, a template sells SOL through Jupiter in
-slices, one per pass of a count loop, then pays out rows. Jupiter's transaction takes 15 entries
-before the first slice: two compute-budget instructions, four setup instructions and their eight
-CPIs, and the run. Each slice takes 7: the route and its event call, the pool's swap and its two
-event calls, and two token transfers. Each payout takes 1. Seven slices fill the trace exactly,
-15 + 7 × 7 = 64, so the first payout would be entry 65, and the transaction fails with
-`MaxInstructionTraceLengthExceeded`, although the loop allows 8 slices.
+slices, one per pass of a count loop, then pays out rows. The transaction spends 15 entries before
+the first slice (compute budget, Jupiter's setup and its CPIs, and the run), 7 per slice (Jupiter,
+the pool, their event calls and two token transfers) and 1 per payout. Seven slices fill the trace
+exactly, 15 + 7 × 7 = 64, so the first payout would be entry 65 and fails with
+`MaxInstructionTraceLengthExceeded`, although the loop allows 8.
 
 ### Call depth {#call-depth}
 

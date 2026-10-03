@@ -6,10 +6,13 @@
 //!   error, and by the reference checker too, so neither side is vacuous.
 //! - Every committed seed replays through its target.
 //! - The generator reaches invokes and mostly verifies.
+//! - Every group break, of a template or a generated program, is refused by `verify` and by the
+//!   reference checker with the same error at the same instruction.
 
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
 use arbitrary::Unstructured;
+use ballista_common::template::TemplateError;
 use ballista_fuzz_support::{
     ceiling,
     checker::{self, SIGNER, WRITABLE},
@@ -108,8 +111,126 @@ fn every_break_of_every_template_is_refused_with_its_error() {
         "cpi-segment-register-fields",
         "unreferenced-segment",
         "uninvoked-descriptor",
-    ] {
+    ]
+    .into_iter()
+    .chain(GROUP_BREAKS)
+    {
         assert!(counts.contains_key(rule), "no template exercises the break {rule}");
+    }
+}
+
+/// The breaks `negative.rs` makes of the group opcodes.
+const GROUP_BREAKS: [&str; 19] = [
+    "group-undeclared",
+    "group-length-stray-b",
+    "group-length-stray-c",
+    "group-length-stray-immediate",
+    "group-program-past-table",
+    "group-second-program-past-table",
+    "group-no-match",
+    "group-five-matches",
+    "group-five-excepts",
+    "group-segments-past-table",
+    "group-floor-short",
+    "group-segment-length",
+    "group-narrow-match",
+    "group-except-offset",
+    "group-except-kind",
+    "group-match-type",
+    "group-unset-register",
+    "group-register-out-of-range",
+    "group-spare-segment",
+];
+
+/// The reference checker refuses a group break with the rule that names `verify`'s error, at the
+/// same instruction: a structural rule (`groups.*`, or `GROUP_LENGTH`'s unused operands) for
+/// `InvalidAccountGroup`, the typing rules for a filter entry's register, and an unused segment
+/// for `InvalidDataSegment`.
+fn checker_agrees(broken: &negative::Break) {
+    let encoded = broken.program.encode();
+    let verdict = checker::check(&broken.program, encoded.len());
+    let walk_rule = |pc: usize, rules: &dyn Fn(&str) -> bool| match &verdict {
+        Err(violation) => assert!(
+            rules(violation.rule) && violation.pc == Some(pc),
+            "{}: verify says {:?}, the checker {violation}",
+            broken.rule,
+            broken.expected
+        ),
+        Ok(report) => panic!("{}: the checker accepts it, with notes {:?}", broken.rule, report.notes),
+    };
+    let first_group = broken.program.instrs.iter().position(|instr| {
+        matches!(instr.op, checker::op::GROUP_LENGTH | checker::op::GROUP_ANY | checker::op::GROUP_COUNT)
+    });
+    match broken.expected {
+        TemplateError::InvalidAccountGroup(pc) => walk_rule(pc, &|rule| {
+            rule.starts_with("groups.") || rule == "format.group-length-operands"
+        }),
+        TemplateError::TypeMismatch | TemplateError::RegisterNotInitialized(_) | TemplateError::InvalidRegister(_) => {
+            let rule = match broken.expected {
+                TemplateError::TypeMismatch => "types.mismatch",
+                TemplateError::RegisterNotInitialized(_) => "types.read-before-write",
+                _ => "types.register-out-of-range",
+            };
+            let Err(violation) = &verdict else { panic!("{}: the checker accepts it", broken.rule) };
+            assert_eq!(violation.rule, rule, "{}: {violation}", broken.rule);
+            let at = violation.pc.expect("a typing rule names its instruction");
+            assert!(first_group.is_some_and(|first| at >= first), "{}: {violation} before any group opcode", broken.rule);
+            assert!(
+                matches!(broken.program.instrs[at].op, checker::op::GROUP_ANY | checker::op::GROUP_COUNT),
+                "{}: {violation} is not at a filter",
+                broken.rule
+            );
+        }
+        TemplateError::InvalidDataSegment(index) => {
+            let report = verdict.unwrap_or_else(|violation| panic!("{}: {violation}", broken.rule));
+            assert!(
+                report.notes.iter().any(|note| {
+                    note.rule == "unreferenced.segment" && note.detail.starts_with(&format!("segment {index}:"))
+                }),
+                "{}: {:?}",
+                broken.rule,
+                report.notes
+            );
+        }
+        ref other => panic!("{}: no group break expects {other:?}", broken.rule),
+    }
+}
+
+#[test]
+fn group_breaks_are_refused_alike_by_verify_and_the_checker() {
+    let mut programs: Vec<(String, Vec<u8>)> = seeds("verify");
+    let mut generated_filters = 0;
+    for seed in 0..1_500 {
+        let bytes = stream(seed, 700);
+        let mut unstructured = Unstructured::new(&bytes);
+        let Some(program) = gen::program(&mut Input(&mut unstructured)) else { continue };
+        if harness::verify(&program).is_none() {
+            continue;
+        }
+        let decoded = Program::decode(&program).expect("decodes");
+        if decoded.instrs.iter().any(|instr| matches!(instr.op, checker::op::GROUP_ANY | checker::op::GROUP_COUNT)) {
+            generated_filters += 1;
+        }
+        programs.push((format!("generated {seed}"), program));
+    }
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for (name, bytes) in programs {
+        let program = Program::decode(&bytes).expect("decodes");
+        for broken in negative::breaks(&program).into_iter().filter(|broken| broken.rule.starts_with("group-")) {
+            if let Err(panic) = std::panic::catch_unwind(|| {
+                negative::require_rejected(&broken);
+                checker_agrees(&broken);
+            }) {
+                let message = panic.downcast_ref::<String>().cloned().unwrap_or_else(|| "a panic".into());
+                panic!("{name}: {message}");
+            }
+            *counts.entry(broken.rule).or_default() += 1;
+        }
+    }
+    eprintln!("verified generated programs with a group filter: {generated_filters}; group breaks: {counts:?}");
+    assert!(generated_filters >= 50, "the generator reaches group filters");
+    for rule in GROUP_BREAKS {
+        assert!(counts.get(rule).is_some_and(|count| *count >= 10), "few programs exercise the break {rule}");
     }
 }
 

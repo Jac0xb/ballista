@@ -5,7 +5,7 @@
 use arbitrary::Unstructured;
 
 use crate::{
-    checker::{op, INSTRUCTIONS_SYSVAR, NONE, ROW_BIT, SYSTEM_PROGRAM},
+    checker::{op, GroupFilter, INSTRUCTIONS_SYSVAR, NONE, ROW_BIT, SYSTEM_PROGRAM},
     model::{self, Account, Cpi, CpiAccount, Instr, Program, Segment},
 };
 
@@ -85,12 +85,12 @@ const MAX_TABLE: usize = 400;
 const MAX_PUBKEYS: usize = 40;
 const MAX_BLOB: usize = 3_000;
 
-/// Every assigned opcode, plus the unassigned 0, 39 and 78 now and then.
+/// Every assigned opcode, plus the unassigned 0, 39 and 81 now and then.
 fn opcode(s: &mut impl Source) -> u8 {
     if s.chance(1, 32) {
-        return s.pick(&[0, 39, 78, 0xff]).unwrap_or(0);
+        return s.pick(&[0, 39, 81, 0xff]).unwrap_or(0);
     }
-    let value = 1 + s.below(76) as u8;
+    let value = 1 + s.below(79) as u8;
     if value >= 39 { value + 1 } else { value }
 }
 
@@ -133,7 +133,7 @@ fn range(len: usize, s: &mut impl Source) -> u64 {
 
 /// An immediate that means something to some opcode.
 pub fn immediate(p: &Program, s: &mut impl Source) -> u64 {
-    match s.below(14) {
+    match s.below(15) {
         0 => s.pick(&[0, 1, 2, 7, 8, 15, 16, 17, 31, 32, 33, 64, 165, 255, 256]).unwrap_or(0),
         1 => s.pick(&[511, 512, 513, 1_023, 1_024, 1_025, 4_095, 4_096, 4_097, 10_240]).unwrap_or(0),
         2 => s.pick(&[u32::MAX as u64, 1 << 32, u64::MAX, i64::MIN as u64, u64::MAX >> 1]).unwrap_or(0),
@@ -163,8 +163,21 @@ pub fn immediate(p: &Program, s: &mut impl Source) -> u64 {
             mask
         }
         9 => s.below(64) as u64,
+        10 => group_filter(p, s),
         _ => s.word(),
     }
+}
+
+/// A group filter's immediate: a run of segments in the table or just past it, 0 to 5 matches and
+/// excepts, and a minimum data length around the ends of common matches.
+fn group_filter(p: &Program, s: &mut impl Source) -> u64 {
+    GroupFilter {
+        segment_start: s.below(p.segments.len() + 1) as u16,
+        matches: s.below(6) as u8,
+        excepts: s.below(6) as u8,
+        min_data_len: s.pick(&[0u32, 1, 8, 32, 40, 63, 64, 72, 165]).unwrap_or(0),
+    }
+    .encode()
 }
 
 fn instruction(p: &Program, s: &mut impl Source) -> Instr {
@@ -215,6 +228,23 @@ fn instruction(p: &Program, s: &mut impl Source) -> Instr {
         op::READ_REGISTRY => {
             instr.b = NONE;
             instr.c = NONE;
+        }
+        // A group, then for a filter one or two programs from the pubkey table.
+        op::GROUP_LENGTH | op::GROUP_ANY | op::GROUP_COUNT => {
+            instr.a = s.below(p.header.account_groups as usize + 2) as u8;
+            if op == op::GROUP_LENGTH {
+                if s.chance(3, 4) {
+                    instr.b = NONE;
+                    instr.c = NONE;
+                    instr.imm = 0;
+                }
+            } else {
+                instr.b = s.below(p.pubkeys.len() + 1) as u8;
+                instr.c = if s.chance(1, 2) { NONE } else { s.below(p.pubkeys.len() + 1) as u8 };
+                if s.chance(3, 4) {
+                    instr.imm = group_filter(p, s);
+                }
+            }
         }
         _ => {}
     }

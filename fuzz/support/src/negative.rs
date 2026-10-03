@@ -14,8 +14,8 @@ use ballista_common::template::{ProgramView, TemplateError};
 
 use crate::{
     ceiling::{self, Site},
-    checker::{self, op, read_opcode, Ty, EXECUTABLE, NONE, ROW_BIT, SIGNER, WRITABLE},
-    model::{Instr, Program},
+    checker::{self, group_entry, op, read_opcode, GroupFilter, Ty, EXECUTABLE, NONE, ROW_BIT, SIGNER, WRITABLE},
+    model::{Instr, Program, Segment},
 };
 
 /// One broken rule: the program with it broken, and what `verify` must say.
@@ -54,6 +54,9 @@ pub fn breaks(program: &Program) -> Vec<Break> {
     cpi_segment_fields(program, &mut out);
     unreferenced_segment(program, &mut out);
     uninvoked_descriptor(program, &mut out);
+    group_operands(program, &mut out);
+    group_filters(program, &mut out);
+    group_spare_segment(program, &mut out);
     out
 }
 
@@ -516,13 +519,14 @@ fn open_after_invoke(program: &Program, out: &mut Vec<Break>) {
 
 /// The error `verify` refuses a record with when a field its opcode leaves unused is set
 /// (`docs/reference/wire-format.md`, "Instruction record"): a FOREACH's `InvalidBatch`, a
-/// REPEAT's `InvalidLoop`, the registry opcodes' `InvalidRegistry`, and otherwise
-/// `InvalidInstruction` at the record.
+/// REPEAT's `InvalidLoop`, the registry opcodes' `InvalidRegistry`, the group opcodes'
+/// `InvalidAccountGroup`, and otherwise `InvalidInstruction` at the record.
 fn unused_field_error(opcode: u8, pc: usize) -> TemplateError {
     match opcode {
         op::FOREACH => TemplateError::InvalidBatch,
         op::REPEAT => TemplateError::InvalidLoop(pc),
         op::OPEN_REGISTRY | op::READ_REGISTRY | op::WRITE_REGISTRY => TemplateError::InvalidRegistry(pc),
+        op::GROUP_LENGTH | op::GROUP_ANY | op::GROUP_COUNT => TemplateError::InvalidAccountGroup(pc),
         _ => TemplateError::InvalidInstruction(pc),
     }
 }
@@ -633,4 +637,217 @@ fn uninvoked_descriptor(program: &Program, out: &mut Vec<Break>) {
     });
     broken.sync_counts();
     out.push(Break { rule: "uninvoked-descriptor", program: broken, expected: TemplateError::InvalidCpi(descriptor) });
+}
+
+/// The pcs of the group opcodes in `program` that `pick` takes, at most two.
+fn group_sites(program: &Program, pick: impl Fn(u8) -> bool) -> Vec<usize> {
+    program.instrs.iter().enumerate().filter(|(_, instr)| pick(instr.op)).map(|(pc, _)| pc).take(2).collect()
+}
+
+fn is_filter(opcode: u8) -> bool {
+    matches!(opcode, op::GROUP_ANY | op::GROUP_COUNT)
+}
+
+/// The operands of a group opcode, each broken in one field, all refused at the record with
+/// `InvalidAccountGroup` ("Account groups" in `docs/reference/wire-format.md`):
+///
+/// - `group-undeclared`: `a` one past the declared groups, on any group opcode;
+/// - `group-length-stray-b`, `-c`, `-immediate`: `GROUP_LENGTH` takes `b` and `c` as `0xff` and
+///   a zero immediate, so `b` or `c` 0, or the immediate 1;
+/// - `group-program-past-table`: a filter's `b` one past the pubkey table;
+/// - `group-second-program-past-table`: its `c` there instead, when that is not `0xff`, which
+///   would name no second program.
+fn group_operands(program: &Program, out: &mut Vec<Break>) {
+    let groups = program.header.account_groups;
+    for pc in group_sites(program, |opcode| opcode == op::GROUP_LENGTH || is_filter(opcode)) {
+        let mut broken = program.clone();
+        broken.instrs[pc].a = groups;
+        out.push(Break { rule: "group-undeclared", program: broken, expected: TemplateError::InvalidAccountGroup(pc) });
+    }
+    if let Some(&pc) = group_sites(program, |opcode| opcode == op::GROUP_LENGTH).first() {
+        let stray: [(&'static str, fn(&mut Instr)); 3] = [
+            ("group-length-stray-b", |instr| instr.b = 0),
+            ("group-length-stray-c", |instr| instr.c = 0),
+            ("group-length-stray-immediate", |instr| instr.imm = 1),
+        ];
+        for (rule, set) in stray {
+            let mut broken = program.clone();
+            set(&mut broken.instrs[pc]);
+            out.push(Break { rule, program: broken, expected: TemplateError::InvalidAccountGroup(pc) });
+        }
+    }
+    let pubkeys = program.pubkeys.len();
+    for pc in group_sites(program, is_filter) {
+        let mut broken = program.clone();
+        broken.instrs[pc].b = pubkeys.min(u8::MAX as usize) as u8;
+        out.push(Break {
+            rule: "group-program-past-table",
+            program: broken,
+            expected: TemplateError::InvalidAccountGroup(pc),
+        });
+        if pubkeys < NONE as usize {
+            let mut broken = program.clone();
+            broken.instrs[pc].c = pubkeys as u8;
+            out.push(Break {
+                rule: "group-second-program-past-table",
+                program: broken,
+                expected: TemplateError::InvalidAccountGroup(pc),
+            });
+        }
+    }
+}
+
+/// The filter at `pc` reading a copy of its segments appended to the table, after `change` edits
+/// its matches, its excepts and its minimum data length; the counts follow the copy. The original
+/// segments stay as they were for any other use, and nothing names them from this filter, so a
+/// verifier that let the change through would refuse them as unused at the end, never with the
+/// expected error. `None` if the copy would outgrow the table or the payload.
+fn refiltered(
+    program: &Program,
+    pc: usize,
+    change: impl FnOnce(&mut Vec<Segment>, &mut Vec<Segment>, &mut u32),
+) -> Option<Program> {
+    let filter = GroupFilter::decode(program.instrs[pc].imm);
+    let run = filter.segments();
+    let mut matches = program.segments.get(run.start..run.start + filter.matches as usize)?.to_vec();
+    let mut excepts = program.segments.get(run.start + filter.matches as usize..run.end)?.to_vec();
+    let mut min_data_len = filter.min_data_len;
+    change(&mut matches, &mut excepts, &mut min_data_len);
+    let added = matches.len() + excepts.len();
+    let start = program.segments.len();
+    if start + added > u16::MAX as usize || program.encode().len() + 8 * added > checker::limit::PAYLOAD {
+        return None;
+    }
+    let mut broken = program.clone();
+    broken.instrs[pc].imm = GroupFilter {
+        segment_start: start as u16,
+        matches: matches.len() as u8,
+        excepts: excepts.len() as u8,
+        min_data_len,
+    }
+    .encode();
+    broken.segments.extend(matches);
+    broken.segments.extend(excepts);
+    broken.sync_counts();
+    Some(broken)
+}
+
+/// A `GROUP_ANY` or `GROUP_COUNT` filter broken in one rule. Its segments are checked in order,
+/// matches then excepts, each for its fields, its kind and its register, then the minimum length
+/// against every match, so the error names the first broken entry. The shape rules are
+/// `InvalidAccountGroup` at the record:
+///
+/// - `group-no-match`, `group-five-matches`, `group-five-excepts`: the counts out of 1 to 4 and 0
+///   to 4, the extra entries copies of valid ones, so only the count is wrong;
+/// - `group-segments-past-table`: the run starting at the table's end;
+/// - `group-floor-short`: the minimum data length one byte short of the furthest match's end;
+/// - `group-segment-length`: a match with a length field;
+/// - `group-narrow-match`: a match of kind `u32`, which only invocation data encodes;
+/// - `group-except-offset`, `group-except-kind`: an except at offset 1, or of kind `u64`.
+///
+/// A match's register as for every opcode:
+///
+/// - `group-match-type`: of another fixed-width kind than its register's type, `TypeMismatch`;
+/// - `group-unset-register`: a new register nothing sets, `RegisterNotInitialized`;
+/// - `group-register-out-of-range`: one past the declared registers, `InvalidRegister`.
+fn group_filters(program: &Program, out: &mut Vec<Break>) {
+    let registers = program.header.registers;
+    for pc in group_sites(program, is_filter) {
+        let invalid = TemplateError::InvalidAccountGroup(pc);
+        let filter = GroupFilter::decode(program.instrs[pc].imm);
+        if filter.matches == 0 || filter.segments().end > program.segments.len() {
+            continue;
+        }
+        let mut push = |rule: &'static str, broken: Option<Program>, expected: TemplateError| {
+            if let Some(program) = broken {
+                out.push(Break { rule, program, expected });
+            }
+        };
+        push("group-no-match", refiltered(program, pc, |matches, _, _| matches.clear()), invalid.clone());
+        push(
+            "group-five-matches",
+            refiltered(program, pc, |matches, _, _| {
+                let first = matches[0];
+                matches.resize(checker::limit::GROUP_MATCHES + 1, first);
+            }),
+            invalid.clone(),
+        );
+        // A fifth except needs a `pubkey` register: an except's, or a `pubkey` match's.
+        let run = filter.segments();
+        let key = program.segments[run.clone()]
+            .iter()
+            .find(|segment| segment.kind == 7)
+            .map(|segment| segment.register);
+        if let Some(key) = key {
+            push(
+                "group-five-excepts",
+                refiltered(program, pc, |_, excepts, _| {
+                    let except = Segment { kind: 7, register: key, offset: 0, len: 0, reserved: [0; 2] };
+                    excepts.resize(checker::limit::GROUP_EXCEPTS + 1, except);
+                }),
+                invalid.clone(),
+            );
+        }
+        if program.segments.len() <= u16::MAX as usize {
+            let mut broken = program.clone();
+            broken.instrs[pc].imm = GroupFilter { segment_start: program.segments.len() as u16, ..filter }.encode();
+            push("group-segments-past-table", Some(broken), invalid.clone());
+        }
+        // The floor needs no copy: no segment changes.
+        let floor = program.segments[run.start..run.start + filter.matches as usize]
+            .iter()
+            .filter_map(|segment| group_entry(segment.kind).map(|(_, width)| segment.offset as u32 + width as u32))
+            .max()
+            .unwrap_or(0);
+        if floor > 0 {
+            let mut broken = program.clone();
+            broken.instrs[pc].imm = GroupFilter { min_data_len: floor - 1, ..filter }.encode();
+            push("group-floor-short", Some(broken), invalid.clone());
+        }
+        push("group-segment-length", refiltered(program, pc, |matches, _, _| matches[0].len = 1), invalid.clone());
+        push("group-narrow-match", refiltered(program, pc, |matches, _, _| matches[0].kind = 3), invalid.clone());
+        if filter.excepts > 0 {
+            push("group-except-offset", refiltered(program, pc, |_, excepts, _| excepts[0].offset = 1), invalid.clone());
+            push("group-except-kind", refiltered(program, pc, |_, excepts, _| excepts[0].kind = 4), invalid.clone());
+        }
+        // A `pubkey` match becomes a `bool` one, anything else a `pubkey` one: either way another
+        // type than the register's, found before the minimum length is compared.
+        push(
+            "group-match-type",
+            refiltered(program, pc, |matches, _, _| matches[0].kind = if matches[0].kind == 7 { 8 } else { 7 }),
+            TemplateError::TypeMismatch,
+        );
+        if (registers as usize) < checker::limit::REGISTERS {
+            let unset = refiltered(program, pc, |matches, _, _| matches[0].register = registers).map(|mut broken| {
+                broken.header.registers += 1;
+                broken
+            });
+            push("group-unset-register", unset, TemplateError::RegisterNotInitialized(registers));
+        }
+        push(
+            "group-register-out-of-range",
+            refiltered(program, pc, |matches, _, _| matches[0].register = registers),
+            TemplateError::InvalidRegister(registers),
+        );
+    }
+}
+
+/// A copy of a filter's last segment appended to the table, beside the run when the run ends the
+/// table: a filter's segments count as used, and a segment nothing names does not, wherever it
+/// sits. Refused after the walk with `InvalidDataSegment` and its index.
+fn group_spare_segment(program: &Program, out: &mut Vec<Break>) {
+    let Some(&pc) = group_sites(program, is_filter).first() else { return };
+    let run = GroupFilter::decode(program.instrs[pc].imm).segments();
+    if run.is_empty()
+        || run.end > program.segments.len()
+        || program.segments.len() >= u16::MAX as usize
+        || program.encode().len() + 8 > checker::limit::PAYLOAD
+    {
+        return;
+    }
+    let mut broken = program.clone();
+    let index = broken.segments.len();
+    broken.segments.push(program.segments[run.end - 1]);
+    broken.sync_counts();
+    out.push(Break { rule: "group-spare-segment", program: broken, expected: TemplateError::InvalidDataSegment(index) });
 }

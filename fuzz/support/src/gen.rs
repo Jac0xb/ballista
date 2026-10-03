@@ -3,15 +3,16 @@
 //! `ballista_common::template::generate` builds programs that verify by construction, but invokes
 //! nothing and reads no account data. This generator reaches the rest: CPIs with every privilege
 //! and account group, return data, PDAs, introspection, byte reads, `bytes` values in data and
-//! carries, and several registry entries. Operands come from a typed pool, so most programs are
-//! valid; one pick in [`SLOPPY`] takes any register, account or value instead, so some are not.
+//! carries, several registry entries, and account group lengths and filters. Operands come from a
+//! typed pool, so most programs are valid; one pick in [`SLOPPY`] takes any register, account or
+//! value instead, so some are not.
 
 use ballista_common::template::{
     record, ProgramBuilder, Segment, ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_REG_BOOL,
     DATA_REG_BYTES, DATA_REG_I64, DATA_REG_PUBKEY, DATA_REG_U128, DATA_REG_U16, DATA_REG_U32,
-    DATA_REG_U64, DATA_REG_U8, INSTRUCTIONS_SYSVAR_ID, ITERATION_ACCOUNT_BIT, NO_INDEX,
-    PROGRAM_FLAG_EMIT_EVENT, SYSTEM_PROGRAM_ADDRESS, VALUE_BOOL, VALUE_BYTES, VALUE_I64, VALUE_PUBKEY,
-    VALUE_U128, VALUE_U64,
+    DATA_REG_U64, DATA_REG_U8, INSTRUCTIONS_SYSVAR_ID, ITERATION_ACCOUNT_BIT, MAX_GROUP_EXCEPTS,
+    MAX_GROUP_MATCHES, NO_INDEX, PROGRAM_FLAG_EMIT_EVENT, SYSTEM_PROGRAM_ADDRESS, VALUE_BOOL, VALUE_BYTES,
+    VALUE_I64, VALUE_PUBKEY, VALUE_U128, VALUE_U64,
 };
 
 use crate::checker::op;
@@ -555,7 +556,7 @@ impl<S: Source> Gen<'_, S> {
             self.invoke(scope, pool, passes);
             return;
         }
-        match self.s.below(24) {
+        match self.s.below(25) {
             0 => self.constant(pool),
             1 => self.load_input(scope, pool),
             2 => self.account_property(scope, pool),
@@ -593,6 +594,7 @@ impl<S: Source> Gen<'_, S> {
                     pool.push((length, Kind::U64));
                 }
             }
+            21 => self.group(pool),
             _ => self.math(pool),
         }
     }
@@ -932,6 +934,86 @@ impl<S: Source> Gen<'_, S> {
         let count = self.s.below(4);
         let parts = self.parts(pool, count, true);
         self.b.emit_data(&parts);
+    }
+
+    /// An account group's length, or a filter over its members, in any scope: one or two owner
+    /// programs, 1 to [`MAX_GROUP_MATCHES`] matches on fixed-width values from the pool at data
+    /// offsets, up to [`MAX_GROUP_EXCEPTS`] except keys, and a minimum data length at or past the
+    /// furthest match's end. A sloppy pick names an undeclared group, no program, a count out of
+    /// range, a kind that is no match value, or a floor one byte short.
+    fn group(&mut self, pool: &mut Pool) {
+        let declared = self.groups as usize;
+        let group = if self.sloppy() {
+            self.s.below(declared + 2) as u8
+        } else if declared == 0 {
+            return;
+        } else {
+            self.s.below(declared) as u8
+        };
+        if self.s.chance(1, 3) {
+            let length = self.b.group_length(group);
+            pool.push((length, Kind::U64));
+            return;
+        }
+        // The data accounts' owner, and now and then a program's address as a second owner.
+        let programs: &[[u8; 32]] = match self.s.below(4) {
+            _ if self.sloppy() => &[],
+            0 => &[[0x77; 32], [0x40; 32]],
+            _ => &[[0x77; 32]],
+        };
+        let wanted = if self.sloppy() {
+            [0, MAX_GROUP_MATCHES + 1][self.s.below(2)]
+        } else {
+            1 + self.s.below(MAX_GROUP_MATCHES)
+        };
+        let mut matches = Vec::with_capacity(wanted);
+        let mut floor = 0u32;
+        for _ in 0..wanted {
+            let (register, kind) = self.match_value(pool);
+            let (encoding, width) = match kind {
+                Kind::Bool => (DATA_REG_BOOL, 1),
+                Kind::I64 => (DATA_REG_I64, 8),
+                Kind::U128 => (DATA_REG_U128, 16),
+                Kind::Pubkey => (DATA_REG_PUBKEY, 32),
+                _ => (DATA_REG_U64, 8),
+            };
+            let encoding = if self.sloppy() { self.s.below(10) as u8 } else { encoding };
+            let offset = [0u16, 1, 8, 32, 64, 72, 133][self.s.below(7)];
+            floor = floor.max(u32::from(offset) + width);
+            matches.push((offset, encoding, register));
+        }
+        let excepts_wanted = if self.sloppy() { MAX_GROUP_EXCEPTS + 1 } else { self.s.below(MAX_GROUP_EXCEPTS + 1) };
+        let mut excepts = Vec::with_capacity(excepts_wanted);
+        for _ in 0..excepts_wanted {
+            let key = match self.pick(pool, |kind| kind == Kind::Pubkey) {
+                Some(register) => register,
+                None => {
+                    let register = self.b.const_pubkey([self.s.byte(); 32]);
+                    pool.push((register, Kind::Pubkey));
+                    register
+                }
+            };
+            excepts.push(key);
+        }
+        let min_data_len = match self.s.below(4) {
+            _ if self.sloppy() => floor.saturating_sub(1),
+            0 => floor + 1 + self.s.below(200) as u32,
+            _ => floor,
+        };
+        let count = self.s.chance(1, 2);
+        let result = self.b.group_filter(count, group, programs, &matches, &excepts, min_data_len);
+        pool.push((result, if count { Kind::U64 } else { Kind::Bool }));
+    }
+
+    /// A register holding a value a group filter can match, `bool`, `u64`, `i64`, `u128` or
+    /// `pubkey`, from the pool, or else a new `pubkey` constant, which the pool then offers again.
+    fn match_value(&mut self, pool: &mut Pool) -> (u8, Kind) {
+        if let Some(register) = self.pick(pool, |kind| !matches!(kind, Kind::Bytes(_))) {
+            return (register, Self::kind_of(pool, register).unwrap_or(Kind::U64));
+        }
+        let register = self.b.const_pubkey([self.s.byte(); 32]);
+        pool.push((register, Kind::Pubkey));
+        (register, Kind::Pubkey)
     }
 
     fn open(&mut self, entry: u8, pool: &mut Pool) {

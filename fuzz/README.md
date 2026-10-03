@@ -29,7 +29,8 @@ cargo test --manifest-path fuzz/Cargo.toml -p ballista-fuzz-support --release
 ```
 
 They replay every seed, check every real template, and check that `verify` refuses every
-negative mutation of each.
+negative mutation of each. Every group break, of a template or a generated program, must also be
+refused by the reference checker with the same error at the same instruction.
 
 Line coverage of the verifier's sources by a target's corpus, with the nightly's `llvm-tools`:
 
@@ -69,6 +70,10 @@ fuzz/scripts/coverage.sh differential
   - registers: a read before a write, and a type mismatch;
   - outputs: an `EMIT` tag, and `SET_RETURN_DATA` before an invoke, in a loop, or before an open;
   - registries: a writable entry, a ninth open, and an open after an invoke;
+  - account groups: an undeclared group, a stray `b`, `c` or immediate on `GROUP_LENGTH`, a
+    filter program past the pubkey table, no match or five matches or excepts, a run past the
+    segment table, a floor one byte short, a match with a length, a narrow kind or another type, an
+    except with an offset or a `u64` kind, an unset or out-of-range register, and a spare segment;
   - other limits and pins: a ninth loop, a read past the minimum length, a guarded invoke before
     `RETURN_DATA`, and the sysvar pin;
   - encodings: an unused operand or immediate set, a CPI data segment's unused field set, and an
@@ -121,7 +126,7 @@ The script rebuilds `fuzz/seeds/` from every template payload in:
 - `fixtures/protocol-examples.json`, `protocol-scenarios.json` and `benchmarks.json`;
 - `clients/rust/tests/fixtures/*.hex` and `docs-examples.json`.
 
-That is 87 distinct templates, about 260 KiB in all.
+That is 89 distinct templates, about 265 KiB in all.
 
 ## Triage
 

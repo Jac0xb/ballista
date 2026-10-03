@@ -9,8 +9,8 @@
 //!   it writes. Register types are tracked by abstract interpretation over every path. Loops run
 //!   to a fixpoint, bounded by their own maximum, so a register must be set, with the right type,
 //!   on every pass count from zero to the maximum.
-//! - **References, bounds, privileges, loops, outputs, registries and limits** follow
-//!   `docs/reference/wire-format.md`, `docs/reference/language.md` and
+//! - **References, bounds, privileges, loops, outputs, registries, account groups and limits**
+//!   follow `docs/reference/wire-format.md`, `docs/reference/language.md` and
 //!   `docs/reference/limits.md`.
 //!
 //! Every rule has a dotted name, so a violation says which promise broke. Rules under `format.`
@@ -99,6 +99,9 @@ pub mod op {
     pub const OPEN_REGISTRY: u8 = 75;
     pub const READ_REGISTRY: u8 = 76;
     pub const WRITE_REGISTRY: u8 = 77;
+    pub const GROUP_LENGTH: u8 = 78;
+    pub const GROUP_ANY: u8 = 79;
+    pub const GROUP_COUNT: u8 = 80;
 }
 
 /// Limits from `docs/reference/limits.md`.
@@ -126,6 +129,8 @@ pub mod limit {
     pub const PDA_SEEDS: usize = 15;
     pub const PDA_SEED_LEN: usize = 32;
     pub const EMIT_TAG: usize = 4;
+    pub const GROUP_MATCHES: usize = 4;
+    pub const GROUP_EXCEPTS: usize = 4;
 }
 
 pub const NONE: u8 = 0xff;
@@ -231,7 +236,7 @@ fn is_loop(opcode: u8) -> bool {
 }
 
 fn known_opcode(opcode: u8) -> bool {
-    matches!(opcode, 1..=38 | 40..=77)
+    matches!(opcode, 1..=38 | 40..=80)
 }
 
 /// The fields of an instruction record one opcode uses. Every other field must be `0xff`, or zero
@@ -282,6 +287,7 @@ pub fn used_fields(opcode: u8, flags: u8) -> Option<Fields> {
         | op::BYTES_LEN
         | op::INSTRUCTION_COUNT
         | op::INSTRUCTION_INDEX
+        | op::GROUP_LENGTH
         | op::REQUIRE => (true, false, false, false),
         opcode if read_opcode(opcode).is_some() => (true, flags & FLAG_DYNAMIC_OFFSET != 0, false, true),
         op::DERIVE_PDA | op::RETURN_DATA | op::READ_REGISTRY | op::FOREACH => (true, false, false, true),
@@ -313,7 +319,12 @@ pub fn used_fields(opcode: u8, flags: u8) -> Option<Fields> {
         op::SELECT | op::MUL_DIV | op::MUL_DIV_CEIL | op::INSTRUCTION_ACCOUNT | op::INSTRUCTION_ACCOUNT_FLAGS => {
             (true, true, true, false)
         }
-        op::READ_INSTRUCTION_DATA | op::READ_INSTRUCTION_BYTES | op::REPEAT | op::OPEN_REGISTRY => (true, true, true, true),
+        op::READ_INSTRUCTION_DATA
+        | op::READ_INSTRUCTION_BYTES
+        | op::REPEAT
+        | op::OPEN_REGISTRY
+        | op::GROUP_ANY
+        | op::GROUP_COUNT => (true, true, true, true),
         op::EMIT | op::SET_RETURN_DATA => (false, false, false, true),
         _ => return None,
     };
@@ -345,6 +356,56 @@ impl Role {
             Role::Seed => "pda.segment-register-fields",
         }
     }
+}
+
+/// What a `GROUP_ANY` or `GROUP_COUNT` immediate packs ("Account groups" in
+/// `docs/reference/wire-format.md`): the filter's first data segment in bytes 0 and 1, its match
+/// segments in byte 2, its except segments in byte 3, and the minimum data length a member needs
+/// in bytes 4 to 7. Every bit is a field, so any immediate decodes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GroupFilter {
+    pub segment_start: u16,
+    pub matches: u8,
+    pub excepts: u8,
+    pub min_data_len: u32,
+}
+
+impl GroupFilter {
+    pub fn decode(imm: u64) -> Self {
+        Self {
+            segment_start: (imm & 0xffff) as u16,
+            matches: ((imm >> 16) & 0xff) as u8,
+            excepts: ((imm >> 24) & 0xff) as u8,
+            min_data_len: (imm >> 32) as u32,
+        }
+    }
+
+    pub fn encode(self) -> u64 {
+        self.segment_start as u64
+            | (self.matches as u64) << 16
+            | (self.excepts as u64) << 24
+            | (self.min_data_len as u64) << 32
+    }
+
+    /// The segments the filter names, in one run: its matches, then its excepts.
+    pub fn segments(self) -> core::ops::Range<usize> {
+        let start = self.segment_start as usize;
+        start..start + self.matches as usize + self.excepts as usize
+    }
+}
+
+/// The type and width of a group filter entry's kind: one of the five fixed-width kinds, each
+/// naming a register of exactly its own type. Unlike invocation data, kind 4 takes a `u64` and
+/// nothing wider, and the narrow kinds 1 to 3, `bytes` and literals are no filter entry at all.
+pub fn group_entry(kind: u8) -> Option<(Ty, usize)> {
+    Some(match kind {
+        4 => (Ty::U64, 8),
+        5 => (Ty::I64, 8),
+        6 => (Ty::U128, 16),
+        7 => (Ty::Pubkey, 32),
+        8 => (Ty::Bool, 1),
+        _ => return None,
+    })
 }
 
 /// Where an instruction sits.
@@ -1103,6 +1164,20 @@ impl<'p> Checker<'p> {
                 let (_, ty) = self.registry_field(pc, i.b, true)?;
                 self.need(state, i.a, at, "the value", |held| held == ty)?;
             }
+            // Account groups, in every scope: the caller sizes them, so a loop body sees the same
+            // members as the root.
+            op::GROUP_LENGTH => {
+                ensure(i.b == NONE && i.c == NONE && i.imm == 0, "format.group-length-operands", at, || {
+                    format!("b {} c {} immediate {:#x}", i.b, i.c, i.imm)
+                })?;
+                self.group(i.a, pc)?;
+                self.write(state, i.dst, Ty::U64, pc)?;
+            }
+            op::GROUP_ANY | op::GROUP_COUNT => {
+                self.group_filter(i, state, pc)?;
+                let ty = if i.op == op::GROUP_ANY { Ty::Bool } else { Ty::U64 };
+                self.write(state, i.dst, ty, pc)?;
+            }
             _ => return fail("format.unknown-opcode", at, i.op.to_string()),
         }
         Ok(0)
@@ -1284,6 +1359,62 @@ impl<'p> Checker<'p> {
         Ok((offset, ty))
     }
 
+    /// An account group the header declares.
+    fn group(&self, group: u8, pc: usize) -> Check {
+        let declared = self.p.header.account_groups;
+        ensure(group < declared, "groups.undeclared", Some(pc), || format!("group {group} of {declared}"))
+    }
+
+    /// `GROUP_ANY` and `GROUP_COUNT` ("Account groups" in `docs/reference/wire-format.md`, and
+    /// what the executor's `count_matches` reads): a declared group; one or two programs a
+    /// member's owner must be, as pubkey table indices, `c` `0xff` for one; 1 to 4 matches and at
+    /// most 4 excepts, in one run inside the segment table. Entry by entry: zero reserved and
+    /// length fields, a fixed-width kind ([`group_entry`]), an except a `pubkey` at offset zero
+    /// (a match's offset is where its value sits in a member's data), and a register set with
+    /// exactly the kind's type. Last, the minimum data length covers every match's bytes, so the
+    /// run compares only bytes a member it tests has. The run's segments count as used.
+    fn group_filter(&mut self, i: Instr, state: &[Ty], pc: usize) -> Check {
+        let p = self.p;
+        let at = Some(pc);
+        self.group(i.a, pc)?;
+        let pubkeys = p.pubkeys.len();
+        ensure(
+            (i.b as usize) < pubkeys && (i.c == NONE || (i.c as usize) < pubkeys),
+            "groups.program",
+            at,
+            || format!("programs {} and {} of {pubkeys} pubkeys", i.b, i.c),
+        )?;
+        let filter = GroupFilter::decode(i.imm);
+        let (matches, excepts) = (filter.matches as usize, filter.excepts as usize);
+        ensure((1..=limit::GROUP_MATCHES).contains(&matches), "groups.match-count", at, || matches.to_string())?;
+        ensure(excepts <= limit::GROUP_EXCEPTS, "groups.except-count", at, || excepts.to_string())?;
+        let run = filter.segments();
+        ensure(run.end <= p.segments.len(), "groups.segment-range", at, || {
+            format!("segments {}..{} of {}", run.start, run.end, p.segments.len())
+        })?;
+        let mut floor = 0usize;
+        for (position, index) in run.enumerate() {
+            self.used_segments[index] = true;
+            let segment = p.segments[index];
+            let detail = || format!("segment {index}: {segment:?}");
+            ensure(segment.reserved == [0; 2] && segment.len == 0, "groups.segment-fields", at, detail)?;
+            let Some((ty, width)) = group_entry(segment.kind) else {
+                return fail("groups.segment-kind", at, detail());
+            };
+            let role = if position < matches {
+                floor = floor.max(segment.offset as usize + width);
+                "a group filter's match"
+            } else {
+                ensure(ty == Ty::Pubkey && segment.offset == 0, "groups.except", at, detail)?;
+                "a group filter's except"
+            };
+            self.need(state, segment.register, at, role, |held| held == ty)?;
+        }
+        ensure(filter.min_data_len as usize >= floor, "groups.floor", at, || {
+            format!("a minimum of {} bytes under matches that reach {floor}", filter.min_data_len)
+        })
+    }
+
     /// No CPI account record lists an entry account writable, whatever invokes it or not.
     fn registry_globals(&self) -> Check {
         let entries = self.entry_accounts();
@@ -1300,7 +1431,8 @@ impl<'p> Checker<'p> {
 
     /// Nothing is left unreached (`docs/reference/wire-format.md`, "CPI descriptors" and "Data
     /// segments"): every descriptor is invoked, and every data segment is part of an invoked
-    /// descriptor's data, an output or a PDA's seeds. Unreached, a record would never be checked.
+    /// descriptor's data, an output, a PDA's seeds or a group filter. Unreached, a record would
+    /// never be checked.
     fn unreferenced(&mut self) -> Check {
         let p = self.p;
         for (index, segment) in p.segments.iter().enumerate() {

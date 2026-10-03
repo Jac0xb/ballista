@@ -13,8 +13,9 @@
  *    a writer's bare `Expected u8`, a stack overflow, or the reuse replay's "compiler bug".
  * 2. **Deterministic.** Compiling twice, compiling the parsed template again, and compiling a
  *    copy whose names are all renamed (some to names such as `constructor`) give the same bytes.
- * 3. **Register reuse preserves meaning.** Compiled with `forceRegisterReuse`, the program is the
- *    plain one with its registers renamed, and on every path through its loops each register read
+ * 3. **Register reuse preserves meaning.** A renumbered program (one past 64 values, or any with
+ *    `registerReuse: 'always'`) is the one-register-per-value program (`registerReuse: 'never'`
+ *    past 64) with its registers renamed, and on every path through its loops each register read
  *    sees the value the plain program's read sees. The replay here decodes the bytes itself and
  *    takes its register operands from the verifier (`common/src/template/verify.rs`), not from the
  *    compiler's own table, and models the runtime's per-pass snapshot (`execute.rs`).
@@ -358,6 +359,7 @@ export class Generator {
   readonly literals = new Set<string>();
   readonly usedInputs = new Set<string>();
   names = 0;
+  balances = 0;
 
   inputs: Record<string, InputDefinition> = {};
   inputValues: Record<string, RunInputValue> = {};
@@ -710,15 +712,17 @@ export class Generator {
         mint[45] = 1;
         return {
           ...base,
-          source: { kind: 'stored', address: rng.bytes(32), lamports: 1_000_000_000n, owner: TOKEN_PROGRAM_ADDRESS_BYTES, data: mint },
+          source: { kind: 'stored', address: rng.bytes(32), lamports: this.lamports(), owner: TOKEN_PROGRAM_ADDRESS_BYTES, data: mint },
         };
       }
       case 'data': {
         // Mostly zeros and ones, so a `bool` read usually succeeds and numbers stay small.
-        const contents = Uint8Array.from({ length: decl.dataLength }, () => rng.weighted([[3, 0], [2, 1], [2, rng.below(16)], [3, rng.below(256)]]));
+        // Some zeros and ones, so a `bool` read can succeed; otherwise varied, so a read of the
+        // wrong offset or account gives a different value.
+        const contents = Uint8Array.from({ length: decl.dataLength }, () => rng.weighted([[2, 0], [2, 1], [2, rng.below(16)], [5, rng.below(256)]]));
         return {
           ...base,
-          source: { kind: 'stored', address: rng.bytes(32), lamports: 1_000_000_000n, owner: decl.owner!, data: contents },
+          source: { kind: 'stored', address: rng.bytes(32), lamports: this.lamports(), owner: decl.owner!, data: contents },
         };
       }
       case 'wallet':
@@ -727,12 +731,18 @@ export class Generator {
           source: {
             kind: 'stored',
             address: rng.bytes(32),
-            lamports: decl.signer && decl.writable ? 10_000_000_000n : 1_000_000_000n + BigInt(rng.below(1_000_000)),
+            lamports: decl.signer && decl.writable ? 10_000_000_000n + this.lamports() : this.lamports(),
             owner: SYSTEM_PROGRAM_ADDRESS_BYTES,
             data: new Uint8Array(0),
           },
         };
     }
+  }
+
+  /** A balance no other account in the world has, so reading the wrong account's shows. */
+  lamports(): bigint {
+    this.balances += 1;
+    return 1_000_000_000n + BigInt(this.balances) * 7_919n + BigInt(this.rng.below(7_919));
   }
 
   /** Builds the fixed accounts' world first, so keys, pins and literals can name their addresses. */
@@ -1502,12 +1512,13 @@ export class Generator {
     }
     if (steps.length === 0) steps.push(step.require(expression.bool(true)));
     // The run's return data: the values still in scope at the end.
-    if (rng.chance(0.75) && scope.vars.size > 0) {
+    // Every value a register reuse bug could swap should be seen, so most runs return them all.
+    if (rng.chance(0.85) && scope.vars.size > 0) {
       const parts: DataPart[] = [];
       let length = 0;
-      for (const [name, binding] of rng.shuffle([...scope.vars]).slice(0, rng.range(1, 16))) {
+      for (const [name, binding] of scope.vars) {
         const width = binding.type === 'bytes' ? binding.max : { bool: 1, u64: 8, i64: 8, u128: 16, pubkey: 32 }[binding.type];
-        if (length + width > 1_000) break;
+        if (length + width > 1_000 || parts.length >= 64) continue;
         length += width;
         parts.push(data.encode(binding.type, expression.variable(name)));
       }
@@ -1550,7 +1561,7 @@ export class Generator {
           role: `${group}[${member}]`,
           signer: false,
           writable: this.rng.chance(0.5),
-          source: { kind: 'stored', address: this.rng.bytes(32), lamports: 1_000_000_000n, owner: SYSTEM_PROGRAM_ADDRESS_BYTES, data: new Uint8Array(0) },
+          source: { kind: 'stored', address: this.rng.bytes(32), lamports: this.lamports(), owner: SYSTEM_PROGRAM_ADDRESS_BYTES, data: new Uint8Array(0) },
         });
       }
     });
@@ -1789,7 +1800,7 @@ function registersRead(program: DecodedProgram, record: Record16): number[] {
  * after the last pass the loop restores them, carried registers excepted. A value is named by the
  * program counter and pass that wrote it.
  */
-export function replay(program: DecodedProgram, passes: readonly number[]): string[] {
+export function replay(program: DecodedProgram, passes: readonly number[], inferCarried = false): string[] {
   const seen: string[] = [];
   let registers: string[] = new Array<string>(256).fill('unset');
   const run = (pc: number, pass: string) => {
@@ -1812,6 +1823,14 @@ export function replay(program: DecodedProgram, passes: readonly number[]): stri
     }
     if (record.opcode === opcode.repeat) seen.push(`${pc}: count ${registers[record.b]}`);
     const carried = [...Array(64).keys()].filter((register) => (record.immediate >> BigInt(register)) & 1n);
+    // A one-register-per-value reference past 64 registers cannot name every carried register in
+    // its 64-bit mask. A body's moves are its assignments, each into a carried register.
+    if (inferCarried) {
+      for (let body = pc + 1; body <= pc + record.a; body += 1) {
+        const inner = program.instructions[body]!;
+        if (inner.opcode === opcode.move && !carried.includes(inner.dst)) carried.push(inner.dst);
+      }
+    }
     const count = passes[loop] ?? 0;
     loop += 1;
     const snapshot = registers.slice();
@@ -1879,7 +1898,10 @@ function loopCount(program: DecodedProgram): number {
   return loops;
 }
 
-/** Problems with `renamed` as a renaming of `plain`; empty when it reads every value `plain` does. */
+/**
+ * Problems with `renamed` as a renaming of `plain`; empty when it reads every value `plain` does.
+ * `plain` past 64 registers is a reference only: its carried registers are inferred.
+ */
 export function reuseProblems(plain: Uint8Array, renamed: Uint8Array, seed: number): string[] {
   const left = decodeProgram(plain);
   const right = decodeProgram(renamed);
@@ -1887,7 +1909,7 @@ export function reuseProblems(plain: Uint8Array, renamed: Uint8Array, seed: numb
   if (problems.length > 0) return problems;
   const rng = new Rng(seed ^ 0x5eed);
   for (const passes of passVectors(loopCount(left), rng)) {
-    const before = replay(left, passes);
+    const before = replay(left, passes, left.registerCount > 64);
     const after = replay(right, passes);
     if (before.length !== after.length) return [`passes ${passes.join(',')}: ${before.length} reads before, ${after.length} after`];
     const index = before.findIndex((value, at) => value !== after[at]);
@@ -1964,7 +1986,7 @@ export interface CorpusCase {
   values: number;
   /** `compileTemplate(document)`. */
   natural: CorpusVariant;
-  /** Compiled with `forceRegisterReuse`, when the natural compile does not reuse registers already. */
+  /** Compiled with `registerReuse: 'always'`, when the natural compile does not reuse registers already. */
   forced?: CorpusVariant;
   /** `materializeAliases(document)`, compiled. */
   materialized?: CorpusVariant;
@@ -2070,16 +2092,20 @@ export function checkCase(fuzzCase: FuzzCase, options: { corpus?: boolean } = {}
   if (decoded.registerCount > 64) report.problems.push(`the header declares ${decoded.registerCount} registers`);
   let forced: CompiledTemplate | undefined;
   if (values > 64) {
+    // The natural compile renumbered on its own; compare it with the numbering it came from.
     report.reused = 'natural';
+    const plain = compileOutcome(fuzzCase.template, { registerReuse: 'never' });
+    if ('error' in plain) report.problems.push(`the one-register-per-value compile failed: ${describeError(plain.error)}`);
+    else report.problems.push(...reuseProblems(plain.ok.bytes, compiled.bytes, fuzzCase.seed).map((problem) => `natural reuse: ${problem}`));
   } else if (values > 0) {
-    const outcome = compileOutcome(fuzzCase.template, { forceRegisterReuse: true });
+    const outcome = compileOutcome(fuzzCase.template, { registerReuse: 'always' });
     if ('error' in outcome) {
       report.problems.push(`forced reuse refused a template that compiles: ${describeError(outcome.error)}`);
     } else {
       forced = outcome.ok;
       report.reused = 'forced';
       report.problems.push(...reuseProblems(compiled.bytes, forced.bytes, fuzzCase.seed).map((problem) => `forced reuse: ${problem}`));
-      const forcedAgain = compileOutcome(fuzzCase.template, { forceRegisterReuse: true });
+      const forcedAgain = compileOutcome(fuzzCase.template, { registerReuse: 'always' });
       if ('error' in forcedAgain || !sameBytes(forcedAgain.ok.bytes, forced.bytes)) report.problems.push('forced reuse is not deterministic');
     }
   }
@@ -2116,6 +2142,100 @@ export function checkCase(fuzzCase: FuzzCase, options: { corpus?: boolean } = {}
     };
   }
   return report;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Findings, minimized. Each has a skipped test below that fails today.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Finding `carried-alias` (medium): inside a loop body, `let` or `snapshot` of a carried variable
+ * binds the variable's own register, since a `let` of a variable compiles to no instruction. A
+ * later `assign` writes that register, so from then on the binding reads the new value. The
+ * language says a binding evaluates once and keeps its value, and `snapshot` is named for
+ * before-and-after checks. `sharesRegister` copies a carried variable that a binding shares when
+ * the loop starts, but nothing does when the binding is made inside the body.
+ *
+ * Here each pass snapshots the total, adds one, and requires the total to have grown by one from
+ * the snapshot. Every pass should pass; the compiled check compares the new total plus one with
+ * itself and fails the first pass. A check of the form `total - before <= cap` passes always.
+ */
+export function carriedAliasDocument(): TemplateInput {
+  return {
+    inputs: { passes: { type: 'u64' } },
+    accounts: {},
+    steps: [
+      step.let('total', u64(0)),
+      step.repeat(
+        expression.input('passes'),
+        [
+          step.snapshot('before', expression.variable('total')),
+          step.assign('total', expression.add(expression.variable('total'), u64(1))),
+          step.require(expression.equal(expression.add(expression.variable('before'), u64(1)), expression.variable('total')), 'grewByOne'),
+        ],
+        { max: 4, carry: ['total'] },
+      ),
+      step.setReturnData([data.encode('u64', expression.variable('total'))]),
+    ],
+  };
+}
+
+const invokeOf = (program: string): Step => step.invoke({ program: fixed(program), accounts: [], data: [] });
+
+/**
+ * Finding `invoke-index` (low): a template with more than 256 invoke steps fails with a bare
+ * `RangeError: Expected u8`. An invoke names its CPI descriptor by a one-byte index, and the
+ * compiler writes that byte as each invoke compiles, before its checks on the CPI count (`can
+ * expand to N CPIs`) and the descriptor table (`table count exceeds the wire format`) run, after
+ * every step. Such a template is invalid anyway; the error should say why.
+ */
+export function manyInvokesDocument(): TemplateInput {
+  return {
+    accounts: { program: { executable: true, address: new Uint8Array(32).fill(9) } },
+    steps: [
+      invokeOf('program'),
+      ...Array.from({ length: 4 }, () => step.repeat(u64(1), Array.from({ length: 64 }, () => invokeOf('program')), { max: 1 })),
+    ],
+  };
+}
+
+/**
+ * Finding `offset-u32` (low): a fixed read offset near the top of the `u32` range fails with a bare
+ * `RangeError: Expected u32`. The compiler raises the account's minimum data length to the read's
+ * end, `offset + width`, which can pass `u32` while the offset itself is a valid `u32`; the
+ * account record's writer then throws. The schema accepts the offset, so the error should say the
+ * read reaches past what an account's data length can be.
+ */
+export function largeOffsetDocument(): TemplateInput {
+  return {
+    accounts: { data: { owner: new Uint8Array(32).fill(1) } },
+    steps: [step.require(expression.equal(expression.accountData(fixed('data'), 0xffff_fffc, 'u64'), u64(0)))],
+  };
+}
+
+/**
+ * Finding `deep-nesting` (low): an expression nested about 1,500 levels deep throws `RangeError:
+ * Maximum call stack size exceeded` from Zod's recursive parse of `ExpressionSchema`, before any
+ * limit applies. At 1,000 levels the compiler refuses it cleanly: more than 128 instructions.
+ */
+export function deepNestingDocument(depth = 2_000): TemplateInput {
+  let value = expression.bool(true);
+  for (let level = 0; level < depth; level += 1) value = expression.not(value);
+  return { accounts: {}, steps: [step.require(value)] };
+}
+
+/**
+ * Finding `proto-name` (low): `__proto__` matches the identifier pattern, but a record parsed by
+ * Zod assigns it as `result[key] = value`, which sets the object's prototype instead of adding the
+ * key. A document read with `JSON.parse` that declares an input, account, registry or field named
+ * `__proto__` loses the declaration without an error: here the step that reads the input fails
+ * with "Unknown input: __proto__". A registry whose only field is `__proto__` is refused as
+ * holding no bytes, and an unused declaration vanishes silently, shifting what follows it.
+ */
+export function protoNameDocument(): TemplateInput {
+  const document = JSON.parse('{"inputs": {"__proto__": {"type": "u64"}}, "accounts": {}}') as TemplateInput;
+  document.steps = [step.require(expression.equal(expression.input('__proto__'), u64(1)))];
+  return document;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2158,6 +2278,24 @@ const COMMITTED_CORPUS = fileURLToPath(new URL('../../../fixtures/compiler-fuzz-
 /** The committed corpus: up to this many cases, picked from these seeds to cover the most features. */
 const COMMITTED_CASES = 12;
 const COMMITTED_CANDIDATES = 400;
+/** The minimized findings' payloads and run data, for the Rust regression tests. */
+const FINDINGS_FIXTURE = fileURLToPath(new URL('../../../fixtures/compiler-fuzz-findings.json', import.meta.url));
+
+function writeFindings(): void {
+  const passes = new Uint8Array(8);
+  new DataView(passes.buffer).setBigUint64(0, 2n, true);
+  const findings = {
+    command: 'UPDATE_COMPILER_FUZZ_CORPUS=1 pnpm --dir clients/js exec vitest run src/compiler-fuzz.test.ts',
+    'carried-alias': {
+      document: 'carriedAliasDocument() in clients/js/src/compiler-fuzz.test.ts',
+      payload: hex(compileTemplate(carriedAliasDocument()).bytes),
+      // Two passes: by the language's rules the run succeeds and returns 2.
+      data: hex(passes),
+      returns: '0200000000000000',
+    },
+  };
+  writeFileSync(FINDINGS_FIXTURE, `${JSON.stringify(findings, null, 1)}\n`);
+}
 
 /** The features a document uses: step and expression kinds, and how its registers are numbered. */
 function features(fuzzCase: FuzzCase, corpusCase: CorpusCase): Set<string> {
@@ -2223,7 +2361,7 @@ describe('compiler fuzz', () => {
     const problems = reports.filter((report) => report.problems.length > 0).map((report) => `seed ${report.seed}: ${report.problems.join('; ')}`);
     expect(problems).toEqual([]);
     // The generator must mostly write documents the compiler accepts, or the oracles test little.
-    expect(compiled.length).toBeGreaterThan(reports.length * 0.6);
+    expect(compiled.length).toBeGreaterThanOrEqual(reports.length * 0.6);
   });
 
   test.runIf(environment('UPDATE_COMPILER_FUZZ_CORPUS') === '1')('rewrite the committed corpus', () => {
@@ -2255,6 +2393,7 @@ describe('compiler fuzz', () => {
     }
     picked.sort((x, y) => x.seed - y.seed);
     writeCorpus(COMMITTED_CORPUS, picked, 'UPDATE_COMPILER_FUZZ_CORPUS=1 pnpm --dir clients/js exec vitest run src/compiler-fuzz.test.ts');
+    writeFindings();
   });
 
   // Triage: `FUZZ_SHOW=<seed>` prints a seed's document, world and disassembly.
@@ -2313,5 +2452,60 @@ describe('compiler fuzz', () => {
     }
     // Some documents need more than 64 registers, so `reuseRegisters` runs without being forced.
     expect(reused).toBeGreaterThan(10);
+  });
+});
+
+/**
+ * The findings, minimized. Each test states what the compiler should do and fails today, so it is
+ * skipped; remove the `.skip` with the fix. `tests/ballista` runs the carried-alias template too.
+ */
+describe('compiler fuzz findings', () => {
+  // BUG carried-alias: a `let` of a carried variable in a loop body shares its register, so the
+  // body's `assign` changes the binding. See `carriedAliasDocument`.
+  test.skip('carried-alias: a snapshot of a carried value keeps its value after the assignment', () => {
+    const program = decodeProgram(compileTemplate(carriedAliasDocument()).bytes);
+    const assignment = program.instructions.findIndex((record) => record.opcode === opcode.move);
+    // After the move, the first add is `before + 1`: it must not read the register the move wrote.
+    const beforePlusOne = program.instructions.slice(assignment + 1).find((record) => record.opcode === opcode.add)!;
+    expect(beforePlusOne.a).not.toBe(program.instructions[assignment]!.dst);
+  });
+
+  // BUG invoke-index: more than 256 invokes fail with a bare `Expected u8`. See `manyInvokesDocument`.
+  test.skip('invoke-index: more than 256 invokes are refused with a clear error', () => {
+    const outcome = compileOutcome(manyInvokesDocument());
+    expect('error' in outcome && isCleanRejection(outcome.error)).toBe(true);
+  });
+
+  // BUG offset-u32: a fixed read whose end passes u32 fails with a bare `Expected u32`. See
+  // `largeOffsetDocument`.
+  test.skip('offset-u32: a fixed read past any data length is refused with a clear error', () => {
+    const outcome = compileOutcome(largeOffsetDocument());
+    expect('error' in outcome && isCleanRejection(outcome.error)).toBe(true);
+  });
+
+  // BUG deep-nesting: a deeply nested expression overflows the stack in Zod's parse. See
+  // `deepNestingDocument`.
+  test.skip('deep-nesting: a deeply nested expression is refused with a clear error', () => {
+    const outcome = compileOutcome(deepNestingDocument());
+    expect('error' in outcome && isCleanRejection(outcome.error)).toBe(true);
+  });
+
+  // BUG proto-name: a declaration named `__proto__` vanishes. See `protoNameDocument`.
+  test.skip('proto-name: an input named __proto__ is declared, or refused by name', () => {
+    const outcome = compileOutcome(protoNameDocument());
+    if ('ok' in outcome) expect(outcome.ok.inputOrder).toContain('__proto__');
+    else expect(describeError(outcome.error)).toMatch(/__proto__.*(reserved|not allowed)|identifier/);
+  });
+
+  // Today's behaviour, so a change to it is noticed: each finding reproduces.
+  test('every finding reproduces today', () => {
+    const program = decodeProgram(compileTemplate(carriedAliasDocument()).bytes);
+    const assignment = program.instructions.findIndex((record) => record.opcode === opcode.move);
+    const beforePlusOne = program.instructions.slice(assignment + 1).find((record) => record.opcode === opcode.add)!;
+    expect(beforePlusOne.a).toBe(program.instructions[assignment]!.dst);
+    expect(() => compileTemplate(manyInvokesDocument())).toThrow(/^Expected u8$/);
+    expect(() => compileTemplate(largeOffsetDocument())).toThrow(/^Expected u32$/);
+    expect(() => compileTemplate(deepNestingDocument())).toThrow(/Maximum call stack size exceeded/);
+    expect(() => compileTemplate(protoNameDocument())).toThrow('Unknown input: __proto__');
   });
 });

@@ -443,3 +443,36 @@ fn compiler_fuzz_corpus_runs_the_same_with_and_without_register_reuse() {
             .join("\n\n")
     );
 }
+
+const FINDINGS: &str = include_str!("../../../../fixtures/compiler-fuzz-findings.json");
+
+/// Finding `carried-alias` (`carriedAliasDocument` in `clients/js/src/compiler-fuzz.test.ts`):
+/// inside a loop body, a `snapshot` of a carried variable shares the variable's register, so the
+/// `assign` after it changes the snapshot too. Each pass of the minimized template snapshots the
+/// total, adds one, and requires that the total grew by one from the snapshot. By the language's
+/// rules a run of two passes succeeds and returns 2; the compiled program compares the new total
+/// plus one with itself and fails the first pass with `RequirementFailed`. With the fix,
+/// regenerate the fixture (`UPDATE_COMPILER_FUZZ_CORPUS=1`) and remove the `ignore`.
+#[test]
+#[ignore = "compiler bug carried-alias: a let of a carried variable in a loop body aliases its register"]
+fn a_snapshot_of_a_carried_value_keeps_its_value_after_the_assignment() {
+    let findings: Value = serde_json::from_str(FINDINGS).expect("the findings fixture is JSON");
+    let finding = &findings["carried-alias"];
+    let payload = decode(finding["payload"].as_str().expect("payload"));
+    let creator = Pubkey::new_unique();
+    let context = context(funded_accounts([creator], 10_000_000_000));
+    let created = context.process_instruction(&create_template_instruction(creator, 1, &payload));
+    assert!(created.program_result.is_ok(), "{created:#?}");
+    let (template, _) = find_template_pda(&creator, 1);
+    let data = decode(finding["data"].as_str().expect("data"));
+    let result = context.process_instruction(&run_instruction(template, vec![], &data));
+    let failure = custom_code(&result).map(|code| (code >> 16, code & 0xffff));
+    assert!(
+        result.program_result.is_ok(),
+        "each pass grows the total by one from its snapshot, yet the run failed: (pc, kind) {failure:?}"
+    );
+    assert_eq!(
+        result.return_data,
+        decode(finding["returns"].as_str().expect("returns"))
+    );
+}

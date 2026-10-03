@@ -2,7 +2,8 @@
 import { SYSTEM_PROGRAM_ADDRESS_BYTES, account, data, defineTemplate, expression, step } from '../../src/index.js';
 
 // Stand-ins so the example runs as written: replace them with the oracle program (the owner of the
-// price account), the price's offset in its layout, and the protocol call.
+// price account), the price's offset in its layout, and the protocol call. A real template also
+// checks which feed the account holds and when its price was published.
 const ORACLE_PROGRAM = SYSTEM_PROGRAM_ADDRESS_BYTES;
 const PRICE_OFFSET = 8;
 const PROTOCOL_PROGRAM = SYSTEM_PROGRAM_ADDRESS_BYTES;

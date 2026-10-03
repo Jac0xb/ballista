@@ -57,15 +57,23 @@ the template's account schema: its list of accounts and the rules each must meet
 `executable: true` with an `address` means the account must be that exact program. `owner` means
 the account must belong to the given program, `minDataLength` means it must hold at least that
 many bytes of data, and `writable` means the transaction may change it. If any account breaks its
-rules, the run fails before the first step, so a caller cannot swap in a different program or a
-look-alike account.
+rules, the run fails before the first step, so a caller cannot swap in a different program, or an
+account another program owns.
+
+The owner pin doesn't fix which account `position` is, or even its type: any account the protocol
+owns with at least 128 bytes passes, another user's position included. Before relying on its data,
+also check its type, by its discriminator or exact length, and its identity, as
+[Canonical position account](#canonical-position-account) does with a derivation. See
+[Pins](/guide/trust-model#pins).
 
 ## Oracle price band
 
 Read a price from an oracle account (an account in which a price feed publishes prices) and stop
 the run unless the price lies between a minimum and a maximum. `PRICE_OFFSET` is the byte offset
 of the price in the oracle's account layout. The oracle account's `owner` is fixed in the account
-schema, as in the previous example, so a caller cannot pass a fake oracle.
+schema, as in the previous example, so the price comes from the oracle program. That doesn't say
+which feed: one program owns every feed's accounts. The band is two inputs, so it guards the caller
+against a price move, not against whoever builds the transaction.
 
 ::: code-group
 
@@ -79,11 +87,11 @@ schema, as in the previous example, so a caller cannot pass a fake oracle.
 
 :::
 
-::: warning Layout and freshness
+::: warning Layout, feed and freshness
 Ballista does not understand oracle formats. The template must read the price at the offset the
-oracle protocol documents, and it should also check the oracle's publish slot or timestamp so that
-a stale price is rejected. [Act only on a fresh price](/examples/protocols/pyth-gate) does both for
-Pyth.
+oracle protocol documents, check that the account holds the feed it expects, by its address or a
+feed ID in its data, and check the publish slot or timestamp so that a stale price is rejected.
+[Act only on a fresh price](/examples/protocols/pyth-gate) does all three for Pyth.
 :::
 
 ## Maximum lamport spend

@@ -32,8 +32,8 @@ with the Rust builder, or by hand, can skip them, so check them when you
 [inspect a template](/guide/inspecting-templates) someone else wrote.
 
 - A called program must pin its `address`, so the caller cannot swap in another program.
-- An account whose data is read must pin its `owner` or `address`, so the byte offsets mean what
-  the template assumes.
+- An account whose data is read must pin its `owner` or `address`. An owner pin alone doesn't fix
+  the account's type: see [Pins](/guide/trust-model#pins).
 - `unsafeUnpinned: true` turns both off for one account. The flag is not stored on chain.
 - The TypeScript caps on steps, rows and data parts. See [Limits](/reference/limits).
 

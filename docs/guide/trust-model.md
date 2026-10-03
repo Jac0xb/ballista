@@ -110,16 +110,26 @@ passes an account that does not match. An account declaration can pin two facts:
 - **`address`** fixes the account to one exact address. Pin every program a template calls, or
   derives a PDA with, this way. Otherwise the caller could substitute any program, and the
   template's calls would mean nothing.
-- **`owner`** fixes the program that owns the account, so the template knows the layout of its
-  data. A `u64` at byte offset 64 is a token balance only if the Token Program owns the account.
+- **`owner`** fixes the program that owns the account, and so which program wrote its data.
 
-Only the TypeScript compiler enforces these two rules, unless you opt out as described below. It
-refuses a template that calls a program without a pinned address, or that reads the data of an
-account that pins neither its owner nor its address. Helpers such as `systemTransfer` also declare
-which program they target, so pinning the wrong address fails when you compile. The Ballista
-program does not check pins: at finalization it checks only that a called program is declared
-`executable`. A template built with the Rust `ProgramBuilder`, or by hand, can leave a program
-unpinned and still be finalized, so check the pins of any template you did not compile yourself.
+An owner pin is not a type pin: it accepts every account that program owns. A 355-byte Token
+multisig passes an owner pin to the Token Program and a `minDataLength` of 165, and its bytes 64 to
+72, where a token account keeps its balance, fall inside its list of signer addresses. An Anchor
+program tells its account types apart only by their first eight bytes, the discriminator. Before a
+template relies on an account's data, it should also check:
+
+- **the type**: the discriminator, or the exact data length, such as 165 bytes for a token account;
+- **the identity**: the address, a derivation ([`assertPda`](/guide/pda-assertions)), or fields
+  that tie the account to the run, such as a token account's mint and owner.
+
+Only the TypeScript compiler requires pins, unless you opt out as described below. It refuses a
+template that calls a program without a pinned address, or that reads the data of an account that
+pins neither its owner nor its address; neither rule checks a type. Helpers such as
+`systemTransfer` also declare which program they target, so pinning the wrong address fails when
+you compile. The Ballista program does not check pins: at finalization it checks only that a
+called program is declared `executable`. A template built with the Rust `ProgramBuilder`, or by
+hand, can leave a program unpinned and still be finalized, so check the pins of any template you
+did not compile yourself.
 
 ## Opting out
 

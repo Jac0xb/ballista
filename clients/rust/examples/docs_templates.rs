@@ -1171,7 +1171,8 @@ pub fn oracle_price_band() -> Vec<u8> {
     use ballista_sdk::{ballista_common::template::*, ProgramBuilder, Segment, SYSTEM_PROGRAM_ID};
 
     // Stand-ins so the example runs as written: replace them with the oracle program (the owner
-    // of the price account), the price's offset in its layout, and the protocol call.
+    // of the price account), the price's offset in its layout, and the protocol call. A real
+    // template also checks which feed the account holds and when its price was published.
     const ORACLE_PROGRAM: [u8; 32] = SYSTEM_PROGRAM_ID.to_bytes();
     const PRICE_OFFSET: u64 = 8;
     const PROTOCOL_PROGRAM: [u8; 32] = SYSTEM_PROGRAM_ID.to_bytes();

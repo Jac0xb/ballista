@@ -22,6 +22,37 @@ pub const BALLISTA_ELF: &[u8] = include_bytes!("../../../target/deploy/ballista.
 pub const ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
 const TEMPLATE_SEED: &[u8] = b"template";
 
+/// Critic tooling. `Mollusk::default()` turns on every SVM feature, 15 of which mainnet does not
+/// have (LiteSVM's `MAINNET_ACTIVE_FEATURES`, sourced 2026-09-15), and allows SIMD-0268's CPI depth
+/// of 9 where mainnet allows 5. With `BALLISTA_MAINNET_FEATURES=1` this rebuilds the feature set,
+/// the compute budget and the program cache to match mainnet; otherwise it is `Mollusk::default()`.
+pub fn base_mollusk() -> Mollusk {
+    let mut mollusk = Mollusk::default();
+    if std::env::var("BALLISTA_MAINNET_FEATURES").as_deref() == Ok("1") {
+        let mut features = solana_svm_feature_set::SVMFeatureSet::all_enabled();
+        features.account_data_direct_mapping = false;
+        features.blake3_syscall_enabled = false;
+        features.block_revenue_sharing = false;
+        features.deprecate_legacy_vote_ixs = false;
+        features.direct_account_pointers_in_program_input = false;
+        features.disable_sbpf_v0_execution = false;
+        features.disable_sbpf_v0_v1_v2_deployment = false;
+        features.enable_big_mod_exp_syscall = false;
+        features.enable_sha512_syscall = false;
+        features.increase_tx_account_lock_limit = false;
+        features.raise_cpi_nesting_limit_to_8 = false;
+        features.reenable_sbpf_v0_execution = false;
+        features.remaining_compute_units_syscall_enabled = false;
+        features.virtual_address_space_adjustments = false;
+        features.vote_account_initialize_v2 = false;
+        let budget = solana_compute_budget::compute_budget::ComputeBudget::new_with_defaults(false);
+        mollusk.program_cache = mollusk_svm::program::ProgramCache::new(&features, &budget, false);
+        mollusk.feature_set = features;
+        mollusk.compute_budget = budget;
+    }
+    mollusk
+}
+
 /// A Mollusk instance with the program and a late clock, matching the other harnesses.
 pub fn mollusk() -> Mollusk {
     let mut mollusk = Mollusk::default();

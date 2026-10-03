@@ -7,7 +7,7 @@ use ballista_fuzz_gen::scenario::{Kind, Scenario};
 use ballista_fuzz_gen::template::{self, Program, World};
 use mollusk_svm::program::loader_keys::LOADER_V3;
 use mollusk_svm::result::types::TransactionResult;
-use mollusk_svm::{Mollusk, MolluskContext};
+use mollusk_svm::MolluskContext;
 use mollusk_svm_programs_memo::memo;
 use mollusk_svm_programs_token::token;
 use solana_account::Account;
@@ -70,7 +70,7 @@ impl Harness {
     pub fn new() -> Self {
         // `Mollusk::default()` enables every SVM feature; the critic's `BALLISTA_MAINNET_FEATURES`
         // switch lives in `cases.rs`, which the fuzzer does not need, so it uses the default set.
-        let mut mollusk = Mollusk::default();
+        let mut mollusk = crate::cases::base_mollusk();
         mollusk.sysvars.clock.unix_timestamp = CLOCK_TIMESTAMP;
         mollusk.sysvars.clock.slot = CLOCK_SLOT;
         mollusk.add_program_with_loader_and_elf(&BALLISTA_ID, &LOADER_V3, crate::cases::BALLISTA_ELF);

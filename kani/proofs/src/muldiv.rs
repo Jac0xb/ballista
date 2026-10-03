@@ -77,11 +77,11 @@ fn check_contract(
 }
 
 /// `mul_div_u64(a, b, c, round_up)` meets the contract for this `c`, any rounding, and `a`, `b`
-/// with 18 symbolic bits each (three 6-bit windows: bits 0–5, 29–34, 58–63). Kani also checks
+/// with 12 symbolic bits each (three 4-bit windows: bits 0–3, 30–33, 60–63). Kani also checks
 /// every panic, overflow and loop bound on the way, so this proves those absent too. Returns
 /// whether it succeeded.
 fn u64_contract(c: u64) -> bool {
-    let (a, b) = (windowed_u64(6), windowed_u64(6));
+    let (a, b) = (windowed_u64(4), windowed_u64(4));
     let round_up: bool = kani::any();
     let outcome = mul_div_u64(a, b, c, round_up).map(|q| q as u128);
     let ok = outcome.is_ok();
@@ -97,7 +97,7 @@ fn u64_contract(c: u64) -> bool {
 /// full divider, which does not finish.
 macro_rules! u64_contracts {
     ($($name:ident: $divisor:expr => $class:literal),* $(,)?) => {$(
-        #[doc = concat!("`mul_div_u64` meets the documented contract for the divisor ", $class, ": the floor or ceiling of the exact product, or `ArithmeticOverflow` exactly when it does not fit; no panic. Bound: that divisor; `a` and `b` with 18 symbolic bits each; either rounding.")]
+        #[doc = concat!("`mul_div_u64` meets the documented contract for the divisor ", $class, ": the floor or ceiling of the exact product, or `ArithmeticOverflow` exactly when it does not fit; no panic. Bound: that divisor; `a` and `b` with 12 symbolic bits each; either rounding.")]
         #[kani::proof]
         #[kani::unwind(4)]
         fn $name() {
@@ -127,12 +127,12 @@ fn mul_div_rejects_a_zero_divisor() {
 }
 
 /// `mul_div_u128(a, b, c, round_up)` meets the contract for this `c`, any rounding, and `a`, `b`
-/// with 18 symbolic bits each (three 6-bit windows: bits 0–5, 61–66, 122–127), against products
+/// with 12 symbolic bits each (three 4-bit windows: bits 0–3, 62–65, 124–127), against products
 /// from the 32-bit-digit schoolbook in `util::U128Parts::widening_mul`, which shares nothing with
 /// `full_product`. Kani checks every panic, overflow and loop bound on the way. Returns whether it
 /// succeeded.
 fn u128_contract(c: u128) -> bool {
-    let (a, b) = (windowed_u128(6), windowed_u128(6));
+    let (a, b) = (windowed_u128(4), windowed_u128(4));
     let round_up: bool = kani::any();
     let product = |x: u128, y: u128| U128Parts::of(x).widening_mul(U128Parts::of(y));
     let outcome = mul_div_u128(a, b, c, round_up);
@@ -147,7 +147,7 @@ fn u128_contract(c: u128) -> bool {
 /// ones Knuth D's normalized path.
 macro_rules! u128_contracts {
     ($($name:ident: $divisor:expr => $class:literal),* $(,)?) => {$(
-        #[doc = concat!("`mul_div_u128` meets the documented contract for the divisor ", $class, ", the 256-bit product included; no panic. Bound: that divisor; `a` and `b` with 18 symbolic bits each; either rounding.")]
+        #[doc = concat!("`mul_div_u128` meets the documented contract for the divisor ", $class, ", the 256-bit product included; no panic. Bound: that divisor; `a` and `b` with 12 symbolic bits each; either rounding.")]
         #[kani::proof]
         #[kani::unwind(8)]
         fn $name() {

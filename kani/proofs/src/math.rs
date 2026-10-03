@@ -204,6 +204,10 @@ fn division_and_remainder_fail_exactly_on_the_documented_inputs() {
 /// Width of each symbolic window in a bounded `u64` or `i64` operand (see `util::windowed_u64`).
 const U64_BITS: u32 = 8;
 
+/// Width of each symbolic window in a bounded `u64` or `i64` division or remainder (see
+/// `util::windowed_u64`).
+const U64_DIVISION_BITS: u32 = 4;
+
 /// `MUL` over `u64` returns the exact product, computed in `u128`, or `ArithmeticOverflow` exactly
 /// when it exceeds `u64::MAX`. Bound: each operand has 24 symbolic bits, three 8-bit windows (bits
 /// 0–7, 28–35, 56–63) with zeros between, so products still reach every bit and overflow; a
@@ -241,11 +245,14 @@ fn i64_mul_is_exact() {
 }
 
 /// `DIV` over `u64`: `DivisionByZero` exactly when the divisor is zero, and otherwise the floor
-/// quotient, checked by the defining inequality `q·b ≤ a < (q + 1)·b` in `u128`. Bound: none
-/// (every `u64` pair).
+/// quotient, checked by the defining inequality `q·b ≤ a < (q + 1)·b` in `u128`. Bound: each
+/// operand has 12 symbolic bits, three 4-bit windows (bits 0–3, 30–33, 60–63) with zeros between.
+/// The check compares the code's divider with a multiplier: at full width it did not finish in 20
+/// minutes, nor with 24 symbolic bits in 15. Which inputs fail, and how, is proved at full width by
+/// `division_and_remainder_fail_exactly_on_the_documented_inputs`.
 #[kani::proof]
 fn u64_div_is_the_floor_quotient() {
-    let (a, b): (u64, u64) = (kani::any(), kani::any());
+    let (a, b) = (windowed_u64(U64_DIVISION_BITS), windowed_u64(U64_DIVISION_BITS));
     let result = arithmetic(OP_DIV, RuntimeValue::U64(a), RuntimeValue::U64(b));
     assert!(matches!(result, Ok(RuntimeValue::U64(_)) | Err(_)));
     match result {
@@ -266,10 +273,12 @@ fn u64_div_is_the_floor_quotient() {
 /// `DIV` over `i64`: `DivisionByZero` exactly when the divisor is zero, `ArithmeticOverflow`
 /// exactly for `i64::MIN / -1`, and otherwise the quotient truncated toward zero: its magnitude is
 /// `|a| / |b|` in `u64` (whose floor property `u64_div_is_the_floor_quotient` proves), and it is
-/// negative exactly when it is nonzero and the signs differ. Bound: none (every `i64` pair).
+/// negative exactly when it is nonzero and the signs differ. Bound: each operand is a windowed
+/// `u64` (12 symbolic bits, as in `u64_div_is_the_floor_quotient`) or its bitwise complement, as an
+/// `i64`, so both signs, `i64::MIN` and `-1` are reachable.
 #[kani::proof]
 fn i64_div_truncates_toward_zero() {
-    let (a, b): (i64, i64) = (kani::any(), kani::any());
+    let (a, b) = (windowed_i64(U64_DIVISION_BITS), windowed_i64(U64_DIVISION_BITS));
     let result = arithmetic(OP_DIV, RuntimeValue::I64(a), RuntimeValue::I64(b));
     assert!(matches!(result, Ok(RuntimeValue::I64(_)) | Err(_)));
     match result {
@@ -529,10 +538,11 @@ fn casts_preserve_the_value_or_fail() {
 // ---------------------------------------------------------------------------------------------
 
 /// `REM` over `u64`: `DivisionByZero` exactly for a zero divisor, otherwise the remainder `r`:
-/// `r < b`, `r ≤ a`, and `a − r` a multiple of `b`. Bound: none (every `u64` pair).
+/// `r < b`, `r ≤ a`, and `a − r` a multiple of `b`. Bound: each operand has 12 symbolic bits, as
+/// in `u64_div_is_the_floor_quotient`.
 #[kani::proof]
 fn u64_remainder_is_exact() {
-    let (a, b): (u64, u64) = (kani::any(), kani::any());
+    let (a, b) = (windowed_u64(U64_DIVISION_BITS), windowed_u64(U64_DIVISION_BITS));
     let result = integer(OP_REM, RuntimeValue::U64(a), RuntimeValue::U64(b));
     assert!(matches!(result, Ok(RuntimeValue::U64(_)) | Err(_)));
     match result {
@@ -552,10 +562,10 @@ fn u64_remainder_is_exact() {
 /// `REM` over `i64`: `DivisionByZero` for a zero divisor, `ArithmeticOverflow` exactly for
 /// `i64::MIN % -1` (documented in docs/reference/language.md), and otherwise the remainder that
 /// takes the dividend's sign: `|r| < |b|`, `r` zero or signed as `a`, and `b | a − r`, in `i128`.
-/// Bound: none (every `i64` pair).
+/// Bound: each operand as in `i64_div_truncates_toward_zero`.
 #[kani::proof]
 fn i64_remainder_takes_the_dividends_sign() {
-    let (a, b): (i64, i64) = (kani::any(), kani::any());
+    let (a, b) = (windowed_i64(U64_DIVISION_BITS), windowed_i64(U64_DIVISION_BITS));
     let result = integer(OP_REM, RuntimeValue::I64(a), RuntimeValue::I64(b));
     assert!(matches!(result, Ok(RuntimeValue::I64(_)) | Err(_)));
     match result {

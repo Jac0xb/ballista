@@ -5,7 +5,8 @@ compare an account before and after a call.
 
 `step.require(condition)` fails the whole transaction unless its condition is true. A condition can
 combine account reads, inputs, the clock, checked arithmetic, comparisons, and the boolean
-operators `and`, `or`, and `not`.
+operators `and`, `or`, and `not`. Inputs come from the caller, so a check that an input can turn
+off, such as one joined with `or` to an input flag, protects nothing.
 
 ## Why snapshots exist
 
@@ -69,21 +70,4 @@ step.require(
     expression.subtract(expression.snapshot('sourceBefore'), expression.input('amount')),
   ),
 ),
-```
-
-## Compound guards
-
-Conditions can be combined. This one lets the run continue when it is enabled, the deadline has not
-passed, and the expected output meets the minimum, or when an emergency override is set.
-
-```ts
-const canExecute = expression.and(
-  expression.input('enabled'),
-  expression.and(
-    expression.lessThanOrEqual(expression.clockUnixTimestamp(), expression.input('deadline')),
-    expression.greaterThanOrEqual(expression.input('expectedOut'), expression.input('minimumOut')),
-  ),
-);
-
-step.require(expression.or(canExecute, expression.input('emergencyOverride')));
 ```

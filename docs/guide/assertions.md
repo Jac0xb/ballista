@@ -11,9 +11,10 @@ off, such as one joined with `or` to an input flag, protects nothing.
 ## Why snapshots exist
 
 An expression is evaluated again everywhere it appears. A read of an account's balance happens anew
-at each place it is used, so the same expression written before and after a CPI (a call to another
-program) gives two different values, and there is no way to keep the first one. Comparing the
-balance after a transfer with a second read of that same balance proves nothing.
+at each place it is used, so the same expression written before and after a
+[CPI](/reference/glossary#cpi) gives two different values, and there is no way to keep the first
+one. Comparing the balance after a transfer with a second read of that same balance proves
+nothing.
 
 `step.snapshot(name, value)` evaluates its expression once, at that point in the steps, and keeps
 the result for the rest of the run. That makes a before-and-after check possible: the snapshot holds

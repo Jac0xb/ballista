@@ -26,8 +26,9 @@ affect the program's own build. `certora/README.md` covers installation.
 
 Ballista runs each template on a small interpreter inside the program. When a template is
 finalized, the program checks every instruction in it once: each operation is known, each value
-is set before it is read, and each operation receives values of the type it expects. Loops are
-never nested, and each has a fixed maximum number of passes. The program has no recursion, and its
+is set before it is read, and each operation receives values of the type it expects
+([Finalization checks](/guide/trust-model#finalization-checks) has the full list). Loops are never
+nested, and each has a fixed maximum number of passes. The program has no recursion, and its
 release build uses `unsafe` only in the few places [Security posture](/guide/security#strengths)
 lists.
 

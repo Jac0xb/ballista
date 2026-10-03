@@ -17,6 +17,11 @@ export const exactLamportDelta = defineTemplate({
     recipient: { writable: true },
   },
   steps: [
+    // A run accepts one account in both slots, so require two different accounts.
+    step.require(
+      expression.notEqual(expression.accountKey('sender'), expression.accountKey('recipient')),
+      'distinctAccounts',
+    ),
     step.snapshot('before', expression.accountField(account.fixed('sender'), 'lamports')),
     systemTransfer({
       systemProgram: account.fixed('systemProgram'),

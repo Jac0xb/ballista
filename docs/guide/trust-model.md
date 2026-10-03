@@ -29,6 +29,15 @@ the entry belongs to the running template and the key it computed. Ballista sign
 only to create its account, the first time a run uses it, with the rent paid by a payer the run
 names. Entries are never closed, and anyone can read them.
 
+## Aliased accounts
+
+A run accepts the same account in two slots and checks each slot against its own declaration. So
+one account can fill two roles: one signer can count as two approvers, and one deposit can satisfy
+two "received at least" checks. Where a template's checks assume two accounts differ, require it
+with `notEqual(accountKey(a), accountKey(b))`, as
+[Exact lamport delta](/guide/assertions#exact-lamport-delta) does. Registry entries are the
+exception: opening an entry that is already open in the run fails with `InvalidRegistryEntry`.
+
 ## Pins
 
 To pin a fact about an account is to fix it in the template, so that a run fails if the caller

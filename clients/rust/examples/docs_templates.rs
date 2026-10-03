@@ -1666,6 +1666,13 @@ pub fn exact_lamport_delta() -> Vec<u8> {
     let amount_input = builder.input(VALUE_U64, 0);
 
     let amount = builder.load_input(amount_input);
+
+    // A run accepts one account in both slots, so require two different accounts.
+    let sender_key = builder.account_key(sender);
+    let recipient_key = builder.account_key(recipient);
+    let distinct = builder.binary(OP_NE, sender_key, recipient_key);
+    builder.require(distinct);
+
     let before = builder.account_lamports(sender); // the snapshot
 
     let transfer_ix = builder.blob(&[2, 0, 0, 0]);

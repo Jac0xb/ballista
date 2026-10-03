@@ -34,8 +34,9 @@ values, called bindings, follow a few rules:
 
 ## Exact lamport delta
 
-This template records the sender's balance in [lamports](/reference/glossary#lamports), transfers
-an amount, then requires that the balance fell by exactly that amount.
+This template requires the sender and recipient to be different accounts, records the sender's
+balance in [lamports](/reference/glossary#lamports), transfers an amount, then requires that the
+balance fell by exactly that amount.
 
 ::: code-group
 
@@ -51,6 +52,11 @@ an amount, then requires that the balance fell by exactly that amount.
 
 In Rust there are no names: the snapshot is simply the register that holds the first balance read,
 and the check after the transfer reads the balance into a new register.
+
+The first `require` refuses one account in both slots. A run accepts that and checks each slot on
+its own, so a check that adds up changes across accounts could count one account twice. Here an
+alias would only fail the exact check, at a less clear step. See
+[Aliased accounts](/guide/trust-model#aliased-accounts).
 
 ## Token amount delta
 

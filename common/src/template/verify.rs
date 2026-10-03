@@ -751,7 +751,9 @@ impl ProgramView<'_> {
     /// before it: its entry account not opened already, the same size as any open of the same
     /// registry index, at most [`MAX_REGISTRY_OPENS`] in all, and no `SET_RETURN_DATA` before it,
     /// since creating an entry calls the System program and a CPI clears return data. Against the
-    /// whole program: no CPI lists the entry account writable.
+    /// whole program: no CPI lists the entry account writable. Two entry accounts that a run fills
+    /// with one account, two entries whose keys come out equal, are left to the run: the second
+    /// open fails with `InvalidRegistryEntry`.
     ///
     /// The other records are found by scanning, as `SET_RETURN_DATA` scans the records after it:
     /// the per-instruction signature Certora verifies against has no room for a slot table. A

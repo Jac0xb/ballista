@@ -3772,6 +3772,100 @@ mod tests {
             assert!(result.program_result.is_ok(), "{result:#?}");
         }
 
+        /// A ledger in registry 0, one `u64` balance per entry, keyed by its holder. Moves the
+        /// `u64` input from the payer's entry to the entry keyed by the `pubkey` input: reads both
+        /// balances, then writes both. Returns the payload and the second open's pc.
+        fn ledger() -> (Vec<u8>, usize) {
+            let mut builder = ProgramBuilder::new();
+            let accounts = declare(&mut builder);
+            let to_entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+            let amount = builder.input(VALUE_U64, 0);
+            let receiver = builder.input(VALUE_PUBKEY, 0);
+            let amount = builder.load_input(amount);
+            let receiver = builder.load_input(receiver);
+            let sender = builder.account_key(accounts.payer);
+            builder.open_registry(
+                accounts.entry,
+                Some(sender),
+                accounts.payer,
+                0,
+                8,
+                accounts.system,
+            );
+            let second_open = builder.open_registry(
+                to_entry,
+                Some(receiver),
+                accounts.payer,
+                0,
+                8,
+                accounts.system,
+            );
+            let from_balance = builder.read_registry(accounts.entry, 0, OP_READ_U64);
+            let to_balance = builder.read_registry(to_entry, 0, OP_READ_U64);
+            let debited = builder.binary(OP_SUB, from_balance, amount);
+            let credited = builder.binary(OP_ADD, to_balance, amount);
+            builder.write_registry(accounts.entry, 0, OP_READ_U64, debited);
+            builder.write_registry(to_entry, 0, OP_READ_U64, credited);
+            (builder.build().unwrap(), second_open)
+        }
+
+        /// Two entries of one registry whose keys come out equal are one account, passed in two
+        /// slots. A transfer that read both balances and then wrote both would credit the sender
+        /// with what it sent, so the second open refuses the entry the first has open.
+        #[test]
+        fn a_second_open_of_an_open_entry_fails() {
+            let sender = Pubkey::new_unique();
+            let receiver = Pubkey::new_unique();
+            let newcomer = Pubkey::new_unique();
+            let (payload, second_open) = ledger();
+            let (context, template) = setup(&payload, 11, &[sender, newcomer]);
+            let from = entry_address(&template, 0, &sender);
+            let to = entry_address(&template, 0, &receiver);
+            let mut seeded = seeded_entry(&context, &template, 0, &sender, 72 + 8);
+            seeded.data[72..].copy_from_slice(&100u64.to_le_bytes());
+            context.account_store.borrow_mut().insert(from, seeded);
+            let transfer = |payer: Pubkey, receiver: Pubkey, from: Pubkey, to: Pubkey| {
+                let metas = vec![
+                    AccountMeta::new_readonly(system_program::id(), false),
+                    AccountMeta::new(payer, true),
+                    AccountMeta::new(from, false),
+                    AccountMeta::new(to, false),
+                ];
+                let mut inputs = 30u64.to_le_bytes().to_vec();
+                inputs.extend_from_slice(receiver.as_ref());
+                context.process_instruction(&run_instruction(template, metas, &inputs))
+            };
+            let balance = |entry: Pubkey| {
+                u64::from_le_bytes(account(&context, entry).data[72..80].try_into().unwrap())
+            };
+
+            // Distinct keys: 30 moves, and the receiver's entry is created.
+            let result = transfer(sender, receiver, from, to);
+            assert!(result.program_result.is_ok(), "{result:#?}");
+            assert_eq!((balance(from), balance(to)), (70, 30));
+
+            // Equal keys: the sender's entry in both slots. Both reads would see 70, and the
+            // credit, 70 + 30, would overwrite the debit, 70 - 30.
+            let result = transfer(sender, sender, from, from);
+            assert_eq!(balance(from), 70, "an aliased transfer credits the sender");
+            assert_eq!(
+                failure(&result),
+                (INVALID_REGISTRY_ENTRY, second_open as u32)
+            );
+
+            // Before the entry exists: the first open creates it, and the second finds it open.
+            let fresh = entry_address(&template, 0, &newcomer);
+            let result = transfer(newcomer, newcomer, fresh, fresh);
+            assert_eq!(
+                failure(&result),
+                (INVALID_REGISTRY_ENTRY, second_open as u32)
+            );
+            assert!(
+                !context.account_store.borrow().contains_key(&fresh),
+                "nothing is created"
+            );
+        }
+
         #[test]
         fn every_writable_width_round_trips() {
             let mut builder = ProgramBuilder::new();

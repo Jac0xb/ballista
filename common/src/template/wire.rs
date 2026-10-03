@@ -224,7 +224,8 @@ pub const OP_BYTES_LEN: u8 = 74;
 /// Checks the registry entry in fixed account `a`, or creates it, and keeps it open for the rest
 /// of the run. `b` is the `pubkey` register holding its key, or [`NO_INDEX`] for the zero key; `c`
 /// is the account that pays for an entry this creates. The immediate is a [`RegistryOpen`].
-/// Writes no register. Once per entry account, at the root, never after `SET_RETURN_DATA`.
+/// Writes no register. Once per entry account, at the root, never after `SET_RETURN_DATA`. An
+/// entry the run has open already, in another account slot, fails the run.
 pub const OP_OPEN_REGISTRY: u8 = 75;
 /// Reads a field of the entry open in account `a` into `dst`, typed as the read opcode the
 /// immediate's [`RegistryField`] names.

@@ -1,9 +1,13 @@
-//! Confirmation runs for findings from the safety-property review
-//! (`docs/superpowers/specs/2026-10-03-safety-properties.md`). Each test names the property it
-//! checks and pins today's behaviour, which a check or a document elsewhere states differently.
+//! Tests from the safety-property review
+//! (`docs/superpowers/specs/2026-10-03-safety-properties.md`). Each names the property it checks.
+//! The first group pins today's behaviour where a check or a document states it differently. The
+//! guards at the end assert the exact error of a check that a mutant deleting it showed no other
+//! test exercised.
 
 use super::*;
-use ballista_common::template::{OP_READ_BOOL, SYSTEM_PROGRAM_ADDRESS};
+use ballista_common::template::{
+    record, OP_CONST_U64, OP_READ_BOOL, OP_REQUIRE, SYSTEM_PROGRAM_ADDRESS,
+};
 
 const TYPE_MISMATCH: u32 = 6012;
 
@@ -338,5 +342,189 @@ fn a_data_read_of_an_open_entry_through_another_slot_fails_without_a_ballista_co
             )
         ),
         "{aliased:#?}"
+    );
+}
+
+const TEMPLATE_NOT_UPLOADING: u32 = 6003;
+const TEMPLATE_NOT_FINALIZED: u32 = 6004;
+const ACCOUNT_CONSTRAINT_FAILED: u32 = 6020;
+/// `RegisterNotInitialized`, register 0: the verifier's code for a read before any write.
+const REGISTER_NOT_INITIALIZED: u32 = 6118;
+
+/// A template that requires `true`, with no accounts and no inputs.
+fn trivial_template() -> Vec<u8> {
+    let mut builder = ProgramBuilder::new();
+    let yes = builder.const_bool(true);
+    builder.require(yes);
+    builder.build().expect("builds")
+}
+
+/// P8 and P11, guard. A finalized template refuses cancel, a chunk write and a second finalize,
+/// each with 6003, and keeps its bytes and lamports. Deleting cancel's state check let a creator
+/// close a finalized template and upload other bytes at its address, and no test failed; a write
+/// was refused only by the offset check.
+#[test]
+fn a_finalized_template_refuses_cancel_write_and_finalize() {
+    let creator = Pubkey::new_unique();
+    let context = context(funded_accounts([creator], 10_000_000_000));
+    let created = context.process_instruction(&create_template_instruction(
+        creator,
+        1,
+        &trivial_template(),
+    ));
+    assert!(created.program_result.is_ok(), "{created:#?}");
+    let template = find_template_pda(&creator, 1).0;
+    let before = context.account_store.borrow()[&template].clone();
+
+    for (name, instruction) in [
+        ("cancel", cancel_template_instruction(creator, template)),
+        (
+            "write",
+            write_template_chunk_instruction(creator, template, 0, &[0]),
+        ),
+        ("finalize", finalize_template_instruction(creator, template)),
+    ] {
+        let result = context.process_instruction(&instruction);
+        assert_eq!(
+            custom_code(&result),
+            Some(TEMPLATE_NOT_UPLOADING),
+            "{name}: {result:#?}"
+        );
+        assert_eq!(context.account_store.borrow()[&template], before, "{name}");
+    }
+}
+
+/// P9, guard. A template whose bytes are all written but which is not finalized refuses to run,
+/// with 6004. Deleting the run path's state check let it run, and no test failed.
+#[test]
+fn a_fully_written_template_that_is_not_finalized_never_runs() {
+    let creator = Pubkey::new_unique();
+    let context = context(funded_accounts([creator], 10_000_000_000));
+    let payload = trivial_template();
+    let hash = solana_sha256_hasher::hash(&payload).to_bytes();
+    let template = find_template_pda(&creator, 2).0;
+    for instruction in [
+        begin_template_instruction(creator, 2, payload.len() as u32, hash),
+        write_template_chunk_instruction(creator, template, 0, &payload),
+    ] {
+        let result = context.process_instruction(&instruction);
+        assert!(result.program_result.is_ok(), "{result:#?}");
+    }
+    let run = context.process_instruction(&run_instruction(template, vec![], &[]));
+    assert_eq!(custom_code(&run), Some(TEMPLATE_NOT_FINALIZED), "{run:#?}");
+}
+
+/// P6, guard. Finalize runs the verifier on a chunked upload: a payload that parses, matches its
+/// hash and reads a register before writing it is refused with the verifier's code. Deleting the
+/// check let it finalize, and no test failed, since every invalid template in the suites was
+/// uploaded in one shot.
+#[test]
+fn finalize_refuses_a_chunked_upload_the_verifier_rejects() {
+    let creator = Pubkey::new_unique();
+    let context = context(funded_accounts([creator], 10_000_000_000));
+    let mut builder = ProgramBuilder::new();
+    let unset = builder.register();
+    builder.emit(record(
+        OP_REQUIRE, NO_INDEX, unset, NO_INDEX, NO_INDEX, 0, 0,
+    ));
+    let payload = builder.build().expect("builds");
+    assert!(ProgramView::parse(&payload).is_ok(), "the payload parses");
+    let hash = solana_sha256_hasher::hash(&payload).to_bytes();
+    let template = find_template_pda(&creator, 3).0;
+    for instruction in [
+        begin_template_instruction(creator, 3, payload.len() as u32, hash),
+        write_template_chunk_instruction(creator, template, 0, &payload),
+    ] {
+        let result = context.process_instruction(&instruction);
+        assert!(result.program_result.is_ok(), "{result:#?}");
+    }
+    let finalized = context.process_instruction(&finalize_template_instruction(creator, template));
+    assert_eq!(
+        custom_code(&finalized),
+        Some(REGISTER_NOT_INITIALIZED),
+        "{finalized:#?}"
+    );
+}
+
+/// P49, guard. A register the loop body writes but does not carry holds its value from before the
+/// loop once the loop ends. Deleting the restore left the body's value there, and no test failed.
+#[test]
+fn a_loop_restores_the_registers_it_does_not_carry() {
+    let mut builder = ProgramBuilder::new();
+    let value = builder.const_u64(5);
+    let count = builder.const_u64(2);
+    builder.repeat(count, 2, 0, |body| {
+        // Overwrites `value` without carrying it.
+        body.emit(record(
+            OP_CONST_U64,
+            value,
+            NO_INDEX,
+            NO_INDEX,
+            NO_INDEX,
+            0,
+            7,
+        ));
+    });
+    let five = builder.const_u64(5);
+    let same = builder.binary(OP_EQ, value, five);
+    builder.require(same);
+    let payload = builder.build().expect("builds");
+    ProgramView::parse(&payload)
+        .and_then(|program| program.verify())
+        .expect("a body may overwrite a register it does not carry");
+
+    let creator = Pubkey::new_unique();
+    let context = context(funded_accounts([creator], 10_000_000_000));
+    let created = context.process_instruction(&create_template_instruction(creator, 4, &payload));
+    assert!(created.program_result.is_ok(), "{created:#?}");
+    let template = find_template_pda(&creator, 4).0;
+    let run = context.process_instruction(&run_instruction(template, vec![], &[]));
+    assert!(run.program_result.is_ok(), "{run:#?}");
+}
+
+/// P45, guard. An account declared executable must be executable, and one with a minimum data
+/// length must hold that many bytes: each fails with 6020 and its index. Deleting either check
+/// left every suite passing.
+#[test]
+fn executable_and_minimum_length_declarations_are_enforced() {
+    let mut builder = ProgramBuilder::new();
+    builder.account(ACCOUNT_EXECUTABLE, None, None, 0);
+    builder.account(0, None, None, 8);
+    let yes = builder.const_bool(true);
+    builder.require(yes);
+    let payload = builder.build().expect("builds");
+
+    let creator = Pubkey::new_unique();
+    let plain = Pubkey::new_unique();
+    let seven = Pubkey::new_unique();
+    let eight = Pubkey::new_unique();
+    let mut accounts = funded_accounts([creator], 10_000_000_000);
+    accounts.insert(plain, Account::new(1_000_000, 0, &system_program::id()));
+    accounts.insert(seven, Account::new(1_000_000, 7, &Pubkey::new_unique()));
+    accounts.insert(eight, Account::new(1_000_000, 8, &Pubkey::new_unique()));
+    let context = context(accounts);
+    let created = context.process_instruction(&create_template_instruction(creator, 5, &payload));
+    assert!(created.program_result.is_ok(), "{created:#?}");
+    let template = find_template_pda(&creator, 5).0;
+    let run = |program: Pubkey, data: Pubkey| {
+        context.process_instruction(&run_instruction(
+            template,
+            vec![
+                AccountMeta::new_readonly(program, false),
+                AccountMeta::new_readonly(data, false),
+            ],
+            &[],
+        ))
+    };
+
+    let both_hold = run(system_program::id(), eight);
+    assert!(both_hold.program_result.is_ok(), "{both_hold:#?}");
+    assert_eq!(
+        custom_code(&run(plain, eight)),
+        Some(ACCOUNT_CONSTRAINT_FAILED)
+    );
+    assert_eq!(
+        custom_code(&run(system_program::id(), seven)),
+        Some((1 << 16) | ACCOUNT_CONSTRAINT_FAILED)
     );
 }

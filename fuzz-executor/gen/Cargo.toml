@@ -1,0 +1,12 @@
+# Random templates, accounts and run data for the executor fuzzers. Shared by the Mollusk suite in
+# `tests/ballista` (a dev-dependency there) and the native libFuzzer target in `fuzz-executor/fuzz`.
+# It depends on `ballista-common` alone; callers inject PDA derivation, so it pins no Solana crate.
+[package]
+name = "ballista-fuzz-gen"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+ballista-common = { path = "../../common" }

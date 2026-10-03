@@ -7,6 +7,11 @@ mod pda_equivalence;
 mod phases;
 mod profile;
 
+// Fuzzing and stateful lifecycle testing of the on-chain program, plus targeted tests for the
+// registry-ordering design finding and the signer/writable mutation checks. See `fuzz/mod.rs`.
+#[cfg(test)]
+mod fuzz;
+
 #[cfg(test)]
 mod tests {
     mod compiler_fuzz;

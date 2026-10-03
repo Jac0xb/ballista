@@ -1,0 +1,19 @@
+# A tiny target program for the executor fuzzer's CPIs: it can set return data, write and move
+# lamports of accounts it owns, re-invoke another program (to probe reentry), and fail with a
+# recognizable code. It is a test fixture only, built with `cargo build-sbf`, and loaded into
+# Mollusk beside the System, Token and Memo programs. Not part of the protocol.
+[package]
+name = "ballista-probe"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+pinocchio = { version = "=0.11.2", features = ["cpi"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(target_os, values("solana"))'] }

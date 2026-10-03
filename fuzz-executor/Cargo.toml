@@ -1,0 +1,11 @@
+# Isolated workspace for the native, coverage-guided executor fuzzer, kept out of the root
+# workspace (as certora/ is) so the release build, its dependency policy and its lock file are
+# untouched. `gen` is the shared generator and reference model; `probe` is a small SBF program the
+# fuzzer calls; `fuzz` is the cargo-fuzz target crate (its own nested workspace). The Mollusk suite
+# in `tests/ballista` path-depends on `gen` as a dev-dependency.
+[workspace]
+resolver = "2"
+members = ["gen", "probe", "ballista-lib"]
+
+[profile.release]
+overflow-checks = true

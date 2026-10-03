@@ -399,10 +399,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ballista-fuzz-gen"
+version = "0.1.0"
+dependencies = [
+ "ballista-common",
+]
+
+[[package]]
 name = "ballista-integration-tests"
 version = "1.0.0"
 dependencies = [
  "ballista-common",
+ "ballista-fuzz-gen",
  "base64",
  "ed25519-dalek 1.0.1",
  "mollusk-svm",
@@ -1321,6 +1329,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
 
 [[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
 name = "hmac"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1619,8 +1633,10 @@ dependencies = [
  "agave-feature-set",
  "agave-precompiles",
  "bincode",
+ "hex",
  "mollusk-svm-error",
  "mollusk-svm-result",
+ "sha2 0.10.9",
  "solana-account",
  "solana-bpf-loader-program",
  "solana-clock",

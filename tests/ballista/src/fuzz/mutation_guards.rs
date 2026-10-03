@@ -262,4 +262,3 @@ fn verifier_rejects_a_cpi_exceeding_the_account_ceiling() {
         "a CPI exceeding the account's declared privilege must be rejected with InvalidCpi; deleting the check lets create succeed"
     );
 }
-

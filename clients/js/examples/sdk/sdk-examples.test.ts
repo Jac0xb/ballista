@@ -353,4 +353,3 @@ describe('the Jupiter deposit runner', () => {
     expect(describeFailure(code, [])).toBe(`code ${code}; the logs name no program that failed`);
   });
 });
-

@@ -39,14 +39,15 @@ Kamino account that records their deposits and debts.
 
 :::
 
+The Rust tabs' `program`, `anchor` and account flags are
+[shared helpers](/examples/protocols/#rust-helpers).
+
 ## Run it
 
 marginfi's withdrawal takes its eight accounts, then the `healthAccounts`
-[account group](/guide/account-groups). After the withdrawal, marginfi checks the account's
-health: whether what it still holds covers what it owes. For each balance still open once this one
-is emptied, the group holds its bank then its oracle, highest bank address first; it is empty if
-this was the only balance. `marginfiHealthAccounts` (TypeScript) and `marginfi_health_accounts`
-(Rust), next to the runs, build it.
+[account group](/guide/account-groups), filled as for
+[Withdraw everything, with a minimum](/examples/protocols/marginfi-withdraw#run-it). It is empty when
+the withdrawn balance was the account's only one.
 
 Kamino's v2 deposit takes 17 accounts: 14 the template passes, then a second group,
 `farmAccounts`, of three. They are the obligation's user state in the reserve's collateral farm,
@@ -62,11 +63,9 @@ The Run tabs pass the 19 declared accounts in order (`marginfi`, `kamino`, `toke
 
 Before the run:
 
-- **Refresh Kamino in the same transaction:** `refresh_reserve` for each reserve the obligation
-  holds, then `refresh_obligation`. A refresh brings a reserve's interest and price, or an
-  obligation's values, up to date. Kamino deposits only into an obligation refreshed in the same
-  slot, and the template doesn't refresh. `buildKaminoRefreshes` (TypeScript) and
-  `kamino_refreshes` (Rust), next to the runs, build them.
+- **Refresh Kamino in the same transaction.** Kamino deposits only into an obligation refreshed in
+  the same slot, and the template doesn't refresh; see
+  [Refreshing Kamino](/examples/protocols/#kamino-refreshes).
 - **Create the farm user state once,** with `init_obligation_farms_for_reserve`, before an
   obligation's first deposit into a reserve with a collateral farm. The main market's SOL and USDC
   reserves both have one.

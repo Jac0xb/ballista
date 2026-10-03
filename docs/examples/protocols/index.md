@@ -108,6 +108,45 @@ template measures a token account, also require that account's `owner` field to 
 Prefer fields the protocol documents as public.
 :::
 
+## Refreshing Kamino {#kamino-refreshes}
+
+Kamino's v2 deposit, repayment and liquidation work only against reserves and an obligation
+refreshed in the same slot, and no template refreshes them. A reserve is Kamino's pool for one
+token, and an obligation is a borrower's record of deposits and debts. Put the refreshes before the
+run, in the same transaction:
+
+1. `refresh_reserve` for each reserve the obligation holds, deposits then borrows, in the order the
+   obligation lists them. Each names the reserve's Scope price account last. The main market prices
+   by Scope alone, so the Pyth and Switchboard slots before it hold the Kamino program, which Kamino
+   reads as "none".
+2. `refresh_obligation`, with the same reserves in the same order.
+
+`buildKaminoRefreshes` and `kamino_refreshes` build both. Beside them, `kaminoFarmPair` and
+`kamino_farm_pair` fill a farm's two slots in a v2 instruction's `farmAccounts`, with the Kamino
+program standing in for a farm the reserve doesn't have.
+
+:::: details The refresh helpers
+::: code-group
+
+<<< @/../clients/js/examples/protocols/run/kamino.ts#kamino-refreshes [TypeScript]
+
+<<< @/../clients/rust/examples/protocol_templates_run.rs#kamino-refreshes [Rust]
+
+:::
+::::
+
+## Rust helpers {#rust-helpers}
+
+The Rust templates share these helpers and constants: the account flags, the program addresses and
+account offsets, `anchor` for an Anchor instruction's discriminator, `program` to declare a pinned
+program, and the token-account declarations and checks.
+
+::: details The Rust helpers
+
+<<< @/../clients/rust/examples/protocol_templates.rs#helpers
+
+:::
+
 ## Running them
 
 You upload a template once. After that, each use is a single run instruction, which a bot or

@@ -45,6 +45,9 @@ depends on trades, so leave such positions out when you build the run.
 
 :::
 
+The Rust tabs' `program`, `anchor` and account flags are
+[shared helpers](/examples/protocols/#rust-helpers).
+
 The offsets come from Orca's `Position` account and the SPL Token account; see
 [reading offsets](/examples/protocols/#reading-offsets-from-an-account).
 

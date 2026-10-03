@@ -44,6 +44,9 @@ It does not read the debt. Kamino repays at most what is owed, and the rest stay
 
 :::
 
+The Rust tabs' `program`, `anchor` and account flags are
+[shared helpers](/examples/protocols/#rust-helpers).
+
 ## Run it
 
 `route` starts its account list with the token program, the signer, and the signer's source and
@@ -62,11 +65,10 @@ The Run tabs pass the 12 declared accounts in order (`jupiter`, `kamino`, `token
 `obligation` to `reserveLiquiditySupply`), then the inputs `routePlan`, `inAmount`, `quotedOutAmount`, `slippageBps`, `platformFeeBps` and
 `minimumRepayment`, then `routeAccounts` and `farmAccounts`.
 
-Before the run, **refresh Kamino in the same transaction:** `refresh_reserve` for each reserve the
-obligation holds, then `refresh_obligation`. A refresh brings a reserve's interest and price, or an
-obligation's values, up to date. Kamino repays only against a reserve and an obligation refreshed
-in the same slot, and the template doesn't refresh. `buildKaminoRefreshes` (TypeScript) and
-`kamino_refreshes` (Rust), next to the runs, build them.
+Before the run, **refresh Kamino in the same transaction.** Kamino repays only against a reserve
+and an obligation refreshed in the same slot, and the template doesn't refresh.
+[Refreshing Kamino](/examples/protocols/#kamino-refreshes) has the order and the helpers that build
+it.
 
 ::: tip Requesting the route
 Ask Jupiter's Swap API for `useSharedAccounts: false`. The template always sends Jupiter's `route`

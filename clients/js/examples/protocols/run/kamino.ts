@@ -1,4 +1,5 @@
 /** Kamino's refreshes, which go before a Kamino run, and the farm accounts its v2 tails end in. */
+// #region kamino-refreshes
 import { AccountRole, address, type Address, type Instruction } from '@solana/kit';
 
 import type { KitAccountBinding } from '../../../src/kit.js';
@@ -85,3 +86,4 @@ export function kaminoFarmPair(farm: KaminoFarm | undefined): KitAccountBinding[
 
 /** The Farms program, which ends every Kamino v2 tail. */
 export const KAMINO_FARMS_PROGRAM: KitAccountBinding = { address: address(KAMINO_FARMS) };
+// #endregion kamino-refreshes

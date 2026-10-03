@@ -39,6 +39,9 @@ The template:
 
 :::
 
+The Rust tabs' `program`, `anchor` and account flags are
+[shared helpers](/examples/protocols/#rust-helpers).
+
 The last two bytes of the withdrawal's instruction data are `Option::Some(true)` for
 `withdraw_all`. In that mode marginfi ignores `amount`, but the field still has to be there,
 because Borsh (the binary format Anchor programs use for instruction arguments) reads every field.
@@ -48,8 +51,7 @@ because Borsh (the binary format Anchor programs use for instruction arguments) 
 The Run tabs pass the 10 declared accounts in order (`marginfi`, `tokenProgram`, `marginfiGroup`,
 `marginfiAccount`, `authority`, `bank`, `bankLiquidityVault`, `bankLiquidityVaultAuthority`,
 `destinationAta`, `treasuryAta`), then the input `minimumWithdrawn`, then the `healthAccounts`
-[account group](/guide/account-groups). `authority` signs but is not writable. Nothing has to go
-before the run.
+[account group](/guide/account-groups). `authority` signs but is not writable.
 
 After the withdrawal, marginfi checks the account's health: whether what it still holds covers
 what it owes, at each bank's oracle price. It reads the banks and oracles from the accounts after
@@ -58,6 +60,10 @@ its bank then its oracle, highest bank address first. It is empty if this was th
 leave a balance out and marginfi refuses the withdrawal. `marginfiHealthAccounts` (TypeScript) and
 `marginfi_health_accounts` (Rust), next to the runs, build it, for banks priced by one oracle
 account.
+
+Nothing has to go before the run while the account owes nothing. Once it owes something, the health
+check needs current prices for every balance left: marginfi counts an asset with a stale price as
+zero and refuses a debt with one. Update those oracles earlier in the transaction.
 
 ## What has been tested
 
@@ -74,8 +80,7 @@ account.
   (`InvalidBankAccount`, in `tests/protocols/tests/marginfi_contract.rs`).
 - **Not tested.** Mainnet itself, more than one remaining balance, banks priced by more than one
   account (staked, Kamino), and Token-2022 tokens: the template accepts SPL Token accounts only. No
-  test holds a marginfi debt or updates marginfi's oracles, and the health check values an asset
-  with a stale price at zero.
+  test holds a marginfi debt or updates marginfi's oracles.
 - A test reads the template and checks that the owner checks come first, and that the withdrawal
   passes `healthAccounts` after its eight accounts, with the vault authority read-only
   (`clients/js/src/protocol-semantics.test.ts`).

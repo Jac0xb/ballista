@@ -75,6 +75,9 @@ nonce in a [registry entry](/guide/registries).
 
 :::
 
+The Rust tabs' `program`, `anchor` and account flags are
+[shared helpers](/examples/protocols/#rust-helpers).
+
 The first steps come from the SDK's `ed25519Signature` helper, which returns them with a `field`
 reader for the signed message. `field` refuses a read past the message, and a template that uses
 `field` without the steps doesn't compile. The Rust template has no helper: it writes the same

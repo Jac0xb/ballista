@@ -43,6 +43,9 @@ repaid. Collateral Kamino could not redeem stays in `userDestinationCollateral` 
 
 :::
 
+The Rust tabs' `program`, `anchor` and account flags are
+[shared helpers](/examples/protocols/#rust-helpers).
+
 If the obligation is healthy again when the run lands, say because another liquidator got there
 first, Kamino refuses and the run reverts. To skip instead, make both the liquidation and the
 bounty check depend on two `u128` fields of the obligation, as the refresh leaves them: it can be
@@ -67,11 +70,10 @@ The Run tabs pass the 19 declared accounts in order (`kamino`, `tokenProgram`,
 `userDestinationLiquidity`), then the inputs `liquidityAmount`, `minAcceptableReceived` and
 `minimumBounty`, then `farmAccounts`.
 
-Before the run, **refresh Kamino in the same transaction:** `refresh_reserve` for each reserve the
-obligation holds, then `refresh_obligation`. A refresh brings a reserve's interest and price, or an
-obligation's values, up to date. Kamino liquidates only against reserves and an obligation
-refreshed in the same slot, and the template doesn't refresh. `buildKaminoRefreshes` (TypeScript)
-and `kamino_refreshes` (Rust), next to the runs, build them.
+Before the run, **refresh Kamino in the same transaction.** Kamino liquidates only against reserves
+and an obligation refreshed in the same slot, and the template doesn't refresh.
+[Refreshing Kamino](/examples/protocols/#kamino-refreshes) has the order and the helpers that build
+it.
 
 ## What has been tested
 

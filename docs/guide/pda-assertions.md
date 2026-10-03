@@ -75,65 +75,9 @@ const run = buildKitRunInstruction({
 });
 ```
 
-```rust [Rust · Template]
-use ballista_sdk::{
-    ballista_common::template::{ACCOUNT_EXECUTABLE, ACCOUNT_WRITABLE, DATA_REG_PUBKEY, OP_EQ},
-    ProgramBuilder, Segment, ASSOCIATED_TOKEN_PROGRAM_ID,
-};
+<<< @/../clients/rust/examples/docs_security.rs#assert-ata-template [Rust · Template]
 
-let mut builder = ProgramBuilder::new();
-let associated_token_program = builder.account(
-    ACCOUNT_EXECUTABLE,
-    Some(ASSOCIATED_TOKEN_PROGRAM_ID.to_bytes()),
-    None,
-    0,
-);
-let token_program = builder.account(0, None, None, 0);
-let recipient = builder.account(0, None, None, 0);
-let mint = builder.account(0, None, None, 0);
-let destination_ata = builder.account(ACCOUNT_WRITABLE, None, None, 0);
-
-// Derive the ATA from [owner, token program, mint] and require the passed account to match.
-let ata_key = builder.account_key(destination_ata);
-let owner_key = builder.account_key(recipient);
-let token_program_key = builder.account_key(token_program);
-let mint_key = builder.account_key(mint);
-let derived = builder.derive_pda(
-    associated_token_program,
-    &[
-        Segment::Register(DATA_REG_PUBKEY, owner_key),
-        Segment::Register(DATA_REG_PUBKEY, token_program_key),
-        Segment::Register(DATA_REG_PUBKEY, mint_key),
-    ],
-);
-let matches = builder.binary(OP_EQ, ata_key, derived);
-builder.require(matches);
-
-let payload = builder.build()?;
-```
-
-```rust [Rust · Run]
-use ballista_sdk::run_instruction;
-use solana_program::{instruction::AccountMeta, pubkey::Pubkey};
-
-// template, recipient_pubkey, mint_pubkey and token_program_id are addresses you supply.
-let (destination_ata_pubkey, _) = Pubkey::find_program_address(
-    &[recipient_pubkey.as_ref(), token_program_id.as_ref(), mint_pubkey.as_ref()],
-    &ballista_sdk::ASSOCIATED_TOKEN_PROGRAM_ID,
-);
-
-let run = run_instruction(
-    template,
-    vec![
-        AccountMeta::new_readonly(ballista_sdk::ASSOCIATED_TOKEN_PROGRAM_ID, false),
-        AccountMeta::new_readonly(token_program_id, false),
-        AccountMeta::new_readonly(recipient_pubkey, false),
-        AccountMeta::new_readonly(mint_pubkey, false),
-        AccountMeta::new(destination_ata_pubkey, false),
-    ],
-    &[],
-);
-```
+<<< @/../clients/rust/examples/docs_security.rs#assert-ata-run [Rust · Run]
 
 :::
 

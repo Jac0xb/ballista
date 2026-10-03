@@ -46,29 +46,7 @@ console.log(inspectTemplate(stored.payload));
 // { fixedAccounts, batchMaxIterations, inputs, cpis, maxExpandedCpis, ... }
 ```
 
-```rust [Rust]
-use ballista_sdk::ballista_common::template::{
-    TemplateAccount, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, NO_INDEX,
-};
-
-let account = TemplateAccount::parse(&account_data).expect("not a template account");
-let program = account.finalized_program().expect("not finalized");
-let stats = program.verify()?; // the same checks the program ran at finalize
-
-for (index, constraint) in program.accounts.iter().enumerate() {
-    let pinned = |i: u8| (i != NO_INDEX).then(|| program.pubkeys[i as usize].bytes);
-    println!(
-        "account {index}: signer={} writable={} address={:?} owner={:?}",
-        constraint.flags & ACCOUNT_SIGNER != 0,
-        constraint.flags & ACCOUNT_WRITABLE != 0,
-        pinned(constraint.address_index),
-        pinned(constraint.owner_index),
-    );
-}
-for cpi in program.cpis {
-    println!("calls the program in account {}", cpi.program_account);
-}
-```
+<<< @/../clients/rust/examples/docs_security.rs#inspect-template [Rust]
 
 :::
 

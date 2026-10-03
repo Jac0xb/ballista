@@ -84,14 +84,27 @@ ProgramView::parse(&payload)?.verify()?;
 | `blob(bytes)` | Stores literal bytes, such as an instruction discriminator, and returns their `(offset, len)` |
 | `cpi(program, accounts, segments)` | Declares a CPI (a call to another program): its program, its `(account, flags)` pairs, and the segments of its instruction data. Returns the CPI's index |
 | `for_each(carry_mask, body)` | Emits a loop over the batch rows. Bit *n* of `carry_mask` keeps register *n*'s value from one row to the next and after the loop |
-| `invoke(cpi, guard)` | Performs a declared CPI. If `guard` names a `bool` register, the CPI runs only when that register is true |
-| `binary(opcode, a, b)` | Emits a two-operand instruction such as `OP_ADD` or `OP_LTE` |
-| `mov(dst, src)` | Copies one register into another; used to update a carried register |
-| `require(register)` | Fails the run unless the `bool` register is true |
+| `invoke(cpi, condition)` | Performs a declared CPI. If `condition` names a `bool` register, the CPI runs only when that register is true |
+| `binary(opcode, left, right)` | Emits a two-operand instruction such as `OP_ADD` or `OP_LTE` |
+| `mov(dst, source)` | Copies one register into another; used to update a carried register |
+| `require(condition)` | Fails the run unless the `bool` register `condition` is true |
 
-Other methods cover the rest of the instruction set, such as `read` and `read_dynamic` for account
-data, `derive_pda` and `create_pda`, `row_input`, and `account_groups` with `cpi_with_group`. The
-sections below cover math, loops, output, introspection, and registries, and
+Other methods cover the rest of the instruction set:
+
+- `const_bool`, `const_i64`, `const_u128`, `const_pubkey`, and `const_bytes` load constants.
+- `account_key`, `account_owner`, `account_lamports`, `account_data_len`, and `account_is_empty`
+  read an account's fields.
+- `read` and `read_dynamic` read account data; `clock_slot` and `clock_timestamp` read the clock.
+- `not`, `select(condition, if_true, if_false)`, and `cast(opcode, value)` cover the remaining
+  value operations.
+- `derive_pda` and `create_pda` compute PDAs; `row_input` declares a row input; `account_groups`
+  with `cpi_with_group` forwards account groups; `set_cpi_max_data_len` overrides a CPI's maximum
+  data length; `flags` sets the program header flags.
+- `op`, `emit`, `register`, and `register_count`, with the free functions `record`,
+  `range_immediate`, and `segment_width`, work with raw instruction records. The `*_mut` accessors
+  exist for negative tests.
+
+The sections below cover math, loops, output, introspection, and registries, and
 [Wire format](/reference/wire-format) lists every opcode.
 
 Declaration order matters. Callers pass fixed accounts in the order you declare them, then each
@@ -222,6 +235,9 @@ address or the key of an account that must sign; otherwise the builder can sign 
 their own. `protocol_templates_run` builds the Ed25519 instruction, and
 [Settle at a signed quote](/examples/protocols/signed-quote) walks through both.
 
+TypeScript's `rateLimit` has no Rust helper either. `jupiter_daily_cap_swap` in the
+`protocol_templates` example writes its steps by hand.
+
 ### Registries
 
 [Remember state between runs](/guide/registries) walks through examples, and the
@@ -330,6 +346,10 @@ address, the registry index, and the 32-byte key: an address's bytes, or `[0; 32
 without a key. It panics if `registry_index` is not below `MAX_REGISTRIES` (8).
 `find_registry_entry_address_for_program` takes the program ID of another deployment.
 
+The crate also exports the seeds `TEMPLATE_SEED` and `REGISTRY_SEED`, `BALLISTA_ID` (the same as
+`ID`), and the program IDs `SYSTEM_PROGRAM_ID`, `TOKEN_PROGRAM_ID`, `ASSOCIATED_TOKEN_PROGRAM_ID`,
+`INSTRUCTIONS_SYSVAR_ID`, and `ED25519_PROGRAM_ID`.
+
 ## Lifecycle instructions
 
 ```rust
@@ -401,7 +421,7 @@ if let Some(error) = decode_ballista_error(code) {
 }
 ```
 
-`None` means the code is outside Ballista's ranges and came from an invoked program. The low 16
+`decode_ballista_error` returns a `DecodedError`. `None` means the code is outside Ballista's ranges and came from an invoked program. The low 16
 bits of a code name the error, and the high 16 bits, `context`, say where it happened: for most
 runtime errors the program counter (the index of the failing bytecode instruction), but an account
 index, an input index, or a count for the kinds matched above. The `run_template` example does the

@@ -60,14 +60,17 @@ type safety, are written but blocked by prover limitations, so they are not prov
   it.
 - **Flat heap.** A run allocates its buffers once and reuses them for every call, so memory use does
   not grow with the number of calls.
-- **Few `unsafe` blocks.** The release program uses `unsafe` only around Solana system calls (logs,
-  return data, hashing and the CPI itself), to fill a CPI's account list in place, and to read the
-  Instructions sysvar and read-only accounts without copying them.
-- **No authority of its own.** Ballista never signs a template's calls, and it holds no funds
-  except the lamports locked in registry entries. A template can only do what the transaction's
-  own signers could do directly.
-- **State only in registry entries.** Between runs, Ballista keeps only the
-  [registry entries](/guide/registries) templates declare. Only a template's own runs can change its entries, a
+- **Few `unsafe` blocks.** The release program uses `unsafe` only:
+  - around Solana system calls (logs, return data, hashing, the curve check and the CPI itself);
+  - to fill a CPI's account list in place;
+  - to read the Instructions sysvar and read-only accounts without copying them;
+  - to read and write registry entries in place;
+  - to build a PDA's seed buffer in place when deriving an address.
+- **No authority of its own.** Ballista never signs a template's calls. It owns two kinds of
+  accounts, templates and registry entries, and each holds only its rent lamports, plus anything
+  someone sends it. A template can only do what the transaction's own signers could do directly.
+- **State only in registry entries.** Ballista keeps run-to-run state only in
+  the [registry entries](/guide/registries) templates declare. Only a template's own runs can change its entries, a
   run checks each entry against the template and key before using it, and within a run Ballista
   signs only to create an entry's own account.
 - **Immutable templates.** A finalized template cannot be changed, so what you reviewed is what

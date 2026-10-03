@@ -390,6 +390,14 @@ the runtime accounts), and the instruction data.
 account's pinned address, too many or too few rows, input values that do not fit their types, more
 than 120 runtime accounts, and run data over 1,024 bytes.
 
+To encode only the instruction data, without accounts:
+
+- `encodeRunInputs(compiled, values, { rows?, groupLengths? })` returns the run's input bytes:
+  each account group's length, the inputs in declaration order, then each row's inputs. It
+  rejects missing or unknown inputs and more than 1,024 bytes.
+- `encodeRun(compiled, values, options?)` returns the same bytes behind the run instruction's
+  tag, `INSTRUCTION_RUN`.
+
 ## Protocol helpers
 
 | Helper | Step it returns |
@@ -410,6 +418,16 @@ The byte constants `SYSTEM_PROGRAM_ADDRESS_BYTES`, `TOKEN_PROGRAM_ADDRESS_BYTES`
 `ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES` are exported for pinning those programs, and
 `INSTRUCTIONS_SYSVAR_ADDRESS_BYTES` and `ED25519_PROGRAM_ADDRESS_BYTES` for the Instructions
 sysvar and the Ed25519 program.
+
+The core package also exports:
+
+- `BALLISTA_PROGRAM_ADDRESS`, the program's address as a base58 string.
+- The limits as `MAX_*` constants, such as `MAX_RUNTIME_ACCOUNTS` and `MAX_EXPANDED_CPIS`; see
+  [Limits](/reference/limits).
+- `opcode`, the bytecode opcode numbers, and the `INSTRUCTION_*` instruction tags.
+- `RUNTIME_ERROR_NAMES` and `VERIFIER_ERROR_NAMES`, the error names in code order from
+  `RUNTIME_ERROR_BASE` (6000) and `VERIFIER_ERROR_BASE` (6100).
+- The Zod schemas behind `defineTemplate`, such as `TemplateSchema` and `StepSchema`.
 
 ### Signed messages
 
@@ -525,7 +543,7 @@ import {
 } from '@jac0xb/ballista/kit';
 
 getTemplateAddress(creator, templateId, programAddress?);
-findFreeTemplateId({ rpc, creator, start? });
+findFreeTemplateId({ rpc, creator, programAddress?, start?, batchSize? });
 findRegistryEntryAddress(template, registryIndex, key, programAddress?);
 buildKitRunInstruction(input);
 buildKitTemplateUploadPlan(input);
@@ -538,7 +556,7 @@ getComputeUnitsConsumed(confirmedTransaction);
 | Function | Purpose |
 | --- | --- |
 | `getTemplateAddress` | The template's address and bump |
-| `findFreeTemplateId` | The lowest template ID at or above `start` whose address holds no account. An address that already holds a template cannot be reused |
+| `findFreeTemplateId` | The lowest template ID at or above `start` whose address holds no account, probing `batchSize` addresses per RPC call (default 16, at most 100). An address that already holds a template cannot be reused |
 | `findRegistryEntryAddress` | A [registry](#registries) entry's address and bump. `key` is an address or 32 bytes, all zeros for an entry without a key. Throws a `RangeError` for an index outside 0 to 7 or a key that is not 32 bytes |
 | `buildKitRunInstruction` | `buildRunInstruction` with Kit addresses, returning a Kit `Instruction` |
 | `buildKitTemplateUploadPlan` | An upload plan made of Kit instructions; given a `transactionMessage`, it sizes the chunks to fit that message |
@@ -547,8 +565,21 @@ getComputeUnitsConsumed(confirmedTransaction);
 | `createComputeUnitProvider` | A provider whose `estimateAndSet(message)` simulates the message and sets its compute-unit limit (the execution budget the transaction requests) to the measured amount plus a margin in basis points (1,000 is 10%, the default). For version 1 messages it also sets the loaded-account-data limit |
 | `getComputeUnitsConsumed` | The compute units a confirmed transaction used, read from its metadata |
 
-`buildKitCancelTemplateInstruction({ creator, templateId })` builds the instruction that cancels an
-unfinished upload.
+`buildKitCancelTemplateInstruction({ creator, templateId, programAddress? })` is async and resolves
+to the instruction that cancels an unfinished upload.
+
+The adapter also exports:
+
+- `BALLISTA_ADDRESS` and `SYSTEM_PROGRAM_ADDRESS`, as Kit addresses.
+- `toKitInstruction(descriptor)`, which turns any core instruction descriptor into a Kit
+  `Instruction`.
+- `measureInstructionInTransaction(message, instruction)`, which measures the message with the
+  instruction appended.
+- `getComputeUnitLimitWithMargin(simulatedUnits, { marginBps?, maxComputeUnitLimit? })`, the
+  margin math `createComputeUnitProvider` uses, capped at `MAX_TRANSACTION_COMPUTE_UNITS`
+  (1,400,000).
+- `getLoadedAccountsDataSizeLimitWithHeadroom(bytes)`, which rounds a loaded-account-data size up
+  to the next 32 KiB page.
 
 To run the [Registries](#registries) example, derive the caller's entry and pass it as
 `callerTotal`'s address:

@@ -9,8 +9,7 @@ see what a template can do that an ordinary transaction can't, read the guide pa
 [amounts read at run time](/guide/runtime-values), [conditional calls](/guide/conditional),
 [loops](/guide/loops) and [guardrails](/guide/guardrails).
 
-Every example outside the protocol section shows its template and the code that runs it in both
-TypeScript and Rust. The **Plain transaction?** column below says whether you can get the same
+Every example shows its template and the code that runs it in both TypeScript and Rust. The **Plain transaction?** column below says whether you can get the same
 result without Ballista:
 
 - **Yes**: ordinary instructions in one transaction do the same thing. What the template adds is a

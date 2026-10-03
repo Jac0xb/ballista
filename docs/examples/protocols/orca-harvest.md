@@ -76,8 +76,14 @@ mints, as SOL and USDC are.
 
 `positionAuthority` signs for every position. It can be the holder, or a delegate: an account, such
 as a keeper bot, that the holder approved on each `positionTokenAccount` with the token program's
-`approve`. The fees still go to the holder's accounts, and since a harvest never spends from them,
-a delegate needs no other approval.
+`approve`. Through this template the fees still go to the holder's accounts, and since a harvest
+never spends from them, a delegate needs no other approval.
+
+::: warning Approving a keeper hands it the positions
+The approval isn't limited to this template. Outside it, the delegate can call Whirlpools'
+`collect_fees` itself and send the fees to accounts of its own, or move the NFT, and with it the
+position. Approve only a keeper you would trust with the positions themselves.
+:::
 
 A row that collects costs about 24,000 compute units, so eight fit the default limit of 200,000;
 for more, add a compute-budget instruction that raises the limit. Rows that share tick arrays fit

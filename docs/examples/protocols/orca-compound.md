@@ -84,8 +84,14 @@ lands, the deposit fails with `PriceSlippageOutOfBounds` (6069), and the whole r
 `positionAuthority` signs for the position. It can be the holder, or a delegate: an account, such as
 a keeper bot, that the holder approved on `positionTokenAccount` with the token program's `approve`.
 A delegate that reinvests also needs approval on both fee accounts, since the deposit spends from
-them under its signature. Approve a bounded amount there: an unlimited approval lets the keeper
-spend those accounts outside this template too.
+them under its signature.
+
+::: warning Approving a keeper hands it the position
+Neither approval is limited to this template. Outside it, the delegate can call Whirlpools'
+`collect_fees` itself and send the fees to accounts of its own, or move the NFT, and with it the
+position. It can also spend from the fee accounts up to the amount approved there. Approve only a
+keeper you would trust with the position itself, and approve a bounded amount on the fee accounts.
+:::
 
 ## What has been tested
 

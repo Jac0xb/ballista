@@ -46,10 +46,21 @@ import {
 
 const wrappedSolBalance = expression.accountData(account.fixed('wsolAccount'), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64');
 
+/** The route's platform fee account and rate are chosen by whoever builds the run: cap the rate. */
+export const MAX_PLATFORM_FEE_BPS = 0n;
+
 export const jitoProfitGuardedTip = defineTemplate({
   inputs: {
-    /** The round trip's Jupiter `route` arguments: the instruction data after the discriminator. */
-    strategyData: { type: 'bytes', maxLength: 512 },
+    /** The joined round trip's `route_plan`: the bytes between the discriminator and `in_amount`. */
+    routePlan: { type: 'bytes', maxLength: 512 },
+    /** The route's `in_amount`. */
+    inAmount: { type: 'u64' },
+    /** The quote's `quoted_out_amount`. */
+    quotedOutAmount: { type: 'u64' },
+    /** The quote's `slippage_bps`. */
+    slippageBps: { type: 'u64' },
+    /** The quote's `platform_fee_bps`, at most `MAX_PLATFORM_FEE_BPS`. */
+    platformFeeBps: { type: 'u64' },
     /** The bid, fixed before signing. Jito's floor is 1,000 lamports. */
     tipLamports: { type: 'u64' },
     /** What the searcher insists on keeping after the tip. */
@@ -90,6 +101,11 @@ export const jitoProfitGuardedTip = defineTemplate({
 
     step.snapshot('balanceBefore', wrappedSolBalance, 'readBalanceBeforeStrategy'),
 
+    // The fee account sits in the route's own accounts: any nonzero rate pays whoever chose it.
+    step.require(
+      expression.lessThanOrEqual(expression.input('platformFeeBps'), expression.u64(MAX_PLATFORM_FEE_BPS)),
+      'platformFeeWithinCap',
+    ),
     step.invoke({
       program: account.fixed('strategyProgram'),
       // `route` takes the token program, the signer, and the user's source and destination token
@@ -102,7 +118,14 @@ export const jitoProfitGuardedTip = defineTemplate({
         { account: account.fixed('wsolAccount'), signer: false, writable: true },
       ],
       accountGroup: 'strategyAccounts',
-      data: [data.literal(JUPITER_ROUTE), data.encode('bytes', expression.input('strategyData'))],
+      data: [
+        data.literal(JUPITER_ROUTE),
+        data.encode('bytes', expression.input('routePlan')),
+        data.encode('u64', expression.input('inAmount')),
+        data.encode('u64', expression.input('quotedOutAmount')),
+        data.encode('u16', expression.input('slippageBps')),
+        data.encode('u8', expression.input('platformFeeBps')),
+      ],
       label: 'runStrategy',
     }),
 

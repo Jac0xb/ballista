@@ -46,8 +46,8 @@ fn anchor(handler: &str) -> Vec<u8> {
 
 // #region jupiter-route
 /// Jupiter `route` data as the Swap API returns it with `useSharedAccounts: false`, split into
-/// the plan and the four numbers after it. The oracle swap, the sweep and the daily cap take them
-/// as inputs.
+/// the plan and the four numbers after it. Every Jupiter template takes them as inputs, so that it
+/// can cap `platform_fee_bps`.
 pub struct RouteQuote<'a> {
     /// `route_plan`, Borsh length prefix included: the bytes between the discriminator and
     /// `in_amount`.
@@ -177,15 +177,15 @@ pub struct JupiterDepositAccounts {
     pub collateral_farm: Option<(Pubkey, Pubkey)>,
 }
 
-/// `route_args` is the Swap API's `route` data after its 8-byte discriminator, and
-/// `route_accounts` its account list from the fifth account on: the template passes the first
-/// four (token program, owner, source, destination) itself.
+/// `route` is the Swap API's `route` data split by [`RouteQuote::split`], and `route_accounts` its
+/// account list from the fifth account on: the template passes the first four (token program,
+/// owner, source, destination) itself.
 ///
 /// Send it behind [`kamino_refreshes`], in the same transaction.
 pub fn run_jupiter_deposit(
     template: Pubkey,
     a: &JupiterDepositAccounts,
-    route_args: &[u8],
+    route: &RouteQuote,
     minimum_out: u64,
     route_accounts: Vec<AccountMeta>,
 ) -> Instruction {
@@ -195,7 +195,11 @@ pub fn run_jupiter_deposit(
     let inputs = RunInputs::new()
         // One length per group, in declaration order: routeAccounts, farmAccounts.
         .groups(&[route_accounts.len() as u8, farm_accounts.len() as u8])
-        .bytes(route_args)
+        .bytes(route.route_plan)
+        .u64(route.in_amount)
+        .u64(route.quoted_out_amount)
+        .u64(route.slippage_bps.into())
+        .u64(route.platform_fee_bps.into())
         .u64(minimum_out)
         .finish();
     let mut accounts = vec![
@@ -323,20 +327,24 @@ pub struct JitoTipAccounts {
 /// accounts with the first leg's source, then both legs' step accounts. `round_trip` in
 /// `tests/protocols/tests/jito_tip.rs` joins single-step legs.
 ///
-/// `strategy_data` is the joined data after its discriminator, and `strategy_accounts` its account
+/// `route` is the joined data split by [`RouteQuote::split`], and `strategy_accounts` its account
 /// list from the fifth account on: the template passes the token program, the searcher, and the
 /// wrapped-SOL account twice.
 pub fn run_jito_tip(
     template: Pubkey,
     a: &JitoTipAccounts,
-    strategy_data: &[u8],
+    route: &RouteQuote,
     tip_lamports: u64,
     minimum_edge: u64,
     strategy_accounts: Vec<AccountMeta>,
 ) -> Instruction {
     let inputs = RunInputs::new()
         .groups(&[strategy_accounts.len() as u8]) // strategyAccounts
-        .bytes(strategy_data)
+        .bytes(route.route_plan)
+        .u64(route.in_amount)
+        .u64(route.quoted_out_amount)
+        .u64(route.slippage_bps.into())
+        .u64(route.platform_fee_bps.into())
         .u64(tip_lamports)
         .u64(minimum_edge)
         .finish();
@@ -364,7 +372,7 @@ pub struct PriceGate {
     pub actor: Pubkey,
 }
 
-/// `action_data` is the Swap API's `route` data after its discriminator, and `action_accounts`
+/// `route` is the Swap API's `route` data split by [`RouteQuote::split`], and `action_accounts`
 /// its account list from the third account on: the template passes the token program and the
 /// actor itself.
 pub fn run_pyth_gate(
@@ -373,7 +381,7 @@ pub fn run_pyth_gate(
     maximum_age: i64,
     maximum_confidence: u64,
     (floor_price, ceiling_price): (i64, i64),
-    action_data: &[u8],
+    route: &RouteQuote,
     action_accounts: Vec<AccountMeta>,
 ) -> Instruction {
     let inputs = RunInputs::new()
@@ -385,7 +393,11 @@ pub fn run_pyth_gate(
         .u64(maximum_confidence)
         .i64(floor_price)
         .i64(ceiling_price)
-        .bytes(action_data)
+        .bytes(route.route_plan)
+        .u64(route.in_amount)
+        .u64(route.quoted_out_amount)
+        .u64(route.slippage_bps.into())
+        .u64(route.platform_fee_bps.into())
         .finish();
     let mut accounts = vec![
         AccountMeta::new_readonly(gate.price_update, false),
@@ -567,14 +579,14 @@ pub struct KaminoRepayAccounts {
     pub debt_farm: Option<(Pubkey, Pubkey)>,
 }
 
-/// `route_args` is the Swap API's `route` data after its discriminator, and `route_accounts` its
+/// `route` is the Swap API's `route` data split by [`RouteQuote::split`], and `route_accounts` its
 /// account list from the fifth account on.
 ///
 /// Send it behind [`kamino_refreshes`], in the same transaction.
 pub fn run_kamino_repay(
     template: Pubkey,
     a: &KaminoRepayAccounts,
-    route_args: &[u8],
+    route: &RouteQuote,
     minimum_repayment: u64,
     route_accounts: Vec<AccountMeta>,
 ) -> Instruction {
@@ -585,7 +597,11 @@ pub fn run_kamino_repay(
     let inputs = RunInputs::new()
         // One length per group, in declaration order: routeAccounts, farmAccounts.
         .groups(&[route_accounts.len() as u8, farm_accounts.len() as u8])
-        .bytes(route_args)
+        .bytes(route.route_plan)
+        .u64(route.in_amount)
+        .u64(route.quoted_out_amount)
+        .u64(route.slippage_bps.into())
+        .u64(route.platform_fee_bps.into())
         .u64(minimum_repayment)
         .finish();
     let mut accounts = vec![
@@ -934,8 +950,10 @@ fn route_data() -> Vec<u8> {
 /// records it by: its instructions, the run last.
 pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
     ("jitoProfitGuardedTip", || {
+        let data = route_data();
+        let route = RouteQuote::split(&data);
         let a = JitoTipAccounts { searcher: key(1), wsol_account: key(2), jito_tip: key(3) };
-        vec![run_jito_tip(TEMPLATE, &a, &[7; 80], 10_000, 100_000, group(40))]
+        vec![run_jito_tip(TEMPLATE, &a, &route, 10_000, 100_000, group(40))]
     }),
     ("jupiterDailyCapSwap", || {
         let data = route_data();
@@ -960,7 +978,9 @@ pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
         };
         let mut transaction =
             kamino_refreshes(a.lending_market, a.obligation, &[(a.reserve, key(14))], &[], &[]);
-        transaction.push(run_jupiter_deposit(TEMPLATE, &a, &[7; 96], 1_000_000, group(20)));
+        let data = route_data();
+        let route = RouteQuote::split(&data);
+        transaction.push(run_jupiter_deposit(TEMPLATE, &a, &route, 1_000_000, group(20)));
         transaction
     }),
     ("jupiterOracleCheckedSwap", || {
@@ -1018,7 +1038,9 @@ pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
         };
         let held = [(key(10), key(11)), (a.repay_reserve, key(11))];
         let mut transaction = kamino_refreshes(a.lending_market, a.obligation, &held, &[], &[]);
-        transaction.push(run_kamino_repay(TEMPLATE, &a, &[7; 96], 1_000_000, group(20)));
+        let data = route_data();
+        let route = RouteQuote::split(&data);
+        transaction.push(run_kamino_repay(TEMPLATE, &a, &route, 1_000_000, group(20)));
         transaction
     }),
     ("marginfiToKaminoRebalance", || {
@@ -1106,7 +1128,9 @@ pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
         };
         // A minute old at most, confident to $0.10, between $100 and $150.
         let band = (100_00000000, 150_00000000);
-        vec![run_pyth_gate(TEMPLATE, &gate, 60, 10_000_000, band, &[7; 96], group(14))]
+        let data = route_data();
+        let route = RouteQuote::split(&data);
+        vec![run_pyth_gate(TEMPLATE, &gate, 60, 10_000_000, band, &route, group(14))]
     }),
     ("signedQuoteSettlement", || {
         let a = SignedQuoteAccounts {

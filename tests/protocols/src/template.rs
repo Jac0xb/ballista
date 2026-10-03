@@ -568,7 +568,7 @@ mod tests {
     fn every_example_lines_up_with_its_payload() {
         let (examples, scenarios) = (examples(), scenarios());
         assert_eq!(examples.iter().count(), 13);
-        assert_eq!(scenarios.iter().count(), 5);
+        assert_eq!(scenarios.iter().count(), 6);
         for (name, example) in examples.iter().chain(scenarios.iter()) {
             // `Run::new` checks the header's counts against the name lists.
             let view = Run::new(key(1), example).view;
@@ -859,11 +859,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "input \"routeArgs\" takes at most 512 bytes; given 513")]
+    #[should_panic(expected = "input \"routePlan\" takes at most 512 bytes; given 513")]
     fn bytes_longer_than_declared_panic() {
         let examples = examples();
         let _ =
-            deposit_run(&examples["jupiterDepositExactOutput"]).input_bytes("routeArgs", &[0; 513]);
+            deposit_run(&examples["jupiterDepositExactOutput"]).input_bytes("routePlan", &[0; 513]);
     }
 
     /// Another type's maximum length would say "at most 0 bytes", which is no help.
@@ -883,7 +883,7 @@ mod tests {
         let example = &examples["jupiterDepositExactOutput"];
         let template = key(99);
         let owner = key(4);
-        let route_args = [0xe5, 0x17, 0xcb, 0x97, 1, 2, 3];
+        let route_plan = [1, 0, 0, 0, 2, 3, 4];
         let route_accounts = vec![
             AccountMeta::new_readonly(JUPITER, false),
             AccountMeta::new(key(21), false),
@@ -901,6 +901,8 @@ mod tests {
             .group("farmAccounts", farm_accounts)
             .group("routeAccounts", route_accounts)
             .input_u64("minimumOut", 1_234_567)
+            .input_u64("platformFeeBps", 0)
+            .input_u64("slippageBps", 50)
             .account("reserveDestinationDepositCollateral", key(13), true, false)
             .account("reserveCollateralMint", key(12), true, false)
             .account("reserveLiquiditySupply", key(11), true, false)
@@ -918,7 +920,9 @@ mod tests {
                 false,
                 false,
             )
-            .input_bytes("routeArgs", &route_args)
+            .input_u64("quotedOutAmount", 990_000)
+            .input_u64("inAmount", 1_000_000)
+            .input_bytes("routePlan", &route_plan)
             .account("tokenProgram", TOKEN_PROGRAM_ID, false, false)
             .account("kamino", KAMINO, false, false)
             .account("jupiter", JUPITER, false, false)
@@ -927,8 +931,10 @@ mod tests {
         // `run`, then routeAccounts' length and farmAccounts'.
         let mut data = vec![5, 3, 3];
         data.extend_from_slice(&7u16.to_le_bytes());
-        data.extend_from_slice(&route_args);
-        data.extend_from_slice(&1_234_567u64.to_le_bytes());
+        data.extend_from_slice(&route_plan);
+        for value in [1_000_000u64, 990_000, 50, 0, 1_234_567] {
+            data.extend_from_slice(&value.to_le_bytes());
+        }
         let by_hand = Instruction {
             program_id: ballista_sdk::ID,
             accounts: vec![
@@ -978,7 +984,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "unbound in the run: accounts [\"kamino\", \"tokenProgram\", \"instructionsSysvar\", \"owner\", \"sourceAta\", \"destinationAta\", \"obligation\", \"lendingMarket\", \"lendingMarketAuthority\", \"reserve\", \"reserveLiquidityMint\", \"reserveLiquiditySupply\", \"reserveCollateralMint\", \"reserveDestinationDepositCollateral\"], inputs [\"routeArgs\", \"minimumOut\"], account groups [\"routeAccounts\", \"farmAccounts\"]"
+        expected = "unbound in the run: accounts [\"kamino\", \"tokenProgram\", \"instructionsSysvar\", \"owner\", \"sourceAta\", \"destinationAta\", \"obligation\", \"lendingMarket\", \"lendingMarketAuthority\", \"reserve\", \"reserveLiquidityMint\", \"reserveLiquiditySupply\", \"reserveCollateralMint\", \"reserveDestinationDepositCollateral\"], inputs [\"routePlan\", \"inAmount\", \"quotedOutAmount\", \"slippageBps\", \"platformFeeBps\", \"minimumOut\"], account groups [\"routeAccounts\", \"farmAccounts\"]"
     )]
     fn a_missing_name_panics() {
         let examples = examples();

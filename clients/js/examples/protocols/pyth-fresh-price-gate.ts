@@ -41,6 +41,9 @@ const price = expression.accountData(account.fixed('priceUpdate'), PYTH.price, '
 const confidence = expression.accountData(account.fixed('priceUpdate'), PYTH.confidence, 'u64');
 const publishTime = expression.accountData(account.fixed('priceUpdate'), PYTH.publishTime, 'i64');
 
+/** The route's platform fee account and rate are chosen by whoever builds the run: cap the rate. */
+export const MAX_PLATFORM_FEE_BPS = 0n;
+
 export const pythFreshPriceGate = defineTemplate({
   inputs: {
     /**
@@ -59,8 +62,16 @@ export const pythFreshPriceGate = defineTemplate({
     maximumConfidence: { type: 'u64' },
     floorPrice: { type: 'i64' },
     ceilingPrice: { type: 'i64' },
-    /** Jupiter's `route` arguments: the Swap API's instruction data after the discriminator. */
-    actionData: { type: 'bytes', maxLength: 512 },
+    /** `route_plan` as the Swap API encoded it: the bytes between the discriminator and `in_amount`. */
+    routePlan: { type: 'bytes', maxLength: 512 },
+    /** The route's `in_amount`. */
+    inAmount: { type: 'u64' },
+    /** The quote's `quoted_out_amount`. */
+    quotedOutAmount: { type: 'u64' },
+    /** The quote's `slippage_bps`. */
+    slippageBps: { type: 'u64' },
+    /** The quote's `platform_fee_bps`, at most `MAX_PLATFORM_FEE_BPS`. */
+    platformFeeBps: { type: 'u64' },
   },
   accounts: {
     /**
@@ -119,6 +130,11 @@ export const pythFreshPriceGate = defineTemplate({
     step.require(expression.greaterThanOrEqual(price, expression.input('floorPrice')), 'priceAboveFloor'),
     step.require(expression.lessThanOrEqual(price, expression.input('ceilingPrice')), 'priceBelowCeiling'),
 
+    // The fee account sits in the route's own accounts: any nonzero rate pays whoever chose it.
+    step.require(
+      expression.lessThanOrEqual(expression.input('platformFeeBps'), expression.u64(MAX_PLATFORM_FEE_BPS)),
+      'platformFeeWithinCap',
+    ),
     step.invoke({
       program: account.fixed('actionProgram'),
       accounts: [
@@ -126,7 +142,14 @@ export const pythFreshPriceGate = defineTemplate({
         { account: account.fixed('actor'), signer: true, writable: false },
       ],
       accountGroup: 'actionAccounts',
-      data: [data.literal(JUPITER_ROUTE), data.encode('bytes', expression.input('actionData'))],
+      data: [
+        data.literal(JUPITER_ROUTE),
+        data.encode('bytes', expression.input('routePlan')),
+        data.encode('u64', expression.input('inAmount')),
+        data.encode('u64', expression.input('quotedOutAmount')),
+        data.encode('u16', expression.input('slippageBps')),
+        data.encode('u8', expression.input('platformFeeBps')),
+      ],
       label: 'actOnTheOracle',
     }),
   ],

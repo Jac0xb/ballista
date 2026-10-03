@@ -2,7 +2,7 @@ import type { Address, Instruction } from '@solana/kit';
 
 import { buildKitRunInstruction, type KitAccountBinding } from '../../../src/kit.js';
 import { compiled } from '../jupiter-deposit-exact-output.js';
-import { JUPITER_V6, KAMINO_LEND, SYSVAR_INSTRUCTIONS } from '../shared.js';
+import { JUPITER_V6, KAMINO_LEND, SYSVAR_INSTRUCTIONS, splitJupiterRoute } from '../shared.js';
 import { KAMINO_FARMS_PROGRAM, kaminoFarmPair, type KaminoFarm } from './kamino.js';
 import { TOKEN_PROGRAM, at, pinned } from './programs.js';
 
@@ -22,16 +22,24 @@ export function buildJupiterDepositRun(input: {
   reserveDestinationDepositCollateral: Address;
   /** The reserve's collateral farm, if it has one. */
   collateralFarm?: KaminoFarm;
-  /** `splitJupiterRoute(swapData).args`: the Swap API's `route` data after the discriminator. */
-  routeArgs: Uint8Array;
+  /** The Swap API's `route` data. */
+  routeData: Uint8Array;
   minimumOut: bigint;
   /** The route's account list from the fifth account on; the template passes the first four. */
   routeAccounts: readonly KitAccountBinding[];
 }): Instruction {
+  const route = splitJupiterRoute(input.routeData);
   return buildKitRunInstruction({
     compiled,
     templateAddress: input.templateAddress,
-    inputs: { routeArgs: input.routeArgs, minimumOut: input.minimumOut },
+    inputs: {
+      routePlan: route.routePlan,
+      inAmount: route.inAmount,
+      quotedOutAmount: route.quotedOutAmount,
+      slippageBps: route.slippageBps,
+      platformFeeBps: route.platformFeeBps,
+      minimumOut: input.minimumOut,
+    },
     accounts: {
       jupiter: pinned(JUPITER_V6),
       kamino: pinned(KAMINO_LEND),

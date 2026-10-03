@@ -30,11 +30,31 @@ fn anchor_discriminator(handler: &str) -> Vec<u8> {
     solana_sha256_hasher::hash(format!("global:{handler}").as_bytes()).to_bytes()[..8].to_vec()
 }
 
+/// Appends Jupiter `route` data, as the Swap API returns it, in the parts every Jupiter template
+/// takes: the plan (the bytes between the discriminator and `in_amount`), then `in_amount`,
+/// `quoted_out_amount`, `slippage_bps` and `platform_fee_bps`, each as a u64. The templates take
+/// the route in parts so that they can cap its platform fee.
+fn route_inputs(inputs: RunInputs, route_data: &[u8]) -> RunInputs {
+    const TAIL: usize = 8 + 8 + 2 + 1;
+    assert!(
+        route_data.len() >= 8 + 4 + TAIL && route_data[..8] == anchor_discriminator("route")[..],
+        "not Jupiter `route` data; ask the Swap API for useSharedAccounts: false"
+    );
+    let (plan, tail) = route_data[8..].split_at(route_data.len() - 8 - TAIL);
+    inputs
+        .bytes(plan)
+        .u64(u64::from_le_bytes(tail[0..8].try_into().unwrap()))
+        .u64(u64::from_le_bytes(tail[8..16].try_into().unwrap()))
+        .u64(u16::from_le_bytes([tail[16], tail[17]]).into())
+        .u64(tail[18].into())
+}
+
 // #region plain
 /// Shape one: fixed accounts and fixed inputs, in the order the template declares them.
 ///
 /// This is `pyth-fresh-price-gate`. Its inputs are `feedId`, `exponent`, `maximumAge`,
-/// `maximumConfidence`, `floorPrice`, `ceilingPrice`, `actionData`; its accounts are the price
+/// `maximumConfidence`, `floorPrice`, `ceilingPrice`, then the route's parts (see
+/// [`route_inputs`]); its accounts are the price
 /// update, the action program, the token program, and the actor. `feed_id` is the Pyth feed the
 /// price update must carry, as 32 bytes, and `exponent` the exponent it must have: the confidence
 /// limit and the band are raw integers at it (SOL/USD's is −8). The action is a Jupiter `route`,
@@ -54,7 +74,7 @@ pub fn run_price_gate(
     maximum_age: i64,
     maximum_confidence: u64,
     band: (i64, i64),
-    action_data: &[u8],
+    route_data: &[u8],
     action_accounts: Vec<AccountMeta>,
 ) -> Instruction {
     // Group lengths come first, before any value, one byte per declared group.
@@ -66,9 +86,8 @@ pub fn run_price_gate(
         .i64(maximum_age)
         .u64(maximum_confidence)
         .i64(band.0)
-        .i64(band.1)
-        .bytes(action_data)
-        .finish();
+        .i64(band.1);
+    let inputs = route_inputs(inputs, route_data).finish();
 
     let mut accounts = vec![
         AccountMeta::new_readonly(gate.price_update, false),
@@ -103,7 +122,7 @@ pub struct KaminoDeposit {
 /// - Jupiter's `route` starts with the token program, the signing owner, and the owner's source
 ///   and destination token accounts. The template passes those four itself, so `route_accounts`
 ///   is the Swap API's list from the fifth account on, and one template serves every route.
-///   `route_args` is the Swap API's instruction data after its eight-byte discriminator.
+///   `route_data` is the Swap API's instruction data, which [`route_inputs`] splits.
 /// - Kamino's deposit ends in two farm accounts, writable when the reserve has a collateral farm
 ///   and the Kamino program ID when it does not, then the Farms program. They travel as a second
 ///   group, which keeps each account's own writable flag.
@@ -114,7 +133,7 @@ pub fn run_jupiter_deposit(
     owner: Pubkey,
     token_accounts: (Pubkey, Pubkey),
     kamino: &KaminoDeposit,
-    route_args: &[u8],
+    route_data: &[u8],
     route_accounts: Vec<AccountMeta>,
     minimum_out: u64,
 ) -> Instruction {
@@ -127,11 +146,8 @@ pub fn run_jupiter_deposit(
     };
     farm_accounts.push(AccountMeta::new_readonly(KAMINO_FARMS, false));
     // Group lengths come first, before any value, one byte per declared group.
-    let inputs = RunInputs::new()
-        .groups(&[route_accounts.len() as u8, farm_accounts.len() as u8])
-        .bytes(route_args)
-        .u64(minimum_out)
-        .finish();
+    let inputs = RunInputs::new().groups(&[route_accounts.len() as u8, farm_accounts.len() as u8]);
+    let inputs = route_inputs(inputs, route_data).u64(minimum_out).finish();
 
     let mut accounts = vec![
         AccountMeta::new_readonly(JUPITER_V6, false),
@@ -273,6 +289,14 @@ fn main() {
     let creator = Pubkey::new_unique();
     let (template, _) = find_template_pda(&creator, 1);
     let key = Pubkey::new_unique;
+    // `route` data with an 80-byte plan, quoted at 1,000,000 in for 990,000 out, with no
+    // platform fee.
+    let mut route_data = anchor_discriminator("route");
+    route_data.extend_from_slice(&[0xc1; 80]);
+    route_data.extend_from_slice(&1_000_000u64.to_le_bytes());
+    route_data.extend_from_slice(&990_000u64.to_le_bytes());
+    route_data.extend_from_slice(&50u16.to_le_bytes());
+    route_data.push(0);
 
     // SOL/USD's feed id, `ef0d8b6f…c280b56d`.
     let sol_usd = [
@@ -292,7 +316,7 @@ fn main() {
         60,
         1_000_000,
         (90_00000000, 250_00000000),
-        &[1, 2, 3, 4],
+        &route_data,
         vec![AccountMeta::new(key(), false); 6],
     );
     println!("price gate        {} accounts, {} data bytes", gate.accounts.len(), gate.data.len());
@@ -313,7 +337,7 @@ fn main() {
         key(),
         (key(), key()),
         &kamino,
-        &[0xc1; 96],
+        &route_data,
         vec![AccountMeta::new(key(), false); 24],
         1_000_000,
     );

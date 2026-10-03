@@ -23,7 +23,9 @@ The template runs the swap only if all of these hold:
 - the price was published at most `maximumAge` seconds ago;
 - the confidence interval is at most `maximumConfidence` (a wide interval means the publishers
   disagree);
-- the price is between `floorPrice` and `ceilingPrice`, inclusive.
+- the price is between `floorPrice` and `ceilingPrice`, inclusive;
+- the route's `platformFeeBps` is at most `MAX_PLATFORM_FEE_BPS`, a constant that is 0
+  (`platformFeeWithinCap`).
 
 A feed id is the 32 bytes that name a Pyth feed, such as SOL/USD. Pyth's receiver program owns
 every feed's price account, so only the feed id says which feed an account holds.
@@ -55,9 +57,8 @@ token accounts, arrive as the `actionAccounts` [account group](/guide/account-gr
 
 The Run tabs pass the four declared accounts, `priceUpdate`, `actionProgram`, `tokenProgram` and
 `actor`, then the inputs `feedId`, `exponent`, `maximumAge`, `maximumConfidence`, `floorPrice`,
-`ceilingPrice` and `actionData`, then the group. `exponent` is an `i64` input, though Pyth stores
-it as an `i32`. `actionData` is Jupiter's instruction data without its eight-byte discriminator;
-the template adds the `route` discriminator itself.
+`ceilingPrice`, `routePlan`, `inAmount`, `quotedOutAmount`, `slippageBps` and `platformFeeBps`,
+then the group. `exponent` is an `i64` input, though Pyth stores it as an `i32`.
 
 ::: tip Requesting the route
 Ask Jupiter's Swap API for `useSharedAccounts: false`. The template always sends Jupiter's `route`

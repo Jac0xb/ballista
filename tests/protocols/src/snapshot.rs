@@ -446,6 +446,27 @@ impl Routing {
     }
 }
 
+impl Leg {
+    /// The leg with a platform fee of `fee_bps` paid to `account`, at `slippage_bps`: what a run's
+    /// builder may choose, since nothing ties `route`'s fee rate or [`PLATFORM_FEE_ACCOUNT`] to the
+    /// wallet. Both the split arguments and the whole `route` data change, so the leg serves a
+    /// template that takes the route either way.
+    pub fn with_platform_fee(&self, fee_bps: u8, slippage_bps: u16, account: Address) -> Leg {
+        let mut leg = self.clone();
+        leg.route.platform_fee_bps = fee_bps;
+        leg.route.slippage_bps = slippage_bps;
+        leg.slippage_bps = slippage_bps;
+        let mut tail = slippage_bps.to_le_bytes().to_vec();
+        tail.push(fee_bps);
+        for data in [&mut leg.route.args, &mut leg.instructions.swap.data] {
+            let at = data.len() - tail.len();
+            data[at..].copy_from_slice(&tail);
+        }
+        leg.instructions.swap.accounts[PLATFORM_FEE_ACCOUNT] = AccountMeta::new(account, false);
+        leg
+    }
+}
+
 /// A platform fee at `bps`, taken out of `amount` the way Jupiter's own does.
 pub fn fee_at(amount: u64, bps: u64) -> u64 {
     amount * bps / 10_000

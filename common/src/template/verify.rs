@@ -3996,7 +3996,7 @@ mod tests {
                 .unwrap_or_else(|error| panic!("runtime scenario {verified}: {error}"));
             verified += 1;
         }
-        assert_eq!(verified, 5, "every runtime scenario is verified");
+        assert_eq!(verified, 6, "every runtime scenario is verified");
         let carry = decode_hex(include_str!("../../../fixtures/carry-sum.hex"));
         let program = ProgramView::parse(&carry).unwrap();
         assert_eq!(program.header.batch_min_iterations(), 1);

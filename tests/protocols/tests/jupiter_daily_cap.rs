@@ -620,3 +620,33 @@ fn a_caller_cannot_use_another_callers_entry() {
     assert_eq!(cap.entry(&owner), before);
     assert_eq!(cap.svm.get_account(&intruder.entry), None);
 }
+
+/// `route`'s platform fee rate and account are the run's builder's choice: nothing ties either to
+/// the caller. The template caps `platformFeeBps` at `MAX_PLATFORM_FEE_BPS`, 0, so a 1% fee paid
+/// to an attacker's USDC account, at 2% slippage so that Jupiter's own check would let it through,
+/// fails at `platformFeeWithinCap`: before the rate limit charges the caller and before Jupiter
+/// runs. `findings/platform-fee.md`.
+#[test]
+fn a_hostile_platform_fee_fails_at_platform_fee_within_cap() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+    let mut cap = Cap::new(&snapshot, example);
+    let mut caller = cap.caller(wallet::wallet());
+    let attacker = keypair(b"ballista-protocol-tests-attacker").pubkey();
+    let attacker_usdc = token_account(&mut cap.svm, &attacker, &caller.leg.output_mint, 0);
+    caller.leg = caller.leg.with_platform_fee(100, 200, attacker_usdc);
+
+    let failure = cap
+        .act(example, &caller)
+        .expect_err("a platform fee above the cap should fail");
+    assert_requirement_failed(&failure, example, "platformFeeWithinCap");
+    assert!(!cap.jupiter_ran(&failure), "{failure:?}");
+    assert_eq!(cap.svm.get_account(&caller.entry), None);
+    assert_eq!(token_balance(&cap.svm, &attacker_usdc), 0);
+    println!(
+        "refused a 100 bps fee at platformFeeWithinCap (pc {}) after {} CU in Ballista's run",
+        ballista_error(&failure).unwrap().1,
+        units_of(&failure.logs, &ballista_sdk::ID).unwrap()
+    );
+}

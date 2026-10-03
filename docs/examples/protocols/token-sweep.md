@@ -21,14 +21,15 @@ writes the instruction data itself. It:
 - reads the balance and fails unless it is above `dustFloor` (`worthSelling`);
 - passes that balance to Jupiter as `in_amount`, with the quoted output scaled to match
   (`quotedOutAmount × balance / quotedInAmount`);
+- requires the route's `platformFeeBps` to be at most `MAX_PLATFORM_FEE_BPS`, a constant that is 0
+  (`platformFeeWithinCap`), before Jupiter is called;
 - requires the proceeds to be at least that scaled quote, less `slippageBps` (`saleMetTheQuote`);
 - requires the account to hold no more than `dustFloor` afterwards (`nothingMeaningfulLeftBehind`).
 
 It guards against the market moving after the quote. It does not guard against:
 
-- **A bad quote or fee.** Whoever builds the run supplies `quotedInAmount`, `quotedOutAmount` and
-  `slippageBps`, which set the least the sale accepts, and the route's platform fee account, whose
-  owner nothing checks.
+- **A bad quote.** Whoever builds the run supplies `quotedInAmount`, `quotedOutAmount` and
+  `slippageBps`, which set the least the sale accepts.
 - **Spending the seller's other token accounts.** The seller signs `route`, and Jupiter passes that
   authority to every step.
 

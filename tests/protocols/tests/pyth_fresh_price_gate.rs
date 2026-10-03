@@ -12,10 +12,10 @@ use {
             copy_pyth_feed, pyth_price, set_pyth_price, PythPrice, SOL_USD_FEED_ID,
             USDC_USD_FEED_ID,
         },
-        snapshot::{warp, Leg, Snapshot, SNAPSHOT_DIR},
+        snapshot::{jupiter_ran, warp, Leg, Snapshot, SNAPSHOT_DIR},
         template::{examples, upload, Example, Run},
         tx::{self, assert_requirement_failed, Failure, Outcome},
-        wallet::{self, fund, keypair, token_balance, SOL},
+        wallet::{self, fund, keypair, token_account, token_balance, SOL},
     },
     ballista_sdk::TOKEN_PROGRAM_ID,
     litesvm::LiteSVM,
@@ -117,7 +117,11 @@ impl Gate {
             .input_u64("maximumConfidence", terms.maximum_confidence)
             .input_i64("floorPrice", terms.floor_price)
             .input_i64("ceilingPrice", terms.ceiling_price)
-            .input_bytes("actionData", &self.leg.route.args)
+            .input_bytes("routePlan", &self.leg.route.route_plan)
+            .input_u64("inAmount", self.leg.route.in_amount)
+            .input_u64("quotedOutAmount", self.leg.route.quoted_out_amount)
+            .input_u64("slippageBps", self.leg.route.slippage_bps.into())
+            .input_u64("platformFeeBps", self.leg.route.platform_fee_bps.into())
             .group("actionAccounts", swap.accounts[ROUTE_HEAD..].to_vec())
             .build()
     }
@@ -362,4 +366,31 @@ fn a_price_at_another_exponent_fails_at_the_exponent_pin() {
     gate.act(example, named)
         .unwrap_or_else(|failure| panic!("{failure:?}"));
     gate.assert_the_route_ran();
+}
+
+/// The gate's action is a Jupiter `route`, whose platform fee rate and account are the run's
+/// builder's choice. The template caps `platformFeeBps` at `MAX_PLATFORM_FEE_BPS`, 0, so with the
+/// price fresh and in band, a 1% fee paid to an attacker's USDC account, at 2% slippage so that
+/// Jupiter's own check would let it through, fails at `platformFeeWithinCap` before Jupiter runs.
+/// `findings/platform-fee.md`.
+#[test]
+fn a_hostile_platform_fee_fails_at_platform_fee_within_cap() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+    let mut gate = Gate::new(&snapshot, example);
+    let attacker = keypair(b"ballista-protocol-tests-attacker").pubkey();
+    let attacker_usdc = token_account(&mut gate.svm, &attacker, &gate.leg.output_mint, 0);
+    gate.leg = gate.leg.with_platform_fee(100, 200, attacker_usdc);
+
+    let failure = gate
+        .act(example, gate.terms())
+        .expect_err("a platform fee above the cap should fail");
+    assert_requirement_failed(&failure, example, "platformFeeWithinCap");
+    assert!(!jupiter_ran(&gate.jupiter, &failure), "{failure:?}");
+    assert_eq!(token_balance(&gate.svm, &attacker_usdc), 0);
+    println!(
+        "refused a 100 bps fee at platformFeeWithinCap after {} CU in Ballista's run",
+        failure.compute_units_of(&ballista_sdk::ID).unwrap()
+    );
 }

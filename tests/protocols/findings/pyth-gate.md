@@ -24,17 +24,20 @@ are the ones a trader selling SOL might set:
 | --- | --- |
 | Fresh (19 s) and in band | Lands. The route fills 123,106,283 USDC units, as in Jupiter's own transaction |
 | Clock moved on 41 s (write rule 3), so the price is exactly 60 s old | Lands |
-| One second later, at 61 s | Fails at `priceIsFresh` (pc 21) after 3,043 CU |
-| Floor one raw unit above the price | Fails at `priceAboveFloor` (pc 27) after 3,399 CU |
-| Ceiling one raw unit below the price | Fails at `priceBelowCeiling` (pc 30) after 3,577 CU |
+| One second later, at 61 s | Fails at `priceIsFresh` (pc 26) after 3,043 CU |
+| Floor one raw unit above the price | Fails at `priceAboveFloor` (pc 32) after 3,399 CU |
+| Ceiling one raw unit below the price | Fails at `priceBelowCeiling` (pc 35) after 3,577 CU |
 | Floor and ceiling both equal to the price | Lands |
-| SOL/USD's account copied as USDC/USD's, with the same price, and `feedId` SOL/USD | Fails at `priceIsTheExpectedFeed` (pc 13) after 2,429 CU |
+| SOL/USD's account copied as USDC/USD's, with the same price, and `feedId` SOL/USD | Fails at `priceIsTheExpectedFeed` (pc 18) after 2,429 CU |
 | The same account with `feedId` USDC/USD | Lands (a control) |
 | The unfixed gate (the payload committed before the feed pin) with that account | Lands. This was a scratch run and is not committed |
-| SOL/USD's exponent moved from −8 to −7 (write rule 2), its raw price and confidence kept | Fails at `priceExponentIsExpected` (pc 16) after 2,629 CU. It landed before the fix |
+| SOL/USD's exponent moved from −8 to −7 (write rule 2), its raw price and confidence kept | Fails at `priceExponentIsExpected` (pc 21) after 2,629 CU. It landed before the fix |
 | The same account with `exponent` −7 | Lands (a control). No other check reads the exponent |
+| In band, with a 100 bps platform fee paid to an attacker's USDC account at `slippageBps` 200 | Fails at `platformFeeWithinCap` after 3,777 CU. It landed before the fix (82,569 CU, 897 bytes) |
 
-Every requirement comes before the route, so a refused run never reaches Jupiter.
+Every requirement comes before the route, so a refused run never reaches Jupiter. The program
+counters are the current template's. The compute units at each failure predate the platform-fee
+cap: the four route numbers it now loads as inputs add about 120 CU before the first requirement.
 
 ## Compute units and size
 
@@ -50,12 +53,15 @@ Every requirement comes before the route, so a refused run never reaches Jupiter
   requirement pays the same 282 CU more; one refused at the feed pin pays 89, for the input alone.
 - **The feed pin's cost.** As in the swap, it cost 318 CU and 32 bytes: the gate took 79,089 CU and
   825 bytes before it.
-- **The template's size.** It is 732 bytes: 596 before the feed pin, and 664 before the exponent
-  pin.
-- **Why this is larger than the oracle swap's run.** It is 17 bytes larger than the swap's 848. Its
-  five 8-byte terms carry 32 bytes more than the swap's one tolerance. The swap sends `route`'s four
-  numbers as 32 bytes of inputs, where the gate forwards them packed in 19 inside `actionData`. And
-  the gate passes two fewer accounts.
+- **The platform-fee cap's cost.** It costs 601 CU and 13 bytes: the run took 79,461 CU (47,362
+  in Ballista's run) and 865 bytes before it, and 80,062 (47,963) and 878 after. Most of it is
+  taking the route in parts: four more inputs to load, and the route's four numbers sent as 32
+  bytes of inputs where `actionData` packed them in 19. The table above predates it.
+- **The template's size.** It is 892 bytes: 732 before the platform-fee cap, 664 before the
+  exponent pin, and 596 before the feed pin.
+- **Why this is larger than the oracle swap's run.** At 878 bytes it is 30 larger than the swap's
+  848. Its five 8-byte terms carry 32 bytes more than the swap's one tolerance, and it passes two
+  fewer accounts.
 
 ## Findings
 
@@ -109,6 +115,23 @@ requires the account's exponent, read as an i64, to equal it (`priceExponentIsEx
 after `priceIsTheExpectedFeed`. The moved account now fails there. With `exponent` −7 it lands,
 which shows that nothing else reads the exponent. The oracle swap reads the exponent and scales by
 it instead; the gate's bounds are the caller's own numbers, so it pins the exponent they assume.
+
+### P1, fixed: the route's platform fee was the builder's
+
+**The problem.** The gate's action is a Jupiter `route`, which pays `platform_fee_bps` of its
+output to the platform fee account at position 6 of its list. Both arrived in what the run's
+builder supplied, `actionData` and the group, and nothing checked either.
+
+**What it allowed.** In band, with a 100 bps fee paid to an attacker's USDC account at
+`slippageBps` 200, the unfixed gate **landed** (82,569 CU, 897 bytes): the red run of
+`a_hostile_platform_fee_fails_at_platform_fee_within_cap`.
+
+**The fix.** The gate declares `MAX_PLATFORM_FEE_BPS`, 0, and requires `platformFeeBps` to be at
+most it (`platformFeeWithinCap`) right before the route. No expression reads a byte out of a
+`bytes` input, so the gate could not read the fee out of `actionData`; it now takes the route in
+parts, `routePlan`, `inAmount`, `quotedOutAmount`, `slippageBps` and `platformFeeBps`, as
+`splitJupiterRoute` splits it. The same run now fails there after 3,777 CU, before Jupiter runs.
+See [`platform-fee.md`](platform-fee.md).
 
 ### Not exercised here
 

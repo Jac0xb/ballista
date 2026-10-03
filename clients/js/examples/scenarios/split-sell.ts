@@ -63,6 +63,8 @@ export const SLICE_EVENT_TAG = new TextEncoder().encode('SLCE');
 export const MAX_SLICES = 8;
 /** The most payout rows one run takes. */
 export const MAX_PAYOUTS = 4;
+/** The route's platform fee account and rate are chosen by whoever builds the run: cap the rate. */
+export const MAX_PLATFORM_FEE_BPS = 0n;
 
 const balanceOf = (name: string) => expression.accountData(account.fixed(name), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64');
 const variable = expression.variable;
@@ -80,7 +82,7 @@ export const splitSellInputs = {
   quotedOutAmount: { type: 'u64' },
   /** The quote's `slippage_bps`. */
   slippageBps: { type: 'u64' },
-  /** The quote's `platform_fee_bps`. */
+  /** The quote's `platform_fee_bps`, at most `MAX_PLATFORM_FEE_BPS`. */
   platformFeeBps: { type: 'u64' },
   /** How far below the oracle a slice's fill may land, in basis points. */
   toleranceBps: { type: 'u64' },
@@ -176,6 +178,11 @@ export function splitSellSteps(): Step[] {
       'computeSliceFloor',
     ),
 
+    // The fee account sits in the route's own accounts: any nonzero rate pays whoever chose it.
+    step.require(
+      expression.lessThanOrEqual(input('platformFeeBps'), expression.u64(MAX_PLATFORM_FEE_BPS)),
+      'platformFeeWithinCap',
+    ),
     step.let('totalReceived', expression.u64(0)),
     step.repeat(
       input('slices'),

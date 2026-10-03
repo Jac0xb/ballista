@@ -5,10 +5,10 @@ use {
     ballista_protocol_tests::{
         kamino,
         lending::{self, JUPITER, MARKET, SOL_RESERVE, SOL_TO_USDC, USDC_MINT, USDC_RESERVE},
-        snapshot::Leg,
+        snapshot::{jupiter_ran, Leg},
         template::{self, Run},
         tx::{self, Failure, Outcome},
-        wallet::{self, SOL, WSOL_MINT},
+        wallet::{self, keypair, SOL, WSOL_MINT},
     },
     ballista_sdk::TOKEN_PROGRAM_ID,
     litesvm::LiteSVM,
@@ -134,7 +134,11 @@ fn run_paying(
         .account("repayReserve", USDC_RESERVE, true, false)
         .account("reserveLiquidityMint", usdc.liquidity_mint, false, false)
         .account("reserveLiquiditySupply", usdc.supply_vault, true, false)
-        .input_bytes("routeArgs", &scene.leg.route.args)
+        .input_bytes("routePlan", &scene.leg.route.route_plan)
+        .input_u64("inAmount", scene.leg.route.in_amount)
+        .input_u64("quotedOutAmount", scene.leg.route.quoted_out_amount)
+        .input_u64("slippageBps", scene.leg.route.slippage_bps.into())
+        .input_u64("platformFeeBps", scene.leg.route.platform_fee_bps.into())
         .input_u64("minimumRepayment", minimum_repayment)
         .group("routeAccounts", route_accounts)
         .group(
@@ -249,4 +253,37 @@ fn an_attackers_swap_destination_is_refused_at_swap_pays_the_borrower() {
         debt_before
     );
     assert_eq!(wallet::token_balance(&svm, &attacker), 0);
+}
+
+/// `route`'s platform fee rate and account are the run's builder's choice, and the repayment takes
+/// whatever reached the borrower. The template caps `platformFeeBps` at `MAX_PLATFORM_FEE_BPS`, 0,
+/// so a 1% fee paid to an attacker's USDC account, at 2% slippage so that Jupiter's own check would
+/// let it through, fails at `platformFeeWithinCap` before Jupiter runs, and the debt stands.
+/// `findings/platform-fee.md`.
+#[test]
+fn a_hostile_platform_fee_fails_at_platform_fee_within_cap() {
+    let (mut svm, mut scene) = scene();
+    let attacker = keypair(b"ballista-protocol-tests-attacker").pubkey();
+    let attacker_usdc = wallet::token_account(&mut svm, &attacker, &USDC_MINT, 0);
+    scene.leg = scene.leg.with_platform_fee(100, 200, attacker_usdc);
+    let debt_before = kamino::borrowed_sf(&svm, &scene.obligation, &USDC_RESERVE);
+
+    let run = run(&svm, &scene, 1);
+    let failure =
+        send_run(&mut svm, &scene, run).expect_err("a platform fee above the cap should fail");
+    tx::assert_requirement_failed(
+        &failure,
+        &template::examples()[NAME],
+        "platformFeeWithinCap",
+    );
+    assert!(!jupiter_ran(&JUPITER, &failure), "{failure:?}");
+    assert_eq!(wallet::token_balance(&svm, &attacker_usdc), 0);
+    assert_eq!(
+        kamino::borrowed_sf(&svm, &scene.obligation, &USDC_RESERVE),
+        debt_before
+    );
+    eprintln!(
+        "{NAME}: refused a 100 bps fee at platformFeeWithinCap after {} CU in Ballista's run",
+        failure.compute_units_of(&ballista_sdk::ID).unwrap()
+    );
 }

@@ -127,12 +127,33 @@ snapshot has.
 | **pass:** tip 1,664,764 + edge 100,000 = the profit | tip paid in full; the searcher keeps the edge less the fee | 119,653 | 96,633 | 934 |
 | **fail:** tip 1,664,765, one lamport over | `RequirementFailed` at `profitCoversTheTip`; nothing paid | — | 95,208 | same |
 | **fail:** loss of 250,660, tip 1,000 | `RequirementFailed` at `profitCoversTheTip` | — | 95,295 | same |
+| **fail:** after the whale's sale, a 10 bps platform fee paid to an attacker's wrapped SOL account, tip 1,000, edge 0 | `RequirementFailed` at `platformFeeWithinCap`, before Jupiter runs; nothing paid | — | 2,943 | — |
+
+The table's other figures predate the platform-fee cap, which added 601 CU to Ballista's run and
+13 bytes to the transaction: the pass now takes 120,102 CU in all, 97,082 in the run, and 947
+bytes (119,501, 96,481 and 934 just before it).
 
 Also checked: a USDC account as `wsolAccount` fails at `wsolAccountHoldsWrappedSol`. Another
 wallet's wrapped SOL fails at `searcherOwnsTheWsolAccount`.
 
-The template payload grew from 424 to 628 bytes. The run passes 46 runtime accounts: 6 fixed and a
+The template payload grew from 424 to 628 bytes, and to 788 with the platform-fee cap. The run passes 46 runtime accounts: 6 fixed and a
 40-account group. The CPI to Jupiter carries 44 accounts, within Ballista's limit of 64.
+
+## The platform fee, fixed
+
+The joined round trip ends, like any `route`, in `platform_fee_bps`, and its platform fee account
+is position 6 of its list, in `strategyAccounts`. Whoever builds the run chose both, and nothing
+checked either. After the whale's sale, a 10 bps fee paid to an attacker's wrapped SOL account,
+with a 1,000-lamport tip and no edge, **landed** against the unfixed template (122,616 CU, 966
+bytes): the attacker's share came out of the profit before `profitCoversTheTip` measured it.
+
+The template now declares `MAX_PLATFORM_FEE_BPS`, 0, and requires `platformFeeBps` to be at most it
+(`platformFeeWithinCap`) right before the round trip. No expression reads a byte out of a `bytes`
+input, so it now takes the joined route in parts, `routePlan`, `inAmount`, `quotedOutAmount`,
+`slippageBps` and `platformFeeBps`, in place of `strategyData`; the runners split the joined data
+with `splitJupiterRoute` or `RouteQuote::split`. The same run fails at `platformFeeWithinCap`
+after 2,943 CU of Ballista's run (`a_hostile_platform_fee_fails_at_platform_fee_within_cap`). See
+[`platform-fee.md`](platform-fee.md).
 
 ## Limits and open items
 

@@ -45,6 +45,9 @@ export const DAILY_CAP = 1_728_000_000n;
 /** The cap over 86,400 seconds. */
 export const REFILL_PER_SECOND = 20_000n;
 
+/** The route's platform fee account and rate are chosen by whoever builds the run: cap the rate. */
+export const MAX_PLATFORM_FEE_BPS = 0n;
+
 export const jupiterDailyCapSwap = defineTemplate({
   inputs: {
     /** `route_plan` as the Swap API encoded it: the bytes between the discriminator and `in_amount`. */
@@ -96,6 +99,12 @@ export const jupiterDailyCapSwap = defineTemplate({
       amount: expression.input('inAmount'),
     }),
     step.snapshot('sourceBefore', sourceBalance, 'readSourceBeforeSwap'),
+
+    // The fee account sits in the route's own accounts: any nonzero rate pays whoever chose it.
+    step.require(
+      expression.lessThanOrEqual(expression.input('platformFeeBps'), expression.u64(MAX_PLATFORM_FEE_BPS)),
+      'platformFeeWithinCap',
+    ),
     step.invoke({
       program: account.fixed('actionProgram'),
       accounts: [

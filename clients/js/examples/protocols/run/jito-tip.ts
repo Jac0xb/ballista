@@ -2,7 +2,7 @@ import type { Address, Instruction } from '@solana/kit';
 
 import { buildKitRunInstruction, type KitAccountBinding } from '../../../src/kit.js';
 import { compiled } from '../jito-profit-guarded-tip.js';
-import { JUPITER_V6 } from '../shared.js';
+import { JUPITER_V6, splitJupiterRoute } from '../shared.js';
 import { SYSTEM_PROGRAM, TOKEN_PROGRAM, at, pinned } from './programs.js';
 
 /**
@@ -19,8 +19,8 @@ export function buildJitoTipRun(input: {
   wsolAccount: Address;
   /** One of the eight `JITO_TIP_ACCOUNTS`. */
   jitoTip: Address;
-  /** The joined `route` data after its discriminator. */
-  strategyData: Uint8Array;
+  /** The joined `route` data, discriminator included. */
+  routeData: Uint8Array;
   tipLamports: bigint;
   minimumEdge: bigint;
   /**
@@ -29,11 +29,16 @@ export function buildJitoTipRun(input: {
    */
   strategyAccounts: readonly KitAccountBinding[];
 }): Instruction {
+  const route = splitJupiterRoute(input.routeData);
   return buildKitRunInstruction({
     compiled,
     templateAddress: input.templateAddress,
     inputs: {
-      strategyData: input.strategyData,
+      routePlan: route.routePlan,
+      inAmount: route.inAmount,
+      quotedOutAmount: route.quotedOutAmount,
+      slippageBps: route.slippageBps,
+      platformFeeBps: route.platformFeeBps,
       tipLamports: input.tipLamports,
       minimumEdge: input.minimumEdge,
     },

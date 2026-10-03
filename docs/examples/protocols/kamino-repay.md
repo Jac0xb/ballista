@@ -20,6 +20,8 @@ The template handles the first number. It:
 - requires `borrowedAssetAta`, where the swap pays out, to belong to the borrower
   (`swapPaysTheBorrower`). Kamino repays from any account the borrower may spend, so without this
   a run could leave the rest of the swap in someone else's account;
+- requires the route's `platformFeeBps` to be at most `MAX_PLATFORM_FEE_BPS`, a constant that is 0
+  (`platformFeeWithinCap`);
 - swaps, measures how much of the borrowed token arrived, and requires at least
   `minimumRepayment` (`swapWorthRepaying`);
 - repays exactly that amount against the borrower's obligation, Kamino's account of their deposits
@@ -57,9 +59,8 @@ as on the main market's SOL and USDC reserves, both farm slots hold the Kamino p
 
 The Run tabs pass the 12 declared accounts in order (`jupiter`, `kamino`, `tokenProgram`,
 `instructionsSysvar`, `borrower`, `collateralAta`, `borrowedAssetAta`, then Kamino's five from
-`obligation` to `reserveLiquiditySupply`), then the inputs `routeArgs` and `minimumRepayment`,
-then `routeAccounts` and `farmAccounts`. `routeArgs` is Jupiter's instruction data without its
-eight-byte discriminator; the template adds the `route` discriminator itself.
+`obligation` to `reserveLiquiditySupply`), then the inputs `routePlan`, `inAmount`, `quotedOutAmount`, `slippageBps`, `platformFeeBps` and
+`minimumRepayment`, then `routeAccounts` and `farmAccounts`.
 
 Before the run, **refresh Kamino in the same transaction:** `refresh_reserve` for each reserve the
 obligation holds, then `refresh_obligation`. A refresh brings a reserve's interest and price, or an

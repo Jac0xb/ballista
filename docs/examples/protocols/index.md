@@ -55,7 +55,8 @@ points, and check them against the protocols' current programs before you use th
   measures them, the source and destination token accounts. The rest of the route's accounts
   arrive as an account group. A test that reads the templates checks this
   (`clients/js/src/protocol-semantics.test.ts`), and the protocol tests send real routes, recorded
-  from Jupiter's API, through Jupiter's own program. Request routes from Jupiter's Swap API with `useSharedAccounts: false`; the default,
+  from Jupiter's API, through Jupiter's own program. Each also caps the route's platform fee at
+  `MAX_PLATFORM_FEE_BPS`, 0 unless its author raises it. Request routes from Jupiter's Swap API with `useSharedAccounts: false`; the default,
   `shared_accounts_route`, is a different instruction with its accounts in a different order.
 
 ## Reading offsets from an account

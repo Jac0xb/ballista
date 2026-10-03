@@ -119,18 +119,30 @@ impl Outcome {
     /// included: the largest of its `consumed` lines, which for a program called once is its
     /// outermost invocation's. `None` if it never ran.
     pub fn compute_units_of(&self, program: &Address) -> Option<u64> {
-        let prefix = format!("Program {program} consumed ");
-        self.logs
-            .iter()
-            .filter_map(|line| {
-                line.strip_prefix(&prefix)?
-                    .split_once(" of ")?
-                    .0
-                    .parse()
-                    .ok()
-            })
-            .max()
+        units_of(&self.logs, program)
     }
+}
+
+impl Failure {
+    /// [`Outcome::compute_units_of`], for a failed transaction: what `program` consumed before it
+    /// failed or its callee did.
+    pub fn compute_units_of(&self, program: &Address) -> Option<u64> {
+        units_of(&self.logs, program)
+    }
+}
+
+/// The largest of `program`'s `consumed` lines in `logs`.
+fn units_of(logs: &[String], program: &Address) -> Option<u64> {
+    let prefix = format!("Program {program} consumed ");
+    logs.iter()
+        .filter_map(|line| {
+            line.strip_prefix(&prefix)?
+                .split_once(" of ")?
+                .0
+                .parse()
+                .ok()
+        })
+        .max()
 }
 
 /// A transaction that failed in a program.

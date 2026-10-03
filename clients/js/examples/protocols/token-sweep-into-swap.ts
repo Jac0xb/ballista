@@ -46,6 +46,9 @@ import {
 const balanceOf = (name: string) =>
   expression.accountData(account.fixed(name), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64');
 
+/** The route's platform fee account and rate are chosen by whoever builds the run: cap the rate. */
+export const MAX_PLATFORM_FEE_BPS = 0n;
+
 export const tokenSweepIntoSwap = defineTemplate({
   inputs: {
     /** `route_plan` as the Swap API encoded it: the bytes between the discriminator and `in_amount`. */
@@ -120,6 +123,12 @@ export const tokenSweepIntoSwap = defineTemplate({
     ),
 
     step.snapshot('proceedsBefore', balanceOf('destinationAta'), 'readProceedsBefore'),
+
+    // The fee account sits in the route's own accounts: any nonzero rate pays whoever chose it.
+    step.require(
+      expression.lessThanOrEqual(expression.input('platformFeeBps'), expression.u64(MAX_PLATFORM_FEE_BPS)),
+      'platformFeeWithinCap',
+    ),
 
     // `route` takes the token program, the signer, and the user's source and destination token
     // accounts first; the route's own accounts follow as the group.

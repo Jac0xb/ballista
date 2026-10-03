@@ -18,7 +18,7 @@ use {
             fee_at, jupiter_ran, Leg, Routing, Snapshot, PLATFORM_FEE_ACCOUNT, ROUTE_HEAD,
             SNAPSHOT_DIR,
         },
-        template::{examples, upload, Example, Run},
+        template::{examples, scenarios, upload, Example, Run},
         tx::{self, assert_requirement_failed, Failure, Outcome},
         wallet::{
             self, associated_token_address, fund, holding, keypair, token_account, token_balance,
@@ -47,11 +47,12 @@ const ROUTE_FIXED_ACCOUNTS: usize = 9;
 /// 1%: the platform fee `jupiter_takes_exactly_in_amount_through_a_split_or_a_platform_fee` sends
 /// `route` with directly.
 const PLATFORM_FEE_BPS: u8 = 100;
-/// 1.5%: a platform fee that still fits `HOSTILE_SLIPPAGE_BPS` but not `TOLERANCE_BPS`; see
-/// `a_hostile_platform_fee_fits_inside_the_tolerance_it_also_sets`.
+/// 1.5%: a platform fee that still fits `HOSTILE_SLIPPAGE_BPS` but not `TOLERANCE_BPS`, which
+/// failed at `fillBeatTheOracle` before the cap; see
+/// `a_hostile_platform_fee_fails_at_platform_fee_within_cap`.
 const EXCESSIVE_FEE_BPS: u8 = 150;
 /// 2%: `slippageBps` loose enough that neither `PLATFORM_FEE_BPS` nor `EXCESSIVE_FEE_BPS` trips
-/// Jupiter's own slippage check, only Ballista's tolerance.
+/// Jupiter's own slippage check.
 const HOSTILE_SLIPPAGE_BPS: u16 = 200;
 
 /// A run's `toleranceBps`, and `route`'s own `slippageBps` and `platformFeeBps`: bundled so
@@ -697,52 +698,67 @@ fn hostile_fee_run(
     (swap, attacker_usdc, result)
 }
 
-/// The tolerance is a budget a hostile route can spend, not only the market moving: a platform fee
-/// the trader never agreed to, paid to an attacker's account, still clears `fillBeatTheOracle` at
-/// `PLATFORM_FEE_BPS` once `slippageBps` is relaxed to `HOSTILE_SLIPPAGE_BPS`, wide enough that
-/// Jupiter's own check never refuses it either. `findings/oracle-swap.md`, "Open: the tolerance is
-/// a budget a hostile route can spend".
+/// A platform fee the trader never agreed to, paid to an attacker's account: the template caps
+/// `platformFeeBps` at `MAX_PLATFORM_FEE_BPS`, 0, so any fee fails at `platformFeeWithinCap` before
+/// Jupiter runs. Before the cap, `PLATFORM_FEE_BPS` landed inside `TOLERANCE_BPS` once
+/// `slippageBps` was relaxed to `HOSTILE_SLIPPAGE_BPS`, and only `EXCESSIVE_FEE_BPS` failed, at
+/// `fillBeatTheOracle`. `findings/platform-fee.md`.
 #[test]
-fn a_hostile_platform_fee_inside_the_tolerance_lands() {
+fn a_hostile_platform_fee_fails_at_platform_fee_within_cap() {
     let snapshot = Snapshot::load(SNAPSHOT_DIR);
     let examples = examples();
     let example = &examples[TEMPLATE];
 
+    for fee_bps in [1, PLATFORM_FEE_BPS, EXCESSIVE_FEE_BPS, u8::MAX] {
+        let (swap, attacker_usdc, result) = hostile_fee_run(&snapshot, example, u64::from(fee_bps));
+        let failure = result.expect_err("a platform fee above the cap should fail");
+        assert_requirement_failed(&failure, example, "platformFeeWithinCap");
+        assert!(!jupiter_ran(&swap.jupiter, &failure), "{fee_bps} bps");
+        assert_eq!(token_balance(&swap.svm, &attacker_usdc), 0);
+        println!(
+            "{fee_bps} bps fee: refused at platformFeeWithinCap after {} CU in Ballista's run",
+            failure.compute_units_of(&ballista_sdk::ID).unwrap()
+        );
+    }
+}
+
+/// The cap is a template constant an author running their own frontend can raise. The test-only
+/// `jupiterOracleCheckedSwapFeeCap100` is this template with `MAX_PLATFORM_FEE_BPS` at 100: a 100
+/// bps fee lands and pays the fee account exactly its share, and 101 bps fails at
+/// `platformFeeWithinCap` before Jupiter runs.
+#[test]
+fn a_raised_cap_takes_a_fee_within_it_and_refuses_one_above() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let scenarios = scenarios();
+    let raised = &scenarios["jupiterOracleCheckedSwapFeeCap100"];
+
     // No fee, at the market: the on-chain fill a fee comes out of.
-    let mut baseline = Swap::new(&snapshot, example);
-    let run = baseline.sol_usd_run(example);
+    let mut baseline = Swap::new(&snapshot, &examples[TEMPLATE]);
+    let run = baseline.sol_usd_run(&examples[TEMPLATE]);
     baseline
         .send(run)
         .unwrap_or_else(|failure| panic!("no fee: {failure:?}"));
     let unfeed = baseline.usdc();
 
-    let (swap, attacker_usdc, result) =
-        hostile_fee_run(&snapshot, example, u64::from(PLATFORM_FEE_BPS));
-    result.unwrap_or_else(|failure| panic!("{failure:?}"));
-    let fee = token_balance(&swap.svm, &attacker_usdc);
-    assert_eq!(fee, fee_at(unfeed, u64::from(PLATFORM_FEE_BPS)));
+    let (swap, fee_account, result) = hostile_fee_run(&snapshot, raised, 100);
+    let outcome =
+        result.unwrap_or_else(|failure| panic!("100 bps under a 100 bps cap: {failure:?}"));
+    let fee = token_balance(&swap.svm, &fee_account);
+    assert_eq!(fee, fee_at(unfeed, 100));
     assert_eq!(swap.usdc(), unfeed - fee);
     println!(
-        "{PLATFORM_FEE_BPS} bps fee at {HOSTILE_SLIPPAGE_BPS} bps slippage: the attacker took \
-         {fee}, the trader {}",
-        swap.usdc()
+        "100 bps under a 100 bps cap: the fee account took {fee}, the trader {}; {} CU, {} bytes",
+        swap.usdc(),
+        outcome.compute_units,
+        outcome.size
     );
-}
 
-/// [`a_hostile_platform_fee_inside_the_tolerance_lands`], larger: `EXCESSIVE_FEE_BPS` still fits
-/// under `HOSTILE_SLIPPAGE_BPS`, wide enough that Jupiter's own check does not catch it, but not
-/// under `TOLERANCE_BPS`, and fails at `fillBeatTheOracle`.
-#[test]
-fn a_larger_hostile_platform_fee_fails_at_fill_beat_the_oracle() {
-    let snapshot = Snapshot::load(SNAPSHOT_DIR);
-    let examples = examples();
-    let example = &examples[TEMPLATE];
-
-    let (swap, attacker_usdc, result) =
-        hostile_fee_run(&snapshot, example, u64::from(EXCESSIVE_FEE_BPS));
-    let failure = result.expect_err("a fee this large should fail the fill check");
-    assert_requirement_failed(&failure, example, "fillBeatTheOracle");
-    assert_eq!(token_balance(&swap.svm, &attacker_usdc), 0);
+    let (swap, fee_account, result) = hostile_fee_run(&snapshot, raised, 101);
+    let failure = result.expect_err("101 bps should fail under a 100 bps cap");
+    assert_requirement_failed(&failure, raised, "platformFeeWithinCap");
+    assert!(!jupiter_ran(&swap.jupiter, &failure));
+    assert_eq!(token_balance(&swap.svm, &fee_account), 0);
 }
 
 /// Another wallet's wrapped SOL, holding `in_amount` (write rule 1), at `sourceAta`, while the

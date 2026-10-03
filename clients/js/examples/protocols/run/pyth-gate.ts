@@ -2,7 +2,7 @@ import type { Address, Instruction } from '@solana/kit';
 
 import { buildKitRunInstruction, type KitAccountBinding } from '../../../src/kit.js';
 import { compiled } from '../pyth-fresh-price-gate.js';
-import { JUPITER_V6 } from '../shared.js';
+import { JUPITER_V6, splitJupiterRoute } from '../shared.js';
 import { TOKEN_PROGRAM, at, pinned } from './programs.js';
 
 export function buildPythGateRun(input: {
@@ -19,11 +19,12 @@ export function buildPythGateRun(input: {
   maximumConfidence: bigint;
   floorPrice: bigint;
   ceilingPrice: bigint;
-  /** `splitJupiterRoute(swapData).args`. */
-  actionData: Uint8Array;
+  /** The Swap API's `route` data. */
+  routeData: Uint8Array;
   /** The route's account list from the third account on: the template passes the token program and the actor. */
   actionAccounts: readonly KitAccountBinding[];
 }): Instruction {
+  const route = splitJupiterRoute(input.routeData);
   return buildKitRunInstruction({
     compiled,
     templateAddress: input.templateAddress,
@@ -34,7 +35,11 @@ export function buildPythGateRun(input: {
       maximumConfidence: input.maximumConfidence,
       floorPrice: input.floorPrice,
       ceilingPrice: input.ceilingPrice,
-      actionData: input.actionData,
+      routePlan: route.routePlan,
+      inAmount: route.inAmount,
+      quotedOutAmount: route.quotedOutAmount,
+      slippageBps: route.slippageBps,
+      platformFeeBps: route.platformFeeBps,
     },
     accounts: {
       priceUpdate: at(input.priceUpdate),

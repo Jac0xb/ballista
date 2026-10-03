@@ -29,9 +29,9 @@ one byte (0 or 1), and a `bytes` input is a little-endian `u16` length followed 
 
 ::: code-group
 
-<<< @/../clients/js/examples/docs/named-inputs.ts#encode [TypeScript encoding]
+<<< @/../clients/js/examples/docs/named-inputs.ts#encode [TypeScript]
 
-<<< @/../clients/rust/examples/docs_limits.rs#encode-run-inputs [Rust encoding]
+<<< @/../clients/rust/examples/docs_limits.rs#encode-run-inputs [Rust]
 
 :::
 

@@ -112,17 +112,25 @@ returns. Here the inner template swaps, requires a minimum, and returns what arr
 `step.setReturnData`. The outer template runs it, reads the amount with `expression.returnData`,
 and deposits exactly that.
 
+The inner template:
+
 ::: code-group
 
-<<< @/../clients/js/examples/docs/swap-and-return-what-arrived.ts#template [TypeScript · Inner]
+<<< @/../clients/js/examples/docs/swap-and-return-what-arrived.ts#template [TypeScript · Template]
 
-<<< @/../clients/js/examples/docs/nested-swap-then-deposit.ts#template [TypeScript · Outer]
+<<< @/../clients/rust/examples/docs_templates.rs#swap-and-return-what-arrived [Rust · Template]
+
+:::
+
+The outer template, and its run:
+
+::: code-group
+
+<<< @/../clients/js/examples/docs/nested-swap-then-deposit.ts#template [TypeScript · Template]
 
 <<< @/../clients/js/examples/docs/nested-swap-then-deposit.ts#run [TypeScript · Run]
 
-<<< @/../clients/rust/examples/docs_templates.rs#swap-and-return-what-arrived [Rust · Inner]
-
-<<< @/../clients/rust/examples/docs_templates.rs#nested-swap-then-deposit [Rust · Outer]
+<<< @/../clients/rust/examples/docs_templates.rs#nested-swap-then-deposit [Rust · Template]
 
 <<< @/../clients/rust/examples/docs_runs.rs#nested-swap-then-deposit [Rust · Run]
 

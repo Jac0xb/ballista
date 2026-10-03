@@ -215,6 +215,14 @@ impl<'data> Scratch<'data> {
     pub fn set_groups(&mut self, layout: &RunLayout) {
         self.groups = layout.groups;
     }
+
+    /// Records `program` as the program the most recent CPI invoked, as a successful `INVOKE`
+    /// does, so a formal specification can check `RETURN_DATA` without modelling a CPI. Only the
+    /// `spec-api` feature compiles it; the program never does.
+    #[cfg(feature = "spec-api")]
+    pub fn set_last_invoked_for_spec(&mut self, program: &'data Address) {
+        self.last_invoked = Some(program);
+    }
 }
 
 /// Where one run's runtime accounts fall: the fixed accounts, `iterations` batch rows, then the

@@ -14,4 +14,5 @@
 //! - `rules::accounts`: account constraints are enforced exactly, and account reads are typed.
 //! - `rules::lifecycle`: finalized templates are immutable and unfinalized ones never run.
 
+pub mod mocks;
 pub mod rules;

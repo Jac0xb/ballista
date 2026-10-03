@@ -16,6 +16,9 @@ certora = []
 ## Host runtime for typechecking and adapter tests; see cvlr-pinocchio.
 rt = ["cvlr/rt", "cvlr-pinocchio/rt"]
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
+
 [dependencies]
 ballista = { workspace = true }
 ballista-common = { workspace = true }

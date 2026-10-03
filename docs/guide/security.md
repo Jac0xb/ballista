@@ -4,15 +4,26 @@ What protects a template, what does not, and what has and has not been reviewed.
 
 ## Audit status
 
-**Ballista has not been audited.** No third party has reviewed the program or the SDKs. The program
-deployed on devnet is a pre-release build that still has an upgrade authority. Treat Ballista as
-unaudited software and keep the value it controls to what you can afford to lose.
+**Ballista is pre-release and unaudited.** No third party has reviewed the program or the SDKs,
+and the program isn't on mainnet.
+
+- **The current build** runs only locally, in the test suite.
+- **The devnet build**, at the address the SDKs use by default, is an older pre-release that
+  rejects templates from this repository. It still has an upgrade authority: whoever holds that
+  key can change what every template on that build does, so while you use it, you trust that key.
+- **Each release will be immutable**, deployed with no upgrade authority. See
+  [Deployments](/guide/trust-model#deployments).
+
+Treat Ballista as unaudited software, and keep the value it controls to what you can afford to
+lose.
 
 ## Checked on chain
 
 The Ballista program checks every template once, at finalization, and checks every run against it,
 whichever SDK built the template. [Finalization checks](/guide/trust-model#finalization-checks)
-lists both.
+lists both, and [Who controls what](/guide/trust-model#who-controls-what) covers what they leave to
+you: the transaction builder, the rest of the transaction, the called programs and their upgrade
+authorities, and replay.
 
 ## Checked only by the TypeScript compiler
 
@@ -51,6 +62,7 @@ checks, the template lifecycle and type safety, are written but blocked, so they
   [registry entries](/guide/registries), and a run checks each entry before using it. See
   [State](/guide/trust-model#state).
 - **Immutable templates.** A finalized template cannot be changed, so what you reviewed is what
-  runs.
+  Ballista runs. That holds for Ballista's part only: the programs a template calls can be upgraded
+  by their own authorities, and so can today's devnet build of Ballista.
 
 See also [Trust model](/guide/trust-model) and [Failure modes and recovery](/guide/failure-modes).

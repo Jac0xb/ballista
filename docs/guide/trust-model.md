@@ -1,17 +1,25 @@
 # Trust model
 
-This page explains who controls what when a template runs, what an account declaration can
-guarantee, and where those guarantees stop. A template calls other programs with accounts the
-caller supplies, so its checks protect you only if you know which parts the caller controls.
+Who controls what when a template runs, what Ballista checks, and where those checks stop. A
+template calls other programs with accounts the caller supplies, so its checks protect you only if
+you know which parts the caller controls.
 
-## Who supplies what
+## Who controls what
 
-| Party | Supplies | Controls |
+| Party | Controls | What limits them |
 | --- | --- | --- |
-| Template author | The template, which cannot change once finalized (checked and locked on chain): account declarations, inputs, steps | What can happen, in what order, and under which conditions |
-| Caller | Every account, every input value, every signature | Which actual accounts and values the template works with |
-| Called programs | Their own instruction behavior and errors | What each call does with the accounts it receives |
-| Ballista | Checks at finalization and at run time, and the registry entries templates declare | Nothing else. It holds no authority of its own ([Signing](#signing)) and keeps state only in registry entries ([State](#state)) |
+| Template author | The declarations, inputs and steps | The [finalization checks](#finalization-checks); the template is fixed after them |
+| Caller | Every account, input value and signature in the run | The template's declarations, pins and checks |
+| Transaction builder | The caller's choices, when someone else builds the transaction, and its other instructions | The same, and what the signers check before signing |
+| Other instructions | Any account the signers allow, before and after the run | A template sees them only through [introspection](/reference/language#introspection) |
+| Called programs | What each call does with the accounts it gets | Their own checks, and the template's checks after the call |
+| Called programs' upgrade authorities | What those programs do after an upgrade | Nothing in the template. Call programs whose authority you trust |
+| Anyone, later (replay) | A second run, with the same inputs or the same signed message | Solana refuses only an identical transaction. Use a deadline, or record each use in a [registry entry](/guide/registries) |
+| Ballista | Its checks, and the registry entries templates declare | It holds no authority of its own: see [Signing](#signing) and [State](#state) |
+| Ballista's upgrade authority | What every template on the pre-release devnet build does | Nothing yet. Releases will have none: see [Deployments](#deployments) |
+
+Treat the caller and the builder as hostile unless the template binds them: a value from an input,
+or an account nothing pins, is theirs to choose.
 
 ## Finalization checks
 
@@ -135,15 +143,17 @@ A code on its own does not say which program raised it, though: a callee's `6001
 as Ballista's `InvalidTemplateAccount`. The transaction logs show which program failed. See
 [Errors and events](/guide/errors-and-events) for how codes are laid out.
 
-## Immutable deployments
+## Deployments
 
-Each version of the Ballista program is deployed under its own address with no upgrade authority,
-so nobody can change what a stored template means. A template's address is derived from the program
-that finalized it, so each template belongs to that one deployment for good. A new deployment is a
-different program, and templates must be uploaded again to use it.
+Each release of the Ballista program will be deployed under its own address with no upgrade
+authority, so that nobody can change what a stored template means. No release exists yet. The
+pre-release build on devnet still has an upgrade authority: whoever holds it can change what every
+template on that build does, so while you use it, you trust that key. It also predates this
+repository's template format and rejects its templates. See
+[Audit status](/guide/security#audit-status) and [Devnet workflow](/guide/devnet).
 
-For this reason the TypeScript SDK takes the program address as a parameter. The Rust SDK's
-instruction builders use the constant `ballista_sdk::ID`, and `find_template_pda_for_program`
-derives a template address under any other deployment. The program deployed on devnet today is an
-earlier pre-release build that rejects templates compiled from this repository; see
-[Devnet workflow](/guide/devnet).
+A template's address is derived from the program that finalized it, so each template belongs to
+that one deployment. A new deployment is a different program, and templates must be uploaded again
+to use it. For this reason the TypeScript SDK takes the program address as a parameter, and the
+Rust SDK's `_for_program` functions, such as `find_template_pda_for_program`, take any deployment
+other than `ballista_sdk::ID`.

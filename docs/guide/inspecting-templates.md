@@ -1,7 +1,9 @@
 # Inspecting a template
 
 Before you run a template someone else uploaded, read what it will do. A finalized template cannot
-change, so what you read is what runs.
+change, so what you read is what Ballista runs. That covers Ballista's part only: the programs the
+template calls can be upgraded by their own authorities, and so can the pre-release devnet build of
+Ballista itself.
 
 ## 1. Find and fetch it
 

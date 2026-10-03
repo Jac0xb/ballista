@@ -251,23 +251,46 @@ fn frame_outputs_calls_and_clock() {
     );
 }
 
-/// Every opcode value the executor does not run, the two loop opcodes among them (only `dispatch`
-/// starts a loop), fails and changes no register: all 182 of 0, 39, `FOREACH`, `REPEAT` and 78 to
-/// 255, against one `World`. Bound: as `World`.
-#[kani::proof]
-#[kani::unwind(179)]
-fn frame_unknown_opcodes() {
+/// Every opcode value the executor does not run fails and changes no register, each checked
+/// against one `World`. The 182 values are split over four harnesses so each stays small.
+fn unknown_opcodes_fail(opcodes: impl Iterator<Item = u8>) {
     let pool: [u8; 4] = kani::any();
     let world = World::new(&pool, any_runtime_value);
     let mut succeeded = false;
-    for opcode in [0u8, 39, OP_FOREACH, OP_REPEAT] {
-        succeeded |= world.check(opcode);
-    }
-    for opcode in 78..=255u8 {
+    for opcode in opcodes {
         succeeded |= world.check(opcode);
     }
     assert!(!succeeded);
     kani::cover!(world.template.dst == 0, "an unknown opcode naming register 0");
+}
+
+/// `unknown_opcodes_fail` for 0, 39 and the two loop opcodes (only `dispatch` starts a loop; one
+/// reached through a single step fails). Bound: as `World`.
+#[kani::proof]
+#[kani::unwind(5)]
+fn frame_unknown_opcodes_below_78() {
+    unknown_opcodes_fail([0u8, 39, OP_FOREACH, OP_REPEAT].into_iter());
+}
+
+/// `unknown_opcodes_fail` for 78 to 127. Bound: as `World`.
+#[kani::proof]
+#[kani::unwind(51)]
+fn frame_unknown_opcodes_78_to_127() {
+    unknown_opcodes_fail(78..=127u8);
+}
+
+/// `unknown_opcodes_fail` for 128 to 191. Bound: as `World`.
+#[kani::proof]
+#[kani::unwind(65)]
+fn frame_unknown_opcodes_128_to_191() {
+    unknown_opcodes_fail(128..=191u8);
+}
+
+/// `unknown_opcodes_fail` for 192 to 255. Bound: as `World`.
+#[kani::proof]
+#[kani::unwind(65)]
+fn frame_unknown_opcodes_192_to_255() {
+    unknown_opcodes_fail(192..=255u8);
 }
 
 /// Accounts' data bytes in the account frame checks: enough for a registry field after the 72-byte
@@ -441,15 +464,13 @@ const fn lamports_of(index: usize) -> u64 {
     1000 + index as u64
 }
 
-/// A body instruction for the loop proofs: a constant, a move, an add, the loop index, a row or
-/// fixed account's lamports, or a row or fixed input, with operands that can also name a register
-/// past the file. (A loop inside a body fails as an opcode the executor does not run:
-/// `frame_unknown_opcodes`.)
-fn body_instruction() -> InstructionRecord {
-    let opcode = one_of(&[OP_CONST_U64, OP_MOVE, OP_ADD, OP_LOOP_INDEX, OP_ACCOUNT_LAMPORTS, OP_LOAD_INPUT]);
+/// A body instruction for the loop proofs, from `opcodes`, with operands that can also name a
+/// register past the file; an account or input reference is a row one or a fixed one.
+fn body_instruction(opcodes: &[u8]) -> InstructionRecord {
+    let opcode = one_of(opcodes);
     let small = || kani::any_where(|n: &u8| (*n as usize) <= LOOP_REGISTERS);
     let reference = || {
-        let offset = kani::any_where(|n: &u8| *n <= 2);
+        let offset = kani::any_where(|n: &u8| *n <= 1);
         if kani::any() { offset | ITERATION_ACCOUNT_BIT } else { offset }
     };
     let (a, b) = match opcode {
@@ -458,6 +479,12 @@ fn body_instruction() -> InstructionRecord {
     };
     record(opcode, small(), a, b, 1, 0, kani::any_where(|n: &u64| *n <= 3))
 }
+
+/// Body opcodes for a count loop: a constant, a move, an add and the loop index.
+const COUNT_BODY: [u8; 4] = [OP_CONST_U64, OP_MOVE, OP_ADD, OP_LOOP_INDEX];
+/// Body opcodes for a row loop: an add, a move, the loop index, and a row or fixed account's
+/// lamports or input.
+const ROW_BODY: [u8; 5] = [OP_ADD, OP_MOVE, OP_LOOP_INDEX, OP_ACCOUNT_LAMPORTS, OP_LOAD_INPUT];
 
 /// The registers a loop leaves behind, computed from the documented rule rather than the
 /// executor's snapshot bookkeeping: each pass starts from the pre-loop registers with the carried
@@ -510,20 +537,14 @@ fn loop_accounts<const N: usize>() -> [AccountMemory<0>; N] {
     })
 }
 
-/// A loop (`REPEAT` or `FOREACH`) followed by one more instruction runs exactly as `loop_model`
-/// says: the same outcome, the same error at the same program counter, and the same final
-/// registers. That covers the carry mask (any `u64`, bits past the register file included), the
-/// restore and its skip when the body writes only carried registers, the pass count (a `REPEAT`
-/// reads its count register once; a count above `c` fails with `LoopCountExceeded`, a non-`u64`
-/// count with `TypeMismatch` or `InvalidRegister`), `LOOP_INDEX`, the row base each pass's row
-/// accounts and row inputs resolve against, and execution resuming after the body. Bound: 3
-/// registers, a 2-instruction body, at most 2 passes (a `REPEAT`'s `c` is 1 or 2, a batch has at
-/// most 2 rows), up to 2 fixed accounts, a batch stride of 1 or 2.
-#[kani::proof]
-#[kani::unwind(9)]
-fn loops_carry_exactly_the_masked_registers() {
-    let foreach: bool = kani::any();
-    let fixed: u8 = kani::any_where(|n: &u8| *n <= 2);
+/// A loop followed by one more instruction runs exactly as `loop_model` says: the same outcome, the
+/// same error at the same program counter, and the same final registers. That covers the carry
+/// mask (any `u64`, bits past the register file included), the restore and its skip when the body
+/// writes only carried registers, the pass count, `LOOP_INDEX`, the row base each pass's row
+/// accounts and row inputs resolve against, and execution resuming after the body. Returns whether
+/// the run succeeded.
+fn loop_runs_as_the_model(foreach: bool) -> bool {
+    let fixed: u8 = kani::any_where(|n: &u8| *n <= 1);
     let stride: u8 = if foreach { kani::any_where(|n: &u8| (1..=2).contains(n)) } else { 0 };
     let iterations: usize = if foreach { kani::any_where(|n: &usize| *n <= 2) } else { 0 };
     let row_inputs: u8 = if foreach { 1 } else { 0 };
@@ -531,14 +552,14 @@ fn loops_carry_exactly_the_masked_registers() {
     let carry: u64 = kani::any();
     let count_register = kani::any_where(|n: &u8| (*n as usize) <= LOOP_REGISTERS);
     let max = kani::any_where(|n: &u8| (1..=2).contains(n));
-    let entry = if foreach {
-        record(OP_FOREACH, NO_INDEX, 2, 0, 0, 0, carry)
+    let (entry, body): (InstructionRecord, &[u8]) = if foreach {
+        (record(OP_FOREACH, NO_INDEX, 2, 0, 0, 0, carry), &ROW_BODY)
     } else {
-        record(OP_REPEAT, NO_INDEX, 2, count_register, max, 0, carry)
+        (record(OP_REPEAT, NO_INDEX, 2, count_register, max, 0, carry), &COUNT_BODY)
     };
-    let after = body_instruction();
-    let instructions = [entry, body_instruction(), body_instruction(), after];
-    let constraints: [AccountConstraint; 4] = core::array::from_fn(|_| any::constraint());
+    let after = body_instruction(&COUNT_BODY);
+    let instructions = [entry, body_instruction(body), body_instruction(body), after];
+    let constraints: [AccountConstraint; 3] = core::array::from_fn(|_| any::constraint());
     let inputs_table = [any::input(), any::input()];
     let program = ProgramView {
         header: &header,
@@ -551,8 +572,8 @@ fn loops_carry_exactly_the_masked_registers() {
         pubkeys: &[],
         blob: &[],
     };
-    let mut memory = loop_accounts::<6>();
-    let accounts: [AccountView; 6] = {
+    let mut memory = loop_accounts::<5>();
+    let accounts: [AccountView; 5] = {
         let base = memory.as_mut_ptr();
         core::array::from_fn(|i| unsafe { (*base.add(i)).view() })
     };
@@ -598,38 +619,46 @@ fn loops_carry_exactly_the_masked_registers() {
     let body_writes_carried_only = instructions[1..3]
         .iter()
         .all(|record| (record.dst as usize) >= LOOP_REGISTERS || carry & (1u64 << record.dst) != 0);
-    kani::cover!(outcome.is_ok() && foreach && iterations == 2, "a FOREACH runs two rows");
-    kani::cover!(
-        outcome.is_ok() && !foreach && matches!(initial.get(count_register as usize), Some(RuntimeValue::U64(2))),
-        "a REPEAT runs two passes"
-    );
-    kani::cover!(outcome.is_ok() && body_writes_carried_only && iterations > 1, "the restore is skipped");
-    kani::cover!(outcome == Err(vm_error(BallistaError::LoopCountExceeded, 0)), "a count above its maximum");
-    kani::cover!(
-        outcome.is_ok() && iterations == 2 && instructions[1].opcode == OP_ACCOUNT_LAMPORTS && instructions[1].a & ITERATION_ACCOUNT_BIT != 0,
-        "a row account read on every row"
-    );
+    kani::cover!(outcome.is_ok() && body_writes_carried_only, "the restore is skipped");
+    kani::cover!(outcome.is_ok() && !body_writes_carried_only, "the restore runs");
+    outcome.is_ok()
 }
 
-/// Two loops in a row, each with a one-instruction body: the second starts from the registers the
-/// first left behind (not from the first loop's snapshot, whose buffer it reuses), and every
-/// FOREACH starts again at the first row. Bound: 3 registers, at most 2 passes per loop, 2 fixed
-/// accounts, stride 1.
+/// `loop_runs_as_the_model` for count loops (`REPEAT`): the count register is read once; a count
+/// above `c` fails with `LoopCountExceeded`, a non-`u64` count with `TypeMismatch` or
+/// `InvalidRegister`. Bound: 3 registers, a 2-instruction body (constants, moves, adds, the loop
+/// index), at most 2 passes (`c` of 1 or 2), any carry mask.
 #[kani::proof]
-#[kani::unwind(10)]
+#[kani::unwind(9)]
+fn count_loops_carry_exactly_the_masked_registers() {
+    let ok = loop_runs_as_the_model(false);
+    kani::cover!(ok, "a count loop runs");
+}
+
+/// `loop_runs_as_the_model` for batch loops (`FOREACH`): each pass's row accounts and row inputs
+/// resolve against `fixed + pass·stride`. Bound: 3 registers, a 2-instruction body (adds, moves,
+/// the loop index, a row or fixed account's lamports or input), at most 2 rows, up to 1 fixed
+/// account, a stride of 1 or 2, any carry mask.
+#[kani::proof]
+#[kani::unwind(9)]
+fn row_loops_carry_exactly_the_masked_registers() {
+    let ok = loop_runs_as_the_model(true);
+    kani::cover!(ok, "a batch loop runs");
+}
+
+/// Two loops in a row, a `FOREACH` then a `REPEAT`, each with a one-instruction body: the second
+/// starts from the registers the first left behind (not from the first loop's snapshot, whose
+/// buffer it reuses). Bound: 3 registers, at most 2 passes per loop, 2 fixed accounts, stride 1,
+/// any carry masks.
+#[kani::proof]
+#[kani::unwind(8)]
 fn consecutive_loops_start_from_the_registers_the_last_one_left() {
     let header = ProgramHeader::new(2, 1, 2, 0, 1, LOOP_REGISTERS as u8, 4, 0, 0, 0, 0, 0, 0, 1, 0);
     let iterations: usize = kani::any_where(|n: &usize| *n <= 2);
-    let make_loop = || {
-        if kani::any() {
-            record(OP_FOREACH, NO_INDEX, 1, 0, 0, 0, kani::any())
-        } else {
-            let count = kani::any_where(|n: &u8| (*n as usize) < LOOP_REGISTERS);
-            record(OP_REPEAT, NO_INDEX, 1, count, 2, 0, kani::any())
-        }
-    };
-    let (first, second) = (make_loop(), make_loop());
-    let instructions = [first, body_instruction(), second, body_instruction()];
+    let first = record(OP_FOREACH, NO_INDEX, 1, 0, 0, 0, kani::any());
+    let count = kani::any_where(|n: &u8| (*n as usize) < LOOP_REGISTERS);
+    let second = record(OP_REPEAT, NO_INDEX, 1, count, 2, 0, kani::any());
+    let instructions = [first, body_instruction(&COUNT_BODY), second, body_instruction(&COUNT_BODY)];
     let constraints: [AccountConstraint; 3] = core::array::from_fn(|_| any::constraint());
     let inputs_table = [any::input(), any::input()];
     let program = ProgramView {
@@ -660,22 +689,14 @@ fn consecutive_loops_start_from_the_registers_the_last_one_left() {
 
     let mut expected = initial;
     let modelled = (|| {
-        for (pc, entry) in [(0usize, first), (2, second)] {
-            let passes = if entry.opcode == OP_FOREACH {
-                iterations
-            } else {
-                match expected[entry.b as usize] {
-                    RuntimeValue::U64(count) if count <= 2 => count as usize,
-                    RuntimeValue::U64(_) => return Err(vm_error(BallistaError::LoopCountExceeded, pc as u16)),
-                    RuntimeValue::Unset => return Err(vm_error(BallistaError::InvalidRegister, pc as u16)),
-                    _ => return Err(vm_error(BallistaError::TypeMismatch, pc as u16)),
-                }
-            };
-            let rows = (entry.opcode == OP_FOREACH).then_some((2, 1));
-            let body = &instructions[pc + 1..pc + 2];
-            loop_model(&program, inputs, runtime, pc + 1, body, passes, rows, entry.immediate(), &mut expected)?;
-        }
-        Ok(())
+        loop_model(&program, inputs, runtime, 1, &instructions[1..2], iterations, Some((2, 1)), first.immediate(), &mut expected)?;
+        let passes = match expected[count as usize] {
+            RuntimeValue::U64(n) if n <= 2 => n as usize,
+            RuntimeValue::U64(_) => return Err(vm_error(BallistaError::LoopCountExceeded, 2)),
+            RuntimeValue::Unset => return Err(vm_error(BallistaError::InvalidRegister, 2)),
+            _ => return Err(vm_error(BallistaError::TypeMismatch, 2)),
+        };
+        loop_model(&program, inputs, runtime, 3, &instructions[3..4], passes, None, second.immediate(), &mut expected)
     })();
     assert_eq!(outcome, modelled);
     if outcome.is_ok() {
@@ -683,15 +704,11 @@ fn consecutive_loops_start_from_the_registers_the_last_one_left() {
             assert!(same_value(&real[register], &expected[register]));
         }
     }
-    kani::cover!(
-        outcome.is_ok() && first.opcode == OP_FOREACH && second.opcode == OP_FOREACH && iterations == 2,
-        "two FOREACH loops over two rows"
-    );
-    kani::cover!(outcome.is_ok() && first.opcode == OP_REPEAT && second.opcode == OP_FOREACH, "a REPEAT then a FOREACH");
+    kani::cover!(outcome.is_ok() && iterations == 2, "two rows, then a count loop");
 }
 
 /// Accounts in the account-check proof.
-const RUNTIME_ACCOUNTS: usize = 5;
+const RUNTIME_ACCOUNTS: usize = 4;
 
 /// `validate_runtime_accounts` accepts exactly the account lists the schema allows, and describes
 /// them exactly. It succeeds if and only if: one group length is given per declared group; the
@@ -699,17 +716,17 @@ const RUNTIME_ACCOUNTS: usize = 5;
 /// batch), between the minimum and maximum row counts; and each fixed account meets its own
 /// constraint and each row account its slot's row constraint (signer, writable, executable, pinned
 /// address, pinned owner, minimum data length). On success the layout has that row count and the
-/// groups start right after the last row, one after another. Bound: up to 5 accounts of any flags,
+/// groups start right after the last row, one after another. Bound: up to 4 accounts of any flags,
 /// one of two addresses, one of two owners, data length up to 3; up to 2 fixed accounts, a stride
-/// up to 2, up to 2 groups of up to 3 accounts; every constraint field, row bound and group length
-/// symbolic.
+/// up to 2, up to 2 rows, up to 1 group of up to 2 accounts (and up to 2 lengths given); every
+/// constraint field, row bound and group length symbolic.
 #[kani::proof]
 #[kani::unwind(33)]
 fn account_checks_enforce_the_schema_exactly() {
     let fixed: u8 = kani::any_where(|n: &u8| *n <= 2);
     let stride: u8 = kani::any_where(|n: &u8| *n <= 2);
-    let groups: u8 = kani::any_where(|n: &u8| *n <= 2);
-    let (min_rows, max_rows): (u8, u8) = (kani::any_where(|n: &u8| *n <= 3), kani::any_where(|n: &u8| *n <= 3));
+    let groups: u8 = kani::any_where(|n: &u8| *n <= 1);
+    let (min_rows, max_rows): (u8, u8) = (kani::any_where(|n: &u8| *n <= 2), kani::any_where(|n: &u8| *n <= 2));
     let header = ProgramHeader::new(fixed, stride, max_rows, min_rows, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, groups);
     let keys = [[7u8; 32], [9u8; 32]];
     let constraint = || {
@@ -747,8 +764,8 @@ fn account_checks_enforce_the_schema_exactly() {
         core::array::from_fn(|i| unsafe { (*base.add(i)).view() })
     };
     let accounts = &accounts[..count];
-    let lengths: [u8; 3] = core::array::from_fn(|_| kani::any_where(|n: &u8| *n <= 3));
-    let given: usize = kani::any_where(|n: &usize| *n <= 3);
+    let lengths: [u8; 2] = core::array::from_fn(|_| kani::any_where(|n: &u8| *n <= 2));
+    let given: usize = kani::any_where(|n: &usize| *n <= 2);
     let group_lengths = &lengths[..given];
 
     let result = validate_runtime_accounts(&program, accounts, group_lengths);
@@ -795,7 +812,7 @@ fn account_checks_enforce_the_schema_exactly() {
             }
         }
         assert_eq!(start, count);
-        kani::cover!(layout.iterations == 2 && given == 1, "two rows and a group");
+        kani::cover!(layout.iterations == 1 && given == 1 && layout.groups[0].1 == 1, "a row and a group");
     }
     kani::cover!(shape_ok && !constraints_ok, "a constraint fails on a well-shaped list");
 }

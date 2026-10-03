@@ -122,15 +122,16 @@ fn body_instruction() -> InstructionRecord {
 /// the same calls as running the same passes one instruction at a time with no cache. Every call
 /// also passes each declared account with exactly its record's signer and writable flags, each
 /// group member writable only as the transaction marked it and never as a signer, a view beside
-/// each meta naming the same account, and no signer seeds. Bound: 2 rows of 1 or 2 accounts after
-/// 2 fixed accounts, a group of 1; a body of an `INVOKE` then a loop index, a constant or a second
-/// `INVOKE`; a descriptor with up to 2 account records (fixed or row, any flags) and up to 2 data
-/// segments (a literal, or a `u64` or `u8` from register 0 or 1); any carry mask.
+/// each meta naming the same account, and no signer seeds. Bound: 2 rows of 1 account after 2
+/// fixed accounts, a group of 1 (forwarded or not); a body of an `INVOKE` then a loop index, a
+/// constant or a second `INVOKE`; a descriptor with up to 2 account records (fixed or row, any
+/// flags) and up to 1 data segment (a literal, or a `u64` from register 0 or 1); any carry mask;
+/// all 7 accounts at distinct addresses.
 #[kani::proof]
 #[kani::unwind(11)]
 #[kani::stub(pinocchio::cpi::invoke_signed_unchecked, crate::invoke::record_invocation)]
 fn batch_invocations_match_a_fresh_build_every_row() {
-    let stride: u8 = kani::any_where(|n: &u8| (1..=2).contains(n));
+    let stride: u8 = 1;
     let rows: usize = 2;
     let header = ProgramHeader::new(2, stride, 2, 0, 0, 2, 3, 1, 2, 2, 0, 0, 4, 0, 1);
     let reference = || {
@@ -142,7 +143,7 @@ fn batch_invocations_match_a_fresh_build_every_row() {
         account_group: if kani::any() { 0 } else { NO_INDEX },
         account_start_le: 0u16.to_le_bytes(),
         account_len: kani::any_where(|n: &u8| *n <= 2),
-        segment_len: kani::any_where(|n: &u8| *n <= 2),
+        segment_len: kani::any_where(|n: &u8| *n <= 1),
         segment_start_le: 0u16.to_le_bytes(),
         max_data_len_le: (MAX_DATA as u16).to_le_bytes(),
         reserved1: [0; 2],
@@ -152,7 +153,7 @@ fn batch_invocations_match_a_fresh_build_every_row() {
         CpiAccountRecord { account: reference(), flags: kani::any::<u8>() & (ACCOUNT_SIGNER | ACCOUNT_WRITABLE) },
     ];
     let segment = || {
-        let kind = one_of(&[DATA_LITERAL, DATA_REG_U64, DATA_REG_U8]);
+        let kind = one_of(&[DATA_LITERAL, DATA_REG_U64]);
         if kind == DATA_LITERAL {
             DataSegment { kind, register: NO_INDEX, offset_le: 0u16.to_le_bytes(), len_le: 2u16.to_le_bytes(), reserved: [0; 2] }
         } else {

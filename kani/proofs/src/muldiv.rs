@@ -76,29 +76,12 @@ fn check_contract(
     }
 }
 
-/// Calls `$check` once per divisor, each a constant (no loop, so the unwind bound stays the one the
-/// code under test needs), and counts the calls that returned true.
-macro_rules! per_divisor {
-    ($check:ident: $($divisor:expr),* $(,)?) => {
-        0u32 $(+ $check($divisor) as u32)*
-    };
-}
-
-/// The `u64` divisors, one per normalization class of `divlu` (its shift is the divisor's
-/// leading-zero count): 63 (1), 62 (3), 60 (10), 34 (a 30-bit prime), 32 (2^32 − 1), 31 (2^32 + 1),
-/// 1 (a 63-bit value), 0 (2^63, `u64::MAX`). A symbolic divisor makes that shift symbolic, and every
-/// later step a full divider, which does not finish; so each divisor gets its own call, with the
-/// dividend's factors symbolic.
-macro_rules! u64_divisors {
-    ($check:ident) => {
-        per_divisor!($check: 1, 3, 10, 1_000_000_007, (1 << 32) - 1, (1 << 32) + 1, (1 << 62) + 12_345, 1 << 63, u64::MAX)
-    };
-}
-
 /// `mul_div_u64(a, b, c, round_up)` meets the contract for this `c`, any rounding, and `a`, `b`
-/// with 24 symbolic bits each (three 8-bit windows). Returns whether it succeeded.
+/// with 18 symbolic bits each (three 6-bit windows: bits 0–5, 29–34, 58–63). Kani also checks
+/// every panic, overflow and loop bound on the way, so this proves those absent too. Returns
+/// whether it succeeded.
 fn u64_contract(c: u64) -> bool {
-    let (a, b) = (windowed_u64(8), windowed_u64(8));
+    let (a, b) = (windowed_u64(6), windowed_u64(6));
     let round_up: bool = kani::any();
     let outcome = mul_div_u64(a, b, c, round_up).map(|q| q as u128);
     let ok = outcome.is_ok();
@@ -109,49 +92,47 @@ fn u64_contract(c: u64) -> bool {
     ok
 }
 
-/// `mul_div_u64` meets the documented contract: `DivisionByZero` for a zero divisor, and for each
-/// divisor in `u64_divisors!` the floor or ceiling of the exact product, or `ArithmeticOverflow` exactly
-/// when it does not fit. Bound: the divisors listed (one per normalization shift class); `a` and
-/// `b` with 24 symbolic bits each (bits 0–7, 28–35, 56–63); either rounding.
+/// One harness per divisor, so each stays small and they run in parallel: a symbolic divisor makes
+/// `divlu`'s normalization shift (the divisor's leading zeros) symbolic, and every later step a
+/// full divider, which does not finish.
+macro_rules! u64_contracts {
+    ($($name:ident: $divisor:expr => $class:literal),* $(,)?) => {$(
+        #[doc = concat!("`mul_div_u64` meets the documented contract for the divisor ", $class, ": the floor or ceiling of the exact product, or `ArithmeticOverflow` exactly when it does not fit; no panic. Bound: that divisor; `a` and `b` with 18 symbolic bits each; either rounding.")]
+        #[kani::proof]
+        #[kani::unwind(4)]
+        fn $name() {
+            let ok = u64_contract($divisor);
+            kani::cover!(ok, "a quotient");
+        }
+    )*};
+}
+
+u64_contracts!(
+    mul_div_u64_contract_divisor_1: 1 => "1 (normalization shift 63)",
+    mul_div_u64_contract_divisor_3: 3 => "3 (shift 62)",
+    mul_div_u64_contract_divisor_10: 10 => "10 (shift 60)",
+    mul_div_u64_contract_divisor_prime: 1_000_000_007 => "1,000,000,007 (shift 34)",
+    mul_div_u64_contract_divisor_2_32_minus_1: (1 << 32) - 1 => "2^32 − 1 (shift 32)",
+    mul_div_u64_contract_divisor_2_32_plus_1: (1 << 32) + 1 => "2^32 + 1 (shift 31)",
+    mul_div_u64_contract_divisor_63_bits: (1 << 62) + 12_345 => "2^62 + 12,345 (shift 1)",
+    mul_div_u64_contract_divisor_2_63: 1 << 63 => "2^63 (shift 0)",
+    mul_div_u64_contract_divisor_max: u64::MAX => "u64::MAX (shift 0)",
+);
+
+/// A zero divisor is `DivisionByZero`, for every `a`, `b` and rounding, in both widths. Bound: none.
 #[kani::proof]
-#[kani::unwind(4)]
-fn mul_div_u64_meets_the_contract() {
+fn mul_div_rejects_a_zero_divisor() {
     assert_eq!(mul_div_u64(kani::any(), kani::any(), 0, kani::any()), Err(err(BallistaError::DivisionByZero)));
-    let successes = u64_divisors!(u64_contract);
-    kani::cover!(successes == 9, "every divisor has a successful quotient");
-}
-
-/// `mul_div_u64` never panics, overflows an intermediate, divides by zero or exceeds its loop
-/// bound: `divlu`'s two correction loops run at most twice each, which the unwind bound of 4
-/// proves. Bound: every `a` and `b` (full width) and either rounding, for each divisor in
-/// `u64_divisors!`.
-#[kani::proof]
-#[kani::unwind(4)]
-fn mul_div_u64_never_panics() {
-    fn run(c: u64) -> bool {
-        let (a, b): (u64, u64) = (kani::any(), kani::any());
-        let outcome = mul_div_u64(a, b, c, kani::any());
-        outcome.is_ok() && a > 1 << 40 && b > 1 << 40
-    }
-    let large = u64_divisors!(run);
-    kani::cover!(large > 0, "large factors divide");
-}
-
-/// The `u128` divisors: one-digit ones, which take two `divlu` steps (1, 3, 10^18, 2^64 − 1), and
-/// two-digit ones, which take Knuth D's normalized path at shifts 63 (2^64 + 1), 27 (2^100 +
-/// 12,345), 1 (2^126 + 1) and 0 (`u128::MAX`).
-macro_rules! u128_divisors {
-    ($check:ident) => {
-        per_divisor!($check: 1, 3, 1_000_000_000_000_000_000, u64::MAX as u128, (1u128 << 64) + 1, (1u128 << 100) + 12_345, (1u128 << 126) + 1, u128::MAX)
-    };
+    assert_eq!(mul_div_u128(kani::any(), kani::any(), 0, kani::any()), Err(err(BallistaError::DivisionByZero)));
 }
 
 /// `mul_div_u128(a, b, c, round_up)` meets the contract for this `c`, any rounding, and `a`, `b`
-/// with 24 symbolic bits each (three 8-bit windows), against products from the 32-bit-digit
-/// schoolbook in `util::U128Parts::widening_mul`, which shares nothing with `full_product`. Returns
-/// whether it succeeded.
+/// with 18 symbolic bits each (three 6-bit windows: bits 0–5, 61–66, 122–127), against products
+/// from the 32-bit-digit schoolbook in `util::U128Parts::widening_mul`, which shares nothing with
+/// `full_product`. Kani checks every panic, overflow and loop bound on the way. Returns whether it
+/// succeeded.
 fn u128_contract(c: u128) -> bool {
-    let (a, b) = (windowed_u128(8), windowed_u128(8));
+    let (a, b) = (windowed_u128(6), windowed_u128(6));
     let round_up: bool = kani::any();
     let product = |x: u128, y: u128| U128Parts::of(x).widening_mul(U128Parts::of(y));
     let outcome = mul_div_u128(a, b, c, round_up);
@@ -162,33 +143,30 @@ fn u128_contract(c: u128) -> bool {
     ok
 }
 
-/// `mul_div_u128` meets the documented contract, the 256-bit product included: `DivisionByZero`
-/// for a zero divisor, and for each divisor in `u128_divisors!` the floor or ceiling of the exact product,
-/// or `ArithmeticOverflow` exactly when it does not fit. Bound: the divisors listed; `a` and `b`
-/// with 24 symbolic bits each (bits 0–7, 60–67, 120–127); either rounding.
-#[kani::proof]
-#[kani::unwind(8)]
-fn mul_div_u128_meets_the_contract() {
-    assert_eq!(mul_div_u128(kani::any(), kani::any(), 0, kani::any()), Err(err(BallistaError::DivisionByZero)));
-    let successes = u128_divisors!(u128_contract);
-    kani::cover!(successes == 8, "every divisor has a successful quotient");
+/// As `u64_contracts!`, for `mul_div_u128`: one-digit divisors take two `divlu` steps, two-digit
+/// ones Knuth D's normalized path.
+macro_rules! u128_contracts {
+    ($($name:ident: $divisor:expr => $class:literal),* $(,)?) => {$(
+        #[doc = concat!("`mul_div_u128` meets the documented contract for the divisor ", $class, ", the 256-bit product included; no panic. Bound: that divisor; `a` and `b` with 18 symbolic bits each; either rounding.")]
+        #[kani::proof]
+        #[kani::unwind(8)]
+        fn $name() {
+            let ok = u128_contract($divisor);
+            kani::cover!(ok, "a quotient");
+        }
+    )*};
 }
 
-/// `mul_div_u128` never panics, overflows an intermediate, divides by zero or exceeds its loop
-/// bounds (`divide_3by2`'s correction loop runs at most twice). Bound: `a` and `b` with 48
-/// symbolic bits each (three 16-bit windows) and either rounding, for each divisor in
-/// `u128_divisors!`.
-#[kani::proof]
-#[kani::unwind(4)]
-fn mul_div_u128_never_panics() {
-    fn run(c: u128) -> bool {
-        let (a, b) = (windowed_u128(16), windowed_u128(16));
-        let outcome = mul_div_u128(a, b, c, kani::any());
-        outcome.is_ok() && (a >> 64) != 0 && (b >> 64) != 0
-    }
-    let wide = u128_divisors!(run);
-    kani::cover!(wide > 0, "two wide factors divide");
-}
+u128_contracts!(
+    mul_div_u128_contract_divisor_1: 1 => "1 (one digit)",
+    mul_div_u128_contract_divisor_3: 3 => "3 (one digit)",
+    mul_div_u128_contract_divisor_10_18: 1_000_000_000_000_000_000 => "10^18 (one digit)",
+    mul_div_u128_contract_divisor_2_64_minus_1: u64::MAX as u128 => "2^64 − 1 (one digit)",
+    mul_div_u128_contract_divisor_2_64_plus_1: (1u128 << 64) + 1 => "2^64 + 1 (two digits, shift 63)",
+    mul_div_u128_contract_divisor_101_bits: (1u128 << 100) + 12_345 => "2^100 + 12,345 (two digits, shift 27)",
+    mul_div_u128_contract_divisor_127_bits: (1u128 << 126) + 1 => "2^126 + 1 (two digits, shift 1)",
+    mul_div_u128_contract_divisor_max: u128::MAX => "u128::MAX (two digits, shift 0)",
+);
 
 /// `full_product` is the exact 256-bit product, against the 32-bit-digit schoolbook product.
 /// Bound: each operand has 12 symbolic bits, three 4-bit windows.

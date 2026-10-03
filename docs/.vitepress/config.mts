@@ -221,7 +221,8 @@ export default defineConfig({
     socialLinks: [{ icon: 'github', link: 'https://github.com/Jac0xb/ballista' }],
     footer: {
       message: 'BALLISTA / A SMALL MACHINE FOR COMPLEX TRANSACTIONS',
-      copyright: `OPEN SOURCE · MIT LICENSE · v${release}`,
+      // The version is the SDK's; the program itself is not yet released.
+      copyright: `OPEN SOURCE · MIT LICENSE · SDK v${release} · PROGRAM PRE-RELEASE`,
     },
   },
 });

@@ -2,6 +2,10 @@
 
 Zod authoring, deterministic flat-bytecode compilation, and instruction codecs for Ballista.
 
+**Status: pre-release.** The program hasn't been audited and isn't on mainnet. The current build
+runs only locally, in the test suite; the older devnet build rejects templates from this
+repository. [Details](https://jac0xb.github.io/ballista/guide/security#audit-status)
+
 ```ts
 import { account, compileTemplate, defineTemplate, expression, step, systemTransfer } from '@jac0xb/ballista';
 

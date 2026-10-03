@@ -47,8 +47,10 @@ template sign as a PDA.
 - A change to the wire format regenerates the shared example payloads in `fixtures/` with
   `pnpm fixtures`. The Rust verifier tests, the Mollusk tests (which run the program in a simulated
   Solana runtime), and the TypeScript tests all read the same files.
-- Each program version is deployed immutably at its own address. Stored templates cannot be
-  upgraded; moving to a new version means creating them again under the new deployment.
+- Each release will be deployed at its own address with no upgrade authority. The pre-release
+  devnet build still has one, so you trust whoever holds that key: they can change what every
+  template on that build does. Stored templates cannot be upgraded; moving to a new version means
+  uploading them again under the new deployment. See [Audit status](/guide/security#audit-status).
 - The program's Rust dependencies are pinned to exact versions, built on Pinocchio 0.11 (a
   lightweight library for Solana programs), and checked with `cargo build-sbf`, the Solana program
   build tool.

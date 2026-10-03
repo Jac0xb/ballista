@@ -4,6 +4,10 @@ Ballista is an on-chain transaction-template engine for Solana. Define a multi-p
 once, compile it into bounded bytecode, store it in an immutable account, and let any caller execute
 it with fresh inputs and accounts—without deploying another custom program.
 
+**Status: pre-release.** The program hasn't been audited and isn't on mainnet. The current build
+runs only locally, in the test suite; the older devnet build rejects templates from this
+repository. [Details](https://jac0xb.github.io/ballista/guide/security#audit-status)
+
 It is designed for the space between a one-off transaction and a bespoke smart contract: payroll
 batches, guarded token operations, account setup, treasury flows, post-CPI invariants, and other
 complex but finite orchestration. Templates can read accounts and the clock, perform checked typed
@@ -28,9 +32,11 @@ current program.
 - Explorer IDL: [`JDQL78RmakzfYKcWzAC56CmUGNhCMtje3HvDCyiH2xCX`](https://explorer.solana.com/address/JDQL78RmakzfYKcWzAC56CmUGNhCMtje3HvDCyiH2xCX?cluster=devnet)
 
 That deployment is an earlier pre-release build and rejects templates compiled from this
-repository with `InvalidTemplateProgram` (custom error 6002). A release will be deployed once and
-made immutable; until then, run templates locally with `pnpm build:program && pnpm test:integration`.
-See the [deployment policy](https://jac0xb.github.io/ballista/guide/devnet).
+repository with `InvalidTemplateProgram` (custom error 6002). It still has the upgrade authority
+above, so using it means trusting whoever holds that key: they can change what every template on
+that build does. Each release will be deployed with no upgrade authority; until then, run templates
+locally with `pnpm build:program && pnpm test:integration`. See the
+[deployment policy](https://jac0xb.github.io/ballista/guide/devnet).
 
 The checked-in [IDL](idl/ballista.json) is published through Solana's Program Metadata program.
 It describes Ballista's accounts and instructions for Explorer discovery; instruction fields marked
@@ -52,7 +58,10 @@ The [runnable TypeScript example](clients/js/examples/ensure-usdc-ata.ts) compil
 template that invokes the Associated Token Program's ordinary, non-idempotent `Create` instruction
 only when the derived token account is empty. The condition is evaluated by Ballista during `Run`,
 so the caller does not need an RPC existence check or a different transaction shape. A repeat run
-therefore proves the guard was applied: the same CPI would fail if Ballista invoked it again.
+therefore shows the guard was applied: the same CPI would fail if Ballista invoked it again.
+
+These runs used the pre-release devnet build above. It still runs this stored template, but
+rejects templates compiled from this repository today.
 
 - Template: [`5ttfid6DiryiFiPwoQZBQXaojHiXjf9nTJB93oVELvJB`](https://explorer.solana.com/address/5ttfid6DiryiFiPwoQZBQXaojHiXjf9nTJB93oVELvJB?cluster=devnet), ID `21844`, 264-byte payload
 - Template upload: [`61vW5fapGuwfVJQgMZaHvRqQkYwccjkUiGKXnEBPohw2kb3ut2LEPqFnn5Sa9yZ7iyweoxDn9pVmTeBbn8zUmKgv`](https://explorer.solana.com/tx/61vW5fapGuwfVJQgMZaHvRqQkYwccjkUiGKXnEBPohw2kb3ut2LEPqFnn5Sa9yZ7iyweoxDn9pVmTeBbn8zUmKgv?cluster=devnet)

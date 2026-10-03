@@ -180,6 +180,11 @@ a, button, input { -webkit-tap-highlight-color: transparent; }
 .start-link:hover { background: var(--signal); }
 .plain-link { padding: 8px 0; border-bottom: 1px solid var(--ink); }
 .plain-link:hover { color: var(--signal); border-color: var(--signal); }
+/* Pre-release status, under the links, so nobody reads the cover as production-ready. */
+.cover-status { max-width: 420px; margin: 28px 0 0; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 13px; line-height: 1.6; color: var(--muted); }
+.cover-status strong { color: var(--signal); font-weight: 600; }
+.cover-status a { color: var(--ink); border-bottom: 1px solid currentColor; }
+.cover-status a:hover { color: var(--signal); }
 
 /* The execution plate is a small, interactive technical drawing. */
 .execution-plate { border: 1px solid var(--ink); position: relative; }

@@ -15,9 +15,9 @@
 
 use {
     ballista_protocol_tests::{
-        snapshot::{Route, Snapshot, SNAPSHOT_DIR},
+        snapshot::{jupiter_ran, Route, Snapshot, PLATFORM_FEE_ACCOUNT, SNAPSHOT_DIR},
         template::{examples, upload, Example, Run},
-        tx::{self, Failure, Outcome},
+        tx::{self, assert_requirement_failed, Failure, Outcome},
         wallet::{
             self, associated_token_address, fund, keypair, token_account, token_balance, SOL,
             WSOL_MINT,
@@ -49,6 +49,9 @@ const EDGE: u64 = 100_000;
 /// destination token accounts, the destination token account, the destination mint, the platform
 /// fee account, the event authority and the program.
 const ROUTE_FIXED_ACCOUNTS: usize = 9;
+/// `route`'s data after its plan: `in_amount`, `quoted_out_amount` (u64 each), `slippage_bps`
+/// (u16) and `platform_fee_bps` (u8).
+const ROUTE_TAIL_LEN: usize = 8 + 8 + 2 + 1;
 
 /// Of those, the ones the template passes itself: the token program, the searcher, and its wrapped
 /// SOL twice, as source and as destination. The rest of the route's accounts are the group.
@@ -133,6 +136,11 @@ fn round_trip(route: &Route) -> Instruction {
         accounts,
         data,
     }
+}
+
+/// The little-endian u64 at `offset` in `data`.
+fn u64_at(data: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap())
 }
 
 /// An Anchor instruction discriminator: the first eight bytes of `sha256("global:<name>")`.
@@ -334,7 +342,30 @@ fn tip_run(
     tip: u64,
     edge: u64,
 ) -> Instruction {
-    let round_trip = round_trip(snapshot.route(ROUTE));
+    tip_run_of(
+        snapshot,
+        template,
+        example,
+        accounts,
+        tip,
+        edge,
+        &round_trip(snapshot.route(ROUTE)),
+    )
+}
+
+/// [`tip_run`] with `round_trip` as the strategy in place of the snapshot's own.
+fn tip_run_of(
+    snapshot: &Snapshot,
+    template: Address,
+    example: &Example,
+    accounts: &Accounts,
+    tip: u64,
+    edge: u64,
+    round_trip: &Instruction,
+) -> Instruction {
+    // The joined data is `route`'s: the plan, then `in_amount`, `quoted_out_amount`,
+    // `slippage_bps` and `platform_fee_bps`, which the template takes in parts.
+    let tail = round_trip.data.len() - ROUTE_TAIL_LEN;
     Run::new(template, example)
         .account("systemProgram", SYSTEM_PROGRAM_ID, false, false)
         .account("strategyProgram", snapshot.named("jupiter"), false, false)
@@ -342,7 +373,14 @@ fn tip_run(
         .account("searcher", accounts.searcher, true, true)
         .account("wsolAccount", accounts.wsol, true, false)
         .account("jitoTip", accounts.tip, true, false)
-        .input_bytes("strategyData", &round_trip.data[8..])
+        .input_bytes("routePlan", &round_trip.data[8..tail])
+        .input_u64("inAmount", u64_at(&round_trip.data, tail))
+        .input_u64("quotedOutAmount", u64_at(&round_trip.data, tail + 8))
+        .input_u64(
+            "slippageBps",
+            u16::from_le_bytes([round_trip.data[tail + 16], round_trip.data[tail + 17]]).into(),
+        )
+        .input_u64("platformFeeBps", round_trip.data[tail + 18].into())
         .input_u64("tipLamports", tip)
         .input_u64("minimumEdge", edge)
         .group(
@@ -828,4 +866,52 @@ fn measure_the_findings_numbers() {
         let profit = backrun_profit(&snapshot, whale_sale);
         println!("a {whale_sale}-lamport whale sale leaves the round trip a profit of {profit}");
     }
+}
+
+/// The joined round trip's platform fee rate and account are the run's builder's choice, as they
+/// are any route's: nothing ties either to the searcher. The template caps the round trip's
+/// `platformFeeBps` at `MAX_PLATFORM_FEE_BPS`, 0, so after the whale's sale a 0.1% fee paid to an
+/// attacker's wrapped SOL account, at 2% slippage, fails at `platformFeeWithinCap` before Jupiter
+/// runs, and no tip is paid. `findings/platform-fee.md`.
+#[test]
+fn a_hostile_platform_fee_fails_at_platform_fee_within_cap() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[EXAMPLE];
+    let accounts = Accounts::of(&snapshot);
+    let mut svm = market(&snapshot, Some(WHALE_SALE));
+    let template = upload_template(&mut svm, example);
+    let attacker = keypair(b"ballista-protocol-tests-attacker").pubkey();
+    let attacker_wsol = token_account(&mut svm, &attacker, &WSOL_MINT, 0);
+    let tip_before = balance(&svm, &accounts.tip);
+
+    // `route`'s data ends in `slippage_bps` (u16) and `platform_fee_bps` (u8).
+    let mut hostile = round_trip(snapshot.route(ROUTE));
+    let at = hostile.data.len() - 3;
+    hostile.data[at..at + 2].copy_from_slice(&200u16.to_le_bytes());
+    hostile.data[at + 2] = 10;
+    hostile.accounts[PLATFORM_FEE_ACCOUNT] = AccountMeta::new(attacker_wsol, false);
+
+    let run = tip_run_of(
+        &snapshot,
+        template,
+        example,
+        &accounts,
+        MINIMUM_TIP,
+        0,
+        &hostile,
+    );
+    let failure = send_backrun(&mut svm, &snapshot, run)
+        .expect_err("a platform fee above the cap should fail");
+    assert_requirement_failed(&failure, example, "platformFeeWithinCap");
+    assert!(
+        !jupiter_ran(&snapshot.named("jupiter"), &failure),
+        "{failure:?}"
+    );
+    assert_eq!(token_balance(&svm, &attacker_wsol), 0);
+    assert_eq!(balance(&svm, &accounts.tip), tip_before);
+    println!(
+        "refused a 10 bps fee at platformFeeWithinCap after {} CU in the run",
+        run_units(&failure.logs)
+    );
 }

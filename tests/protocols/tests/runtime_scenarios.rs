@@ -599,6 +599,35 @@ fn more_slices_than_the_loops_max_fail_before_anything_is_sold() {
     assert!(slices_logged(&failure.logs, 1).is_empty());
 }
 
+/// Each slice is a Jupiter `route` whose platform fee rate and account are the run's builder's
+/// choice. The split sell caps `platformFeeBps` at `MAX_PLATFORM_FEE_BPS`, 0, so a 1% fee paid to
+/// an attacker's USDC account, at 2% slippage, fails at `platformFeeWithinCap` before the first
+/// slice is sold. `findings/platform-fee.md`.
+#[test]
+fn a_hostile_platform_fee_fails_at_platform_fee_within_cap() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let scenarios = scenarios();
+    let example = &scenarios["splitSellPayout"];
+    let mut scene = Scene::new(&snapshot, &scenarios);
+    let attacker = keypair(b"ballista-protocol-tests-attacker").pubkey();
+    let attacker_usdc = token_account(&mut scene.svm, &attacker, &scene.usdc, 0);
+    scene.leg = scene.leg.with_platform_fee(100, 200, attacker_usdc);
+
+    let run = scene.split_sell_payout(example, 2, &[1]);
+    let failure = scene
+        .send(run)
+        .expect_err("a platform fee above the cap should fail");
+    assert_ballista_failure(
+        &failure,
+        example,
+        "RequirementFailed",
+        "platformFeeWithinCap",
+    );
+    assert!(!jupiter_ran(&scene.jupiter, &failure), "{failure:?}");
+    assert!(slices_logged(&failure.logs, 1).is_empty());
+    assert_eq!(token_balance(&scene.svm, &attacker_usdc), 0);
+}
+
 /// Rows that ask one unit more than the sale received fail at `payoutsWithinProceeds`: the first
 /// row takes the whole total, and the second's unit is refused before its transfer. Rows that ask
 /// exactly the total land and leave the seller none of it.

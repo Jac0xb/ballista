@@ -10,7 +10,7 @@
 
 use {
     ballista_protocol_tests::{
-        snapshot::{fee_at, jupiter_ran, Leg, Routing, Snapshot, ROUTE_HEAD, SNAPSHOT_DIR},
+        snapshot::{jupiter_ran, Leg, Routing, Snapshot, ROUTE_HEAD, SNAPSHOT_DIR},
         template::{examples, upload, Example, Run},
         tx::{self, Failure, Outcome},
         wallet::{
@@ -34,11 +34,11 @@ const DUST_FLOOR: u64 = 10_000;
 /// Raydium CLMM's `NotEnoughTickArrayAccount`: the swap would cross into a tick array it was not
 /// given.
 const NOT_ENOUGH_TICK_ARRAY_ACCOUNT: u32 = 6023;
-/// 1%: a platform fee that still clears `saleMetTheQuote` at `HOSTILE_SLIPPAGE_BPS`; see
-/// `a_hostile_platform_fee_fits_inside_the_slippage_it_also_sets`.
+/// 1%: a platform fee that cleared `saleMetTheQuote` at `HOSTILE_SLIPPAGE_BPS` before the cap;
+/// see `a_hostile_platform_fee_fails_at_platform_fee_within_cap`.
 const HOSTILE_FEE_BPS: u8 = 100;
-/// 2.5%: close to the 2.55% a `u8` fee allows, and still clears `saleMetTheQuote` at
-/// `LARGE_HOSTILE_SLIPPAGE_BPS`.
+/// 2.5%: close to the 2.55% a `u8` fee allows, which cleared `saleMetTheQuote` at
+/// `LARGE_HOSTILE_SLIPPAGE_BPS` before the cap.
 const LARGE_HOSTILE_FEE_BPS: u8 = 250;
 /// 2%: `slippageBps` loose enough that `HOSTILE_FEE_BPS` does not trip Jupiter's own slippage
 /// check.
@@ -369,26 +369,18 @@ fn an_attackers_destination_fails_at_proceeds_go_to_the_seller() {
 }
 
 /// `route`'s platform fee account is the run's builder's choice, and so is `slippageBps`: nothing
-/// ties either to the seller. `saleMetTheQuote` moves with `slippageBps`, so a builder who raises
-/// it to fit a fee past Jupiter's own check also raises what it may take from the seller. Selling
-/// the quoted 150 USDC with an attacker's wrapped SOL account as the platform fee account:
-/// `HOSTILE_FEE_BPS` lands at `HOSTILE_SLIPPAGE_BPS`, and `LARGE_HOSTILE_FEE_BPS`, close to the
-/// 2.55% a `u8` fee allows, lands at `LARGE_HOSTILE_SLIPPAGE_BPS`. `findings/token-sweep.md`,
-/// "Open: the quote and the fee are the builder's".
+/// ties either to the seller, and `saleMetTheQuote` moves with `slippageBps`. The template caps
+/// `platformFeeBps` at `MAX_PLATFORM_FEE_BPS`, 0. Selling the quoted 150 USDC with an attacker's
+/// wrapped SOL account as the platform fee account, `HOSTILE_FEE_BPS` at `HOSTILE_SLIPPAGE_BPS`
+/// and `LARGE_HOSTILE_FEE_BPS` at `LARGE_HOSTILE_SLIPPAGE_BPS` both fail at
+/// `platformFeeWithinCap`, before Jupiter runs. Before the cap both landed.
+/// `findings/platform-fee.md`.
 #[test]
-fn a_hostile_platform_fee_fits_inside_the_slippage_it_also_sets() {
+fn a_hostile_platform_fee_fails_at_platform_fee_within_cap() {
     let snapshot = Snapshot::load(SNAPSHOT_DIR);
     let examples = examples();
     let example = &examples[TEMPLATE];
     let balance = snapshot.route(ROUTE).legs[0].route.in_amount;
-
-    // No fee, at the quote's own slippage: the on-chain fill a fee is taken out of.
-    let mut baseline = Sweep::new(&snapshot, example);
-    let before_baseline = baseline.lamports();
-    let baseline_outcome = baseline
-        .sell(balance)
-        .unwrap_or_else(|failure| panic!("no fee: {failure:?}"));
-    let gross = baseline.lamports() + baseline_outcome.fee - before_baseline;
 
     for (platform_fee_bps, slippage_bps) in [
         (HOSTILE_FEE_BPS, HOSTILE_SLIPPAGE_BPS),
@@ -399,7 +391,7 @@ fn a_hostile_platform_fee_fits_inside_the_slippage_it_also_sets() {
         let attacker = keypair(b"ballista-protocol-tests-attacker").pubkey();
         let attacker_wsol = token_account(&mut sweep.svm, &attacker, &WSOL_MINT, 0);
         let before = sweep.lamports();
-        let outcome = sweep
+        let failure = sweep
             .sell_routed(
                 balance,
                 slippage_bps,
@@ -407,20 +399,18 @@ fn a_hostile_platform_fee_fits_inside_the_slippage_it_also_sets() {
                 DUST_FLOOR,
                 Routing::platform_fee_to(leg, attacker_wsol),
             )
-            .unwrap_or_else(|failure| {
-                panic!("{platform_fee_bps} bps at {slippage_bps} bps slippage: {failure:?}")
-            });
-        let fee = token_balance(&sweep.svm, &attacker_wsol);
-        assert_eq!(
-            fee,
-            fee_at(gross, u64::from(platform_fee_bps)),
+            .expect_err("a platform fee above the cap should fail");
+        tx::assert_requirement_failed(&failure, example, "platformFeeWithinCap");
+        assert!(
+            !jupiter_ran(&sweep.jupiter, &failure),
             "{platform_fee_bps} bps"
         );
-        let proceeds = sweep.lamports() + outcome.fee - before;
-        assert_eq!(proceeds, gross - fee, "{platform_fee_bps} bps");
+        assert_eq!(token_balance(&sweep.svm, &attacker_wsol), 0);
+        sweep.assert_nothing_sold(balance, before, &failure);
         println!(
-            "{platform_fee_bps} bps fee at {slippage_bps} bps slippage: the attacker took {fee}, \
-             the seller {proceeds}"
+            "{platform_fee_bps} bps fee at {slippage_bps} bps slippage: refused at \
+             platformFeeWithinCap after {} CU in Ballista's run",
+            failure.compute_units_of(&ballista_sdk::ID).unwrap()
         );
     }
 }

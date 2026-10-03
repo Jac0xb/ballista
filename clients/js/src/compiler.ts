@@ -340,6 +340,19 @@ export interface CompileStats {
   accountGroups: number;
 }
 
+/**
+ * Test-only options for `compileTemplate`; not part of the supported API, and no template needs
+ * them.
+ * @internal
+ */
+export interface CompileOptions {
+  /**
+   * Renumbers registers for reuse even when every value fits in 64 registers, one each, so a
+   * differential test can run the renumbered program against the one-register-per-value program.
+   */
+  forceRegisterReuse?: boolean;
+}
+
 export interface CompiledTemplate {
   template: Template;
   bytes: Uint8Array;
@@ -402,9 +415,12 @@ class Compiler {
   maxCpiDataLength = 0;
   /** Whether a `setReturnData` step has compiled; no invoke may follow it. */
   returnDataSet = false;
+  /** Test-only: see `CompileOptions.forceRegisterReuse`. */
+  readonly forceRegisterReuse: boolean;
 
-  constructor(template: Template) {
+  constructor(template: Template, options: CompileOptions = {}) {
     this.template = template;
+    this.forceRegisterReuse = options.forceRegisterReuse === true;
     this.inputEntries = Object.entries(template.inputs);
     this.rowInputEntries = Object.entries(template.batch?.rowInputs ?? {});
     this.fixedEntries = Object.entries(template.accounts);
@@ -465,8 +481,9 @@ class Compiler {
     for (const [, input] of this.rowInputEntries) this.inputRecords.push(this.compileInput(input));
 
     // Values take registers in order, one each. A template that fits in 64 keeps that numbering;
-    // only one that does not is renumbered to reuse registers.
-    const registers = this.nextRegister > MAX_REGISTERS ? this.reuseRegisters() : this.nextRegister;
+    // only one that does not is renumbered to reuse registers (or, in a test, one that forces it).
+    const reuse = this.nextRegister > MAX_REGISTERS || (this.forceRegisterReuse && this.nextRegister > 0);
+    const registers = reuse ? this.reuseRegisters() : this.nextRegister;
     if (this.instructions.length > MAX_VM_INSTRUCTIONS) {
       throw new RangeError('Template uses more than 128 VM instructions');
     }
@@ -1379,8 +1396,8 @@ class Compiler {
   }
 }
 
-export function compileTemplate(input: TemplateInput | Template): CompiledTemplate {
-  return new Compiler(TemplateSchema.parse(input)).compile();
+export function compileTemplate(input: TemplateInput | Template, options?: CompileOptions): CompiledTemplate {
+  return new Compiler(TemplateSchema.parse(input), options).compile();
 }
 
 /**

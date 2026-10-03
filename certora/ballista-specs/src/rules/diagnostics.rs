@@ -6,10 +6,11 @@
 //! - Expected to fail: byte stores read back as a word (heap); the constant program parsed from
 //!   byte stores, or from a `memcpy` of the binary's data (a global copied by `memcpy` is never
 //!   initialized in the prover's encoding: only globals loaded directly and branched on, or compared
-//!   by a 32-byte `memcmp`, are); a stack temporary built from a one-byte tag and a four-byte code,
-//!   copied with one eight-byte move, as `RunResult` and `RuntimeValue` values are.
-//! - Expected to prove: a word stored and read back as a word; the same copy when the temporary's
-//!   word is two four-byte halves, the one merge the prover rebuilds on the stack.
+//!   by a 32-byte `memcmp`, are); the code at offset 4 of a stack word whose tag was a one-byte
+//!   store, after one eight-byte copy, as executor errors are copied.
+//! - Expected to prove: a word stored and read back as a word; both halves of the same copy when
+//!   each half was a four-byte store, the one merge the prover rebuilds on the stack.
+//! - Probe: whether the one-byte tag of that copy survives.
 
 use ballista_common::template::*;
 use cvlr::nondet::havoc::alloc_mut_ref_havoced;
@@ -84,41 +85,52 @@ pub fn rule_heap_word_stores_read_back_as_words() {
     cvlr_assert!(word == 0x0807_0605_0403_0201);
 }
 
-/// The shape of an error the executor returns: a one-byte tag at offset 0, two bytes never written,
-/// a four-byte code at offset 4, built in a stack temporary and copied to the heap with one
-/// eight-byte move, as `validate_account`, `registry::open` and `mul_div` do with theirs. Returns
-/// the tag read back from the copy.
+/// The shape of an error the executor returns: a tag at offset 0, a four-byte code at offset 4,
+/// built in a stack temporary and copied to the heap with one eight-byte move, as
+/// `validate_account`, `registry::open`, `mul_div` and `cast` do with theirs. The tag is one byte
+/// with three bytes never written (`short`), or a full four-byte half. Returns the copied word,
+/// read back at the width it was stored, so the stack copy is the only width change.
 #[inline(always)]
-fn copied_tag(halves: bool) -> u8 {
+fn copied_word(short: bool) -> u64 {
     let mut temporary = core::mem::MaybeUninit::<u64>::uninit();
     let base = temporary.as_mut_ptr().cast::<u8>();
     let heap = alloc_mut_ref_havoced::<u64>();
     // SAFETY: every access stays inside the eight-byte temporary or the eight-byte allocation; the
     // four-byte stores sit at offsets 0 and 4 of an eight-byte-aligned word.
     unsafe {
-        if halves {
-            core::ptr::write_volatile(base.cast::<u32>(), 7);
-        } else {
+        if short {
             core::ptr::write_volatile(base, 7u8);
+        } else {
+            core::ptr::write_volatile(base.cast::<u32>(), 7);
         }
         core::ptr::write_volatile(base.add(4).cast::<u32>(), 6012);
         let word = core::ptr::read_volatile(base.cast::<u64>());
         core::ptr::write_volatile(heap as *mut u64, word);
-        // Read back at the width it was stored, so the stack copy is the only width change.
-        core::ptr::read_volatile(heap as *const u64) as u8
+        core::ptr::read_volatile(heap as *const u64)
     }
 }
 
-/// Expected to fail: the copy's tag is unknown to the prover, which rebuilds a stack word only from
-/// two four-byte halves. This is the shape that blocks the account, registry-refusal, `mul_div`
-/// and typing rules.
+/// Expected to fail: the code at offset 4 does not survive a copy of a word whose first store was
+/// narrower. The prover keeps stack values by offset and rebuilds a word only from two four-byte
+/// halves, so the copy carries the tag's store alone, or an unknown value. Rules that read an
+/// error's kind after such a copy (the account, `mul_div`, registry-refusal, ceiling and typing
+/// rules) are suspected blocked on this.
 #[rule]
-pub fn rule_stack_byte_tag_survives_a_word_copy() {
-    cvlr_assert!(copied_tag(false) == 7);
+pub fn rule_stack_word_copy_keeps_the_code_after_a_short_tag() {
+    cvlr_assert!(copied_word(true) >> 32 == 6012);
 }
 
-/// Expected to prove, the control: the same copy when the temporary's word is two four-byte halves.
+/// A probe, either result informative: whether the one-byte tag itself survives the same copy. If
+/// it proves, rules that read only an `Ok` or `Err` tag after such a copy are not blocked by it.
 #[rule]
-pub fn rule_stack_half_word_tag_survives_a_word_copy() {
-    cvlr_assert!(copied_tag(true) == 7);
+pub fn rule_stack_word_copy_keeps_a_short_tag() {
+    cvlr_assert!(copied_word(true) & 0xff == 7);
+}
+
+/// Expected to prove, the control: the same copy keeps both halves when each was a four-byte
+/// store, the one merge the prover rebuilds on the stack.
+#[rule]
+pub fn rule_stack_word_copy_keeps_both_halves() {
+    let word = copied_word(false);
+    cvlr_assert!(word & 0xffff_ffff == 7 && word >> 32 == 6012);
 }

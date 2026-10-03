@@ -17,6 +17,13 @@
 //! The rule here states link 1, the one a template's author controls, for any declarations, any
 //! record and any descriptor. Forwarded account groups are outside it: their members carry the
 //! transaction's writable flag and are never signers, by construction in `invoke_cpi`.
+//!
+//! Blocked. `verify_cpi` returns `Result<usize, TemplateError>`, whose tag is one byte (`Ok` is the
+//! niche value 0x21). Each error path writes that byte into a stack temporary and copies the word
+//! out with one eight-byte move, and `verify_instruction` reads the tag back as a byte. The prover
+//! cannot rebuild that word, so to it a refused CPI can read as accepted, and the rule would report
+//! that as a violation. The verifier's other helpers return the same type the same way, which is a
+//! further reason the typing rules are blocked.
 
 use ballista_common::template::*;
 use cvlr::nondet::havoc::alloc_mut_ref_havoced;

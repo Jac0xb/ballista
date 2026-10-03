@@ -3,7 +3,16 @@
 # on the host through its `spec-api` feature; pinocchio's off-chain CPI, return-data and sysvar
 # stubs make every CPI a no-op, so this fuzzes the interpreter's own branches with CPIs stubbed.
 #
-# Run (nightly): cargo +nightly-2025-11-21 fuzz run run_executor -- -max_total_time=600
+# Two targets, run from `fuzz-executor/` with a nightly toolchain:
+#   cargo +nightly-2025-11-21 fuzz run --sanitizer none run_executor -- -max_total_time=600 -max_len=2048
+#   cargo +nightly-2025-11-21 fuzz run --sanitizer none run_template_bytes \
+#     fuzz/corpus/run_template_bytes fuzz/seeds/run_template_bytes -- -max_total_time=600 -max_len=12288
+# `run_executor` drives the generators; `run_template_bytes` mutates real templates, seeded from
+# `fuzz/seeds/` (built from fixtures/*.hex, protocol-examples.json and benchmarks.json).
+# `--sanitizer none`: on macOS 26 the AddressSanitizer runtime hangs at startup enumerating the
+# dyld shared cache, before libFuzzer prints anything. Coverage instrumentation still applies, and
+# Rust's own bounds, overflow and panic checks still turn a bug into a crash. On Linux, drop the
+# flag to add ASan.
 [package]
 name = "ballista-fuzz-executor"
 version = "0.0.0"
@@ -32,3 +41,10 @@ bench = false
 
 [profile.release]
 debug = 1
+
+[[bin]]
+name = "run_template_bytes"
+path = "fuzz_targets/run_template_bytes.rs"
+test = false
+doc = false
+bench = false

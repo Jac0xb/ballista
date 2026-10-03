@@ -54,8 +54,8 @@ run. Rent is 5,080 lamports a byte at today's rate, counting 128 bytes of overhe
 - **Upload.** The creator pays for the template account, an 80-byte header plus the compiled
   template: (128 + 80 + template bytes) × 5,080 lamports. The 216-byte
   [Getting started](/guide/getting-started) template locks 2,153,920 lamports, about 0.0022 SOL;
-  the [largest template allowed](/reference/limits) locks about 0.053 SOL. A [finalized](/reference/glossary#finalize)
-  template is never closed, so its rent stays locked.
+  the [largest template allowed](/reference/limits) locks about 0.053 SOL. A
+  [finalized](/reference/glossary#finalize) template is never closed, so its rent stays locked.
 - **Registry entries.** The run that creates an [entry](/guide/registries) pays for it, a 72-byte
   header plus the fields: (128 + 72 + field bytes) × 5,080 lamports. Entries are never closed
   either.
@@ -68,7 +68,7 @@ run. Rent is 5,080 lamports a byte at today's rate, counting 128 bytes of overhe
 Ballista makes [CPIs](/reference/glossary#cpi) in a fixed order, with checks between them; it is
 not a general smart-contract language. Write your own program for any of these:
 
-- **Custody.** A template can't hold funds: it has no authority of its own.
+- **Custody.** A template can't take custody of funds: it has no authority of its own.
 - **PDA signing.** A template can't sign as a [PDA](/reference/glossary#pda); see
   [when Ballista signs](/guide/trust-model#signing).
 - **Protocol-owned state.** [Registry entries](/guide/registries) hold small per-template state,

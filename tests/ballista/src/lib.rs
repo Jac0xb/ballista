@@ -9,6 +9,8 @@ mod profile;
 
 #[cfg(test)]
 mod tests {
+    mod register_reuse;
+
     use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
     use base64::{engine::general_purpose::STANDARD, Engine as _};

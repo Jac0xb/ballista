@@ -1820,5 +1820,952 @@
         "label": "sixDecimals"
       }
     ]
+  },
+  "register-reuse-signed-quote": {
+    "hash": "b1101c8dea2932598ffffe14f80ed449f3b0ac67028d692ad166e3a0d8a0fa4a",
+    "stats": {
+      "payloadBytes": 1778,
+      "fixedAccounts": 10,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 1,
+      "registers": 20,
+      "instructions": 90,
+      "cpis": 2,
+      "maxExpandedCpis": 5,
+      "maxCpiDataLength": 9,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "inputs.amount"
+      },
+      {
+        "pc": 1,
+        "path": "constants[0]"
+      },
+      {
+        "pc": 2,
+        "path": "constants[1]"
+      },
+      {
+        "pc": 3,
+        "path": "constants[2]"
+      },
+      {
+        "pc": 4,
+        "path": "constants[3]"
+      },
+      {
+        "pc": 5,
+        "path": "constants[4]"
+      },
+      {
+        "pc": 6,
+        "path": "constants[5]"
+      },
+      {
+        "pc": 7,
+        "path": "constants[6]"
+      },
+      {
+        "pc": 8,
+        "path": "constants[7]"
+      },
+      {
+        "pc": 9,
+        "path": "constants[8]"
+      },
+      {
+        "pc": 10,
+        "path": "constants[9]"
+      },
+      {
+        "pc": 11,
+        "path": "constants[10]"
+      },
+      {
+        "pc": 12,
+        "path": "constants[11]"
+      },
+      {
+        "pc": 13,
+        "path": "constants[12]"
+      },
+      {
+        "pc": 14,
+        "path": "constants[13]"
+      },
+      {
+        "pc": 15,
+        "path": "constants[14]"
+      },
+      {
+        "pc": 16,
+        "path": "constants[15]"
+      },
+      {
+        "pc": 17,
+        "path": "constants[16]"
+      },
+      {
+        "pc": 18,
+        "path": "accounts.takerFills"
+      },
+      {
+        "pc": 19,
+        "path": "accounts.takerFills"
+      },
+      {
+        "pc": 20,
+        "path": "steps[0]",
+        "label": "quoteInstructionIndex"
+      },
+      {
+        "pc": 21,
+        "path": "steps[0]",
+        "label": "quoteInstructionIndex"
+      },
+      {
+        "pc": 22,
+        "path": "steps[1]",
+        "label": "quoteIsEd25519"
+      },
+      {
+        "pc": 23,
+        "path": "steps[1]",
+        "label": "quoteIsEd25519"
+      },
+      {
+        "pc": 24,
+        "path": "steps[1]",
+        "label": "quoteIsEd25519"
+      },
+      {
+        "pc": 25,
+        "path": "steps[2]",
+        "label": "quoteIsOneSelfContainedSignature"
+      },
+      {
+        "pc": 26,
+        "path": "steps[2]",
+        "label": "quoteIsOneSelfContainedSignature"
+      },
+      {
+        "pc": 27,
+        "path": "steps[2]",
+        "label": "quoteIsOneSelfContainedSignature"
+      },
+      {
+        "pc": 28,
+        "path": "steps[2]",
+        "label": "quoteIsOneSelfContainedSignature"
+      },
+      {
+        "pc": 29,
+        "path": "steps[3]",
+        "label": "quoteIsBySigner"
+      },
+      {
+        "pc": 30,
+        "path": "steps[3]",
+        "label": "quoteIsBySigner"
+      },
+      {
+        "pc": 31,
+        "path": "steps[3]",
+        "label": "quoteIsBySigner"
+      },
+      {
+        "pc": 32,
+        "path": "steps[3]",
+        "label": "quoteIsBySigner"
+      },
+      {
+        "pc": 33,
+        "path": "steps[3]",
+        "label": "quoteIsBySigner"
+      },
+      {
+        "pc": 34,
+        "path": "steps[4]",
+        "label": "quoteMessageOffset"
+      },
+      {
+        "pc": 35,
+        "path": "steps[5]",
+        "label": "quoteIsTagged"
+      },
+      {
+        "pc": 36,
+        "path": "steps[5]",
+        "label": "quoteIsTagged"
+      },
+      {
+        "pc": 37,
+        "path": "steps[5]",
+        "label": "quoteIsTagged"
+      },
+      {
+        "pc": 38,
+        "path": "steps[6]",
+        "label": "quoteHasNotExpired"
+      },
+      {
+        "pc": 39,
+        "path": "steps[6]",
+        "label": "quoteHasNotExpired"
+      },
+      {
+        "pc": 40,
+        "path": "steps[6]",
+        "label": "quoteHasNotExpired"
+      },
+      {
+        "pc": 41,
+        "path": "steps[6]",
+        "label": "quoteHasNotExpired"
+      },
+      {
+        "pc": 42,
+        "path": "steps[6]",
+        "label": "quoteHasNotExpired"
+      },
+      {
+        "pc": 43,
+        "path": "steps[7]",
+        "label": "quoteIsForThisTaker"
+      },
+      {
+        "pc": 44,
+        "path": "steps[7]",
+        "label": "quoteIsForThisTaker"
+      },
+      {
+        "pc": 45,
+        "path": "steps[7]",
+        "label": "quoteIsForThisTaker"
+      },
+      {
+        "pc": 46,
+        "path": "steps[7]",
+        "label": "quoteIsForThisTaker"
+      },
+      {
+        "pc": 47,
+        "path": "steps[7]",
+        "label": "quoteIsForThisTaker"
+      },
+      {
+        "pc": 48,
+        "path": "steps[8]",
+        "label": "withinTheQuotedSize"
+      },
+      {
+        "pc": 49,
+        "path": "steps[8]",
+        "label": "withinTheQuotedSize"
+      },
+      {
+        "pc": 50,
+        "path": "steps[8]",
+        "label": "withinTheQuotedSize"
+      },
+      {
+        "pc": 51,
+        "path": "steps[8]",
+        "label": "withinTheQuotedSize"
+      },
+      {
+        "pc": 52,
+        "path": "steps[9]",
+        "label": "paysInTheQuotedMint"
+      },
+      {
+        "pc": 53,
+        "path": "steps[9]",
+        "label": "paysInTheQuotedMint"
+      },
+      {
+        "pc": 54,
+        "path": "steps[9]",
+        "label": "paysInTheQuotedMint"
+      },
+      {
+        "pc": 55,
+        "path": "steps[9]",
+        "label": "paysInTheQuotedMint"
+      },
+      {
+        "pc": 56,
+        "path": "steps[9]",
+        "label": "paysInTheQuotedMint"
+      },
+      {
+        "pc": 57,
+        "path": "steps[10]",
+        "label": "deliversTheQuotedMint"
+      },
+      {
+        "pc": 58,
+        "path": "steps[10]",
+        "label": "deliversTheQuotedMint"
+      },
+      {
+        "pc": 59,
+        "path": "steps[10]",
+        "label": "deliversTheQuotedMint"
+      },
+      {
+        "pc": 60,
+        "path": "steps[10]",
+        "label": "deliversTheQuotedMint"
+      },
+      {
+        "pc": 61,
+        "path": "steps[10]",
+        "label": "deliversTheQuotedMint"
+      },
+      {
+        "pc": 62,
+        "path": "steps[11]",
+        "label": "paymentReachesTheMaker"
+      },
+      {
+        "pc": 63,
+        "path": "steps[11]",
+        "label": "paymentReachesTheMaker"
+      },
+      {
+        "pc": 64,
+        "path": "steps[11]",
+        "label": "paymentReachesTheMaker"
+      },
+      {
+        "pc": 65,
+        "path": "steps[11]",
+        "label": "paymentReachesTheMaker"
+      },
+      {
+        "pc": 66,
+        "path": "steps[12]",
+        "label": "priceTheFill"
+      },
+      {
+        "pc": 67,
+        "path": "steps[12]",
+        "label": "priceTheFill"
+      },
+      {
+        "pc": 68,
+        "path": "steps[12]",
+        "label": "priceTheFill"
+      },
+      {
+        "pc": 69,
+        "path": "steps[13]",
+        "label": "takerPays"
+      },
+      {
+        "pc": 70,
+        "path": "steps[14]",
+        "label": "makerDelivers"
+      },
+      {
+        "pc": 71,
+        "path": "steps[15]"
+      },
+      {
+        "pc": 72,
+        "path": "steps[16]"
+      },
+      {
+        "pc": 73,
+        "path": "steps[16]"
+      },
+      {
+        "pc": 74,
+        "path": "steps[17]"
+      },
+      {
+        "pc": 75,
+        "path": "steps[17]"
+      },
+      {
+        "pc": 76,
+        "path": "steps[18]"
+      },
+      {
+        "pc": 77,
+        "path": "steps[18]"
+      },
+      {
+        "pc": 78,
+        "path": "steps[18]"
+      },
+      {
+        "pc": 79,
+        "path": "steps[18]"
+      },
+      {
+        "pc": 80,
+        "path": "steps[19]"
+      },
+      {
+        "pc": 81,
+        "path": "steps[19]"
+      },
+      {
+        "pc": 82,
+        "path": "steps[19]"
+      },
+      {
+        "pc": 83,
+        "path": "steps[19]"
+      },
+      {
+        "pc": 84,
+        "path": "steps[20]",
+        "label": "withinTakerCap"
+      },
+      {
+        "pc": 85,
+        "path": "steps[20]",
+        "label": "withinTakerCap"
+      },
+      {
+        "pc": 86,
+        "path": "steps[20]",
+        "label": "withinTakerCap"
+      },
+      {
+        "pc": 87,
+        "path": "steps[21]"
+      },
+      {
+        "pc": 88,
+        "path": "steps[21]"
+      },
+      {
+        "pc": 89,
+        "path": "steps[22]"
+      }
+    ]
+  },
+  "register-reuse-loop": {
+    "hash": "e005e3b84375f24bb9d0368419a55b6b9c8be6ed0324b71ae69023b02d27d4bb",
+    "stats": {
+      "payloadBytes": 1756,
+      "fixedAccounts": 3,
+      "batchStride": 0,
+      "batchMaxIterations": 0,
+      "batchMinIterations": 0,
+      "inputs": 2,
+      "registers": 9,
+      "instructions": 101,
+      "cpis": 1,
+      "maxExpandedCpis": 10,
+      "maxCpiDataLength": 12,
+      "emitEvent": false,
+      "rowInputs": 0,
+      "accountGroups": 0
+    },
+    "sourceMap": [
+      {
+        "pc": 0,
+        "path": "inputs.passes"
+      },
+      {
+        "pc": 1,
+        "path": "inputs.stride"
+      },
+      {
+        "pc": 2,
+        "path": "constants[0]"
+      },
+      {
+        "pc": 3,
+        "path": "constants[1]"
+      },
+      {
+        "pc": 4,
+        "path": "constants[2]"
+      },
+      {
+        "pc": 5,
+        "path": "steps[0]",
+        "label": "before0"
+      },
+      {
+        "pc": 6,
+        "path": "steps[0]",
+        "label": "before0"
+      },
+      {
+        "pc": 7,
+        "path": "steps[0]",
+        "label": "before0"
+      },
+      {
+        "pc": 8,
+        "path": "steps[0]",
+        "label": "before0"
+      },
+      {
+        "pc": 9,
+        "path": "steps[1]",
+        "label": "before1"
+      },
+      {
+        "pc": 10,
+        "path": "steps[1]",
+        "label": "before1"
+      },
+      {
+        "pc": 11,
+        "path": "steps[1]",
+        "label": "before1"
+      },
+      {
+        "pc": 12,
+        "path": "steps[1]",
+        "label": "before1"
+      },
+      {
+        "pc": 13,
+        "path": "steps[2]",
+        "label": "before2"
+      },
+      {
+        "pc": 14,
+        "path": "steps[2]",
+        "label": "before2"
+      },
+      {
+        "pc": 15,
+        "path": "steps[2]",
+        "label": "before2"
+      },
+      {
+        "pc": 16,
+        "path": "steps[2]",
+        "label": "before2"
+      },
+      {
+        "pc": 17,
+        "path": "steps[3]",
+        "label": "before3"
+      },
+      {
+        "pc": 18,
+        "path": "steps[3]",
+        "label": "before3"
+      },
+      {
+        "pc": 19,
+        "path": "steps[3]",
+        "label": "before3"
+      },
+      {
+        "pc": 20,
+        "path": "steps[3]",
+        "label": "before3"
+      },
+      {
+        "pc": 21,
+        "path": "steps[4]",
+        "label": "before4"
+      },
+      {
+        "pc": 22,
+        "path": "steps[4]",
+        "label": "before4"
+      },
+      {
+        "pc": 23,
+        "path": "steps[4]",
+        "label": "before4"
+      },
+      {
+        "pc": 24,
+        "path": "steps[4]",
+        "label": "before4"
+      },
+      {
+        "pc": 25,
+        "path": "steps[5]",
+        "label": "before5"
+      },
+      {
+        "pc": 26,
+        "path": "steps[5]",
+        "label": "before5"
+      },
+      {
+        "pc": 27,
+        "path": "steps[5]",
+        "label": "before5"
+      },
+      {
+        "pc": 28,
+        "path": "steps[5]",
+        "label": "before5"
+      },
+      {
+        "pc": 29,
+        "path": "steps[6]",
+        "label": "before6"
+      },
+      {
+        "pc": 30,
+        "path": "steps[6]",
+        "label": "before6"
+      },
+      {
+        "pc": 31,
+        "path": "steps[6]",
+        "label": "before6"
+      },
+      {
+        "pc": 32,
+        "path": "steps[6]",
+        "label": "before6"
+      },
+      {
+        "pc": 33,
+        "path": "steps[7]",
+        "label": "before7"
+      },
+      {
+        "pc": 34,
+        "path": "steps[7]",
+        "label": "before7"
+      },
+      {
+        "pc": 35,
+        "path": "steps[7]",
+        "label": "before7"
+      },
+      {
+        "pc": 36,
+        "path": "steps[7]",
+        "label": "before7"
+      },
+      {
+        "pc": 37,
+        "path": "steps[8]",
+        "label": "before8"
+      },
+      {
+        "pc": 38,
+        "path": "steps[8]",
+        "label": "before8"
+      },
+      {
+        "pc": 39,
+        "path": "steps[8]",
+        "label": "before8"
+      },
+      {
+        "pc": 40,
+        "path": "steps[8]",
+        "label": "before8"
+      },
+      {
+        "pc": 41,
+        "path": "steps[9]",
+        "label": "before9"
+      },
+      {
+        "pc": 42,
+        "path": "steps[9]",
+        "label": "before9"
+      },
+      {
+        "pc": 43,
+        "path": "steps[9]",
+        "label": "before9"
+      },
+      {
+        "pc": 44,
+        "path": "steps[9]",
+        "label": "before9"
+      },
+      {
+        "pc": 45,
+        "path": "steps[10]",
+        "label": "before10"
+      },
+      {
+        "pc": 46,
+        "path": "steps[10]",
+        "label": "before10"
+      },
+      {
+        "pc": 47,
+        "path": "steps[10]",
+        "label": "before10"
+      },
+      {
+        "pc": 48,
+        "path": "steps[10]",
+        "label": "before10"
+      },
+      {
+        "pc": 49,
+        "path": "steps[11]",
+        "label": "before11"
+      },
+      {
+        "pc": 50,
+        "path": "steps[11]",
+        "label": "before11"
+      },
+      {
+        "pc": 51,
+        "path": "steps[11]",
+        "label": "before11"
+      },
+      {
+        "pc": 52,
+        "path": "steps[11]",
+        "label": "before11"
+      },
+      {
+        "pc": 53,
+        "path": "steps[12]",
+        "label": "before12"
+      },
+      {
+        "pc": 54,
+        "path": "steps[12]",
+        "label": "before12"
+      },
+      {
+        "pc": 55,
+        "path": "steps[12]",
+        "label": "before12"
+      },
+      {
+        "pc": 56,
+        "path": "steps[12]",
+        "label": "before12"
+      },
+      {
+        "pc": 57,
+        "path": "steps[13]",
+        "label": "before13"
+      },
+      {
+        "pc": 58,
+        "path": "steps[13]",
+        "label": "before13"
+      },
+      {
+        "pc": 59,
+        "path": "steps[13]",
+        "label": "before13"
+      },
+      {
+        "pc": 60,
+        "path": "steps[13]",
+        "label": "before13"
+      },
+      {
+        "pc": 61,
+        "path": "steps[16]",
+        "label": "payTerms"
+      },
+      {
+        "pc": 62,
+        "path": "steps[16]",
+        "label": "payTerms"
+      },
+      {
+        "pc": 63,
+        "path": "steps[16]",
+        "label": "payTerms"
+      },
+      {
+        "pc": 64,
+        "path": "steps[16].steps[0]"
+      },
+      {
+        "pc": 65,
+        "path": "steps[16].steps[0]"
+      },
+      {
+        "pc": 66,
+        "path": "steps[16].steps[0]"
+      },
+      {
+        "pc": 67,
+        "path": "steps[16].steps[1]"
+      },
+      {
+        "pc": 68,
+        "path": "steps[16].steps[1]"
+      },
+      {
+        "pc": 69,
+        "path": "steps[16].steps[2]"
+      },
+      {
+        "pc": 70,
+        "path": "steps[16].steps[2]"
+      },
+      {
+        "pc": 71,
+        "path": "steps[16].steps[2]"
+      },
+      {
+        "pc": 72,
+        "path": "steps[16].steps[3]",
+        "label": "payEvenTerms"
+      },
+      {
+        "pc": 73,
+        "path": "steps[16].steps[3]",
+        "label": "payEvenTerms"
+      },
+      {
+        "pc": 74,
+        "path": "steps[16].steps[3]",
+        "label": "payEvenTerms"
+      },
+      {
+        "pc": 75,
+        "path": "steps[16].steps[3]",
+        "label": "payEvenTerms"
+      },
+      {
+        "pc": 76,
+        "path": "steps[16].steps[4]",
+        "label": "indexCommutes"
+      },
+      {
+        "pc": 77,
+        "path": "steps[16].steps[4]",
+        "label": "indexCommutes"
+      },
+      {
+        "pc": 78,
+        "path": "steps[16].steps[4]",
+        "label": "indexCommutes"
+      },
+      {
+        "pc": 79,
+        "path": "steps[16].steps[4]",
+        "label": "indexCommutes"
+      },
+      {
+        "pc": 80,
+        "path": "steps[16].steps[4]",
+        "label": "indexCommutes"
+      },
+      {
+        "pc": 81,
+        "path": "steps[16].steps[4]",
+        "label": "indexCommutes"
+      },
+      {
+        "pc": 82,
+        "path": "steps[17]",
+        "label": "after0"
+      },
+      {
+        "pc": 83,
+        "path": "steps[17]",
+        "label": "after0"
+      },
+      {
+        "pc": 84,
+        "path": "steps[17]",
+        "label": "after0"
+      },
+      {
+        "pc": 85,
+        "path": "steps[17]",
+        "label": "after0"
+      },
+      {
+        "pc": 86,
+        "path": "steps[18]",
+        "label": "after1"
+      },
+      {
+        "pc": 87,
+        "path": "steps[18]",
+        "label": "after1"
+      },
+      {
+        "pc": 88,
+        "path": "steps[18]",
+        "label": "after1"
+      },
+      {
+        "pc": 89,
+        "path": "steps[18]",
+        "label": "after1"
+      },
+      {
+        "pc": 90,
+        "path": "steps[19]",
+        "label": "after2"
+      },
+      {
+        "pc": 91,
+        "path": "steps[19]",
+        "label": "after2"
+      },
+      {
+        "pc": 92,
+        "path": "steps[19]",
+        "label": "after2"
+      },
+      {
+        "pc": 93,
+        "path": "steps[19]",
+        "label": "after2"
+      },
+      {
+        "pc": 94,
+        "path": "steps[20]",
+        "label": "after3"
+      },
+      {
+        "pc": 95,
+        "path": "steps[20]",
+        "label": "after3"
+      },
+      {
+        "pc": 96,
+        "path": "steps[20]",
+        "label": "after3"
+      },
+      {
+        "pc": 97,
+        "path": "steps[20]",
+        "label": "after3"
+      },
+      {
+        "pc": 98,
+        "path": "steps[21]",
+        "label": "largestWithinTotal"
+      },
+      {
+        "pc": 99,
+        "path": "steps[21]",
+        "label": "largestWithinTotal"
+      },
+      {
+        "pc": 100,
+        "path": "steps[22]"
+      }
+    ]
   }
 }

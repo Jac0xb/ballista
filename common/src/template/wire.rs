@@ -195,7 +195,9 @@ pub const OP_SET_RETURN_DATA: u8 = 63;
 /// The number of instructions in the transaction. `a` is the Instructions sysvar account, as for
 /// every opcode up to `OP_READ_INSTRUCTION_BYTES`.
 pub const OP_INSTRUCTION_COUNT: u8 = 64;
-/// The index of the instruction running this template.
+/// The index of the transaction instruction running this template, from the Instructions sysvar,
+/// which counts only the transaction's own instructions: under a CPI, such as a nested run, it is
+/// the outer instruction's.
 pub const OP_INSTRUCTION_INDEX: u8 = 65;
 /// The program of the instruction whose `u64` index is in register `b`.
 pub const OP_INSTRUCTION_PROGRAM: u8 = 66;
@@ -224,7 +226,8 @@ pub const OP_BYTES_LEN: u8 = 74;
 /// Checks the registry entry in fixed account `a`, or creates it, and keeps it open for the rest
 /// of the run. `b` is the `pubkey` register holding its key, or [`NO_INDEX`] for the zero key; `c`
 /// is the account that pays for an entry this creates. The immediate is a [`RegistryOpen`].
-/// Writes no register. Once per entry account, at the root, never after `SET_RETURN_DATA`.
+/// Writes no register. Once per entry account, at the root, never after `SET_RETURN_DATA`. An
+/// entry the run has open already, in another account slot, fails the run.
 pub const OP_OPEN_REGISTRY: u8 = 75;
 /// Reads a field of the entry open in account `a` into `dst`, typed as the read opcode the
 /// immediate's [`RegistryField`] names.

@@ -69,8 +69,9 @@ pub enum BallistaError {
     #[error("bytes were read from a writable account")]
     WritableAccountBytesRead,
     /// An open found an account that is not the entry the template named: the wrong owner, size or
-    /// header, not writable, or, when it creates the entry, not the derived address. The context
-    /// is the program counter.
+    /// header, not writable, or, when it creates the entry, not the derived address. Also an entry
+    /// this run has open already, which a second entry of the same registry reaches when its key
+    /// equals the first's. The context is the program counter.
     #[error("invalid registry entry")]
     InvalidRegistryEntry,
     /// A CPI passed an entry this run has open as writable. Only a nested Ballista run could use

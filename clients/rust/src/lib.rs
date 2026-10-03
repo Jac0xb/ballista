@@ -1,10 +1,12 @@
 //! Rust client for Ballista: template addresses, lifecycle and run instruction codecs, typed run
-//! input encoding, error decoding, and re-exports of the shared authoring builder.
+//! input encoding, error decoding, run output decoding from transaction logs, and re-exports of
+//! the shared authoring builder.
 //!
 //! Authoring from Rust uses [`ProgramBuilder`], which emits the same bytecode the TypeScript
 //! compiler produces; see `examples/author_template.rs`. Running a template from Rust needs only
 //! the template address, the account metas in schema order, and inputs encoded with
-//! [`RunInputs`]; see `examples/run_template.rs`.
+//! [`RunInputs`]; see `examples/run_template.rs`. [`program_data`] and [`decode_run_event`] read a
+//! run's events and `EMIT` output back from the transaction's logs.
 
 use ballista_common::instruction::*;
 use solana_program::{
@@ -13,12 +15,20 @@ use solana_program::{
     pubkey::Pubkey,
 };
 
+mod logs;
+
 pub use ballista_common;
 pub use ballista_common::template::{
     decode_ballista_error, DecodedError, ErrorSource, ProgramBuilder, Segment, MAX_REGISTRIES,
     REGISTRY_SEED,
 };
+pub use logs::{
+    decode_run_event, program_data, BallistaOutput, LogError, ProgramDataLine, RunEvent,
+};
 
+/// The address of the pre-release devnet build, which the functions without `_for_program`
+/// use. That build has an upgrade authority and rejects templates from this repository: pass
+/// your own deployment's address to the `_for_program` functions.
 pub const ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
 pub const BALLISTA_ID: Pubkey = ID;
 pub const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111");
@@ -164,19 +174,40 @@ impl RunInputs {
     }
 }
 
+/// An Anchor instruction discriminator: the first eight bytes of `sha256("global:<name>")`, where
+/// `name` is the instruction handler's snake_case name. An Anchor program expects it at the start
+/// of the instruction data, as a template's CPI to one starts with a `Segment::Literal` of it.
+pub fn anchor_discriminator(name: &str) -> [u8; 8] {
+    let hash = solana_sha256_hasher::hashv(&[b"global:", name.as_bytes()]).to_bytes();
+    let mut discriminator = [0; 8];
+    discriminator.copy_from_slice(&hash[..8]);
+    discriminator
+}
+
 pub fn create_template_instruction(
     creator: Pubkey,
     template_id: u16,
     payload: &[u8],
 ) -> Instruction {
-    let (template, _) = find_template_pda(&creator, template_id);
+    create_template_instruction_for_program(creator, template_id, payload, &ID)
+}
+
+/// [`create_template_instruction`] for the deployment at `program_id`, under which the template's
+/// address is derived.
+pub fn create_template_instruction_for_program(
+    creator: Pubkey,
+    template_id: u16,
+    payload: &[u8],
+    program_id: &Pubkey,
+) -> Instruction {
+    let (template, _) = find_template_pda_for_program(&creator, template_id, program_id);
     let mut data = Vec::with_capacity(35 + payload.len());
     data.push(IX_CREATE_TEMPLATE);
     data.extend_from_slice(&template_id.to_le_bytes());
     data.extend_from_slice(&template_hash(payload));
     data.extend_from_slice(payload);
     Instruction {
-        program_id: ID,
+        program_id: *program_id,
         accounts: vec![
             AccountMeta::new(creator, true),
             AccountMeta::new(template, false),
@@ -192,14 +223,26 @@ pub fn begin_template_instruction(
     payload_len: u32,
     payload_hash: [u8; 32],
 ) -> Instruction {
-    let (template, _) = find_template_pda(&creator, template_id);
+    begin_template_instruction_for_program(creator, template_id, payload_len, payload_hash, &ID)
+}
+
+/// [`begin_template_instruction`] for the deployment at `program_id`, under which the template's
+/// address is derived.
+pub fn begin_template_instruction_for_program(
+    creator: Pubkey,
+    template_id: u16,
+    payload_len: u32,
+    payload_hash: [u8; 32],
+    program_id: &Pubkey,
+) -> Instruction {
+    let (template, _) = find_template_pda_for_program(&creator, template_id, program_id);
     let mut data = Vec::with_capacity(39);
     data.push(IX_BEGIN_TEMPLATE);
     data.extend_from_slice(&template_id.to_le_bytes());
     data.extend_from_slice(&payload_len.to_le_bytes());
     data.extend_from_slice(&payload_hash);
     Instruction {
-        program_id: ID,
+        program_id: *program_id,
         accounts: vec![
             AccountMeta::new(creator, true),
             AccountMeta::new(template, false),
@@ -215,12 +258,24 @@ pub fn write_template_chunk_instruction(
     offset: u32,
     bytes: &[u8],
 ) -> Instruction {
+    write_template_chunk_instruction_for_program(creator, template, offset, bytes, &ID)
+}
+
+/// [`write_template_chunk_instruction`] for the deployment at `program_id`. `template` is the
+/// address [`find_template_pda_for_program`] derives under it.
+pub fn write_template_chunk_instruction_for_program(
+    creator: Pubkey,
+    template: Pubkey,
+    offset: u32,
+    bytes: &[u8],
+    program_id: &Pubkey,
+) -> Instruction {
     let mut data = Vec::with_capacity(5 + bytes.len());
     data.push(IX_WRITE_TEMPLATE_CHUNK);
     data.extend_from_slice(&offset.to_le_bytes());
     data.extend_from_slice(bytes);
     Instruction {
-        program_id: ID,
+        program_id: *program_id,
         accounts: vec![
             AccountMeta::new(creator, true),
             AccountMeta::new(template, false),
@@ -230,8 +285,18 @@ pub fn write_template_chunk_instruction(
 }
 
 pub fn finalize_template_instruction(creator: Pubkey, template: Pubkey) -> Instruction {
+    finalize_template_instruction_for_program(creator, template, &ID)
+}
+
+/// [`finalize_template_instruction`] for the deployment at `program_id`. `template` is the address
+/// [`find_template_pda_for_program`] derives under it.
+pub fn finalize_template_instruction_for_program(
+    creator: Pubkey,
+    template: Pubkey,
+    program_id: &Pubkey,
+) -> Instruction {
     Instruction {
-        program_id: ID,
+        program_id: *program_id,
         accounts: vec![
             AccountMeta::new(creator, true),
             AccountMeta::new(template, false),
@@ -241,8 +306,18 @@ pub fn finalize_template_instruction(creator: Pubkey, template: Pubkey) -> Instr
 }
 
 pub fn cancel_template_instruction(creator: Pubkey, template: Pubkey) -> Instruction {
+    cancel_template_instruction_for_program(creator, template, &ID)
+}
+
+/// [`cancel_template_instruction`] for the deployment at `program_id`. `template` is the address
+/// [`find_template_pda_for_program`] derives under it.
+pub fn cancel_template_instruction_for_program(
+    creator: Pubkey,
+    template: Pubkey,
+    program_id: &Pubkey,
+) -> Instruction {
     Instruction {
-        program_id: ID,
+        program_id: *program_id,
         accounts: vec![
             AccountMeta::new(creator, true),
             AccountMeta::new(template, false),
@@ -256,6 +331,16 @@ pub fn run_instruction(
     runtime_accounts: Vec<AccountMeta>,
     input_bytes: &[u8],
 ) -> Instruction {
+    run_instruction_for_program(template, runtime_accounts, input_bytes, &ID)
+}
+
+/// [`run_instruction`] for the deployment at `program_id`, which finalized `template`.
+pub fn run_instruction_for_program(
+    template: Pubkey,
+    runtime_accounts: Vec<AccountMeta>,
+    input_bytes: &[u8],
+    program_id: &Pubkey,
+) -> Instruction {
     let mut data = Vec::with_capacity(1 + input_bytes.len());
     data.push(IX_RUN);
     data.extend_from_slice(input_bytes);
@@ -263,7 +348,7 @@ pub fn run_instruction(
     accounts.push(AccountMeta::new_readonly(template, false));
     accounts.extend(runtime_accounts);
     Instruction {
-        program_id: ID,
+        program_id: *program_id,
         accounts,
         data,
     }
@@ -287,6 +372,88 @@ mod tests {
         let run = run_instruction(template, vec![], &[1, 2]);
         assert_eq!(run.data, vec![IX_RUN, 1, 2]);
         assert_eq!(run.accounts[0].pubkey, template);
+    }
+
+    /// Each builder is its `_for_program` variant with `ID`, and the variant addresses the program
+    /// it is given, deriving a template address under that program where it derives one.
+    #[test]
+    fn every_builder_has_a_variant_for_another_deployment() {
+        let creator = Pubkey::new_unique();
+        let other = Pubkey::new_unique();
+        let (template, _) = find_template_pda(&creator, 3);
+        let (other_template, _) = find_template_pda_for_program(&creator, 3, &other);
+        assert_ne!(template, other_template);
+        let metas = vec![AccountMeta::new(Pubkey::new_unique(), true)];
+        let builders: [(Instruction, Instruction, Instruction); 6] = [
+            (
+                create_template_instruction(creator, 3, &[1, 2]),
+                create_template_instruction_for_program(creator, 3, &[1, 2], &ID),
+                create_template_instruction_for_program(creator, 3, &[1, 2], &other),
+            ),
+            (
+                begin_template_instruction(creator, 3, 9, [4; 32]),
+                begin_template_instruction_for_program(creator, 3, 9, [4; 32], &ID),
+                begin_template_instruction_for_program(creator, 3, 9, [4; 32], &other),
+            ),
+            (
+                write_template_chunk_instruction(creator, template, 5, &[6]),
+                write_template_chunk_instruction_for_program(creator, template, 5, &[6], &ID),
+                write_template_chunk_instruction_for_program(
+                    creator,
+                    other_template,
+                    5,
+                    &[6],
+                    &other,
+                ),
+            ),
+            (
+                finalize_template_instruction(creator, template),
+                finalize_template_instruction_for_program(creator, template, &ID),
+                finalize_template_instruction_for_program(creator, other_template, &other),
+            ),
+            (
+                cancel_template_instruction(creator, template),
+                cancel_template_instruction_for_program(creator, template, &ID),
+                cancel_template_instruction_for_program(creator, other_template, &other),
+            ),
+            (
+                run_instruction(template, metas.clone(), &[7]),
+                run_instruction_for_program(template, metas.clone(), &[7], &ID),
+                run_instruction_for_program(other_template, metas.clone(), &[7], &other),
+            ),
+        ];
+        for (default, with_id, elsewhere) in builders {
+            assert_eq!(default, with_id);
+            assert_eq!(default.program_id, ID);
+            assert_eq!(elsewhere.program_id, other);
+            assert_eq!(elsewhere.data, default.data);
+            let template_at = |instruction: &Instruction| {
+                instruction
+                    .accounts
+                    .iter()
+                    .position(|meta| meta.pubkey == template || meta.pubkey == other_template)
+                    .map(|at| instruction.accounts[at].pubkey)
+            };
+            assert_eq!(template_at(&default), Some(template), "{default:?}");
+            assert_eq!(
+                template_at(&elsewhere),
+                Some(other_template),
+                "{elsewhere:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn anchor_discriminators_hash_the_global_namespace() {
+        // sha256("global:initialize") and sha256("global:route"), Jupiter's swap, first 8 bytes.
+        assert_eq!(
+            anchor_discriminator("initialize"),
+            [0xaf, 0xaf, 0x6d, 0x1f, 0x0d, 0x98, 0x9b, 0xed]
+        );
+        assert_eq!(
+            anchor_discriminator("route"),
+            [0xe5, 0x17, 0xcb, 0x97, 0x7a, 0xe3, 0xad, 0x2a]
+        );
     }
 
     #[test]

@@ -51,7 +51,8 @@ impl EntryId<'_> {
 }
 
 /// Checks the entry `id` names in `entry`, or creates it with `payer`'s lamports, then marks the
-/// entry's data exclusively borrowed for the rest of the run.
+/// entry's data exclusively borrowed for the rest of the run. An entry this run has open already
+/// fails with `InvalidRegistryEntry`.
 ///
 /// The mark is Ballista's record that the entry is open. `READ_REGISTRY` and `WRITE_REGISTRY`
 /// require it, and every CPI meets it: the invocation refuses a writable account whose data is
@@ -69,14 +70,15 @@ pub fn open(entry: &AccountView, payer: &AccountView, id: &EntryId, size: usize)
     } else {
         create_entry(payer, entry, id, size)?;
     }
-    // A second open of the same account, a duplicate in the transaction, finds it marked already.
-    if !entry.is_borrowed_mut() {
-        let mut view = *entry;
-        let borrowed = view
-            .try_borrow_mut()
-            .map_err(|_| BallistaError::InvalidRegistryEntry)?;
-        core::mem::forget(borrowed);
-    }
+    // The verifier lets a template open each entry account once, so an account already marked here
+    // is one the transaction passed in two slots: two entries of one registry whose keys came out
+    // equal. The two would alias, and a template that read both and then wrote both would lose its
+    // first write, so the borrow fails the run.
+    let mut view = *entry;
+    let borrowed = view
+        .try_borrow_mut()
+        .map_err(|_| BallistaError::InvalidRegistryEntry)?;
+    core::mem::forget(borrowed);
     Ok(())
 }
 
@@ -270,7 +272,11 @@ mod tests {
         let view = entry.view();
         assert_eq!(open(&view, &payer, &id(&template), 16), Ok(()));
         assert!(view.is_borrowed_mut(), "an open marks the entry");
-        assert_eq!(open(&view, &payer, &id(&template), 16), Ok(()), "a duplicate opens again");
+        assert_eq!(
+            open(&view, &payer, &id(&template), 16),
+            Err(err(BallistaError::InvalidRegistryEntry)),
+            "a second open of an open entry: two entries whose keys are equal"
+        );
 
         let wrong = |name: &str, data: Vec<u8>, owner: [u8; 32], writable: bool, size: usize| {
             let mut entry = TestAccount::new([3; 32], owner, 10, writable, &data);

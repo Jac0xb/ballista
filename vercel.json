@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "pnpm install",
+  "buildCommand": "BALLISTA_DOCS_BASE=/ BALLISTA_DOCS_ORIGIN=https://${VERCEL_PROJECT_PRODUCTION_URL} pnpm docs:build",
+  "outputDirectory": "docs/.vitepress/dist",
+  "cleanUrls": true
+}

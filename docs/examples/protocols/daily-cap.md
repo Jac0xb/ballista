@@ -79,8 +79,8 @@ and the actor's address.
 
 The actor's first run creates the entry, with no separate instruction, and the actor pays its
 [rent](/reference/glossary#rent), the lamports Solana requires an account to hold for its size:
-1,503,360 lamports, about 0.0015 SOL, for this 88-byte entry. Nothing closes an entry, so the rent
-isn't returned.
+1,097,280 lamports, about 0.0011 SOL, on mainnet, for this 88-byte entry. Nothing closes an entry,
+so the rent isn't returned.
 
 [Getting a Jupiter route](/examples/protocols/#jupiter-routes) says how to request the route from
 Jupiter's Swap API and what to keep from its response.

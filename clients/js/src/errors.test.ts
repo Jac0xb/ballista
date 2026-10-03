@@ -189,10 +189,11 @@ describe('which program failed', () => {
     expect(decodeBallistaFailure(ballistaCode, logs, OTHER_DEPLOYMENT)).toMatchObject({ name: 'RequirementFailed' });
   });
 
-  // Bug (docs/superpowers/specs/2026-10-03-safety-properties.md, finding F9): in a nested run the
-  // inner run logs its failure first, so `failedProgram` finds Ballista and `explainRunError` maps
-  // the inner template's program counter onto the outer template's source map. Skipped until the
-  // SDK tells the two runs apart; it fails today, naming the outer `withinBudget` step.
+  // Bug (docs/superpowers/specs/2026-10-03-safety-properties.md, P91 and finding F9): in a nested
+  // run the inner run logs its failure first, so `failedProgram` finds Ballista and
+  // `explainRunError` maps the inner template's program counter onto the outer template's source
+  // map. Skipped until the SDK tells the two runs apart; it fails today, naming the outer
+  // `withinBudget` step.
   test.skip('does not explain a failure inside a nested run by a step of the outer template', () => {
     const failed = `failed: custom program error: 0x${ballistaCode.toString(16)}`;
     const nestedRefused = [

@@ -4,15 +4,15 @@
 //! documentation leaves out.
 
 use ballista_common::template::{
-    record, ProgramBuilder, ProgramView, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, OP_FOREACH,
-    OP_REQUIRE, PROGRAM_HEADER_LEN, VALUE_U64,
+    record, ProgramBuilder, ProgramView, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, OP_FOREACH, OP_REQUIRE,
+    PROGRAM_HEADER_LEN, VALUE_U64,
 };
 
-/// P-PARSE-2. `ProgramView::parse` reads `input_count + row_input_count` input descriptors. The
-/// Certora rule `rule_parsed_sections_exactly_consume_the_payload` (in `run.conf`) asserts
+/// P82, finding F1. `ProgramView::parse` reads `input_count + row_input_count` input descriptors.
+/// The Certora rule `rule_parsed_sections_exactly_consume_the_payload` (in `run.conf`) asserts
 /// `program.inputs.len() == header.input_count()`, so this 28-byte payload, well inside the rule's
-/// 96-byte bound, is a counterexample to it: the rule cannot prove as written. The fix is to
-/// assert against `header.total_input_count()`.
+/// 96-byte bound, is a counterexample to it: the rule cannot prove as written. The fix is to assert
+/// against `header.total_input_count()`.
 #[test]
 fn a_row_input_descriptor_is_a_counterexample_to_the_parser_rule() {
     let mut builder = ProgramBuilder::new();
@@ -29,10 +29,10 @@ fn a_row_input_descriptor_is_a_counterexample_to_the_parser_rule() {
     assert_ne!(program.inputs.len(), program.header.input_count());
 }
 
-/// P-FIN-1 (canonical encoding). The verifier checks every field the wire format calls reserved,
-/// but not the operands an opcode leaves unused: a FOREACH's `dst`, `b` and `c`, and a REQUIRE's
-/// `dst`, `b`, `c` and immediate, accept any value. Two payloads that differ only there verify
-/// alike and run alike, so these bytes can never take a meaning later without a version bump.
+/// P17, finding F4. The verifier checks every field the wire format calls reserved, but not the
+/// operands an opcode leaves unused: a FOREACH's `dst`, `b` and `c`, and a REQUIRE's `dst`, `b`,
+/// `c` and immediate, accept any value. Two payloads that differ only there verify alike and run
+/// alike, so these bytes can never take a meaning later without a version bump.
 #[test]
 fn unused_operands_of_foreach_and_require_accept_any_value() {
     let build = |dirty: bool| {
@@ -66,5 +66,9 @@ fn unused_operands_of_foreach_and_require_accept_any_value() {
     assert_ne!(clean, dirty);
     let verify = |bytes: &[u8]| ProgramView::parse(bytes).and_then(|program| program.verify());
     assert!(verify(&clean).is_ok());
-    assert_eq!(verify(&dirty), verify(&clean), "the unused operands are not checked");
+    assert_eq!(
+        verify(&dirty),
+        verify(&clean),
+        "the unused operands are not checked"
+    );
 }

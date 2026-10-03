@@ -3148,3 +3148,21 @@ impl<'data> Scratch<'data> {
         self.last_invoked = Some(program);
     }
 }
+
+/// Runs a whole program, loops included, against a register file the caller owns, for the formal
+/// specifications (see `kani/`): `run` without its account checks, input decoding and run event, so
+/// a proof can read every register afterwards. The dispatch loop is the one `run` uses.
+///
+/// Kept at the end of the file: panic locations carry line numbers into the binary, so code added
+/// above would change the release build even when this function is compiled out.
+#[cfg(feature = "spec-api")]
+pub fn execute_program<'data>(
+    program: &ProgramView<'data>,
+    inputs: &[RuntimeValue<'data>],
+    accounts: &'data [AccountView],
+    iterations: usize,
+    registers: &mut [RuntimeValue<'data>],
+    scratch: &mut Scratch<'data>,
+) -> ProgramResult {
+    execute_root(program, inputs, accounts, iterations, registers, scratch, None)
+}

@@ -8,11 +8,11 @@
 //! Induction over the instruction sequence then gives the whole-program guarantee. Which errors are
 //! value-dependent is `rules::oracle`'s documented split.
 //!
-//! Blocked on the prover's memory model, three ways: the spec programs are byte-stored constants
-//! the parser reads back as words; the executor copies each operand register to its stack with
-//! eight-byte moves and then reads its one-byte tag, which the prover does not rebuild; and it
-//! writes the destination by copying a stack temporary whose tag is one byte, so the destination's
-//! type is unknown to the prover too. `tests/typing_enumeration.rs` checks the same property on the
+//! Blocked on the prover's memory model: the spec programs are byte-stored constants the parser
+//! reads back as words. Suspected besides: the executor copies each operand register to its stack
+//! with eight-byte moves and reads its one-byte tag back, writes the destination by copying a stack
+//! temporary whose tag is one byte, and the verifier's helpers return their errors the same way.
+//! The prover rebuilds a stack word only from two four-byte halves, so it may lose those tags. `tests/typing_enumeration.rs` checks the same property on the
 //! host, exhaustively over the rules' structural inputs, and passes.
 //!
 //! Each rule has reachability rules for success and for a value-dependent failure, and a twin that

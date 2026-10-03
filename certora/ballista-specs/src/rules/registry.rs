@@ -5,9 +5,9 @@
 //! `NOT_BORROWED` to 0, and nothing else in an open writes that byte. The rules observe that byte
 //! rather than the `RunResult` an open returns: `registry::open` builds its errors on its own stack
 //! from a two-byte tag and a four-byte code and copies them out with an eight-byte move across two
-//! bytes it never wrote, and the prover does not rebuild a word from cells with a gap, so the
-//! returned tag of a failed open is unknown to it. The byte is written with one-byte stores and read
-//! the same way everywhere.
+//! bytes it never wrote. The prover rebuilds a stack word only from two four-byte halves, so it may
+//! not follow the returned tag. The byte is written with one-byte stores and read the same way
+//! everywhere.
 //!
 //! Model limits, which narrow what these rules cover:
 //!
@@ -214,9 +214,9 @@ fn entry_open_already() -> &'static mut AccountSlot<ENTRY_DATA> {
 /// slots that hold one entry (two keys of one registry that came out equal) can no longer both be
 /// open, so no template can read both and lose one write to the other.
 ///
-/// Blocked: the only difference between the two outcomes is the `RunResult` the second open
-/// returns, whose tag the prover cannot see (see the module comment). Both outcomes leave the
-/// borrow byte at 0. It can prove once `RunError` is laid out without padding in its first word.
+/// Blocked, suspected: the only difference between the two outcomes is the `RunResult` the second
+/// open returns, whose tag the prover may not follow (see the module comment). Both outcomes leave
+/// the borrow byte at 0. A four-byte `RunError` tag would remove the doubt.
 #[rule]
 pub fn rule_registry_open_refuses_an_open_entry() {
     let entry = entry_open_already();

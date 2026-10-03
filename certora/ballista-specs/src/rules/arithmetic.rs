@@ -445,9 +445,10 @@ fn mul_div_case() -> (u64, u128, MulDivOutcome) {
 /// that never writes its result slot. Its overflow case is now exact (the rounded quotient exceeds
 /// `u64::MAX`) where it was a necessary condition (the floor reaches `u64::MAX`).
 ///
-/// Blocked: `mul_div` is out of line and builds its result in a stack temporary whose
-/// `RuntimeValue` tag is one byte, then copies it out with eight-byte moves. The prover cannot
-/// rebuild those words, so even whether the result is `Ok` is unknown to it.
+/// Blocked, suspected: `mul_div` is out of line and builds its result in a stack temporary whose
+/// `RuntimeValue` tag is one byte, then copies it out with eight-byte moves, and its errors as
+/// two-byte tags and four-byte kinds. The prover rebuilds a stack word only from two four-byte
+/// halves, so it may lose the kind, or the tag.
 #[rule]
 pub fn rule_u64_mul_div_is_exact() {
     let (c, rounded, outcome) = mul_div_case();

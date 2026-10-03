@@ -181,7 +181,7 @@ pub fn u64_registers() -> &'static mut [RuntimeValue<'static>] {
 /// The four payload words of a register, bytes 8..40, each read with one eight-byte load at a
 /// constant offset. The executor writes a register's payload with eight-byte stores, so these
 /// read back exactly what it wrote; its one-byte tag it copies with an eight-byte move from a stack
-/// temporary, which the prover cannot follow, so rules observe payloads rather than tags.
+/// temporary, which the prover may not follow, so rules observe payloads rather than tags.
 pub fn payload_words(value: &RuntimeValue<'_>) -> [u64; 4] {
     let base = (value as *const RuntimeValue).cast::<u8>();
     // SAFETY: every `RuntimeValue` is 40 bytes with its payload from offset 8.

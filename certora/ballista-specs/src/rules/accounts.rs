@@ -7,11 +7,12 @@
 //! reads those bytes back as words, which the prover models as unrelated values. They now also
 //! cover more than the constants did: any minimum data length, and any pinned address and owner.
 //!
-//! Blocked all the same. `validate_account` builds each error in a stack temporary from a two-byte
-//! tag and a four-byte code and copies it out with an eight-byte move across two bytes it never
-//! wrote, which the prover cannot rebuild. To `validate_runtime_accounts`, and so to these rules, a
-//! refused account can read as an accepted one. The header-read rule meets the same problem in the
-//! executor's register write: it copies a value whose tag is one byte as eight-byte words.
+//! Blocked all the same, suspected. `validate_account` builds each error in a stack temporary from a
+//! two-byte tag and a four-byte code and copies it out with an eight-byte move across two bytes it
+//! never wrote. The prover rebuilds a stack word only from two four-byte halves, so the code is lost
+//! and the tag may be; then a refused account can read as accepted, or as the wrong refusal. The
+//! header-read rule meets the same question in the executor's register write, which copies a value
+//! whose tag is one byte as eight-byte words. The `rule_stack_word_copy_*` diagnostics settle it.
 //!
 //! Each rule has a reachability rule for each branch that asserts and a twin that must fail.
 

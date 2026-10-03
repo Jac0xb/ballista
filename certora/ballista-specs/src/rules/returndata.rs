@@ -9,7 +9,7 @@
 //! are the setter's address. The rules read a pubkey at offset 0, so a successful read leaves the
 //! setter's address in the destination register; a refused read leaves the register as it was.
 //! They observe the register's payload, which the executor writes with eight-byte stores, rather
-//! than the `RunResult`, whose error tag the prover cannot follow (see `rules::registry`).
+//! than the `RunResult`, whose error tag the prover may not follow (see `rules::registry`).
 //!
 //! The program a rule says was invoked is set with `Scratch::set_last_invoked_for_spec`, a
 //! `spec-api` hook, instead of running an `INVOKE`: a successful `invoke_cpi` stores exactly that

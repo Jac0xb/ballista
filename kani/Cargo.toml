@@ -1,0 +1,19 @@
+# Kani proof workspace. Kept out of the root workspace, as `certora/` is, so the release build, its
+# lock file and its dependency policy are untouched. Run from here: `cargo kani -p ballista-kani`.
+# See README.md for the per-harness commands and bounds.
+[workspace]
+resolver = "2"
+members = ["ballista-lib", "proofs"]
+
+[workspace.dependencies]
+pinocchio = { version = "=0.11.2", features = ["cpi"] }
+pinocchio-system = "=0.6.1"
+solana-address = { version = "=2.7.0", features = ["curve25519", "decode"] }
+solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }
+ballista = { path = "ballista-lib", features = ["no-entrypoint", "spec-api"] }
+ballista-common = { path = "../common" }
+
+[profile.dev]
+# The program ships with overflow checks on (see the root `[profile.release]`). Kani checks
+# arithmetic overflow regardless; this keeps a plain `cargo build` of the harness crate honest too.
+overflow-checks = true

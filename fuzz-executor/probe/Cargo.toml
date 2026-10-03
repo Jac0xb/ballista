@@ -13,7 +13,7 @@ publish = false
 crate-type = ["cdylib", "lib"]
 
 [dependencies]
-pinocchio = { version = "=0.11.2", features = ["cpi"] }
+pinocchio = { version = "=0.11.2", features = ["cpi", "account-resize"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(target_os, values("solana"))'] }

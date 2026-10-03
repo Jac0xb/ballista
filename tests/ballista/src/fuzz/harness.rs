@@ -20,6 +20,13 @@ pub const BALLISTA_ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ck
 /// start with "PROBE" to stand out in a trace. The probe ELF's own declared id is irrelevant:
 /// Mollusk maps the ELF to whichever id it is loaded under.
 pub const PROBE_ID: Pubkey = pubkey!("6QYQq7JmVu6vjCGkfovra3pBH5zv8o9HiC5uMrEW7PsF");
+/// The probe ELF loaded a second time, at the address `World::new` derives (the probe's with its
+/// last byte flipped), so a batch's rows can name different programs that accept the same call.
+pub const PROBE_COPY_ID: Pubkey = {
+    let mut bytes = PROBE_ID.to_bytes();
+    bytes[31] ^= 0xff;
+    Pubkey::new_from_array(bytes)
+};
 
 /// How many accounts the probe forwards when it wraps a run (`MAX_FORWARD` in
 /// fuzz-executor/probe/src/lib.rs): the template plus this many minus one runtime accounts. A
@@ -68,8 +75,8 @@ pub struct CapturedCpi {
 
 impl Harness {
     pub fn new() -> Self {
-        // `Mollusk::default()` enables every SVM feature; the critic's `BALLISTA_MAINNET_FEATURES`
-        // switch lives in `cases.rs`, which the fuzzer does not need, so it uses the default set.
+        // `Mollusk::default()` enables every SVM feature, 15 of which mainnet lacks;
+        // `BALLISTA_MAINNET_FEATURES=1` switches to mainnet's set (`cases::base_mollusk`).
         let mut mollusk = crate::cases::base_mollusk();
         mollusk.sysvars.clock.unix_timestamp = CLOCK_TIMESTAMP;
         mollusk.sysvars.clock.slot = CLOCK_SLOT;
@@ -79,6 +86,7 @@ impl Harness {
         let has_probe = match probe_elf() {
             Some(elf) => {
                 mollusk.add_program_with_loader_and_elf(&PROBE_ID, &LOADER_V3, &elf);
+                mollusk.add_program_with_loader_and_elf(&PROBE_COPY_ID, &LOADER_V3, &elf);
                 true
             }
             None => false,
@@ -264,14 +272,72 @@ pub fn captured_cpis(outcome: &RunOutcome) -> Vec<CapturedCpi> {
         .collect()
 }
 
+/// What the run's top-level instruction logged about its calls and its failure.
+#[derive(Debug, Default)]
+pub struct LogTrace {
+    /// The flags each of the run's direct probe calls received, in call order: one byte per
+    /// account, bit 0 signer and bit 1 writable, from the probe's `probe:` line. Mollusk 0.14
+    /// records a CPI's accounts but not their flags, so this is the only record of them.
+    pub probe_flags: Vec<Vec<u8>>,
+    /// Whether the run invoked any program directly before it ended, successful or not.
+    pub made_cpi: bool,
+    /// The program whose instruction failed first, so innermost, with its stack height and the
+    /// runtime's message. The error belongs to that program's own frame: a CPI's privilege check
+    /// fails in the caller's frame before the callee starts, and a callee's own failure is logged
+    /// before its callers unwind.
+    pub first_failure: Option<(Pubkey, u32, String)>,
+}
+
+/// Walks the transaction's log lines for the run's top-level instruction.
+pub fn log_trace(outcome: &RunOutcome) -> LogTrace {
+    let probes = [PROBE_ID.to_string(), PROBE_COPY_ID.to_string()];
+    let mut trace = LogTrace::default();
+    let mut top_level = 0usize;
+    let mut stack: Vec<(String, u32)> = Vec::new();
+    for line in &outcome.logs {
+        let Some(rest) = line.strip_prefix("Program ") else { continue };
+        if let Some(message) = rest.strip_prefix("log: ") {
+            let innermost = stack.last();
+            if let (Some(flags), Some((id, height))) = (message.strip_prefix("probe:"), innermost) {
+                if probes.contains(id) && *height == outcome.ballista_cpi_height && top_level == outcome.top_index + 1 {
+                    trace.probe_flags.push(flags.bytes().map(|digit| digit.wrapping_sub(b'0')).collect());
+                }
+            }
+            continue;
+        }
+        let Some((id, tail)) = rest.split_once(' ') else { continue };
+        if let Some(height) = tail.strip_prefix("invoke [").and_then(|t| t.strip_suffix(']')) {
+            let height: u32 = height.parse().unwrap_or(0);
+            if height == 1 {
+                top_level += 1;
+            }
+            if top_level == outcome.top_index + 1 && height == outcome.ballista_cpi_height {
+                trace.made_cpi = true;
+            }
+            stack.push((id.to_string(), height));
+        } else if tail == "success" {
+            stack.pop();
+        } else if let Some(message) = tail.strip_prefix("failed: ") {
+            let height = stack.pop().map_or(0, |(_, height)| height);
+            if trace.first_failure.is_none() && top_level == outcome.top_index + 1 {
+                if let Ok(program) = id.parse::<Pubkey>() {
+                    trace.first_failure = Some((program, height, message.to_string()));
+                }
+            }
+        }
+    }
+    trace
+}
+
 /// The program a `Program` maps to, as a `Pubkey`.
 pub fn program_pubkey(world: &World, program: Program) -> Pubkey {
     Pubkey::new_from_array(world.program(program))
 }
 
 /// Reads the probe ELF the fuzzer calls, built with
-/// `cargo build-sbf --manifest-path fuzz-executor/probe/Cargo.toml`. Absent, probe CPIs fail as a
-/// runtime error (an allowed outcome) and coverage of the CPI paths drops; present, they run.
+/// `cargo build-sbf --manifest-path fuzz-executor/probe/Cargo.toml`. The executor fuzz loop
+/// refuses to run without it: a run wrapped in a probe call, and every probe CPI, would fail for a
+/// reason that has nothing to do with Ballista, and the model compares nothing.
 fn probe_elf() -> Option<Vec<u8>> {
     if let Ok(path) = std::env::var("BALLISTA_PROBE_SO") {
         return std::fs::read(path).ok();

@@ -358,7 +358,14 @@ impl ScenarioGen<'_, '_> {
                 None => self.fresh(slot.owner.unwrap_or(SYSTEM_PROGRAM_ADDRESS), slot.min_len as usize),
             }
         } else if slot.flags & ACCOUNT_EXECUTABLE != 0 {
-            let program = ALL_PROGRAMS[self.g.below(ALL_PROGRAMS.len())];
+            // A row that names the program its batch calls usually gets the probe or its copy,
+            // which both accept the probe calls the template makes, so rows that differ can still
+            // succeed.
+            let program = if slot.role == Role::Program(Program::Probe) && self.g.chance(7, 8) {
+                if self.g.chance(1, 2) { Program::Probe } else { Program::ProbeCopy }
+            } else {
+                ALL_PROGRAMS[self.g.below(ALL_PROGRAMS.len())]
+            };
             self.program_index(program)
         } else {
             let min_len = slot.min_len as usize;

@@ -9,11 +9,13 @@
 //! - introspection reads.
 //!
 //! Opaque data taints the CPI data built from it, which the model marks [`CpiData::Opaque`] and the
-//! harness then skips comparing, while still checking the call's program and account privileges. A
-//! control-flow decision (a guard, a `repeat` count, a `require`, a `select`) that depends on an
-//! opaque value makes the whole prediction [`Prediction::Indeterminate`], and the harness falls
-//! back to its model-free checks for that run. Concrete control flow, which is the common case,
-//! yields a full [`Prediction::Calls`] the harness matches against the captured inner instructions.
+//! harness then skips comparing, while still checking the call's program, accounts and the flags
+//! each account is passed with. A control-flow decision (a guard, a `repeat` count, a `require`, a
+//! `select`) that depends on an opaque value makes the whole prediction
+//! [`Prediction::Indeterminate`], and the harness falls back to its model-free checks for that run.
+//! Concrete control flow, which is the common case, yields a full [`Prediction::Calls`] the harness
+//! matches against the captured inner instructions, or a [`Prediction::Fails`] the run must agree
+//! with. Every disagreement with a concrete prediction fails the fuzz test.
 
 use ballista_common::template::*;
 
@@ -42,12 +44,14 @@ pub enum CpiData {
 
 #[derive(Clone, Debug)]
 pub enum Prediction {
-    /// The model ran the whole template with concrete control flow.
-    Calls { cpis: Vec<ExpectedCpi>, return_data: CpiData, sets_return_data: bool },
+    /// The model ran the whole template with concrete control flow: its CPIs in order, the bytes
+    /// of every `EMIT` line in order, and the return data. `loop_passes` counts the loop passes it
+    /// made, so the harness knows how often a loop's register restore was compared.
+    Calls { cpis: Vec<ExpectedCpi>, emits: Vec<CpiData>, return_data: CpiData, sets_return_data: bool, loop_passes: usize },
     /// A control-flow decision depended on an opaque value; only the model-free checks apply.
     Indeterminate(&'static str),
-    /// The model predicts the run fails. The harness treats a success here as a soft mismatch to
-    /// investigate, not a hard finding, since a model bug could cause it.
+    /// The model predicts the run fails, for a reason it computed from concrete values. A run that
+    /// succeeds anyway disagrees with the model, and the harness fails the test.
     Fails(&'static str),
 }
 
@@ -107,21 +111,28 @@ pub struct Model<'a, A: Accounts> {
     accounts: &'a A,
     inputs: &'a [InputVal],
     iterations: usize,
+    /// Each account group's length, from the run data's prefix.
+    group_lengths: &'a [u8],
     clock_slot: u64,
     clock_timestamp: i64,
     /// Once any CPI has run, account state may have changed, so reads become opaque.
     mutated: bool,
     cpis: Vec<ExpectedCpi>,
+    emits: Vec<CpiData>,
     return_data: CpiData,
     sets_return_data: bool,
+    loop_passes: usize,
 }
 
-/// Runs the model. The result is the harness's soft oracle.
+/// Runs the model: what a run of `program` over `accounts` with these inputs, batch rows, account
+/// group lengths and clock should do.
+#[allow(clippy::too_many_arguments)]
 pub fn predict<A: Accounts>(
     program: &ProgramView,
     accounts: &A,
     inputs: &[InputVal],
     iterations: usize,
+    group_lengths: &[u8],
     clock_slot: u64,
     clock_timestamp: i64,
 ) -> Prediction {
@@ -130,19 +141,24 @@ pub fn predict<A: Accounts>(
         accounts,
         inputs,
         iterations,
+        group_lengths,
         clock_slot,
         clock_timestamp,
         mutated: false,
         cpis: Vec::new(),
+        emits: Vec::new(),
         return_data: CpiData::Concrete(Vec::new()),
         sets_return_data: false,
+        loop_passes: 0,
     };
     let mut registers = vec![Val::Unset; program.header.register_count()];
     match model.run(&mut registers) {
         Ok(()) => Prediction::Calls {
             cpis: model.cpis,
+            emits: model.emits,
             return_data: model.return_data,
             sets_return_data: model.sets_return_data,
+            loop_passes: model.loop_passes,
         },
         Err(stop) => stop,
     }
@@ -202,6 +218,7 @@ impl<A: Accounts> Model<'_, A> {
             for pc in body.clone() {
                 self.step(registers, pc, Some((pass, row_base)))?;
             }
+            self.loop_passes += 1;
             for register in 0..registers.len() {
                 if carried(register) {
                     snapshot[register] = registers[register].clone();
@@ -287,7 +304,11 @@ impl<A: Accounts> Model<'_, A> {
                 }
             }
             OP_INVOKE => self.invoke(registers, instruction, loop_context)?,
-            OP_EMIT => { /* logged, not compared here */ self.mutated = true; let _ = self.build_output(registers, instruction)?; }
+            // A log line changes no account, so reads stay predictable after it.
+            OP_EMIT => {
+                let line = self.build_output(registers, instruction)?;
+                self.emits.push(line);
+            }
             OP_SET_RETURN_DATA => {
                 self.return_data = self.build_output(registers, instruction)?;
                 self.sets_return_data = true;
@@ -308,7 +329,7 @@ impl<A: Accounts> Model<'_, A> {
 
     fn blob(&self, instruction: &InstructionRecord) -> Result<&[u8], Prediction> {
         let (offset, len) = instruction.blob_range();
-        self.program.blob.get(offset..offset + len).ok_or(Prediction::Indeterminate("blob range"))
+        offset.checked_add(len).and_then(|end| self.program.blob.get(offset..end)).ok_or(Prediction::Indeterminate("blob range"))
     }
 
     fn load_input(&self, instruction: &InstructionRecord, loop_context: Option<(usize, usize)>) -> Result<Val, Prediction> {
@@ -374,7 +395,7 @@ impl<A: Accounts> Model<'_, A> {
         } else {
             instruction.immediate() as usize
         };
-        Ok(decode_read(instruction.opcode, data, offset))
+        decode_read(instruction.opcode, data, offset)
     }
 
     fn read_account_bytes(&self, registers: &[Val], instruction: &InstructionRecord, loop_context: Option<(usize, usize)>) -> Result<Val, Prediction> {
@@ -392,7 +413,7 @@ impl<A: Accounts> Model<'_, A> {
             _ => return Err(Prediction::Indeterminate("byte offset not u64")),
         };
         let len = instruction.immediate() as usize;
-        match data.get(offset..offset + len) {
+        match offset.checked_add(len).and_then(|end| data.get(offset..end)) {
             Some(bytes) => Ok(Val::Bytes(bytes.to_vec())),
             None => Err(Prediction::Fails("account bytes out of range")),
         }
@@ -642,25 +663,15 @@ impl<A: Accounts> Model<'_, A> {
     }
 
     /// Where each declared account group falls among the runtime accounts, from the run layout:
-    /// after the fixed accounts and every batch row.
+    /// after the fixed accounts and every batch row, in declaration order, each as long as the run
+    /// data's prefix says.
     fn group_ranges(&self) -> Vec<(usize, usize)> {
         let header = self.program.header;
-        let declared = header.fixed_account_count() + self.iterations * header.batch_stride();
-        let mut start = declared;
+        let mut start = header.fixed_account_count() + self.iterations * header.batch_stride();
         let mut ranges = Vec::new();
-        // The group lengths are the run-data prefix; the model learns them from the account count,
-        // distributing the remainder is not possible, so it asks the accounts source for the total
-        // and treats all remaining accounts as belonging to groups it cannot split. With one group
-        // this is exact; with several the harness only checks pre-group accounts.
-        let total = self.accounts.count();
-        let remaining = total.saturating_sub(declared);
-        if header.account_group_count() == 1 {
-            ranges.push((start, remaining));
-        } else {
-            for _ in 0..header.account_group_count() {
-                ranges.push((start, 0));
-                start += 0;
-            }
+        for &len in self.group_lengths.iter().take(header.account_group_count()) {
+            ranges.push((start, len as usize));
+            start += len as usize;
         }
         ranges
     }
@@ -699,10 +710,14 @@ impl<A: Accounts> Model<'_, A> {
     }
 }
 
-fn decode_read(opcode: u8, data: &[u8], offset: usize) -> Val {
+/// A typed read of account data the model knows: past the end, or a `bool` byte other than 0 or 1,
+/// the run fails.
+fn decode_read(opcode: u8, data: &[u8], offset: usize) -> Result<Val, Prediction> {
     let width = read_width(opcode);
-    let Some(slice) = data.get(offset..offset + width) else { return Val::Opaque };
-    match opcode {
+    let Some(slice) = offset.checked_add(width).and_then(|end| data.get(offset..end)) else {
+        return Err(Prediction::Fails("typed read past the account data"));
+    };
+    Ok(match opcode {
         OP_READ_U8 => Val::U64(slice[0] as u64),
         OP_READ_U16 => Val::U64(u16::from_le_bytes(slice.try_into().unwrap()) as u64),
         OP_READ_U32 => Val::U64(u32::from_le_bytes(slice.try_into().unwrap()) as u64),
@@ -714,10 +729,10 @@ fn decode_read(opcode: u8, data: &[u8], offset: usize) -> Val {
         OP_READ_BOOL => match slice[0] {
             0 => Val::Bool(false),
             1 => Val::Bool(true),
-            _ => Val::Opaque,
+            _ => return Err(Prediction::Fails("bool byte other than 0 or 1")),
         },
         _ => Val::Opaque,
-    }
+    })
 }
 
 fn encode_register(kind: u8, value: &Val) -> Result<Vec<u8>, Prediction> {

@@ -189,7 +189,8 @@ one for each key the template computes.
 <<< @/../clients/rust/examples/docs_rust_reference.rs#registry
 
 The builder checks none of the [registry rules](/reference/language#registries); `verify` rejects a
-break with `InvalidRegistry` (6132). Pass each entry writable, at the address
+break with `InvalidRegistry` (6132). Put every `open_registry` before the first `invoke`, as the
+TypeScript compiler does: an open after one is refused. Pass each entry writable, at the address
 `find_registry_entry_address` derives. A run fails with `InvalidRegistryEntry` (6025) when the
 account is not that entry, and when two entries of one registry get equal keys: both name one
 account, and its second open fails.

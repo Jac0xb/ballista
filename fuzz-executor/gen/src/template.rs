@@ -370,7 +370,8 @@ impl TemplateGen<'_, '_> {
             self.b.flags(PROGRAM_FLAG_EMIT_EVENT);
         }
 
-        // Some templates do work before their opens, so a call can precede an open.
+        // Some templates do work before their opens, never a call: the verifier refuses an open
+        // after an invoke (`statement` picks a value instead).
         let early = if self.g.chance(1, 4) { self.g.range(1, 4) } else { 0 };
         for _ in 0..early {
             self.statement();
@@ -746,6 +747,7 @@ impl TemplateGen<'_, '_> {
         match self.g.weighted(&[14, 2, 5, 2, 2]) {
             0 => self.value(),
             1 => self.require(),
+            2 if self.opened.len() < self.plan.opens.len() => self.value(),
             2 => self.invoke(),
             3 => self.emit_output(true),
             _ => self.write_registry(),

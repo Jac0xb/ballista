@@ -44,10 +44,11 @@ Ballista program finalizes a template only if:
   case stays within every [program limit](/reference/limits#program-limits): inputs, registers,
   instructions, accounts, loops, calls, call data, seeds, output and registries.
 - **Registries and output follow their rules.** A
-  [registry entry](/reference/language#registries) is opened at the top level before it is used,
-  read and written only through its declared fields, and never passed writable to a call. Return
-  data is set at most once, after the last call, and every `emit` starts with a literal tag
-  ([output rules](/reference/language#output)).
+  [registry entry](/reference/language#registries) is opened at the top level, before any call
+  and before it is used. It is read and written only through its declared fields, and never passed
+  writable to a call; a call that reaches it through another slot or an account group fails the
+  run. Return data is set at most once, after the last call, and every `emit` starts with a
+  literal tag ([output rules](/reference/language#output)).
 
 Finalization does not check that a called program's address is pinned (only the TypeScript
 compiler requires that; see [Pins](#pins)), what the called programs do, or who may run the

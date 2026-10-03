@@ -815,8 +815,9 @@ pub enum TemplateError {
     /// An introspection opcode's account is not a fixed account pinned to the Instructions sysvar.
     InvalidIntrospection(usize),
     /// A registry opcode breaks a registry rule: an open outside the root, repeated, past the
-    /// eighth, after `SET_RETURN_DATA`, with a bad index, size, key or account; or a field read or
-    /// write with no open of its account before it, outside the registry, or of the wrong type.
+    /// eighth, after `SET_RETURN_DATA` or an `INVOKE`, with a bad index, size, key or account; or a
+    /// field read or write with no open of its account before it, outside the registry, or of the
+    /// wrong type.
     InvalidRegistry(usize),
 }
 

@@ -49,6 +49,7 @@ pub fn breaks(program: &Program) -> Vec<Break> {
     ninth_loop(program, &mut out);
     ninth_open(program, &mut out);
     open_after_return_data(program, &mut out);
+    open_after_invoke(program, &mut out);
     out
 }
 
@@ -477,4 +478,34 @@ fn open_after_return_data(program: &Program, out: &mut Vec<Break>) {
     let invoke_later = broken.instrs[open + 1..].iter().any(|instr| instr.op == op::INVOKE);
     let expected = if invoke_later { TemplateError::InvalidOutput(open) } else { TemplateError::InvalidRegistry(open + 1) };
     out.push(Break { rule: "open-after-return-data", program: broken, expected });
+}
+
+/// An `INVOKE` inserted just before the first registry open: a call of a new descriptor that passes
+/// no account and no data to a fixed account declared executable, valid on its own. Until an open
+/// marks its entry, a CPI could reach the entry through another slot, so every open precedes every
+/// invoke: the open, now one later, is refused with `InvalidRegistry`.
+fn open_after_invoke(program: &Program, out: &mut Vec<Break>) {
+    let Some(open) = program.instrs.iter().position(|instr| instr.op == op::OPEN_REGISTRY) else { return };
+    let fixed = program.header.fixed_accounts as usize;
+    let Some(executable) = program.accounts[..fixed].iter().position(|account| account.flags & EXECUTABLE != 0) else {
+        return;
+    };
+    if program.instrs.len() >= checker::limit::INSTRUCTIONS || program.cpis.len() >= u8::MAX as usize {
+        return;
+    }
+    let mut broken = program.clone();
+    let descriptor = broken.cpis.len() as u8;
+    broken.cpis.push(crate::model::Cpi {
+        program: executable as u8,
+        group: NONE,
+        account_start: 0,
+        account_len: 0,
+        segment_len: 0,
+        segment_start: 0,
+        max_data_len: 0,
+        reserved: [0; 2],
+    });
+    broken.instrs.insert(open, Instr::new(op::INVOKE, NONE, descriptor, NONE, NONE, 0));
+    broken.sync_counts();
+    out.push(Break { rule: "open-after-invoke", program: broken, expected: TemplateError::InvalidRegistry(open + 1) });
 }

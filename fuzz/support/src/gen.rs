@@ -130,7 +130,8 @@ struct Gen<'s, S: Source> {
     max_rows: usize,
     /// Descriptors made so far, so a later invoke can name one again from another place.
     descriptors: Vec<Descriptor>,
-    /// Entry accounts still to open. Opens go anywhere at the root, between other steps.
+    /// Entry accounts still to open. Opens go anywhere at the root before the first invoke,
+    /// between other steps.
     pending_opens: Vec<u8>,
     /// Invoke often and push loop maxima toward the 64-CPI bound.
     cpi_heavy: bool,
@@ -328,7 +329,7 @@ impl<S: Source> Gen<'_, S> {
     }
 
     /// Opens the next pending entry one time in three, so opens fall before, between and after
-    /// the root's invokes and field reads.
+    /// the root's field reads. The first invoke opens every entry still pending.
     fn maybe_open(&mut self, pool: &mut Pool) {
         if !self.pending_opens.is_empty() && self.s.chance(1, 3) {
             let entry = self.pending_opens.remove(0);
@@ -756,6 +757,17 @@ impl<S: Source> Gen<'_, S> {
     /// A CPI: a program account declared executable, up to four accounts passed with at most
     /// their declared privileges, data from the pool, sometimes a group, a guard, and return data.
     fn invoke(&mut self, scope: Scope, pool: &mut Pool, passes: usize) {
+        // Every open precedes every invoke, so the pending ones go first, at the root. A loop body
+        // cannot hold an open, so it calls nothing while one is pending.
+        if !self.pending_opens.is_empty() && !self.sloppy() {
+            if scope != Scope::Root {
+                return;
+            }
+            while !self.pending_opens.is_empty() {
+                let entry = self.pending_opens.remove(0);
+                self.open(entry, pool);
+            }
+        }
         if self.cpis + passes > MAX_CPIS && !self.sloppy() {
             return;
         }

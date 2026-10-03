@@ -100,6 +100,7 @@ fn every_break_of_every_template_is_refused_with_its_error() {
         "ninth-loop",
         "ninth-open",
         "open-after-return-data",
+        "open-after-invoke",
     ] {
         assert!(counts.contains_key(rule), "no template exercises the break {rule}");
     }

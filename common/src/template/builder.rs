@@ -291,7 +291,8 @@ impl ProgramBuilder {
     /// Opens registry `index`'s entry in account `entry` for the rest of the run: the run checks
     /// the entry, or creates it with `payer`'s lamports through `system_program`. `key` is a
     /// `pubkey` register, or `None` for the zero key; `size` is the registry's field bytes.
-    /// Returns the instruction's index.
+    /// Returns the instruction's index. Put every open before the first `invoke` and any
+    /// `set_return_data`: `verify` refuses an open after either with `InvalidRegistry`.
     pub fn open_registry(
         &mut self,
         entry: u8,

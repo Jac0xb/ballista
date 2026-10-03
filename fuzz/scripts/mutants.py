@@ -100,6 +100,11 @@ MUTANTS = {
         ".any(|record| matches!(record.opcode, OP_INVOKE | OP_SET_RETURN_DATA))",
         ".any(|record| matches!(record.opcode, OP_SET_RETURN_DATA))",
     ),
+    # Every registry open precedes every invoke.
+    "verify-registry-open-after-invoke": (
+        "                OP_SET_RETURN_DATA | OP_INVOKE => return Err(invalid),",
+        "                OP_SET_RETURN_DATA => return Err(invalid),",
+    ),
 }
 
 

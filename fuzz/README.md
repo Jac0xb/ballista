@@ -68,7 +68,7 @@ fuzz/scripts/coverage.sh differential
     program or group, and a loop maximum past 64 CPIs;
   - registers: a read before a write, and a type mismatch;
   - outputs: an `EMIT` tag, and `SET_RETURN_DATA` before an invoke, in a loop, or before an open;
-  - registries: a writable entry, and a ninth open;
+  - registries: a writable entry, a ninth open, and an open after an invoke;
   - other limits and pins: a ninth loop, a read past the minimum length, a guarded invoke before
     `RETURN_DATA`, and the sysvar pin.
 
@@ -144,10 +144,11 @@ The script deletes one verifier rule at a time, in a throwaway worktree. For eac
 stable tests and `structured` from an empty corpus, and reports which catch the deletion and how
 fast. A mutant that survives both is a rule nothing here tests.
 
-The 14 mutants cover the CPI ceiling, declared accounts and groups, the CPI count,
-read-before-write, read bounds, return data, `EMIT` tags, registry entries and the sysvar pin.
-The stable tests catch every one, and so does `structured`, within 10 seconds of an empty corpus.
-That includes the critic's `verify-cpi-privilege`, which the proptests in `common/tests` miss.
+The 15 mutants cover the CPI ceiling, declared accounts and groups, the CPI count,
+read-before-write, read bounds, return data, `EMIT` tags, registry entries and their order, and the
+sysvar pin. The stable tests catch every one, and so does `structured`, within 10 seconds of an
+empty corpus. That includes the critic's `verify-cpi-privilege`, which the proptests in
+`common/tests` miss.
 
 ## First local run
 

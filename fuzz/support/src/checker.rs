@@ -1151,6 +1151,11 @@ impl<'p> Checker<'p> {
             at,
             String::new,
         )?;
+        // Until its open marks the entry, a CPI could reach it through another slot or a group.
+        ensure(!p.instrs[..pc].iter().any(|instr| instr.op == op::INVOKE), "registry.open-after-invoke", at, || {
+            let invoke = p.instrs[..pc].iter().position(|instr| instr.op == op::INVOKE).unwrap_or_default();
+            format!("invoke at {invoke}")
+        })?;
         self.report.registry_opens += 1;
         Ok(())
     }

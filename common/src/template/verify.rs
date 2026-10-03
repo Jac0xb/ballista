@@ -747,13 +747,16 @@ impl ProgramView<'_> {
     /// registry index below [`MAX_REGISTRIES`] and 1 to [`MAX_REGISTRY_SIZE`] field bytes; no
     /// destination; the entry a fixed account declared writable and nothing else; the payer a
     /// fixed account declared signer and writable; the System program account fixed and pinned to
-    /// the System program; the key [`NO_INDEX`] or a set `pubkey` register. Against the opens
+    /// the System program; the key [`NO_INDEX`] or a set `pubkey` register. Against the records
     /// before it: its entry account not opened already, the same size as any open of the same
-    /// registry index, at most [`MAX_REGISTRY_OPENS`] in all, and no `SET_RETURN_DATA` before it,
-    /// since creating an entry calls the System program and a CPI clears return data. Against the
-    /// whole program: no CPI lists the entry account writable. Two entry accounts that a run fills
-    /// with one account, two entries whose keys come out equal, are left to the run: the second
-    /// open fails with `InvalidRegistryEntry`.
+    /// registry index, at most [`MAX_REGISTRY_OPENS`] in all, no `SET_RETURN_DATA`, since creating
+    /// an entry calls the System program and a CPI clears return data, and no `INVOKE`, in a loop
+    /// or not. Until the open marks the entry, nothing stops a CPI that reaches it through another
+    /// slot or an account group, writable, and a nested run of this template could then change the
+    /// entry under a read the open's own run already made. With every invoke after every open,
+    /// each CPI meets the mark. Against the whole program: no CPI lists the entry account writable.
+    /// Two entry accounts that a run fills with one account, two entries whose keys come out
+    /// equal, are left to the run: the second open fails with `InvalidRegistryEntry`.
     ///
     /// The other records are found by scanning, as `SET_RETURN_DATA` scans the records after it:
     /// the per-instruction signature Certora verifies against has no room for a slot table. A
@@ -810,7 +813,7 @@ impl ProgramView<'_> {
         let mut opens = 0usize;
         for record in self.instructions.get(..instruction_index).unwrap_or(&[]) {
             match record.opcode {
-                OP_SET_RETURN_DATA => return Err(invalid),
+                OP_SET_RETURN_DATA | OP_INVOKE => return Err(invalid),
                 OP_OPEN_REGISTRY => {
                     opens += 1;
                     let earlier = RegistryOpen::decode(record.immediate()).ok_or(invalid)?;
@@ -826,13 +829,12 @@ impl ProgramView<'_> {
         if opens >= MAX_REGISTRY_OPENS {
             return Err(invalid);
         }
-        // No CPI lists the entry writable, wherever its invoke sits. After the open, the entry's
-        // borrow mark fails every such CPI with `RegistryReentry`. Before it, no template needs
-        // one: only Ballista writes an entry, through its fields once it is open, and an entry
-        // holds its rent and nothing else. The CPI account records are scanned directly, a few
-        // bytes against a pass over every instruction to find the invokes, so a CPI that nothing
-        // invokes is refused as well. A row account or a group member that turns out to be the
-        // entry is left to the run's check.
+        // No CPI lists the entry writable. Every invoke follows every open, so the entry's borrow
+        // mark would fail such a CPI with `RegistryReentry` in every run; the upload refuses it
+        // instead. The CPI account records are scanned directly, a few bytes against a pass over
+        // every instruction to find the invokes, so a CPI that nothing invokes is refused as well.
+        // Another slot, a row account or a group member that turns out to be the entry is left to
+        // the mark.
         if self
             .cpi_accounts
             .iter()
@@ -882,10 +884,10 @@ impl ProgramView<'_> {
 
     /// Refuses an account-data read, a read opcode or `READ_ACCOUNT_BYTES`, of an account any
     /// `OPEN_REGISTRY` names, wherever either sits: an entry's fields are read with
-    /// `READ_REGISTRY`, which needs the open first. Before the open, the entry is not yet marked,
-    /// so a CPI between such a read and the open could change the entry, and a write based on the
-    /// read would lose that update. After the open, the read would fail on the mark. The entry's
-    /// key, owner, lamports and data length stay readable, since none of them is a field.
+    /// `READ_REGISTRY`, which needs the open first. After the open, such a read would fail on the
+    /// mark. Before it, no invoke can run (see `verify_open_registry`), so the read would see what
+    /// the open is about to check, but outside the fields. The entry's key, owner, lamports and
+    /// data length stay readable, since none of them is a field.
     ///
     /// An open accepts only a fixed account declared writable, so the scan for one runs only for
     /// such an account: most data reads name an account the template cannot write, and scanning
@@ -4214,6 +4216,38 @@ mod tests {
         let pc = builder.open_registry(entry, None, payer, 0, 8, system);
         assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)));
 
+        // Never after an INVOKE, guarded or not, at the root or in a loop body: until its open
+        // marks the entry, a CPI could pass it writable through another slot. The same program
+        // with the open first verifies.
+        let placements = [
+            ("unguarded", false, false),
+            ("guarded", true, false),
+            ("in a loop", false, true),
+        ];
+        for (name, guarded, in_loop) in placements {
+            for open_first in [false, true] {
+                let mut builder = ProgramBuilder::new();
+                let system = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
+                let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+                let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+                let cpi = builder.cpi(system, &[], &[]);
+                let guard = builder.const_bool(true);
+                let count = builder.const_u64(1);
+                let mut open = None;
+                if open_first {
+                    open = Some(builder.open_registry(entry, None, payer, 0, 8, system));
+                }
+                if in_loop {
+                    builder.repeat(count, 1, 0, |body| body.invoke(cpi, None));
+                } else {
+                    builder.invoke(cpi, guarded.then_some(guard));
+                }
+                let open = open.unwrap_or_else(|| builder.open_registry(entry, None, payer, 0, 8, system));
+                let expected = if open_first { Ok(()) } else { Err(invalid(open)) };
+                assert_eq!(verify_builder(&builder).map(|_| ()), expected, "{name}, open first: {open_first}");
+            }
+        }
+
         // Reads and writes need an open of their account before them, and a field inside it.
         for (name, on_payer, offset, selector, write, fine) in [
             ("read past the end", false, 9, OP_READ_U64, false, false),
@@ -4270,8 +4304,8 @@ mod tests {
     }
 
     /// An entry's data is read only through its fields: any other account-data read of an entry
-    /// account is refused, after the open, before it, where a CPI could still change the entry,
-    /// or in a loop body. The entry's key, owner, lamports and data length stay readable.
+    /// account is refused, after the open, before it, or in a loop body. The entry's key, owner,
+    /// lamports and data length stay readable.
     #[test]
     fn entry_data_is_read_only_through_its_fields() {
         let invalid = TemplateError::InvalidRegistry;

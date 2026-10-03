@@ -549,9 +549,10 @@ Ballista program; its seeds are on [Wire format](/reference/wire-format#registry
   entry account's `key`, `owner`, `lamports`, `dataLength`, and `isEmpty` stay readable, as for any
   account.
 - **A CPI may pass an entry read-only, never writable.** The compiler refuses it, and the verifier
-  refuses the template with `InvalidRegistry` (6132). If a batch-row account or account group
-  member that a CPI passes writable turns out to be an open entry, the CPI fails with
-  `RegistryReentry` (6026). So no other run can change an entry between this run's read and its
+  refuses the template with `InvalidRegistry` (6132). If another fixed account, a batch-row
+  account or an account group member that a CPI passes writable turns out to be an open entry,
+  the CPI fails with `RegistryReentry` (6026). The verifier also refuses an open after any CPI, so
+  every CPI meets this check, and no other run can change an entry between this run's read and its
   write.
 
 ### Spending limits

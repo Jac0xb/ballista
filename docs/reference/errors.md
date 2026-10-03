@@ -106,7 +106,7 @@ Raised by `CreateTemplate` or `FinalizeTemplate` when the template fails its che
 | 6129 | `0x17F1` | `InvalidLoop` | More than 8 loops, a `repeat` inside another loop or naming a row, or a malformed `repeat` |
 | 6130 | `0x17F2` | `InvalidOutput` | An `emit` or `setReturnData` breaks a rule in [Output](/reference/language#output) |
 | 6131 | `0x17F3` | `InvalidIntrospection` | A read of the transaction's instructions names an account not pinned to the Instructions sysvar |
-| 6132 | `0x17F4` | `InvalidRegistry` | A registry entry is opened in a loop, passed writable to a CPI, read as raw data, or otherwise breaks a rule in [Registries](/reference/language#registries) |
+| 6132 | `0x17F4` | `InvalidRegistry` | A registry entry is opened in a loop or after a CPI, passed writable to a CPI, read as raw data, or otherwise breaks a rule in [Registries](/reference/language#registries) |
 
 The same names, in code order, are in `fixtures/runtime-error-names.txt` and
 `fixtures/verifier-error-names.txt`, which the program and both SDKs are tested against. The

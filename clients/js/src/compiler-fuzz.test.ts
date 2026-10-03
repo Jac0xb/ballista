@@ -176,9 +176,13 @@ interface Gen {
   max: number;
 }
 
+/** What a numeric binding is known to hold, so arithmetic can read it directly and stay in range. */
+type Range = 'small' | 'nonzero' | 'shift';
+
 interface Binding {
   type: ValueKind;
   max: number;
+  range?: Range;
 }
 
 interface Scope {
@@ -834,8 +838,11 @@ export class Generator {
     }
     const variables = [...scope.vars].filter(([, binding]) => binding.type === type);
     if (variables.length > 0) {
+      // Half the time one of the oldest: a value made early and read late keeps its register
+      // longest, which is what register reuse must get right.
       options.push([6, () => {
-        const [name, binding] = rng.pick(variables);
+        const pool = rng.chance(0.5) ? variables.slice(0, Math.max(1, Math.ceil(variables.length / 3))) : variables;
+        const [name, binding] = rng.pick(pool);
         return { e: expression.variable(name), type, max: binding.max };
       }]);
     }
@@ -885,6 +892,27 @@ export class Generator {
     }
   }
 
+  /**
+   * An operand known to be in `range`: half the time a binding made to hold such a value, read
+   * directly, otherwise a fresh expression clamped into it. `small` keeps a sum, product or shift
+   * in range, `nonzero` a divisor, and `shift` an amount.
+   */
+  operand(scope: Scope, type: 'u64' | 'i64' | 'u128', range: Range, depth: number): Expression {
+    const tagged = [...scope.vars].filter(([, binding]) => binding.type === type && binding.range === range);
+    if (tagged.length > 0 && this.rng.chance(0.5)) {
+      const pool = this.rng.chance(0.5) ? tagged.slice(0, Math.max(1, Math.ceil(tagged.length / 2))) : tagged;
+      return expression.variable(this.rng.pick(pool)[0]);
+    }
+    return this.rangeExpression(scope, type, range, depth);
+  }
+
+  rangeExpression(scope: Scope, type: 'u64' | 'i64' | 'u128', range: Range, depth: number): Expression {
+    const value = this.expr(scope, type, depth - 1).e;
+    if (range === 'nonzero') return expression.max(value, this.small(type, 1n));
+    if (range === 'shift') return this.clamp(type, value, 32n);
+    return this.clamp(type, value, type === 'u128' ? 1n << 62n : 1n << 31n);
+  }
+
   /** `value % modulus` in `type`, the usual way to keep a value small enough to stay in range. */
   clamp(type: 'u64' | 'i64' | 'u128', value: Expression, modulus: bigint): Expression {
     return expression.remainder(value, this.small(type, modulus));
@@ -900,22 +928,22 @@ export class Generator {
       [6, () => {
         const op = rng.pick(['add', 'subtract', 'multiply', 'divide', 'remainder', 'min', 'max'] as const);
         if (!safe) return g(expression[op](sub(), sub()));
-        const left = sub();
-        const right = sub();
+        const small = () => this.operand(scope, type, 'small', depth);
         switch (op) {
           case 'add':
-            return g(expression.add(this.clamp(type, left, halfWidth), this.clamp(type, right, halfWidth)));
-          case 'subtract':
-            return type === 'i64'
-              ? g(expression.subtract(this.clamp(type, left, halfWidth), this.clamp(type, right, halfWidth)))
-              : g(expression.subtract(expression.max(left, right), expression.min(left, right)));
+            return g(expression.add(small(), small()));
+          case 'subtract': {
+            if (type === 'i64') return g(expression.subtract(small(), small()));
+            const [left, right] = [sub(), sub()];
+            return g(expression.subtract(expression.max(left, right), expression.min(left, right)));
+          }
           case 'multiply':
-            return g(expression.multiply(this.clamp(type, left, halfWidth), this.clamp(type, right, halfWidth)));
+            return g(expression.multiply(small(), small()));
           case 'divide':
           case 'remainder':
-            return g(expression[op](left, expression.max(right, this.small(type, 1n))));
+            return g(expression[op](sub(), this.operand(scope, type, 'nonzero', depth)));
           default:
-            return g(expression[op](left, right));
+            return g(expression[op](sub(), sub()));
         }
       }],
       [2, () => g(expression.select(this.expr(scope, 'bool', depth - 1).e, sub(), sub()))],
@@ -938,15 +966,13 @@ export class Generator {
       }]);
       options.push([2, () => {
         const left = rng.chance(0.5);
-        const bits = type === 'u64' ? 64n : 128n;
-        const amount = safe ? this.clamp('u64', sub('u64'), left ? bits / 2n : bits + 8n) : sub('u64');
-        const value = safe && left ? this.clamp(type, sub(), 1n << (bits / 2n - 1n)) : sub();
+        const amount = safe ? this.operand(scope, 'u64', 'shift', depth) : sub('u64');
+        const value = safe && left ? this.operand(scope, type, 'small', depth) : sub();
         return g(left ? expression.shiftLeft(value, amount) : expression.shiftRight(value, amount));
       }]);
-      options.push([1, () => {
-        const bound = type === 'u64' ? 1n << 32n : 1n << 64n;
-        const divisor = safe ? expression.max(sub(), this.small(type, 1n)) : sub();
-        const [left, right] = safe ? [this.clamp(type, sub(), bound), this.clamp(type, sub(), bound)] : [sub(), sub()];
+      options.push([2, () => {
+        const divisor = safe ? this.operand(scope, type, 'nonzero', depth) : sub();
+        const [left, right] = safe ? [this.operand(scope, type, 'small', depth), this.operand(scope, type, 'small', depth)] : [sub(), sub()];
         return g(expression.multiplyDivide(left, right, divisor, rng.pick(['down', 'up'] as const)));
       }]);
     }
@@ -1066,9 +1092,11 @@ export class Generator {
           seeds.push(seed.e);
         }
         const bump = rng.chance(0.1)
-          ? rng.chance(0.5)
-            ? u64(rng.pick([255, 254, 253]))
-            : this.clamp('u64', this.expr(scope, 'u64', depth - 1).e, 256n)
+          ? rng.weighted<Expression>([
+              [2, u64(rng.pick([255, 254, 253]))],
+              [1, this.clamp('u64', this.expr(scope, 'u64', depth - 1).e, 256n)],
+              [1, this.operand(scope, 'u64', 'shift', depth)],
+            ])
           : undefined;
         return g(expression.pda(rng.pick(programs).reference, seeds, bump));
       }]);
@@ -1476,6 +1504,18 @@ export class Generator {
     for (let index = 0, count = rng.weighted([[4, 0], [3, 1], [1, 2]]); index < count; index += 1) {
       loops.push(this.batch && rng.chance(0.4) ? 'forEach' : 'repeat');
     }
+    // A prelude of bindings known to be small, non-zero or a shift amount, which later arithmetic
+    // reads directly: values made first and read last.
+    for (let index = 0, count = rng.range(0, 6); index < count; index += 1) {
+      const type = rng.weighted<'u64' | 'i64' | 'u128'>([[5, 'u64'], [1, 'i64'], [2, 'u128']]);
+      const range = rng.pick(type === 'u64' ? (['small', 'nonzero', 'shift'] as const) : (['small', 'nonzero'] as const));
+      const name = this.name(range === 'small' ? 'small' : range === 'nonzero' ? 'nonzero' : 'shift');
+      const candidate = step.let(name, this.rangeExpression(scope, type, range, this.depth()));
+      if (this.fits(candidate)) {
+        steps.push(candidate);
+        scope.vars.set(name, { type, max: 0, range });
+      }
+    }
     const triggers = loops.map(() => rng.range(0, Math.max(0, this.limit - 12))).sort((x, y) => x - y);
     let stalls = 0;
     while (this.instructions < this.limit && stalls < 12 && steps.length < 100) {
@@ -1512,11 +1552,12 @@ export class Generator {
     }
     if (steps.length === 0) steps.push(step.require(expression.bool(true)));
     // The run's return data: the values still in scope at the end.
-    // Every value a register reuse bug could swap should be seen, so most runs return them all.
+    // Most runs return about half their root values: enough to see a swapped value, while the
+    // values left out end their lives earlier, where reuse can get them wrong.
     if (rng.chance(0.85) && scope.vars.size > 0) {
       const parts: DataPart[] = [];
       let length = 0;
-      for (const [name, binding] of scope.vars) {
+      for (const [name, binding] of [...scope.vars].filter(() => rng.chance(0.5))) {
         const width = binding.type === 'bytes' ? binding.max : { bool: 1, u64: 8, i64: 8, u128: 16, pubkey: 32 }[binding.type];
         if (length + width > 1_000 || parts.length >= 64) continue;
         length += width;
@@ -1588,8 +1629,8 @@ export function generateCase(seed: number): FuzzCase {
 /** Messages that mean the compiler failed inside, not that it refused the document. */
 const INTERNAL_ERROR = [
   /Cannot read propert/i,
-  /undefined/,
-  /\bnull\b/,
+  /\bof undefined\b|undefined is not|is undefined\b/,
+  /\bof null\b|null is not|is null\b/,
   /is not a function/,
   /is not iterable/,
   /^Expected u(8|16|32)$/,
@@ -1919,6 +1960,486 @@ export function reuseProblems(plain: Uint8Array, renamed: Uint8Array, seed: numb
 }
 
 // ---------------------------------------------------------------------------------------------
+// Mutations: documents that break the rules on purpose, for oracle 1
+// ---------------------------------------------------------------------------------------------
+
+/** Names that mean something to a JavaScript object, as a document read from JSON can hold. */
+const TRICKY_NAMES = ['constructor', 'toString', 'valueOf', 'hasOwnProperty', 'prototype', '__proto__', 'length', '_'];
+
+type Mutable = Record<string, unknown>;
+
+/** A place in a document a mutation can write: `parent[key]`. */
+interface Slot {
+  parent: Mutable | unknown[];
+  key: string | number;
+}
+
+/** Every place in a document a mutation can reach. */
+interface Sites {
+  expressions: Slot[];
+  /** References and declarations by name, with their kind: `input`, `account`, `variable`... */
+  names: { slot: Slot; kind: string }[];
+  stepLists: { list: unknown[]; inLoop: boolean }[];
+  invokes: Mutable[];
+  outputs: Mutable[];
+  loops: Mutable[];
+  constraints: Mutable[];
+  /** Numeric fields: offsets, lengths, maxima. */
+  numbers: Slot[];
+}
+
+const READ_TYPES: readonly ReadType[] = ['bool', 'u8', 'u16', 'u32', 'i32', 'u64', 'i64', 'u128', 'pubkey'];
+
+function collectSites(template: Mutable): Sites {
+  const sites: Sites = { expressions: [], names: [], stepLists: [], invokes: [], outputs: [], loops: [], constraints: [], numbers: [] };
+  const name = (parent: Mutable, key: string, kind: string) => sites.names.push({ slot: { parent, key }, kind });
+  const reference = (node: unknown) => {
+    if (node && typeof node === 'object') {
+      const record = node as Mutable;
+      name(record, 'name', record.kind === 'iterationAccount' ? 'row' : 'account');
+    }
+  };
+  const visitExpression = (parent: Mutable | unknown[], key: string | number): void => {
+    const node = (parent as Record<string | number, unknown>)[key] as Mutable | undefined;
+    if (!node || typeof node !== 'object') return;
+    sites.expressions.push({ parent, key });
+    const child = (field: string) => visitExpression(node, field);
+    switch (node.kind) {
+      case 'input':
+      case 'rowInput':
+      case 'variable':
+        name(node, 'name', String(node.kind));
+        break;
+      case 'accountField':
+        reference(node.account);
+        break;
+      case 'accountData':
+        reference(node.account);
+        if (typeof node.offset === 'number') sites.numbers.push({ parent: node, key: 'offset' });
+        else child('offset');
+        break;
+      case 'returnData':
+        sites.numbers.push({ parent: node, key: 'offset' });
+        break;
+      case 'pda':
+        reference(node.program);
+        (node.seeds as unknown[]).forEach((_, index) => visitExpression(node.seeds as unknown[], index));
+        if (node.bump) child('bump');
+        break;
+      case 'binary':
+        child('left');
+        child('right');
+        break;
+      case 'multiplyDivide':
+        child('left');
+        child('right');
+        child('divisor');
+        break;
+      case 'powerOfTen':
+        child('exponent');
+        break;
+      case 'not':
+      case 'cast':
+      case 'bytesLength':
+        child('value');
+        break;
+      case 'select':
+        child('condition');
+        child('ifTrue');
+        child('ifFalse');
+        break;
+      case 'instructionCount':
+      case 'currentInstructionIndex':
+        reference(node.sysvar);
+        break;
+      case 'instruction':
+        reference(node.sysvar);
+        child('index');
+        break;
+      case 'instructionAccount':
+        reference(node.sysvar);
+        child('index');
+        child('position');
+        break;
+      case 'instructionData':
+        reference(node.sysvar);
+        child('index');
+        child('offset');
+        break;
+      case 'instructionDataBytes':
+        reference(node.sysvar);
+        child('index');
+        child('offset');
+        sites.numbers.push({ parent: node, key: 'length' });
+        break;
+      case 'accountDataBytes':
+        reference(node.account);
+        child('offset');
+        sites.numbers.push({ parent: node, key: 'length' });
+        break;
+      case 'registry':
+        name(node, 'account', 'account');
+        name(node, 'field', 'field');
+        break;
+    }
+  };
+  const visitParts = (parts: unknown[]) =>
+    parts.forEach((part) => {
+      if ((part as Mutable).kind === 'encoded') visitExpression(part as Mutable, 'value');
+    });
+  const visitSteps = (list: unknown[], inLoop: boolean) => {
+    sites.stepLists.push({ list, inLoop });
+    for (const item of list) {
+      const current = item as Mutable;
+      switch (current.kind) {
+        case 'require':
+          visitExpression(current, 'condition');
+          break;
+        case 'let':
+        case 'assign':
+          name(current, 'name', 'variable');
+          visitExpression(current, 'value');
+          break;
+        case 'invoke':
+          sites.invokes.push(current);
+          reference(current.program);
+          for (const entry of current.accounts as Mutable[]) reference(entry.account);
+          visitParts(current.data as unknown[]);
+          if (current.when) visitExpression(current, 'when');
+          if (current.accountGroup !== undefined) name(current, 'accountGroup', 'group');
+          break;
+        case 'emit':
+        case 'setReturnData':
+          sites.outputs.push(current);
+          visitParts(current.parts as unknown[]);
+          break;
+        case 'setRegistry':
+          name(current, 'account', 'account');
+          name(current, 'field', 'field');
+          visitExpression(current, 'value');
+          break;
+        case 'forEach':
+        case 'repeat':
+          sites.loops.push(current);
+          if (current.kind === 'repeat') {
+            visitExpression(current, 'count');
+            sites.numbers.push({ parent: current, key: 'max' });
+          }
+          (current.carry as unknown[] | undefined)?.forEach((_, index) => sites.names.push({ slot: { parent: current.carry as unknown[], key: index }, kind: 'variable' }));
+          visitSteps(current.steps as unknown[], true);
+          break;
+      }
+    }
+  };
+  visitSteps(template.steps as unknown[], false);
+  const declared = [template.accounts, (template.batch as Mutable | undefined)?.row].filter(Boolean) as Mutable[];
+  for (const record of declared) {
+    for (const constraint of Object.values(record) as Mutable[]) {
+      sites.constraints.push(constraint);
+      sites.numbers.push({ parent: constraint, key: 'minDataLength' });
+      const registry = constraint.registry as Mutable | undefined;
+      if (registry) {
+        name(registry, 'name', 'registry');
+        name(registry, 'payer', 'account');
+        if (registry.key) visitExpression(registry, 'key');
+      }
+    }
+  }
+  return sites;
+}
+
+/** All names of one kind in a document, to point a reference at the wrong one. */
+function namesOf(sites: Sites, kind: string): string[] {
+  return [...new Set(sites.names.filter((entry) => entry.kind === kind).map((entry) => String((entry.slot.parent as Record<string | number, unknown>)[entry.slot.key])))];
+}
+
+/** An expression a document has no business holding where it is put: out of scope, mistyped, or extreme. */
+function hostileExpression(rng: Rng, sites: Sites, existing: unknown): Expression {
+  const any = (kind: string, fallback: string) => {
+    const names = namesOf(sites, kind);
+    return names.length > 0 && rng.chance(0.7) ? rng.pick(names) : rng.chance(0.5) ? fallback : rng.pick(TRICKY_NAMES);
+  };
+  const literal = (): Expression =>
+    rng.pick([
+      () => u64((1n << 64n) - 1n),
+      () => i64(-(1n << 63n)),
+      () => u128((1n << 128n) - 1n),
+      () => expression.bool(rng.chance(0.5)),
+      () => expression.pubkey(new Uint8Array(32)),
+      () => expression.bytes(rng.bytes(rng.pick([0, 1, 32, 33, 1024]))),
+    ])();
+  return rng.pick<() => Expression>([
+    () => expression.loopIndex(),
+    () => expression.rowInput(any('rowInput', 'nope')),
+    () => expression.returnData(rng.pick(READ_TYPES), rng.pick([0, 1, 1008, 1016, 1017, 0xffff_ffff])),
+    () => expression.variable(any('variable', 'nope')),
+    () => expression.input(any('input', 'nope')),
+    () => expression.accountField(account.iteration(any('row', 'nope')), rng.pick(['key', 'lamports', 'isEmpty'] as const)),
+    () => expression.accountData(fixed(any('account', 'nope')), rng.pick([0, 31, 1024, 0xffff_fff8, 0xffff_ffff]), rng.pick(READ_TYPES)),
+    () => expression.accountData(fixed(any('account', 'nope')), literal(), rng.pick(READ_TYPES)),
+    () => expression.accountDataBytes(fixed(any('account', 'nope')), u64(0), rng.pick([1, 1024])),
+    () => expression.instructionCount(fixed(any('account', 'nope'))),
+    () => expression.instructionDataBytes(fixed(any('account', 'nope')), u64(0), u64(0), rng.pick([1, 1024])),
+    () => expression.pda(fixed(any('account', 'nope')), Array.from({ length: rng.pick([1, 2, 15, 16]) }, literal)),
+    () => expression.pda(fixed(any('account', 'nope')), [literal()], literal()),
+    () => expression.registry(any('account', 'nope'), any('field', 'nope')),
+    () => literal(),
+    () => expression.cast(rng.pick(['u64', 'i64', 'u128'] as const), literal()),
+    () => expression.powerOfTen(u64(rng.pick([0, 38, 39, 1000]))),
+    () => expression.select(expression.bool(true), expression.bytes(rng.bytes(5)), expression.bytes(rng.bytes(900))),
+    () => expression.bytesLength(literal()),
+    () => expression.multiplyDivide(literal(), literal(), literal(), rng.pick(['down', 'up'] as const)),
+    () => expression[rng.pick(['shiftLeft', 'bitAnd', 'lessThan', 'and', 'equal', 'remainder'] as const)](literal(), literal()),
+    () => {
+      // The same expression, nested deep.
+      let value = existing as Expression;
+      for (let level = 0, depth = rng.pick([10, 130, 600]); level < depth; level += 1) value = expression.not(value);
+      return value;
+    },
+  ])();
+}
+
+/** A step that breaks a placement or typing rule wherever it lands. */
+function hostileStep(rng: Rng, sites: Sites): Step {
+  const any = (kind: string, fallback: string) => {
+    const names = namesOf(sites, kind);
+    return names.length > 0 && rng.chance(0.7) ? rng.pick(names) : fallback;
+  };
+  const value = () => hostileExpression(rng, sites, expression.bool(true));
+  return rng.pick<() => Step>([
+    () => step.assign(any('variable', 'nope'), value()),
+    () => step.setReturnData([data.encode('u64', u64(1))]),
+    () => step.let(`fresh${rng.below(1000)}`, expression.returnData(rng.pick(READ_TYPES), 0)),
+    () => step.let(any('variable', 'nope'), u64(1)),
+    () => step.repeat(u64(1), [step.repeat(u64(1), [step.require(expression.bool(true))], { max: 1 })], { max: 1 }),
+    () => step.repeat(value(), [step.require(expression.bool(true))], { max: rng.pick([1, 255]), carry: [any('variable', 'nope')] }),
+    () => step.forEach([step.emit([data.literal(Uint8Array.of(1, 2, 3, 4)), data.encode('u64', expression.loopIndex())])]),
+    () => step.emit([data.literal(rng.pick([Uint8Array.of(0x42, 0x45, 0x56, 0x31), Uint8Array.of(1, 2), new Uint8Array(0)]))]),
+    () => step.emit([data.literal(Uint8Array.of(9, 9, 9, 9)), ...Array.from({ length: 33 }, () => data.encode('pubkey', expression.pubkey(new Uint8Array(32))))]),
+    () => step.invoke({ program: fixed(any('account', 'nope')), accounts: [{ account: fixed(any('account', 'nope')), signer: true, writable: true }], data: [] }),
+    () => step.invoke({ program: fixed(any('account', 'nope')), accounts: [], data: [data.literal(new Uint8Array(4097))] }),
+    () => step.invoke({ program: fixed(any('account', 'nope')), accounts: [], data: [], accountGroup: any('group', 'nope') }),
+    () => step.setRegistry(any('account', 'nope'), any('field', 'nope'), value()),
+    () => step.require(value()),
+  ])();
+}
+
+/** Breaks a valid document in one to three places; returns what it did. */
+export function mutateDocument(original: TemplateInput, rng: Rng): { template: TemplateInput; mutations: string[] } {
+  const template = structuredClone(original) as unknown as Mutable;
+  const mutations: string[] = [];
+  for (let count = rng.range(1, 3); mutations.length < count; ) {
+    const sites = collectSites(template);
+    const operator = rng.weighted<string>([
+      [5, 'expression'],
+      [4, 'name'],
+      [3, 'insert-step'],
+      [2, 'move-step'],
+      [2, 'delete-step'],
+      [1, 'duplicate-step'],
+      [3, 'account'],
+      [2, 'number'],
+      [2, 'loop'],
+      [1, 'declarations'],
+    ]);
+    switch (operator) {
+      case 'expression': {
+        if (sites.expressions.length === 0) continue;
+        const { parent, key } = rng.pick(sites.expressions);
+        const target = parent as Record<string | number, unknown>;
+        target[key] = hostileExpression(rng, sites, target[key]);
+        break;
+      }
+      case 'name': {
+        if (sites.names.length === 0) continue;
+        const { slot, kind } = rng.pick(sites.names);
+        const others = sites.names.filter((entry) => entry.kind !== kind);
+        const nameAt = ({ slot: other }: { slot: Slot }) => String((other.parent as Record<string | number, unknown>)[other.key]);
+        const replacement = rng.weighted<() => string>([
+          [3, () => (others.length > 0 ? nameAt(rng.pick(others)) : 'nope')],
+          [2, () => rng.pick(TRICKY_NAMES)],
+          [1, () => `unknown${rng.below(100)}`],
+        ])();
+        (slot.parent as Record<string | number, unknown>)[slot.key] = replacement;
+        break;
+      }
+      case 'insert-step': {
+        const { list } = rng.pick(sites.stepLists);
+        list.splice(rng.below(list.length + 1), 0, hostileStep(rng, sites));
+        break;
+      }
+      case 'move-step': {
+        const from = rng.pick(sites.stepLists);
+        const to = rng.pick(sites.stepLists);
+        if (from.list.length === 0) continue;
+        const [moved] = from.list.splice(rng.below(from.list.length), 1);
+        to.list.splice(rng.below(to.list.length + 1), 0, moved);
+        break;
+      }
+      case 'delete-step': {
+        const { list } = rng.pick(sites.stepLists);
+        if (list.length === 0) continue;
+        list.splice(rng.below(list.length), 1);
+        break;
+      }
+      case 'duplicate-step': {
+        const { list } = rng.pick(sites.stepLists);
+        if (list.length === 0) continue;
+        const index = rng.below(list.length);
+        const copies = rng.pick([2, 40, 130, 300]);
+        list.splice(index, 0, ...Array.from({ length: copies }, () => structuredClone(list[index])));
+        break;
+      }
+      case 'account': {
+        if (sites.constraints.length === 0) continue;
+        const constraint = rng.pick(sites.constraints);
+        rng.pick<() => void>([
+          () => (constraint.signer = !constraint.signer),
+          () => (constraint.writable = !constraint.writable),
+          () => (constraint.executable = !constraint.executable),
+          () => delete constraint.address,
+          () => delete constraint.owner,
+          () => (constraint.unsafeUnpinned = !constraint.unsafeUnpinned),
+          () => (constraint.address = rng.pick([new Uint8Array(32), INSTRUCTIONS_SYSVAR_ADDRESS_BYTES, new Uint8Array(31)])),
+          () => (constraint.registry = { name: rng.pick([...namesOf(sites, 'registry'), 'nope']), payer: rng.pick([...namesOf(sites, 'account'), 'nope']) }),
+        ])();
+        break;
+      }
+      case 'number': {
+        if (sites.numbers.length === 0) continue;
+        const { parent, key } = rng.pick(sites.numbers);
+        (parent as Record<string | number, unknown>)[key] = rng.pick([0, 1, 255, 256, 1024, 1025, 0xffff_ffff, 2 ** 32, -1, 1.5, Number.MAX_SAFE_INTEGER]);
+        break;
+      }
+      case 'loop': {
+        if (sites.loops.length === 0) continue;
+        const loop = rng.pick(sites.loops);
+        rng.pick<() => void>([
+          () => (loop.carry = [...((loop.carry as string[] | undefined) ?? []), rng.pick([...namesOf(sites, 'variable'), 'nope'])]),
+          () => (loop.carry = [...((loop.carry as string[] | undefined) ?? []), ...((loop.carry as string[] | undefined) ?? [])]),
+          () => (loop.max = rng.pick([0, 1, 255, 256])),
+          () => (loop.count = hostileExpression(rng, sites, loop.count)),
+          () => (loop.steps = []),
+        ])();
+        break;
+      }
+      case 'declarations': {
+        rng.pick<() => void>([
+          () => ((template.inputs as Mutable)[`big${rng.below(100)}`] = { type: 'bytes', maxLength: rng.pick([0, 1024, 1025]) }),
+          () => (template.registries = Object.fromEntries(Array.from({ length: 9 }, (_, index) => [`r${index}`, { f: 'u64' }]))),
+          () => (template.emitEvent = !template.emitEvent),
+          () => (template.accountGroups = ['g', 'g']),
+          () => {
+            const batch = template.batch as Mutable | undefined;
+            if (batch) batch.maxIterations = rng.pick([0, 1, 60, 61]);
+            else template.batch = { maxIterations: 2, row: { r: { writable: true } } };
+          },
+        ])();
+        break;
+      }
+    }
+    mutations.push(operator);
+  }
+  return { template: template as unknown as TemplateInput, mutations };
+}
+
+/**
+ * The document with every declared name and reference passed through `rename`, each record keeping
+ * its order. Keys are defined as own properties, as `JSON.parse` makes them, so a name such as
+ * `__proto__` is a key like any other here.
+ */
+export function renameDocument(template: TemplateInput, rename: (name: string) => string): TemplateInput {
+  const copy = structuredClone(template) as unknown as Mutable;
+  for (const { slot } of collectSites(copy).names) {
+    const target = slot.parent as Record<string | number, unknown>;
+    target[slot.key] = rename(String(target[slot.key]));
+  }
+  const renameKeys = (record: unknown): Mutable => {
+    const renamed: Mutable = {};
+    for (const [key, value] of Object.entries((record ?? {}) as Mutable)) {
+      Object.defineProperty(renamed, rename(key), { value, enumerable: true, writable: true, configurable: true });
+    }
+    return renamed;
+  };
+  copy.inputs = renameKeys(copy.inputs);
+  copy.accounts = renameKeys(copy.accounts);
+  if (copy.registries) {
+    const registries: Mutable = {};
+    for (const [name, fields] of Object.entries(copy.registries as Mutable)) {
+      Object.defineProperty(registries, rename(name), { value: renameKeys(fields), enumerable: true, writable: true, configurable: true });
+    }
+    copy.registries = registries;
+  }
+  const batch = copy.batch as Mutable | undefined;
+  if (batch) {
+    batch.row = renameKeys(batch.row);
+    if (batch.rowInputs) batch.rowInputs = renameKeys(batch.rowInputs);
+  }
+  if (copy.accountGroups) copy.accountGroups = (copy.accountGroups as string[]).map(rename);
+  return copy as unknown as TemplateInput;
+}
+
+/** Every distinct name in a document. */
+function declaredNames(template: TemplateInput): string[] {
+  const copy = template as unknown as Mutable;
+  const names = new Set<string>(collectSites(copy).names.map(({ slot }) => String((slot.parent as Record<string | number, unknown>)[slot.key])));
+  for (const record of [copy.inputs, copy.accounts, copy.registries, (copy.batch as Mutable | undefined)?.row, (copy.batch as Mutable | undefined)?.rowInputs]) {
+    for (const key of Object.keys((record ?? {}) as Mutable)) names.add(key);
+  }
+  for (const fields of Object.values((copy.registries ?? {}) as Mutable)) for (const key of Object.keys(fields as Mutable)) names.add(key);
+  for (const group of (copy.accountGroups as string[] | undefined) ?? []) names.add(group);
+  return [...names];
+}
+
+/** Oracle 2, for names: renamed, some to names an object already has, the document compiles the same. */
+export function renamingProblems(template: TemplateInput, compiled: Outcome, rng: Rng): string[] {
+  const names = declaredNames(template);
+  const tricky = rng.shuffle([...TRICKY_NAMES]);
+  const mapping = new Map(names.map((name, index) => [name, index < tricky.length && rng.chance(0.5) ? tricky[index]! : `renamed${index}`]));
+  // A tricky name taken twice would merge two declarations; keep the mapping one-to-one.
+  const used = new Set<string>();
+  for (const [name, target] of mapping) {
+    if (used.has(target)) mapping.set(name, `renamed_${name}`);
+    used.add(mapping.get(name)!);
+  }
+  const renamed = renameDocument(template, (name) => mapping.get(name) ?? name);
+  const outcome = compileOutcome(renamed);
+  const proto = [...mapping.values()].includes('__proto__');
+  if ('ok' in compiled && 'ok' in outcome) {
+    return sameBytes(compiled.ok.bytes, outcome.ok.bytes) ? [] : [`${proto ? 'known proto-name: ' : ''}renamed names compile to different bytes`];
+  }
+  if ('ok' in compiled !== 'ok' in outcome) {
+    const what = 'ok' in compiled ? `refused after renaming: ${describeError((outcome as { error: unknown }).error)}` : 'compiles only after renaming';
+    return [`${proto ? 'known proto-name: ' : ''}${what}`];
+  }
+  return [];
+}
+
+function countInvokes(steps: Step[]): number {
+  return steps.reduce((sum, current) => sum + (current.kind === 'invoke' ? 1 : current.kind === 'forEach' || current.kind === 'repeat' ? countInvokes(current.steps) : 0), 0);
+}
+
+/** The finding an internal error belongs to, when it is one already triaged. */
+export function knownFinding(template: TemplateInput, error: unknown): string | undefined {
+  const message = error instanceof Error ? error.message : '';
+  if (message === 'Expected u8' && countInvokes(template.steps as Step[]) > 255) return 'invoke-index';
+  if (message === 'Expected u32') {
+    let reaches = false;
+    const visit = (node: unknown): void => {
+      if (node === null || typeof node !== 'object') return;
+      if (Array.isArray(node)) return node.forEach(visit);
+      const record = node as Mutable;
+      if (record.kind === 'accountData' && typeof record.offset === 'number' && record.offset + READ_WIDTH[record.type as ReadType] > 0xffff_ffff) reaches = true;
+      Object.values(record).forEach(visit);
+    };
+    visit(template);
+    if (reaches) return 'offset-u32';
+  }
+  if (/Maximum call stack size exceeded/.test(message)) return 'deep-nesting';
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------------------------
 // Metamorphic copies of a document
 // ---------------------------------------------------------------------------------------------
 
@@ -1993,8 +2514,10 @@ export interface CorpusCase {
   /** Known findings this document can trigger, so a harness counts them rather than failing. */
   hazards: string[];
   accounts: unknown[];
-  /** The run data after the instruction tag. */
-  data: string;
+  /** The run data after the instruction tag; absent for a mutated document its world no longer fits. */
+  data?: string;
+  /** For a mutated document, what was done to it. */
+  mutations?: string[];
 }
 
 function variant(compiled: CompiledTemplate): CorpusVariant {
@@ -2053,19 +2576,40 @@ export interface CaseReport {
   compiled: boolean;
   /** Internal errors, nondeterminism and reuse problems: each one a finding. */
   problems: string[];
+  /** Findings already triaged, each with its own skipped test: counted, not failed. */
+  known: string[];
   rejection?: string;
   reused: 'natural' | 'forced' | 'none';
   corpus?: CorpusCase;
+  /** For a mutated document, what was done to it. */
+  mutations?: string[];
 }
 
 const sameBytes = (left: Uint8Array, right: Uint8Array) => left.length === right.length && left.every((byte, index) => byte === right[index]);
 
-export function checkCase(fuzzCase: FuzzCase, options: { corpus?: boolean } = {}): CaseReport {
-  const report: CaseReport = { seed: fuzzCase.seed, size: fuzzCase.size, compiled: false, problems: [], reused: 'none' };
+export function checkCase(fuzzCase: FuzzCase, options: { corpus?: boolean; mutations?: string[] } = {}): CaseReport {
+  const report: CaseReport = {
+    seed: fuzzCase.seed,
+    size: fuzzCase.size,
+    compiled: false,
+    problems: [],
+    known: [],
+    reused: 'none',
+    ...(options.mutations ? { mutations: options.mutations } : {}),
+  };
   const natural = compileOutcome(fuzzCase.template);
+  // Oracle 2, for names: the same document under other names compiles the same.
+  for (const problem of renamingProblems(fuzzCase.template, natural, new Rng(fuzzCase.seed ^ 0x0a11a5))) {
+    if (problem.startsWith('known proto-name')) report.known.push('proto-name');
+    else report.problems.push(problem);
+  }
   if ('error' in natural) {
     report.rejection = describeError(natural.error);
-    if (!isCleanRejection(natural.error)) report.problems.push(`internal error: ${report.rejection}`);
+    if (!isCleanRejection(natural.error)) {
+      const known = knownFinding(fuzzCase.template, natural.error);
+      if (known) report.known.push(known);
+      else report.problems.push(`internal error: ${report.rejection}`);
+    }
     // A refusal must be deterministic too.
     const again = compileOutcome(fuzzCase.template);
     if (!('error' in again) || describeError(again.error) !== report.rejection) report.problems.push('a second compile did not refuse the same way');
@@ -2119,15 +2663,18 @@ export function checkCase(fuzzCase: FuzzCase, options: { corpus?: boolean } = {}
   }
 
   if (options.corpus) {
-    let runData: Uint8Array;
+    // A mutated document may no longer fit its world's inputs; it is then verified but not run.
+    let runData: Uint8Array | undefined;
     try {
       runData = encodeRunInputs(compiled, fuzzCase.inputs, {
         ...(fuzzCase.rows.length > 0 && compiled.rowInputOrder.length > 0 ? { rows: fuzzCase.rows } : {}),
         groupLengths: fuzzCase.groupLengths,
       });
     } catch (error) {
-      report.problems.push(`the generator's inputs do not encode: ${describeError(error)}`);
-      return report;
+      if (!options.mutations) {
+        report.problems.push(`the generator's inputs do not encode: ${describeError(error)}`);
+        return report;
+      }
     }
     report.corpus = {
       seed: fuzzCase.seed,
@@ -2138,7 +2685,8 @@ export function checkCase(fuzzCase: FuzzCase, options: { corpus?: boolean } = {}
       ...(materialized ? { materialized: variant(materialized) } : {}),
       hazards: carriedAliasHazard(fuzzCase.template.steps as Step[]) ? ['carried-alias'] : [],
       accounts: fuzzCase.accounts.map(corpusAccount),
-      data: hex(runData),
+      ...(runData ? { data: hex(runData) } : {}),
+      ...(options.mutations ? { mutations: options.mutations } : {}),
     };
   }
   return report;
@@ -2274,6 +2822,8 @@ const environment = (name: string) => process.env[name];
 const SEED_START = Number(environment('FUZZ_SEED_START') ?? 1);
 const SEEDS = Number(environment('FUZZ_SEEDS') ?? 400);
 const CORPUS_PATH = environment('FUZZ_CORPUS');
+/** Mutated copies checked per seed: documents that break the rules on purpose. */
+const MUTANTS_PER_SEED = Number(environment('FUZZ_MUTANTS') ?? 2);
 const COMMITTED_CORPUS = fileURLToPath(new URL('../../../fixtures/compiler-fuzz-corpus.json', import.meta.url));
 /** The committed corpus: up to this many cases, picked from these seeds to cover the most features. */
 const COMMITTED_CASES = 12;
@@ -2326,22 +2876,52 @@ describe('compiler fuzz', () => {
   test(`seeds ${SEED_START}..${SEED_START + SEEDS - 1}: compile or refuse cleanly, deterministically, and reuse registers faithfully`, { timeout: 3_600_000 }, () => {
     const reports: CaseReport[] = [];
     const corpus: CorpusCase[] = [];
+    const mutants: CaseReport[] = [];
     for (let seed = SEED_START; seed < SEED_START + SEEDS; seed += 1) {
       let report: CaseReport;
+      let fuzzCase: FuzzCase | undefined;
       try {
-        report = checkCase(generateCase(seed), { corpus: CORPUS_PATH !== undefined });
+        fuzzCase = generateCase(seed);
+        report = checkCase(fuzzCase, { corpus: CORPUS_PATH !== undefined });
       } catch (error) {
         // The generator or an oracle threw: a harness bug, reported with its seed.
-        report = { seed, size: 'small', compiled: false, problems: [`harness: ${describeError(error)}`], reused: 'none' };
+        report = { seed, size: 'small', compiled: false, problems: [`harness: ${describeError(error)}`], known: [], reused: 'none' };
       }
       reports.push(report);
       if (report.corpus) corpus.push(report.corpus);
+      for (let index = 0; fuzzCase && index < MUTANTS_PER_SEED; index += 1) {
+        let mutant: CaseReport;
+        try {
+          const { template, mutations } = mutateDocument(fuzzCase.template, new Rng(seed * 7_919 + index));
+          mutant = checkCase({ ...fuzzCase, template }, { corpus: CORPUS_PATH !== undefined, mutations });
+        } catch (error) {
+          mutant = { seed, size: fuzzCase.size, compiled: false, problems: [`harness (mutant ${index}): ${describeError(error)}`], known: [], reused: 'none' };
+        }
+        mutants.push(mutant);
+        if (mutant.corpus) corpus.push(mutant.corpus);
+      }
     }
     if (CORPUS_PATH) writeCorpus(CORPUS_PATH, corpus, `FUZZ_SEED_START=${SEED_START} FUZZ_SEEDS=${SEEDS}`);
 
     const compiled = reports.filter((report) => report.compiled);
+    const histogram = (list: CaseReport[]) =>
+      Object.entries(
+        list
+          .filter((report) => report.rejection)
+          .reduce<Record<string, number>>((counts, report) => {
+            const key = report.rejection!.replace(/\d+/g, 'N').slice(0, 90);
+            counts[key] = (counts[key] ?? 0) + 1;
+            return counts;
+          }, {}),
+      ).sort((x, y) => y[1] - x[1]);
+    const known = [...reports, ...mutants].flatMap((report) => report.known).reduce<Record<string, number>>((counts, id) => {
+      counts[id] = (counts[id] ?? 0) + 1;
+      return counts;
+    }, {});
     const summary = {
       seeds: `${SEED_START}..${SEED_START + SEEDS - 1}`,
+      mutants: { checked: mutants.length, compiled: mutants.filter((report) => report.compiled).length, refusals: histogram(mutants).slice(0, 40) },
+      knownFindings: known,
       compiled: compiled.length,
       refused: reports.length - compiled.length,
       forcedReuse: reports.filter((report) => report.reused === 'forced').length,
@@ -2358,7 +2938,9 @@ describe('compiler fuzz', () => {
       ).sort((x, y) => y[1] - x[1]),
     };
     console.log(JSON.stringify(summary, null, 1));
-    const problems = reports.filter((report) => report.problems.length > 0).map((report) => `seed ${report.seed}: ${report.problems.join('; ')}`);
+    const problems = [...reports, ...mutants]
+      .filter((report) => report.problems.length > 0)
+      .map((report) => `seed ${report.seed}${report.mutations ? ` mutant (${report.mutations.join(', ')})` : ''}: ${report.problems.join('; ')}`);
     expect(problems).toEqual([]);
     // The generator must mostly write documents the compiler accepts, or the oracles test little.
     expect(compiled.length).toBeGreaterThanOrEqual(reports.length * 0.6);

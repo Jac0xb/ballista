@@ -317,8 +317,43 @@ struct Tally {
     failures: std::collections::BTreeMap<String, usize>,
     forced_compared: usize,
     materialized_compared: usize,
+    verified_only: usize,
     known: std::collections::BTreeMap<String, usize>,
-    findings: Vec<String>,
+    /// Each finding's category and message: `verifier rejects`, `upload refused`, `structural
+    /// error`, `forced differs` or `materialized differs`.
+    findings: Vec<(&'static str, String)>,
+}
+
+impl Tally {
+    fn finding(&mut self, category: &'static str, message: String) {
+        self.findings.push((category, message));
+    }
+
+    /// The findings by category, with the first few of each.
+    fn report(&self) -> String {
+        let mut categories: Vec<&str> = self
+            .findings
+            .iter()
+            .map(|(category, _)| *category)
+            .collect();
+        categories.dedup();
+        categories.sort_unstable();
+        categories.dedup();
+        categories
+            .into_iter()
+            .map(|category| {
+                let all: Vec<&String> = self
+                    .findings
+                    .iter()
+                    .filter(|(c, _)| *c == category)
+                    .map(|(_, m)| m)
+                    .collect();
+                let first: Vec<&str> = all.iter().take(3).map(|message| message.as_str()).collect();
+                format!("{category}: {}\n  {}", all.len(), first.join("\n  "))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 fn run_corpus(corpus: &str) -> Tally {
@@ -339,10 +374,19 @@ fn run_corpus(corpus: &str) -> Tally {
             };
             let payload = decode(variant["payload"].as_str().expect("payload"));
             tally.payloads += 1;
+            let runnable = case.get("data").is_some_and(Value::is_string);
             if let Err(error) = ProgramView::parse(&payload).and_then(|program| program.verify()) {
-                tally.findings.push(format!(
-                    "seed {seed} {name}: the verifier rejects the compiled payload: {error:?}"
-                ));
+                tally.finding(
+                    "verifier rejects",
+                    format!(
+                        "seed {seed} {name}: the verifier rejects the compiled payload: {error:?}"
+                    ),
+                );
+                continue;
+            }
+            // A mutated document its world no longer fits is verified, not run.
+            if !runnable {
+                tally.verified_only += 1;
                 continue;
             }
             match run_variant(&mut context, case, &payload) {
@@ -350,7 +394,9 @@ fn run_corpus(corpus: &str) -> Tally {
                     tally.runs += 1;
                     outcomes.push((name, outcome, paths(variant, &payload)));
                 }
-                Err(error) => tally.findings.push(format!("seed {seed} {name}: {error}")),
+                Err(error) => {
+                    tally.finding("upload refused", format!("seed {seed} {name}: {error}"))
+                }
             }
         }
         let Some((_, natural, natural_paths)) =
@@ -373,10 +419,13 @@ fn run_corpus(corpus: &str) -> Tally {
                     && natural.result.contains("Failure(1,")
                     && !reads_a_bool(&payload, (code >> 16) as usize)
                 {
-                    tally.findings.push(format!(
-                        "seed {seed}: a verified program failed with structural error {kind} at {:?}",
-                        failure_step(code, natural_paths)
-                    ));
+                    tally.finding(
+                        "structural error",
+                        format!(
+                            "seed {seed}: a verified program failed with structural error {kind} at {:?}",
+                            failure_step(code, natural_paths)
+                        ),
+                    );
                 }
             }
         }
@@ -400,10 +449,17 @@ fn run_corpus(corpus: &str) -> Tally {
                 *tally.known.entry("carried-alias".to_owned()).or_default() += 1;
                 continue;
             }
-            tally.findings.push(format!(
-                "seed {seed}: natural and {name} runs differ: {}",
-                found.join("; ")
-            ));
+            tally.finding(
+                if exact {
+                    "forced differs"
+                } else {
+                    "materialized differs"
+                },
+                format!(
+                    "seed {seed}: natural and {name} runs differ: {}",
+                    found.join("; ")
+                ),
+            );
         }
     }
     tally
@@ -416,9 +472,10 @@ fn compiler_fuzz_corpus_runs_the_same_with_and_without_register_reuse() {
     });
     let tally = run_corpus(external.as_deref().unwrap_or(COMMITTED));
     eprintln!(
-        "compiler fuzz corpus: {} cases, {} payloads verified and uploaded, {} runs; natural runs: {} succeeded, failures {:?}; {} forced-reuse and {} materialized comparisons; known findings {:?}",
+        "compiler fuzz corpus: {} cases, {} payloads verified ({} of them not run: mutated documents their world no longer fits), {} runs; natural runs: {} succeeded, failures {:?}; {} forced-reuse and {} materialized comparisons; known findings {:?}",
         tally.cases,
         tally.payloads,
+        tally.verified_only,
         tally.runs,
         tally.succeeded,
         tally.failures,
@@ -434,13 +491,7 @@ fn compiler_fuzz_corpus_runs_the_same_with_and_without_register_reuse() {
         tally.findings.is_empty(),
         "{} findings:\n{}",
         tally.findings.len(),
-        tally
-            .findings
-            .iter()
-            .take(20)
-            .cloned()
-            .collect::<Vec<_>>()
-            .join("\n\n")
+        tally.report()
     );
 }
 

@@ -9,7 +9,10 @@ import {
   compileTemplate,
   defineTemplate,
   expression,
+  rateLimit,
   step,
+  systemTransfer,
+  type Step,
 } from './index.js';
 
 describe('addressBytes', () => {
@@ -38,5 +41,61 @@ describe('anchorDiscriminator', () => {
     // Jupiter v6 `route`, as its instruction data starts.
     expect(Buffer.from(anchorDiscriminator('route')).toString('hex')).toBe('e517cb977ae3ad2a');
     expect(anchorDiscriminator('collect_fees')).toHaveLength(8);
+  });
+});
+
+describe('rateLimit in a template that keeps two limits', () => {
+  const limit = (registry: string, fields: { spent?: string; lastSpend?: string; name?: string } = {}): Step[] =>
+    rateLimit({
+      registry,
+      cap: expression.u64(1_000_000_000),
+      refillPerSecond: expression.u64(11_574),
+      amount: expression.input('amount'),
+      ...fields,
+    });
+  const letNames = (steps: Step[]) => steps.flatMap((item) => (item.kind === 'let' ? [item.name] : []));
+  const labels = (steps: Step[]) => steps.flatMap((item) => (item.kind === 'require' ? [item.label] : []));
+
+  test('names its variables after the registry account, and the field when it is not `spent`', () => {
+    expect(letNames(limit('perCaller'))).toEqual([
+      'perCallerLast',
+      'perCallerNow',
+      'perCallerSpent',
+      'perCallerRefill',
+      'perCallerTotal',
+    ]);
+    expect(letNames(limit('limits', { spent: 'usdcSpent', lastSpend: 'usdcLast' }))[0]).toBe('limitsUsdcSpentLast');
+    expect(labels(limit('perCaller'))).toEqual(['withinRateLimit']);
+    expect(letNames(limit('perCaller', { name: 'daily' }))[0]).toBe('dailyLast');
+    expect(labels(limit('perCaller', { name: 'daily' }))).toEqual(['withinDaily']);
+  });
+
+  test('compiles a per-caller limit beside a shared one, and two limits in one entry', () => {
+    const template = defineTemplate({
+      inputs: { amount: { type: 'u64' } },
+      registries: { limits: { spent: 'u64', lastSpend: 'i64', usdcSpent: 'u64', usdcLast: 'i64' } },
+      accounts: {
+        caller: { signer: true, writable: true },
+        recipient: { writable: true },
+        perCaller: account.registry('limits', { key: expression.accountKey('caller'), payer: 'caller' }),
+        shared: account.registry('limits', { payer: 'caller' }),
+        systemProgram: account.systemProgram(),
+      },
+      steps: [
+        ...limit('perCaller'),
+        ...limit('shared'),
+        ...limit('shared', { spent: 'usdcSpent', lastSpend: 'usdcLast' }),
+        systemTransfer({
+          systemProgram: account.fixed('systemProgram'),
+          from: account.fixed('caller'),
+          to: account.fixed('recipient'),
+          lamports: expression.input('amount'),
+        }),
+      ],
+    });
+    const compiled = compileTemplate(template);
+    // Each limit's requirement is labeled withinRateLimit; its path tells them apart.
+    const paths = compiled.sourceMap.filter((entry) => entry.label === 'withinRateLimit').map((entry) => entry.path);
+    expect([...new Set(paths)]).toEqual(['steps[5]', 'steps[13]', 'steps[21]']);
   });
 });

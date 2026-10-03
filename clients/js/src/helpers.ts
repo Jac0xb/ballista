@@ -406,8 +406,11 @@ function isTemplateConstant(value: unknown): boolean {
  *   get right.
  *
  * `name` prefixes the variables the steps bind, `<name>Last`, `<name>Now`, `<name>Spent`,
- * `<name>Refill` and `<name>Total`, and names the requirement `within<Name>`: `withinRateLimit` by
- * default.
+ * `<name>Refill` and `<name>Total`, and names the requirement `within<Name>`. Without it, the
+ * variables take the registry account's name, followed by the `spent` field's when that is not
+ * `spent`, and the requirement is `withinRateLimit`. So limits kept in different entries, or in
+ * different fields of one entry, fit in one template; give each a `name` to tell their failures
+ * apart by label.
  */
 export function rateLimit(input: {
   registry: string;
@@ -429,30 +432,31 @@ export function rateLimit(input: {
       );
     }
   }
-  const name = input.name ?? 'rateLimit';
   const spentField = input.spent ?? 'spent';
   const lastSpendField = input.lastSpend ?? 'lastSpend';
+  const capitalized = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+  // Each limit lives in its own entry, or its own field of one, so either names its variables
+  // apart from another limit's in the same template.
+  const prefix =
+    input.name ?? (spentField === 'spent' ? input.registry : `${input.registry}${capitalized(spentField)}`);
   const u128 = (value: Expression) => expression.cast('u128', value);
-  const last = expression.variable(`${name}Last`);
-  const now = expression.variable(`${name}Now`);
-  const spent = expression.variable(`${name}Spent`);
-  const refill = expression.variable(`${name}Refill`);
-  const total = expression.variable(`${name}Total`);
+  const last = expression.variable(`${prefix}Last`);
+  const now = expression.variable(`${prefix}Now`);
+  const spent = expression.variable(`${prefix}Spent`);
+  const refill = expression.variable(`${prefix}Refill`);
+  const total = expression.variable(`${prefix}Total`);
   return [
-    step.let(`${name}Last`, expression.registry(input.registry, lastSpendField)),
+    step.let(`${prefix}Last`, expression.registry(input.registry, lastSpendField)),
     // `now` never reads earlier than `lastSpend`, so `now − lastSpend` is never negative, and the
     // `lastSpend` written back never moves back.
-    step.let(`${name}Now`, expression.max(expression.clockUnixTimestamp(), last)),
-    step.let(`${name}Spent`, u128(expression.registry(input.registry, spentField))),
-    step.let(`${name}Refill`, expression.multiply(u128(expression.subtract(now, last)), u128(input.refillPerSecond))),
+    step.let(`${prefix}Now`, expression.max(expression.clockUnixTimestamp(), last)),
+    step.let(`${prefix}Spent`, u128(expression.registry(input.registry, spentField))),
+    step.let(`${prefix}Refill`, expression.multiply(u128(expression.subtract(now, last)), u128(input.refillPerSecond))),
     step.let(
-      `${name}Total`,
+      `${prefix}Total`,
       expression.add(expression.subtract(spent, expression.min(spent, refill)), u128(input.amount)),
     ),
-    step.require(
-      expression.lessThanOrEqual(total, u128(input.cap)),
-      `within${name.charAt(0).toUpperCase()}${name.slice(1)}`,
-    ),
+    step.require(expression.lessThanOrEqual(total, u128(input.cap)), `within${capitalized(input.name ?? 'rateLimit')}`),
     step.setRegistry(input.registry, spentField, expression.cast('u64', total)),
     step.setRegistry(input.registry, lastSpendField, now),
   ];

@@ -32,6 +32,7 @@ import {
   consolidateOnlyTheFundedAccounts,
   runConsolidateOnlyTheFundedAccounts,
 } from './consolidate-only-the-funded-accounts.js';
+import { crankOncePerWaitingEntry, runCrankOncePerWaitingEntry } from './crank-once-per-waiting-entry.js';
 import { crankOnlyTheRipeEntries, runCrankOnlyTheRipeEntries } from './crank-only-the-ripe-entries.js';
 import { deadlineAndMinimumOutput, runDeadlineAndMinimumOutput } from './deadline-and-minimum-output.js';
 import { deadlineRefund, runDeadlineRefund } from './deadline-refund.js';
@@ -490,6 +491,12 @@ const cases: Case[] = [
         ],
       }),
   },
+  {
+    name: 'crank-once-per-waiting-entry',
+    template: crankOncePerWaitingEntry,
+    docsOnlyRows: 0,
+    run: () => runCrankOncePerWaitingEntry({ templateAddress: TEMPLATE, keeper: key(1), queue: key(2) }),
+  },
 ];
 
 async function record(item: Case, rows: number): Promise<Recorded> {
@@ -528,7 +535,7 @@ describe('docs examples', () => {
       output[item.name] = await record(item, item.docsOnlyRows!);
     }
     writeFileSync(DOCS_ONLY_PATH, `${JSON.stringify(output, null, 2)}\n`);
-    expect(Object.keys(output)).toHaveLength(6);
+    expect(Object.keys(output)).toHaveLength(7);
   });
 
   test('the budget example explains its labelled failure', () => {

@@ -65,6 +65,7 @@ pub const ALL: &[Example] = &[
         consolidate_only_the_funded_accounts,
     ),
     ("crank-only-the-ripe-entries", crank_only_the_ripe_entries),
+    ("crank-once-per-waiting-entry", crank_once_per_waiting_entry),
     (
         "distribute-a-runtime-pot-pro-rata",
         distribute_a_runtime_pot_pro_rata,
@@ -610,6 +611,41 @@ pub fn distribute_a_runtime_pot_pro_rata() -> Vec<u8> {
     builder.build().expect("template builds")
 }
 // #endregion distribute-a-runtime-pot-pro-rata
+
+// #region crank-once-per-waiting-entry
+/// Crank the queue once for each waiting entry, at most eight times.
+pub fn crank_once_per_waiting_entry() -> Vec<u8> {
+    use ballista_sdk::{ballista_common::template::*, ProgramBuilder, Segment, SYSTEM_PROGRAM_ID};
+
+    // Stand-ins so the example runs as written: replace them with the queue program's address,
+    // its crank instruction data, and the offset of the waiting count in its queue account.
+    const QUEUE_PROGRAM: [u8; 32] = SYSTEM_PROGRAM_ID.to_bytes();
+    const CRANK_DATA: [u8; 12] = [2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];
+    const WAITING_OFFSET: u64 = 8;
+
+    let mut builder = ProgramBuilder::new();
+    let queue_program = builder.account(ACCOUNT_EXECUTABLE, Some(QUEUE_PROGRAM), None, 0);
+    let keeper = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+    // 16 bytes, so the u64 at offset 8 fits. The TypeScript compiler works this out itself.
+    let queue = builder.account(ACCOUNT_WRITABLE, None, Some(QUEUE_PROGRAM), 16);
+
+    let most = builder.const_u64(8);
+    let waiting = builder.read(OP_READ_U64, queue, WAITING_OFFSET);
+    let count = builder.binary(OP_MIN, waiting, most);
+    let crank_ix = builder.blob(&CRANK_DATA);
+    let crank = builder.cpi(
+        queue_program,
+        &[
+            (keeper, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+            (queue, ACCOUNT_WRITABLE),
+        ],
+        &[Segment::Literal(crank_ix)],
+    );
+    // Runs `count` times, at most 8. The 0 is the carry mask: nothing is carried.
+    builder.repeat(count, 8, 0, |pass| pass.invoke(crank, None));
+    builder.build().expect("template builds")
+}
+// #endregion crank-once-per-waiting-entry
 
 // ------------------------------------------------------------------ payments
 

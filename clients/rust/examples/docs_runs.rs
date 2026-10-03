@@ -84,6 +84,9 @@ pub const ALL: &[ExampleRun] = &[
     ("crank-only-the-ripe-entries", |rows| {
         crank_only_the_ripe_entries(key(200), key(1), &keys(10, rows))
     }),
+    ("crank-once-per-waiting-entry", |_| {
+        crank_once_per_waiting_entry(key(200), key(1), key(2))
+    }),
     ("distribute-a-runtime-pot-pro-rata", |rows| {
         let holders: Vec<(Pubkey, u64)> = keys(10, rows).into_iter().map(|k| (k, 100)).collect();
         distribute_a_runtime_pot_pro_rata(key(200), key(1), 2_000_000, &holders)
@@ -521,6 +524,27 @@ pub fn distribute_a_runtime_pot_pro_rata(
     run_instruction(template, accounts, &inputs.finish())
 }
 // #endregion distribute-a-runtime-pot-pro-rata
+
+// #region crank-once-per-waiting-entry
+/// The run reads the count itself, so the keeper passes only the accounts.
+pub fn crank_once_per_waiting_entry(
+    template: Pubkey,
+    keeper: Pubkey,
+    queue: Pubkey,
+) -> Instruction {
+    use ballista_sdk::{run_instruction, SYSTEM_PROGRAM_ID};
+    use solana_program::instruction::AccountMeta;
+
+    const QUEUE_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
+
+    let accounts = vec![
+        AccountMeta::new_readonly(QUEUE_PROGRAM, false),
+        AccountMeta::new(keeper, true),
+        AccountMeta::new(queue, false),
+    ];
+    run_instruction(template, accounts, &[])
+}
+// #endregion crank-once-per-waiting-entry
 
 // ------------------------------------------------------------------ payments
 

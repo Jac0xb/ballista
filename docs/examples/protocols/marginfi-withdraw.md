@@ -2,8 +2,12 @@
 
 <p class="protocol-line">marginfi</p>
 
-**Status:** Run as real transactions against marginfi, copied from mainnet at one slot into
-LiteSVM, a local Solana runtime. Not yet run on mainnet itself.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against marginfi's
+program and accounts copied from mainnet; not yet run on devnet or mainnet.
+
+**Cost:** Ballista's own work took 5,472 of the tested transaction's 60,030
+[compute units](/reference/glossary#compute-units); marginfi and the token transfer took the rest.
+Ballista charges no fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -67,12 +71,11 @@ zero and refuses a debt with one. Update those oracles earlier in the transactio
 
 ## What has been tested
 
-- **Against the real programs.** `tests/protocols/tests/marginfi_withdraw_all_with_floor.rs`
-  empties a 100 USDC marginfi balance and sweeps it to the treasury: all of it, less at most the
-  one base unit marginfi's rounding can keep. With 1 SOL also deposited, `healthAccounts` carried
-  the SOL bank and its oracle, and the USDC came out, leaving the SOL. The whole transaction took
-  60,030 compute units (Solana's measure of execution cost) and 550 bytes, or 77,924 and 616 with
-  the SOL balance.
+- **In LiteSVM.** `tests/protocols/tests/marginfi_withdraw_all_with_floor.rs` empties a 100 USDC
+  marginfi balance and sweeps it to the treasury: all of it, less at most the one base unit
+  marginfi's rounding can keep. With 1 SOL also deposited, `healthAccounts` carried the SOL bank and
+  its oracle, and the USDC came out, leaving the SOL. The whole transaction took 60,030 compute
+  units and 550 bytes, or 77,924 and 616 with the SOL balance.
 - **Failures.** A `minimumWithdrawn` one unit above the deposit fails at `withdrawalMetItsFloor`.
   An attacker's account as `treasuryAta` fails at `sweepGoesToTheAuthority`, and as both
   `destinationAta` and `treasuryAta` at `withdrawalGoesToTheAuthority`, before marginfi is called.

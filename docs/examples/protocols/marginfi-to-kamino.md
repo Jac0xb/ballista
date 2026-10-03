@@ -2,8 +2,12 @@
 
 <p class="protocol-line">marginfi · Kamino</p>
 
-**Status:** Run as real transactions against marginfi and Kamino, copied from mainnet at one slot
-into LiteSVM, a local Solana runtime. Not yet run on mainnet itself.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against marginfi and
+Kamino programs and accounts copied from mainnet; not yet run on devnet or mainnet.
+
+**Cost:** Ballista's own work took 6,438 of the tested transaction's 162,666
+[compute units](/reference/glossary#compute-units); the protocols took the rest. Ballista charges no
+fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -72,11 +76,11 @@ Before the run:
 
 ## What has been tested
 
-- **Against the real programs.** `tests/protocols/tests/marginfi_to_kamino_rebalance.rs` moves a
-  100 USDC marginfi balance, the account's only one, into Kamino's USDC reserve, which has a
-  collateral farm, behind Kamino's refreshes. Kamino was asked for exactly what marginfi released
-  and kept back no more than its cToken rounding, and the marginfi balance closed. The whole
-  transaction took 162,666 compute units (Solana's measure of execution cost) and 1,009 bytes.
+- **In LiteSVM.** `tests/protocols/tests/marginfi_to_kamino_rebalance.rs` moves a 100 USDC marginfi
+  balance, the account's only one, into Kamino's USDC reserve, which has a collateral farm, behind
+  Kamino's refreshes. Kamino was asked for exactly what marginfi released and kept back no more than
+  its cToken rounding, and the marginfi balance closed. The whole transaction took 162,666 compute
+  units and 1,009 bytes.
 - **Failures.** A `minimumMoved` one unit above the deposit fails at `worthRebalancing`, with
   nothing moved.
 - **Not tested.** Mainnet itself, a marginfi account with other balances, a reserve without a

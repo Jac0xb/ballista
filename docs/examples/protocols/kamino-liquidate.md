@@ -2,8 +2,12 @@
 
 <p class="protocol-line">Kamino</p>
 
-**Status:** Run as real transactions against Kamino, copied from mainnet at one slot into LiteSVM,
-a local Solana runtime. Not yet run on mainnet itself.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against Kamino's program
+and accounts copied from mainnet; not yet run on devnet or mainnet.
+
+**Cost:** Ballista's own work took 5,776 of the tested transaction's 185,271
+[compute units](/reference/glossary#compute-units); Kamino took the rest. Ballista charges no fee;
+see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -77,12 +81,11 @@ it.
 
 ## What has been tested
 
-- **Against the real programs.** `tests/protocols/tests/kamino_liquidate_with_proof.rs` liquidates
-  an obligation that deposited 1 SOL and borrowed 70% of its value in USDC, after the test cut
-  SOL's price 12%, behind Kamino's refreshes. The run repaid 10% of the debt, the market's limit
-  per liquidation, and received more SOL than that USDC was worth at the oracle price, with no
-  cTokens left over. The whole transaction took 185,271 compute units (Solana's measure of
-  execution cost) and 1,045 bytes.
+- **In LiteSVM.** `tests/protocols/tests/kamino_liquidate_with_proof.rs` liquidates an obligation
+  that deposited 1 SOL and borrowed 70% of its value in USDC, after the test cut SOL's price 12%,
+  behind Kamino's refreshes. The run repaid 10% of the debt, the market's limit per liquidation, and
+  received more SOL than that USDC was worth at the oracle price, with no cTokens left over. The
+  whole transaction took 185,271 compute units and 1,045 bytes.
 - **Failures.** A `minimumBounty` one lamport above the payout fails at `liquidationPaidTheBounty`,
   with nothing moved. An attacker's account, approved for the liquidator, as
   `userDestinationLiquidity` or `userDestinationCollateral` fails at the matching owner check,

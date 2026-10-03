@@ -2,8 +2,12 @@
 
 <p class="protocol-line">Orca</p>
 
-**Status:** Run as real transactions against Orca's Whirlpools program and a SOL/USDC pool, copied
-from mainnet at one slot into LiteSVM, a local Solana runtime. Not yet run on mainnet itself.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against Orca's
+Whirlpools program and a SOL/USDC pool copied from mainnet; not yet run on devnet or mainnet.
+
+**Cost:** Ballista's own work took 14,587 of the tested four-row transaction's 60,880
+[compute units](/reference/glossary#compute-units); Whirlpools took the rest. Ballista charges no
+fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -24,12 +28,12 @@ Then, for each position, it:
    `fee_owed_b` hold only what the last update recorded, and a position that earned looks empty;
 3. calls `collect_fees` if either fee is above `dustFloor`.
 
-Skipping a collect saves about 13,300 compute units (Solana's measure of execution cost) and leaves
-dust alone. It doesn't prevent reverts: `collect_fees` with nothing owed succeeds and moves nothing.
-What reverts the whole harvest is a row that fails regardless of its fees: a position the signer
-isn't allowed to sign for (Whirlpools' `MissingOrInvalidDelegate`, 6019), one from another pool
-(`ConstraintHasOne`, 2001), or one of another holder (`positionBelongsToTheFeeOwner`). None of these
-depends on trades, so leave such positions out when you build the run.
+Skipping a collect saves about 13,300 compute units and leaves dust alone. It doesn't prevent
+reverts: `collect_fees` with nothing owed succeeds and moves nothing. What reverts the whole harvest
+is a row that fails regardless of its fees: a position the signer isn't allowed to sign for
+(Whirlpools' `MissingOrInvalidDelegate`, 6019), one from another pool (`ConstraintHasOne`, 2001), or
+one of another holder (`positionBelongsToTheFeeOwner`). None of these depends on trades, so leave
+such positions out when you build the run.
 
 ## Template
 
@@ -83,8 +87,8 @@ which program refused. The TypeScript run's `describeFailure` reads the logs to 
 
 ## What has been tested
 
-- **Against the real program.** `tests/protocols/tests/orca_harvest_many_positions.rs` earns fees
-  with real swaps through the pool, then harvests:
+- **In LiteSVM.** `tests/protocols/tests/orca_harvest_many_positions.rs` earns fees with real swaps
+  through the pool, then harvests:
   - Four rows: fees in both tokens; fees in token B only, with the NFT held in a Token-2022
     account; out of range, with no fees; and no liquidity. The first two update and collect, the
     third only updates, and the fourth makes no call. The holder receives exactly the first two

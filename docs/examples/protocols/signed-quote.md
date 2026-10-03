@@ -2,10 +2,14 @@
 
 <p class="protocol-line">Ed25519 · Instructions sysvar · SPL Token</p>
 
-**Status:** Run as real transactions against mainnet's Token program, the real USDC and wrapped SOL
-mints and Solana's Ed25519 precompile, copied from mainnet at one slot into LiteSVM, a local Solana
-runtime. Also run in Mollusk, a harness that runs Solana programs without a validator. Not yet run
-on devnet or mainnet itself.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against the Token
+program and the USDC and wrapped SOL mints copied from mainnet, with Solana's Ed25519 precompile,
+and in Mollusk, a harness that runs Solana programs without a validator; not yet run on devnet or
+mainnet.
+
+**Cost:** Ballista's own work took 8,733 of the tested transaction's 8,892
+[compute units](/reference/glossary#compute-units); the two token transfers took the rest. Ballista
+charges no fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -115,15 +119,14 @@ fails at `quoteIsEd25519`.
 
 ## What has been tested
 
-- **Against the real programs.** `tests/protocols/tests/signed_quote.rs` runs it as real transactions
-  in LiteSVM, against mainnet's Token program, the real USDC and wrapped SOL mints and the Ed25519
-  precompile. Selling 1.5 SOL and a lamport pays 225,375,001 USDC units, rounded up. Settling at
-  exactly `expiry` lands and one second later fails; exactly `maxAmount` lands and one lamport more
-  fails; USDC named as the base mint fails at `deliversTheQuotedMint`. The same quote settled twice
-  in its window lands both times, 3 SOL against a `maxAmount` of 2 SOL. No failed run moves any
-  balance. A settlement costs 8,892 compute units, and the transaction is 783 bytes with a 15,000
-  lamport fee. The precompile uses no compute units: it adds one signature to the fee and 276 of the
-  783 bytes.
+- **In LiteSVM.** `tests/protocols/tests/signed_quote.rs` runs it against copies of mainnet's Token
+  program and the USDC and wrapped SOL mints, with the Ed25519 precompile. Selling 1.5 SOL and a
+  lamport pays 225,375,001 USDC units, rounded up. Settling at exactly `expiry` lands and one second
+  later fails; exactly `maxAmount` lands and one lamport more fails; USDC named as the base mint
+  fails at `deliversTheQuotedMint`. The same quote settled twice in its window lands both times, 3
+  SOL against a `maxAmount` of 2 SOL. No failed run moves any balance. A settlement costs 8,892
+  compute units, and the transaction is 783 bytes with a 15,000 lamport fee. The precompile uses no
+  compute units: it adds one signature to the fee and 276 of the 783 bytes.
 - **End to end in Mollusk.** `tests/ballista/src/lib.rs` (`signed_quote_settles_only_as_the_maker_signed`)
   uploads the template as the TypeScript SDK compiles it and runs it in Mollusk after a real
   Ed25519 instruction. At a price of 2,500,000 (2.5 quote units per base unit), taking 3,000,001

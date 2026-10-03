@@ -2,8 +2,12 @@
 
 <p class="protocol-line">Kamino · Jupiter</p>
 
-**Status:** Run as real transactions against Jupiter, a Meteora pool and Kamino, copied from
-mainnet at one slot into LiteSVM, a local Solana runtime. Not yet run on mainnet itself.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against Jupiter, Meteora
+and Kamino programs and accounts copied from mainnet; not yet run on devnet or mainnet.
+
+**Cost:** Ballista's own work took 8,345 of the tested transaction's 141,830
+[compute units](/reference/glossary#compute-units); the protocols took the rest. Ballista charges no
+fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -78,11 +82,10 @@ are in a different order.
 
 ## What has been tested
 
-- **Against the real programs.** `tests/protocols/tests/kamino_repay_swap_output.rs` sells 1 SOL
-  through Jupiter and a Meteora pool, behind Kamino's refreshes, for a borrower owing three times
-  the route's quote. The debt falls by exactly what the swap produced. The whole transaction took
-  141,830 compute units (Solana's measure of execution cost) and 1,006 bytes, using the route's
-  lookup table.
+- **In LiteSVM.** `tests/protocols/tests/kamino_repay_swap_output.rs` sells 1 SOL through Jupiter
+  and a Meteora pool, behind Kamino's refreshes, for a borrower owing three times the route's quote.
+  The debt falls by exactly what the swap produced. The whole transaction took 141,830 compute units
+  and 1,006 bytes, using the route's lookup table.
 - **Failures.** A `minimumRepayment` one unit above the output fails at `swapWorthRepaying`, swap
   included. An attacker's account, approved for the borrower, as `borrowedAssetAta` fails at
   `swapPaysTheBorrower`, before Jupiter is called. A route that charges a platform fee fails at

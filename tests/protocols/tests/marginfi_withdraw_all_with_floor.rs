@@ -132,8 +132,10 @@ fn withdraws_a_sole_position_and_sweeps_it() {
     let run = run(&svm, &scene, FLOOR);
     let outcome = send_run(&mut svm, &scene, run).unwrap_or_else(|failure| panic!("{failure:?}"));
     eprintln!(
-        "{NAME}: {} CU, {} bytes",
-        outcome.compute_units, outcome.size
+        "{NAME}: {} CU, {} of them Ballista's own, {} bytes",
+        outcome.compute_units,
+        outcome.own_compute_units_of(&ballista_sdk::ID).unwrap(),
+        outcome.size
     );
     let withdrawn = assert_swept(&svm, &scene);
     eprintln!("{NAME}: withdrew {withdrawn} of {DEPOSIT}");
@@ -150,8 +152,10 @@ fn withdraws_one_position_of_two_with_the_health_group() {
     let run = run(&svm, &scene, FLOOR);
     let outcome = send_run(&mut svm, &scene, run).unwrap_or_else(|failure| panic!("{failure:?}"));
     eprintln!(
-        "{NAME} with a second balance: {} CU, {} bytes",
-        outcome.compute_units, outcome.size
+        "{NAME} with a second balance: {} CU, {} of them Ballista's own, {} bytes",
+        outcome.compute_units,
+        outcome.own_compute_units_of(&ballista_sdk::ID).unwrap(),
+        outcome.size
     );
     assert_swept(&svm, &scene);
     assert_eq!(marginfi::active_banks(&svm, &scene.account), [SOL_BANK]);

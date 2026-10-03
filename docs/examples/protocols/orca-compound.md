@@ -2,8 +2,12 @@
 
 <p class="protocol-line">Orca</p>
 
-**Status:** Run as real transactions against Orca's Whirlpools program and a SOL/USDC pool, copied
-from mainnet at one slot into LiteSVM, a local Solana runtime. Not yet run on mainnet itself.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against Orca's
+Whirlpools program and a SOL/USDC pool copied from mainnet; not yet run on devnet or mainnet.
+
+**Cost:** Ballista's own work took 8,972 of the tested transaction's 43,784
+[compute units](/reference/glossary#compute-units); Whirlpools took the rest. Ballista charges no
+fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -85,11 +89,11 @@ spend those accounts outside this template too.
 
 ## What has been tested
 
-- **Against the real program.** `tests/protocols/tests/orca_compound_fees.rs` earns fees with real
-  swaps through the pool, then runs the template:
+- **In LiteSVM.** `tests/protocols/tests/orca_compound_fees.rs` earns fees with real swaps through
+  the pool, then runs the template:
   - Fees in both tokens are updated, collected and reinvested. The liquidity added is exactly what
     Orca's own math says the fees buy, and one fee is used whole. The run took 43,784 compute units
-    (Solana's measure of execution cost) and 706 bytes.
+    and 706 bytes.
   - Fees in one token are collected whole, not reinvested. With no fees, only the update runs. A
     position without liquidity gets no Whirlpools call, and an emptied one is collected, not
     refilled.

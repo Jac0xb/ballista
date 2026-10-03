@@ -239,8 +239,10 @@ fn only_the_rows_that_earned_collect() {
         ]
     );
     println!(
-        "four rows: {} CU, {} bytes",
-        outcome.compute_units, outcome.size
+        "four rows: {} CU, {} of them Ballista's own, {} bytes",
+        outcome.compute_units,
+        outcome.own_compute_units_of(&ballista_sdk::ID).unwrap(),
+        outcome.size
     );
 }
 

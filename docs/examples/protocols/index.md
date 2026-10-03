@@ -2,13 +2,13 @@
 
 Thirteen example templates. Twelve work with real Solana protocols: Jupiter, Kamino, marginfi,
 Orca, Pyth and Jito, and one of those, the daily cap, also keeps state between runs. The thirteenth
-settles a trade at a price someone signed off chain. Each one works with a
-value that only exists while the transaction runs, such as what a swap returned or what a position
-has earned. The source files are in `clients/js/examples/protocols/`.
+settles a trade at a price someone signed off chain. Each one works with a value that only exists
+while the transaction runs, such as what a swap returned or what a position has earned. The source
+files are in `clients/js/examples/protocols/`.
 
-The twelve protocol templates have been run as real transactions against the protocols' own
-programs, copied from mainnet, and the signed quote against Solana's own Ed25519 and token
-programs. [What has been tested](#what-has-been-tested) has the details. Treat them as starting
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against copies of the
+protocols' mainnet programs and accounts; not yet run on devnet or mainnet.
+[What has been tested](#what-has-been-tested) has the details. Treat the templates as starting
 points, and check them against the protocols' current programs before you use them.
 
 | Template | Protocol | Decided during the run |
@@ -34,13 +34,14 @@ points, and check them against the protocols' current programs before you use th
   Ballista program runs before it stores a template (`common/src/template/verify.rs`).
 - **Rust.** Each Rust template is byte-identical to the TypeScript one, and each Rust run passes
   the accounts, flags and inputs its template declares (`clients/rust/tests/protocol_templates.rs`).
-- **Running against the protocols.** The twelve protocol templates run as real signed transactions
-  against the protocols' own programs in [LiteSVM](https://github.com/LiteSVM/litesvm), a local
-  Solana runtime. The programs and accounts are copied from mainnet at a single slot, so the tests
-  never touch the network (`tests/protocols/`). The signed quote runs the same way against mainnet's
-  Token program and the real Ed25519 precompile, and also in Mollusk, a harness that runs Solana
-  programs without a validator (`tests/ballista/`). Each page's "What has been tested" says what its
-  runs showed.
+- **Running against copies of the protocols.** The twelve protocol templates run as signed
+  transactions in LiteSVM, a local Solana runtime, against the protocols' programs and accounts
+  copied from mainnet at a single slot. The tests never touch the network (`tests/protocols/`). The
+  signed quote runs the same way against a copy of mainnet's Token program, with the Ed25519
+  precompile, and also in Mollusk, a harness that runs Solana programs without a validator
+  (`tests/ballista/`). None has run on devnet or mainnet. Each page's "What has been tested" says
+  what its runs showed, and its Cost line how much of the measured transaction was Ballista's own
+  work.
 - **Account offsets.** The Orca, Pyth and SPL Token offsets are also checked against real devnet
   accounts by an opt-in test; see [reading offsets](#reading-offsets-from-an-account). The Kamino
   and marginfi templates don't read those protocols' accounts. They read SPL token accounts: their

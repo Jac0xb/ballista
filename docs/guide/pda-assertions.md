@@ -3,16 +3,15 @@
 This page shows how a template checks that an account the caller passed is the PDA or associated
 token account it expects, and how to keep that check cheap.
 
-A PDA (program-derived address) is an address computed from a program's address, a list of seeds,
-and one extra seed byte called the bump. The bump is chosen so the address falls off the ed25519
-curve, which means no private key exists for it. The canonical bump is the first value, counting
-down from 255, that gives such an address, and programs normally create their accounts at that
-canonical address. An ATA (associated token account) is the token account at the Associated Token
-Program's PDA for a given wallet, token program, and mint.
+A [PDA](/reference/glossary#pda) is derived from a program's address, a list of seeds, and one
+extra seed byte called the bump, chosen so the address falls off the ed25519 curve and has no
+private key. The canonical bump is the first value, counting down from 255, that gives such an
+address, and programs normally create their accounts at that canonical address. An
+[ATA](/reference/glossary#ata) is the token account at the Associated Token Program's PDA for a
+given wallet, token program, and mint.
 
-These assertions prove how an address was derived. They do not let Ballista sign for the account:
-Ballista never signs a template's calls. Within a run, its only signature creates a
-[registry entry](/guide/registries)'s own account.
+These assertions prove how an address was derived. They do not let Ballista sign for the account;
+see [Signing](/guide/trust-model#signing).
 
 ## Assert an associated token account
 
@@ -75,65 +74,9 @@ const run = buildKitRunInstruction({
 });
 ```
 
-```rust [Rust · Template]
-use ballista_sdk::{
-    ballista_common::template::{ACCOUNT_EXECUTABLE, ACCOUNT_WRITABLE, DATA_REG_PUBKEY, OP_EQ},
-    ProgramBuilder, Segment, ASSOCIATED_TOKEN_PROGRAM_ID,
-};
+<<< @/../clients/rust/examples/docs_security.rs#assert-ata-template [Rust · Template]
 
-let mut builder = ProgramBuilder::new();
-let associated_token_program = builder.account(
-    ACCOUNT_EXECUTABLE,
-    Some(ASSOCIATED_TOKEN_PROGRAM_ID.to_bytes()),
-    None,
-    0,
-);
-let token_program = builder.account(0, None, None, 0);
-let recipient = builder.account(0, None, None, 0);
-let mint = builder.account(0, None, None, 0);
-let destination_ata = builder.account(ACCOUNT_WRITABLE, None, None, 0);
-
-// Derive the ATA from [owner, token program, mint] and require the passed account to match.
-let ata_key = builder.account_key(destination_ata);
-let owner_key = builder.account_key(recipient);
-let token_program_key = builder.account_key(token_program);
-let mint_key = builder.account_key(mint);
-let derived = builder.derive_pda(
-    associated_token_program,
-    &[
-        Segment::Register(DATA_REG_PUBKEY, owner_key),
-        Segment::Register(DATA_REG_PUBKEY, token_program_key),
-        Segment::Register(DATA_REG_PUBKEY, mint_key),
-    ],
-);
-let matches = builder.binary(OP_EQ, ata_key, derived);
-builder.require(matches);
-
-let payload = builder.build()?;
-```
-
-```rust [Rust · Run]
-use ballista_sdk::run_instruction;
-use solana_program::{instruction::AccountMeta, pubkey::Pubkey};
-
-// template, recipient_pubkey, mint_pubkey and token_program_id are addresses you supply.
-let (destination_ata_pubkey, _) = Pubkey::find_program_address(
-    &[recipient_pubkey.as_ref(), token_program_id.as_ref(), mint_pubkey.as_ref()],
-    &ballista_sdk::ASSOCIATED_TOKEN_PROGRAM_ID,
-);
-
-let run = run_instruction(
-    template,
-    vec![
-        AccountMeta::new_readonly(ballista_sdk::ASSOCIATED_TOKEN_PROGRAM_ID, false),
-        AccountMeta::new_readonly(token_program_id, false),
-        AccountMeta::new_readonly(recipient_pubkey, false),
-        AccountMeta::new_readonly(mint_pubkey, false),
-        AccountMeta::new(destination_ata_pubkey, false),
-    ],
-    &[],
-);
-```
+<<< @/../clients/rust/examples/docs_security.rs#assert-ata-run [Rust · Run]
 
 :::
 
@@ -170,9 +113,9 @@ for the bump.
 ## Supply the bump
 
 Finding the canonical bump on chain means hashing with 255, then 254, and so on until the result is
-off the curve. Solana charges 1,500 compute units (its measure of execution cost) for every attempt,
-and the number of attempts depends on the seeds. The caller can compute the bump off chain for
-free, so a template can take it as an input and derive the address once:
+off the curve. Solana charges 1,500 [compute units](/reference/glossary#compute-units) for every
+attempt, and the number of attempts depends on the seeds. The caller can compute the bump off
+chain for free, so a template can take it as an input and derive the address once:
 
 ```ts
 import { account, assertPda, expression } from '@jac0xb/ballista';

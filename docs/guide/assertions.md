@@ -5,14 +5,16 @@ compare an account before and after a call.
 
 `step.require(condition)` fails the whole transaction unless its condition is true. A condition can
 combine account reads, inputs, the clock, checked arithmetic, comparisons, and the boolean
-operators `and`, `or`, and `not`.
+operators `and`, `or`, and `not`. Inputs come from the caller, so a check that an input can turn
+off, such as one joined with `or` to an input flag, protects nothing.
 
 ## Why snapshots exist
 
 An expression is evaluated again everywhere it appears. A read of an account's balance happens anew
-at each place it is used, so the same expression written before and after a CPI (a call to another
-program) gives two different values, and there is no way to keep the first one. Comparing the
-balance after a transfer with a second read of that same balance proves nothing.
+at each place it is used, so the same expression written before and after a
+[CPI](/reference/glossary#cpi) gives two different values, and there is no way to keep the first
+one. Comparing the balance after a transfer with a second read of that same balance proves
+nothing.
 
 `step.snapshot(name, value)` evaluates its expression once, at that point in the steps, and keeps
 the result for the rest of the run. That makes a before-and-after check possible: the snapshot holds
@@ -33,8 +35,9 @@ values, called bindings, follow a few rules:
 
 ## Exact lamport delta
 
-This template records the sender's balance in [lamports](/reference/glossary#lamports), transfers
-an amount, then requires that the balance fell by exactly that amount.
+This template requires the sender and recipient to be different accounts, records the sender's
+balance in [lamports](/reference/glossary#lamports), transfers an amount, then requires that the
+balance fell by exactly that amount.
 
 ::: code-group
 
@@ -50,6 +53,11 @@ an amount, then requires that the balance fell by exactly that amount.
 
 In Rust there are no names: the snapshot is simply the register that holds the first balance read,
 and the check after the transfer reads the balance into a new register.
+
+The first `require` refuses one account in both slots. A run accepts that and checks each slot on
+its own, so a check that adds up changes across accounts could count one account twice. Here an
+alias would only fail the exact check, at a less clear step. See
+[Aliased accounts](/guide/trust-model#aliased-accounts).
 
 ## Token amount delta
 
@@ -69,21 +77,4 @@ step.require(
     expression.subtract(expression.snapshot('sourceBefore'), expression.input('amount')),
   ),
 ),
-```
-
-## Compound guards
-
-Conditions can be combined. This one lets the run continue when it is enabled, the deadline has not
-passed, and the expected output meets the minimum, or when an emergency override is set.
-
-```ts
-const canExecute = expression.and(
-  expression.input('enabled'),
-  expression.and(
-    expression.lessThanOrEqual(expression.clockUnixTimestamp(), expression.input('deadline')),
-    expression.greaterThanOrEqual(expression.input('expectedOut'), expression.input('minimumOut')),
-  ),
-);
-
-step.require(expression.or(canExecute, expression.input('emergencyOverride')));
 ```

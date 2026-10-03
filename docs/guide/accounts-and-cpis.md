@@ -10,15 +10,15 @@ the account's exact `address`, the program that owns it (`owner`), and a minimum
 (`minDataLength`). A run rejects any account that does not meet its declaration.
 
 The declaration is also a ceiling. A CPI in the template may pass an account as a signer or as
-writable only if the account's declaration requires that privilege.
+writable only if the account's declaration requires that privilege. Finalization, the one-time
+check that locks the template on chain, enforces this, so the declarations tell you the most a run
+can ask of each declared account. They don't say which calls get it: a declared signer can be
+passed as a signer to every CPI in the template. [Account group](#account-groups) members are
+outside the ceiling, since they have no declaration.
 
-That ceiling is what makes it safe to publish a template for callers you do not control. The
-privileges are fixed when the template is written and checked again at finalization, the one-time
-check that locks the template on chain, so the declarations tell you the most any run can do.
-Ballista passes on only the signatures the outer transaction already carries, and it never signs a
-template's calls as a PDA (program-derived address: an address a program controls, with no private
-key) of its own. Within a run, its only signature creates a [registry entry](/guide/registries)'s own account and never reaches
-a template's calls, so a template cannot create authority the transaction did not already have.
+Ballista passes on only the signatures the transaction already carries and never signs a
+template's calls, so a template cannot create authority the transaction did not already have. See
+[Privileges](/guide/trust-model#privileges) and [Signing](/guide/trust-model#signing).
 
 ## Protocol helper
 
@@ -70,9 +70,10 @@ builder cannot see a `bytes` input's maximum length from the segment, so the Rus
 A CPI's account list is fixed when the template is written. Some programs need accounts the author
 cannot know in advance, such as the pools along a swap route. For these, a template declares an
 account group: the caller supplies its members at run time, and the CPI passes them after its
-declared accounts. Group members have no requirements, cannot be read by the template, and are never
-passed as signers. [Account groups](./account-groups) covers the rules and shows a template that
-chooses between swaps at run time.
+declared accounts. Group members have no requirements and cannot be read by the template. A CPI
+passes each one as writable whenever the transaction marked it writable, and never as a signer.
+[Account groups](./account-groups) covers the rules and shows a template that chooses between
+swaps at run time.
 
 ## Conditional invocation
 

@@ -1171,7 +1171,8 @@ pub fn oracle_price_band() -> Vec<u8> {
     use ballista_sdk::{ballista_common::template::*, ProgramBuilder, Segment, SYSTEM_PROGRAM_ID};
 
     // Stand-ins so the example runs as written: replace them with the oracle program (the owner
-    // of the price account), the price's offset in its layout, and the protocol call.
+    // of the price account), the price's offset in its layout, and the protocol call. A real
+    // template also checks which feed the account holds and when its price was published.
     const ORACLE_PROGRAM: [u8; 32] = SYSTEM_PROGRAM_ID.to_bytes();
     const PRICE_OFFSET: u64 = 8;
     const PROTOCOL_PROGRAM: [u8; 32] = SYSTEM_PROGRAM_ID.to_bytes();
@@ -1666,6 +1667,13 @@ pub fn exact_lamport_delta() -> Vec<u8> {
     let amount_input = builder.input(VALUE_U64, 0);
 
     let amount = builder.load_input(amount_input);
+
+    // A run accepts one account in both slots, so require two different accounts.
+    let sender_key = builder.account_key(sender);
+    let recipient_key = builder.account_key(recipient);
+    let distinct = builder.binary(OP_NE, sender_key, recipient_key);
+    builder.require(distinct);
+
     let before = builder.account_lamports(sender); // the snapshot
 
     let transfer_ix = builder.blob(&[2, 0, 0, 0]);

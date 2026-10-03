@@ -4,36 +4,26 @@ What protects a template, what does not, and what has and has not been reviewed.
 
 ## Audit status
 
-**Ballista has not been audited.** No third party has reviewed the program or the SDKs. The program
-deployed on devnet is a pre-release build that still has an upgrade authority. Treat Ballista as
-unaudited software and keep the value it controls to what you can afford to lose.
+**Ballista is pre-release and unaudited.** No third party has reviewed the program or the SDKs,
+and the program isn't on mainnet.
+
+- **The current build** runs only locally, in the test suite.
+- **The devnet build**, at the address the SDKs use by default, is an older pre-release that
+  rejects templates from this repository. It still has an upgrade authority: whoever holds that
+  key can change what every template on that build does, so while you use it, you trust that key.
+- **Each release will be immutable**, deployed with no upgrade authority. See
+  [Deployments](/guide/trust-model#deployments).
+
+Treat Ballista as unaudited software, and keep the value it controls to what you can afford to
+lose.
 
 ## Checked on chain
 
-The Ballista program enforces these for every template, whichever SDK built it.
-
-**At upload** (the verifier, before a template is finalized):
-
-- the bytes are well formed, with no unknown instructions or reserved bits;
-- every value is set before it is read, and has the type each instruction expects;
-- every account reference points at a declared account;
-- no call passes a declared account as signer or writable unless its declaration requires that.
-  [Account-group](/guide/account-groups) members are the exception: they have no declaration and
-  are passed with the transaction's own writable flag, never as signers;
-- a program that is called is declared `executable`;
-- at most eight loops, never nested, each with a fixed maximum, and at most 64 calls even in the
-  worst case;
-- fixed-offset reads stay within the account's declared minimum length;
-- a [registry entry](/guide/registries) is opened at the top level before it is used, read and written only
-  through its declared fields, and never passed writable to a call.
-
-**At every run:**
-
-- each account matches its declaration: signer, writable, executable, address, owner and minimum
-  length;
-- inputs decode exactly, and the account and row counts are in range;
-- arithmetic and casts are checked, and a failed `require` stops the run;
-- the template is finalized, and the run never writes to it.
+The Ballista program checks every template once, at finalization, and checks every run against it,
+whichever SDK built the template. [Finalization checks](/guide/trust-model#finalization-checks)
+lists both, and [Who controls what](/guide/trust-model#who-controls-what) covers what they leave to
+you: the transaction builder, the rest of the transaction, the called programs and their upgrade
+authorities, and replay.
 
 ## Checked only by the TypeScript compiler
 
@@ -42,22 +32,24 @@ with the Rust builder, or by hand, can skip them, so check them when you
 [inspect a template](/guide/inspecting-templates) someone else wrote.
 
 - A called program must pin its `address`, so the caller cannot swap in another program.
-- An account whose data is read must pin its `owner` or `address`, so the byte offsets mean what
-  the template assumes.
+- An account whose data is read must pin its `owner` or `address`. An owner pin alone doesn't fix
+  the account's type: see [Pins](/guide/trust-model#pins).
 - `unsafeUnpinned: true` turns both off for one account. The flag is not stored on chain.
 - The TypeScript caps on steps, rows and data parts. See [Limits](/reference/limits).
 
 ## Formal verification
 
-14 rules are set up for the Certora Solana Prover: `u64` and `i64` arithmetic, comparisons, casts,
-error codes and the template parser. 13 more, covering account checks, the template lifecycle and
-type safety, are written but blocked by prover limitations, so they are not proved.
+15 rules are set up for the Certora Solana Prover: `u64` and `i64` arithmetic, comparisons, casts,
+error codes and the template parser. 14 more, covering `u128` arithmetic, `multiplyDivide`, account
+checks, the template lifecycle and type safety, are written but blocked, so they are not proved.
 [Formal verification](/guide/formal-verification) has the details.
 
 ## Strengths
 
-- **Errors pass through.** A called program's error reaches you unchanged. Ballista never relabels
-  it.
+- **Errors pass through.** A called program's error reaches you unchanged, even a code in
+  Ballista's own range. So a code alone doesn't say which program raised it: a callee's `6001` is
+  also Ballista's `InvalidTemplateAccount`, and only the logs tell them apart. See
+  [Errors and events](/guide/errors-and-events).
 - **Flat heap.** A run allocates its buffers once and reuses them for every call, so memory use does
   not grow with the number of calls.
 - **Few `unsafe` blocks.** The release program uses `unsafe` only:
@@ -66,14 +58,13 @@ type safety, are written but blocked by prover limitations, so they are not prov
   - to read the Instructions sysvar and read-only accounts without copying them;
   - to read and write registry entries in place;
   - to build a PDA's seed buffer in place when deriving an address.
-- **No authority of its own.** Ballista never signs a template's calls. It owns two kinds of
-  accounts, templates and registry entries, and each holds only its rent lamports, plus anything
-  someone sends it. A template can only do what the transaction's own signers could do directly.
-- **State only in registry entries.** Ballista keeps run-to-run state only in
-  the [registry entries](/guide/registries) templates declare. Only a template's own runs can change its entries, a
-  run checks each entry against the template and key before using it, and within a run Ballista
-  signs only to create an entry's own account.
+- **No authority of its own.** Ballista never signs a template's calls, so a template can do only
+  what the transaction's signers could do directly. See [Signing](/guide/trust-model#signing).
+- **State only in registry entries.** Only a template's own runs can change its
+  [registry entries](/guide/registries), and a run checks each entry before using it. See
+  [State](/guide/trust-model#state).
 - **Immutable templates.** A finalized template cannot be changed, so what you reviewed is what
-  runs.
+  Ballista runs. That holds for Ballista's part only: the programs a template calls can be upgraded
+  by their own authorities, and so can today's devnet build of Ballista.
 
 See also [Trust model](/guide/trust-model) and [Failure modes and recovery](/guide/failure-modes).

@@ -653,7 +653,10 @@ pub struct KaminoLiquidateAccounts {
     pub debt_farm: Option<(Pubkey, Pubkey)>,
 }
 
-/// `minimum_bounty` is in the seized collateral's own units (lamports for SOL collateral).
+/// `liquidity_amount` is the most debt to repay, in the repaid token's base units.
+/// `min_acceptable_received` is Kamino's own floor on its figure for the payout, net of its fee; 0
+/// for none. `minimum_bounty` is what `user_destination_liquidity` must gain, in the collateral's
+/// base units (lamports for SOL): what the liquidator receives, not its profit.
 ///
 /// Send it behind [`kamino_refreshes`], in the same transaction.
 pub fn run_kamino_liquidate(

@@ -32,9 +32,11 @@ export function buildKaminoLiquidateRun(input: {
   /** The withdrawn reserve's collateral farm and the repaid reserve's debt farm, if they exist. */
   collateralFarm?: KaminoFarm;
   debtFarm?: KaminoFarm;
+  /** The most debt to repay, in the repaid token's base units. */
   liquidityAmount: bigint;
+  /** Kamino's own floor on its figure for the payout, net of its fee; 0 for none. */
   minAcceptableReceived: bigint;
-  /** In the seized collateral's own units: lamports for SOL collateral. */
+  /** What `userDestinationLiquidity` must gain, in the collateral's base units: not profit. */
   minimumBounty: bigint;
 }): Instruction {
   return buildKitRunInstruction({

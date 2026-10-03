@@ -15,8 +15,7 @@ Liquidates a Kamino loan and reverts unless you receive at least a set amount of
 
 A Kamino loan lives in an obligation, the borrower's account of deposits and debts. Once the debt
 passes a set share of the collateral's value, the obligation is unhealthy, and anyone may repay
-part of the debt for collateral worth more. Kamino's own minimum,
-`min_acceptable_received_liquidity_amount`, bounds its calculation, not what reaches you.
+part of the debt for collateral worth more.
 
 The template:
 
@@ -29,9 +28,19 @@ The template:
 - requires that balance to have grown by at least `minimumBounty`, or the whole run reverts
   (`liquidationPaidTheBounty`).
 
-`minimumBounty` is in the collateral's units, lamports for SOL, and is not netted against what you
-repaid. Collateral Kamino could not redeem stays in `userDestinationCollateral` as cTokens
-(Kamino's deposit receipts) and doesn't count.
+You supply three inputs:
+
+- `liquidityAmount`: the most debt to repay, in the repaid token's base units, taken from
+  `userSourceLiquidity`. Kamino repays less if one liquidation may not take that much of the debt;
+  in the tested market, one takes at most 10%.
+- `minAcceptableReceived`: Kamino's own floor, `min_acceptable_received_liquidity_amount`. Kamino
+  compares it with its own figure for the collateral it pays, net of its fee, not with what
+  arrives. 0 turns it off, as in the tests.
+- `minimumBounty`: the least `userDestinationLiquidity` must grow by, in the collateral's base
+  units (lamports, for SOL). It is what you receive, not your profit: what you repaid isn't
+  subtracted. To require a profit, set it above the repaid debt's value in the collateral at the
+  oracle price. Collateral Kamino couldn't redeem stays in `userDestinationCollateral` as cTokens
+  (Kamino's deposit receipts) and doesn't count.
 
 ## Template
 

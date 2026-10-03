@@ -14,7 +14,7 @@ you know which parts the caller controls.
 | Other instructions | Any account the signers allow, before and after the run | A template sees them only through [introspection](/reference/language#introspection) |
 | Called programs | What each call does with the accounts it gets | Their own checks, and the template's checks after the call |
 | Called programs' upgrade authorities | What those programs do after an upgrade | Nothing in the template. Call programs whose authority you trust |
-| Anyone, later (replay) | A second run, with the same inputs or the same signed message | Solana refuses only an identical transaction. Use a deadline, or record each use in a [registry entry](/guide/registries) |
+| Anyone, later (replay) | A second run, with the same inputs or the same signed message, given the signatures it needs | Solana refuses only an identical transaction. Use a deadline, or record each use in a [registry entry](/guide/registries) |
 | Ballista | Its checks, and the registry entries templates declare | It holds no authority of its own: see [Signing](#signing) and [State](#state) |
 | Ballista's upgrade authority | What every template on the pre-release devnet build does | Nothing yet. Releases will have none: see [Deployments](#deployments) |
 
@@ -129,34 +129,17 @@ template relies on an account's data, it should also check:
 
 Only the TypeScript compiler requires pins, unless you opt out as described below. It refuses a
 template that calls a program without a pinned address, or that reads the data of an account that
-pins neither its owner nor its address; neither rule checks a type. Helpers such as
-`systemTransfer` also declare which program they target, so pinning the wrong address fails when
-you compile. The Ballista program does not check pins: at finalization it checks only that a
-called program is declared `executable`. A template built with the Rust `ProgramBuilder`, or by
-hand, can leave a program unpinned and still be finalized, so check the pins of any template you
-did not compile yourself.
+pins neither its owner nor its address; neither rule checks a type. The Ballista program checks no
+pins, so a template built with the Rust `ProgramBuilder`, or by hand, can leave a program unpinned
+and still be finalized. Check the pins of any template you did not compile yourself.
 
 ## Opting out
 
 `unsafeUnpinned: true` on an account declaration turns off both compiler requirements for that
-account, and the template then accepts whatever the caller passes. That is reasonable when the
-caller is the only party affected, such as a wallet's own maintenance template. It is not
-reasonable when someone else relies on the template as a safeguard, because the caller can then
-point a call at any program they choose.
-
-The flag's name is long on purpose, so that it stands out in code review. It exists only in the
-TypeScript template document and is not stored on chain.
-
-## Error attribution
-
-Errors raised by a called program pass through a run unchanged, including custom codes that happen
-to fall in Ballista's own ranges. Inside the program, Ballista keeps its own failures separate from
-a callee's errors and only turns them into codes at the end, so it never relabels a callee's error
-or adds its own context to it.
-
-A code on its own does not say which program raised it, though: a callee's `6001` is the same number
-as Ballista's `InvalidTemplateAccount`. The transaction logs show which program failed. See
-[Errors and events](/guide/errors-and-events) for how codes are laid out.
+account, so the template accepts whatever the caller passes. That suits a template only its caller
+relies on, such as a wallet's own maintenance template, and not one that someone else relies on as
+a safeguard: the caller could point a call at any program. The long name is meant to stand out in
+code review. The flag exists only in the TypeScript template document and is not stored on chain.
 
 ## Deployments
 

@@ -46,8 +46,10 @@ checks, the template lifecycle and type safety, are written but blocked, so they
 
 ## Strengths
 
-- **Errors pass through.** A called program's error reaches you unchanged. Ballista never relabels
-  it.
+- **Errors pass through.** A called program's error reaches you unchanged, even a code in
+  Ballista's own range. So a code alone doesn't say which program raised it: a callee's `6001` is
+  also Ballista's `InvalidTemplateAccount`, and only the logs tell them apart. See
+  [Errors and events](/guide/errors-and-events).
 - **Flat heap.** A run allocates its buffers once and reuses them for every call, so memory use does
   not grow with the number of calls.
 - **Few `unsafe` blocks.** The release program uses `unsafe` only:

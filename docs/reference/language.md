@@ -288,9 +288,9 @@ value is non-zero still fails when it is zero, because the division runs either 
 ## Bindings
 
 A binding evaluates an expression once, at its place in the step list, and keeps the result in a
-register for the rest of the run. Write one with `step.let(name, value)` or
-`step.snapshot(name, value)`. The two compile identically; `snapshot` reads better in
-before-and-after checks. Read the value back with `expression.variable(name)` or
+[register](/reference/limits#registers) for every later read. Write one with
+`step.let(name, value)` or `step.snapshot(name, value)`. The two compile identically; `snapshot`
+reads better in before-and-after checks. Read the value back with `expression.variable(name)` or
 `expression.snapshot(name)`.
 
 Bindings are what make before-and-after comparisons possible. An expression written inline is

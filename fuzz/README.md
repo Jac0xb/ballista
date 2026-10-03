@@ -28,7 +28,14 @@ Stable checks, no nightly needed:
 cargo test --manifest-path fuzz/Cargo.toml -p ballista-fuzz-support --release
 ```
 
-They replay every seed, check every real template, and refuse every negative mutation of each.
+They replay every seed, check every real template, and check that `verify` refuses every
+negative mutation of each.
+
+Line coverage of the verifier's sources by a target's corpus, with the nightly's `llvm-tools`:
+
+```sh
+fuzz/scripts/coverage.sh differential
+```
 
 ## Targets
 
@@ -83,7 +90,13 @@ Each finding has an ignored test in `common/tests/fuzz_findings.rs`.
 | `cpi.segment-literal-register`, `cpi.segment-register-fields` | `verify_cpi` checks invocation data segments with its own loop and skips the two unused-field checks that `verify_segment` makes. |
 | `unreferenced.segment`, `unreferenced.cpi` | A data segment or CPI descriptor that nothing reaches is never checked. |
 
-They are listed in `harness::KNOWN_FINDINGS`, so the targets print them once and keep fuzzing.
+Two more findings there have no checker rule:
+
+- `verify_cpi` numbers a bad segment from the descriptor's first, not the table's.
+- `verify_single_instruction` panics on a view with more than 64 registers.
+
+The four rules in the table are listed in `harness::KNOWN_FINDINGS`, so the targets print them once
+and keep fuzzing.
 
 - `BALLISTA_FUZZ_STRICT=1` makes them all fatal again, for example to check a fix.
 - A comma-separated list of rule names makes only those fatal. This is how

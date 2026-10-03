@@ -828,7 +828,9 @@ impl<S: Source> Gen<'_, S> {
                 flags &= !ACCOUNT_WRITABLE;
             }
             if self.sloppy() {
-                flags = self.s.below(4) as u8;
+                // Any of the three account flags, the executable bit included, which no record
+                // may carry even when its slot declares it.
+                flags = self.s.below(8) as u8;
             }
             records.push((account.reference, flags));
         }

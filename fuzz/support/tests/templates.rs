@@ -68,7 +68,11 @@ fn every_break_of_every_template_is_refused_with_its_error() {
                 "{name}: the reference checker accepts the break {}",
                 broken.rule
             );
-            if broken.rule.starts_with("privilege") || broken.rule.starts_with("undeclared") || broken.rule.starts_with("cpi-count") {
+            if broken.rule.starts_with("privilege")
+                || broken.rule.starts_with("undeclared")
+                || broken.rule.starts_with("cpi-count")
+                || broken.rule == "record-flags"
+            {
                 assert!(ceiling::check(&broken.program).is_err(), "{name}: the ceiling pass accepts {}", broken.rule);
             }
             *counts.entry(broken.rule).or_default() += 1;
@@ -78,6 +82,7 @@ fn every_break_of_every_template_is_refused_with_its_error() {
     for rule in [
         "privilege-signer",
         "privilege-writable",
+        "record-flags",
         "undeclared-account",
         "undeclared-program",
         "cpi-count-repeat",

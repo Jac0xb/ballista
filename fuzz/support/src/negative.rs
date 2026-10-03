@@ -14,7 +14,7 @@ use ballista_common::template::{ProgramView, TemplateError};
 
 use crate::{
     ceiling::{self, Site},
-    checker::{self, op, read_opcode, Ty, NONE, ROW_BIT, SIGNER, WRITABLE},
+    checker::{self, op, read_opcode, Ty, EXECUTABLE, NONE, ROW_BIT, SIGNER, WRITABLE},
     model::{Instr, Program},
 };
 
@@ -33,6 +33,7 @@ const PER_KIND: usize = 6;
 pub fn breaks(program: &Program) -> Vec<Break> {
     let mut out = Vec::new();
     privilege(program, &mut out);
+    record_flags(program, &mut out);
     undeclared_account(program, &mut out);
     undeclared_program(program, &mut out);
     cpi_count(program, &mut out);
@@ -93,6 +94,29 @@ fn privilege(program: &Program, out: &mut Vec<Break>) {
             });
             made += 1;
         }
+    }
+}
+
+/// A record carrying the executable bit, which no record may: its flags are signer and writable
+/// only. The slot is one declared executable, so the privilege ceiling alone would let it through:
+/// the record's own slot when it declares that, or else the descriptor's program slot, retargeted.
+fn record_flags(program: &Program, out: &mut Vec<Break>) {
+    let mut made = 0;
+    for index in 0..program.cpi_accounts.len() {
+        if made >= 2 {
+            break;
+        }
+        let Some((pc, site, descriptor)) = first_invoke_listing(program, index) else { continue };
+        let mut broken = program.clone();
+        let record = &mut broken.cpi_accounts[index];
+        let declared = ceiling::declared(program, record.account, site).unwrap_or(0);
+        if declared & EXECUTABLE == 0 {
+            record.account = program.cpis[program.instrs[pc].a as usize].program;
+            record.flags = 0;
+        }
+        record.flags |= EXECUTABLE;
+        out.push(Break { rule: "record-flags", program: broken, expected: TemplateError::InvalidCpi(descriptor) });
+        made += 1;
     }
 }
 

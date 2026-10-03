@@ -315,14 +315,38 @@ impl ScenarioGen<'_, '_> {
     }
 
     /// An account that satisfies `slot`, usually.
+    /// Whether the account at `index` can fill `slot`: its pins, executable flag and minimum length,
+    /// and privileges the transaction could grant it (no Ballista PDA, program or sysvar signs; no
+    /// program or sysvar is writable).
+    fn satisfies(&self, index: usize, slot: &Slot) -> bool {
+        let spec = &self.pool[index];
+        let fixed_role = matches!(spec.kind, Kind::Program(_) | Kind::Sysvar);
+        slot.address.is_none_or(|address| spec.address == address)
+            && (slot.flags & ACCOUNT_EXECUTABLE == 0 || spec.executable)
+            && slot.owner.is_none_or(|owner| spec.owner == owner)
+            && spec.data.len() >= slot.min_len as usize
+            && (slot.flags & ACCOUNT_SIGNER == 0 || !(fixed_role || self.is_ballista_pda(index)))
+            && (slot.flags & ACCOUNT_WRITABLE == 0 || !fixed_role)
+    }
+
     fn satisfy(&mut self, slot: &Slot, assigned: &[usize]) -> usize {
         if !assigned.is_empty() && self.g.chance(1, 8) {
-            // Alias an account another slot already holds.
+            // Alias an account another slot already holds, when it can fill this slot too: one
+            // account in two roles, the case a template must guard with `notEqual` (trust-model,
+            // "Aliased accounts"). Such a run passes validation, so its later steps get exercised.
+            let candidates: Vec<usize> = assigned.iter().copied().filter(|&index| self.satisfies(index, slot)).collect();
+            if let Some(index) = self.g.pick(&candidates) {
+                self.grant(index, slot.flags);
+                return index;
+            }
+        }
+        if !assigned.is_empty() && self.g.chance(1, 40) {
+            // A blind alias, which usually fails validation: exercises the rejection path.
             let index = assigned[self.g.below(assigned.len())];
             self.grant(index, slot.flags);
             return index;
         }
-        if self.g.chance(1, 20) {
+        if self.g.chance(1, 40) {
             // Anything at all.
             let index = self.g.below(self.pool.len());
             self.grant(index, slot.flags);
@@ -611,7 +635,7 @@ impl ScenarioGen<'_, '_> {
         }
 
         let mut mutation = None;
-        if self.g.chance(1, 8) {
+        if self.g.chance(1, 10) {
             mutation = Some(self.mutate(&mut runtime, &mut run_data));
         }
 

@@ -44,9 +44,9 @@ pub struct RunOutcome {
     /// Stack height of the invocations the run makes directly: 2 for a top-level run, 3 when the
     /// run is itself nested inside a probe instruction.
     pub ballista_cpi_height: u32,
-    /// Lamports of every stored account just before the run, so conservation can be checked
-    /// against their true pre-run balances (the template's rent is not in the generated pool).
-    pub before_lamports: HashMap<Pubkey, u64>,
+    /// Every stored account just before the run, so conservation and read-only immutability can
+    /// be checked against true pre-run state (the template's rent is not in the generated pool).
+    pub before_accounts: HashMap<Pubkey, Account>,
     /// The run transaction's log lines.
     pub logs: Vec<String>,
 }
@@ -161,17 +161,11 @@ impl Harness {
         for extra in &scenario.after {
             instructions.push(self.probe_instruction(scenario, extra));
         }
-        let before_lamports: HashMap<Pubkey, u64> = self
-            .context
-            .account_store
-            .borrow()
-            .iter()
-            .map(|(key, account)| (*key, account.lamports))
-            .collect();
+        let before_accounts: HashMap<Pubkey, Account> = self.context.account_store.borrow().clone();
         self.clear_logs();
         let result = self.context.process_transaction_instructions(&instructions);
         let logs = self.logger.borrow().messages.clone();
-        RunOutcome { result, top_index, ballista_cpi_height, before_lamports, logs }
+        RunOutcome { result, top_index, ballista_cpi_height, before_accounts, logs }
     }
 
     /// Seeds the store with the scenario's accounts. Programs and the Instructions sysvar are left

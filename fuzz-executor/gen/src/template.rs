@@ -495,13 +495,31 @@ impl TemplateGen<'_, '_> {
             pool.extend(world.probe_data.iter().copied());
             pool[self.g.below(pool.len())]
         });
-        let owner = self.g.chance(2, 5).then(|| match self.g.below(5) {
+        let mut owner = self.g.chance(2, 5).then(|| match self.g.below(5) {
             0 | 1 => world.probe,
             2 => SYSTEM_PROGRAM_ADDRESS,
             3 => world.ballista,
             _ => world.token,
         });
-        let min_len = if self.g.chance(1, 2) { 0 } else { self.g.range(1, 96) as u32 };
+        let mut min_len = if self.g.chance(1, 2) { 0 } else { self.g.range(1, 96) as u32 };
+        // A real template pins facts that can hold together. Usually make them consistent: a pinned
+        // address keeps its own owner and no length floor (its data varies run to run), a program
+        // has its loader as owner and no floor, and a signer is never a Ballista PDA. Rarely leave
+        // them as drawn, so a run still meets declarations no account satisfies.
+        if !self.g.chance(1, 20) {
+            if let Some(address) = address {
+                let natural = if world.probe_data.contains(&address) { world.probe } else { SYSTEM_PROGRAM_ADDRESS };
+                owner = owner.map(|_| natural);
+                min_len = 0;
+            }
+            if flags & ACCOUNT_EXECUTABLE != 0 {
+                owner = None;
+                min_len = 0;
+            }
+            if flags & ACCOUNT_SIGNER != 0 && owner == Some(world.ballista) {
+                owner = None;
+            }
+        }
         Slot { flags, address, owner, min_len, role: Role::Plain }
     }
 

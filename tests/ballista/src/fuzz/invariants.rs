@@ -20,6 +20,10 @@ use super::harness::{captured_cpis, program_pubkey, Harness, RunOutcome};
 pub struct Report {
     pub hard: Vec<String>,
     pub soft: Vec<String>,
+    /// Whether the reference model predicted this run concretely and its CPIs were compared.
+    pub model_compared: bool,
+    /// How many CPIs the comparison matched one for one.
+    pub cpis_compared: usize,
 }
 
 impl Report {
@@ -78,6 +82,9 @@ pub fn check(
 
     if succeeded {
         lamports_conserved(outcome, &mut report);
+        readonly_unchanged(outcome, &mut report);
+        entries_change_only_in_own_runs(world, template, outcome, &mut report);
+        opened_entries_distinct(plan, scenario, &mut report);
         output_rules(plan, scenario, template, outcome, &mut report);
         account_set_and_programs(world, scenario, template, outcome, &mut report);
         reference_model(harness, world, plan, scenario, template, inputs, outcome, &mut report);
@@ -159,13 +166,60 @@ fn lamports_conserved(outcome: &RunOutcome, report: &mut Report) {
     let mut before: u128 = 0;
     let mut after: u128 = 0;
     for (key, account) in &outcome.result.resulting_accounts {
-        if let Some(pre) = outcome.before_lamports.get(key) {
-            before += *pre as u128;
+        if let Some(pre) = outcome.before_accounts.get(key) {
+            before += pre.lamports as u128;
             after += account.lamports as u128;
         }
     }
     if before != after {
         report.hard(format!("lamports not conserved: {before} -> {after}"));
+    }
+}
+
+/// An account the transaction marks read-only is unchanged after it: lamports, data, owner and the
+/// executable flag (a sanity check; the runtime enforces it).
+fn readonly_unchanged(outcome: &RunOutcome, report: &mut Report) {
+    let Some(message) = &outcome.result.message else { return };
+    let keys = message.account_keys();
+    for (index, key) in keys.iter().enumerate() {
+        if message.is_writable(index) {
+            continue;
+        }
+        let (Some(before), Some(after)) = (outcome.before_accounts.get(key), result_account(&outcome.result, key)) else { continue };
+        if before.lamports != after.lamports || before.data != after.data || before.owner != after.owner || before.executable != after.executable {
+            report.hard(format!("read-only account {key} changed"));
+        }
+    }
+}
+
+/// A registry entry changes only in a run of its own template: every Ballista-owned entry whose
+/// bytes the run changed names this template in its header. A run that invokes Ballista (a nested
+/// run of possibly another template) is exempt, since that template may write its own entries.
+fn entries_change_only_in_own_runs(world: &World, template: &Pubkey, outcome: &RunOutcome, report: &mut Report) {
+    let ballista = Pubkey::new_from_array(world.ballista);
+    if captured_cpis(outcome).iter().any(|cpi| cpi.program == ballista) {
+        return;
+    }
+    for (key, after) in &outcome.result.resulting_accounts {
+        if after.owner != ballista || !after.data.starts_with(&REGISTRY_ENTRY_MAGIC) || after.data.len() < 40 {
+            continue;
+        }
+        let unchanged = outcome.before_accounts.get(key).is_some_and(|before| before.data == after.data && before.owner == after.owner);
+        if !unchanged && after.data[8..40] != template.to_bytes() {
+            report.hard(format!("entry {key} of another template changed in this template's run"));
+        }
+    }
+}
+
+/// On success every open ran (opens sit at the root, and a failing instruction fails the run), so
+/// the entry accounts the opens named are pairwise distinct: a second open of an open entry fails.
+fn opened_entries_distinct(plan: &TemplatePlan, scenario: &Scenario, report: &mut Report) {
+    let mut seen = HashSet::new();
+    for open in &plan.opens {
+        let Some(&index) = scenario.slots.get(open.entry) else { continue };
+        if !seen.insert(scenario.pool[index].address) {
+            report.hard(format!("a run succeeded although two opens named one entry account (slot {})", open.entry));
+        }
     }
 }
 
@@ -299,6 +353,8 @@ fn reference_model(
         }
     };
     let captured = captured_cpis(outcome);
+    report.model_compared = true;
+    report.cpis_compared = expected.len().min(captured.len());
     if captured.len() != expected.len() {
         let captured_programs: Vec<_> = captured.iter().map(|cpi| program_of(world, &cpi.program)).collect();
         report.soft(format!(
@@ -388,7 +444,16 @@ fn output_rules(plan: &TemplatePlan, scenario: &Scenario, template: &Pubkey, out
             if lines.last() != Some(event) {
                 report.hard("the run event is not the run's last Program data line".to_string());
             }
-            let iterations = u8::try_from(scenario.iterations).unwrap_or(u8::MAX);
+            // The rows the run actually saw, from its own layout: a deliberate mutation can add or
+            // drop a row account, so the generator's pre-mutation count is not the truth. The run
+            // succeeded, so the division was exact and in range.
+            let groups: usize = scenario.run_data.get(1..1 + plan.groups).map_or(0, |lengths| lengths.iter().map(|&n| n as usize).sum());
+            let rows = scenario.slots.len().saturating_sub(plan.fixed.len()).saturating_sub(groups);
+            let actual = if plan.row.is_empty() { 0 } else { rows / plan.row.len() };
+            if actual != scenario.iterations && std::env::var("FV_DUMP").is_ok() {
+                eprintln!("dump: rows {} differ from generated {} because of: {:?}", actual, scenario.iterations, scenario.mutation);
+            }
+            let iterations = u8::try_from(actual).unwrap_or(u8::MAX);
             if event.len() != 47
                 || &event[..4] != b"BEV1"
                 || event[4] != ballista_common::template::TEMPLATE_PROGRAM_VERSION

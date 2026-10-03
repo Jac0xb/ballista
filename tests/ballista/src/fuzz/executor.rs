@@ -24,6 +24,33 @@ struct SeedResult {
     hard: Vec<String>,
     soft: Vec<String>,
     fell_back: bool,
+    stats: Stats,
+}
+
+/// What one or many runs did, for the report: how often the oracles actually had something to check.
+#[derive(Default, Clone, Copy)]
+struct Stats {
+    succeeded: usize,
+    failed: usize,
+    ballista_codes: usize,
+    model_compared: usize,
+    cpis_compared: usize,
+    runs_with_cpis: usize,
+    multi_open_successes: usize,
+    registry_entry_rejections: usize,
+}
+
+impl Stats {
+    fn add(&mut self, other: Stats) {
+        self.succeeded += other.succeeded;
+        self.failed += other.failed;
+        self.ballista_codes += other.ballista_codes;
+        self.model_compared += other.model_compared;
+        self.cpis_compared += other.cpis_compared;
+        self.runs_with_cpis += other.runs_with_cpis;
+        self.multi_open_successes += other.multi_open_successes;
+        self.registry_entry_rejections += other.registry_entry_rejections;
+    }
 }
 
 /// Runs one seed end to end.
@@ -46,6 +73,7 @@ fn run_seed(harness: &Harness, seed: u64) -> SeedResult {
                 hard: vec![format!("seed {seed}: a generated template failed to upload: {error}")],
                 soft: Vec::new(),
                 fell_back,
+                stats: Stats::default(),
             };
         }
     };
@@ -61,8 +89,23 @@ fn run_seed(harness: &Harness, seed: u64) -> SeedResult {
     let outcome = harness.run(&scenario, &template, &finalized);
     let report = invariants::check(harness, &world, &plan, &scenario, &template, &finalized, &inputs, &outcome);
 
+    let succeeded = outcome.result.program_result.is_ok();
+    let code = match &outcome.result.program_result {
+        mollusk_svm::result::types::TransactionProgramResult::Failure(_, solana_program_error::ProgramError::Custom(code)) => Some(code & 0xffff),
+        _ => None,
+    };
+    let stats = Stats {
+        succeeded: usize::from(succeeded),
+        failed: usize::from(!succeeded),
+        ballista_codes: usize::from(code.is_some_and(|kind| (6000..=6132).contains(&kind))),
+        model_compared: usize::from(report.model_compared),
+        cpis_compared: report.cpis_compared,
+        runs_with_cpis: usize::from(!super::harness::captured_cpis(&outcome).is_empty()),
+        multi_open_successes: usize::from(succeeded && plan.opens.len() >= 2),
+        registry_entry_rejections: usize::from(code == Some(6025)),
+    };
     let prefix = |messages: Vec<String>| messages.into_iter().map(|m| format!("seed {seed}: {m}")).collect();
-    SeedResult { hard: prefix(report.hard), soft: prefix(report.soft), fell_back }
+    SeedResult { hard: prefix(report.hard), soft: prefix(report.soft), fell_back, stats }
 }
 
 #[test]
@@ -92,9 +135,11 @@ fn fuzz_executor_differential() {
     let mut soft_count = 0usize;
     let mut soft_samples = Vec::new();
     let mut fallbacks = 0usize;
+    let mut stats = Stats::default();
     for offset in 0..cases {
         let seed = start.wrapping_add(offset);
         let result = run_seed(&harness, seed);
+        stats.add(result.stats);
         hard.extend(result.hard);
         soft_count += result.soft.len();
         fallbacks += usize::from(result.fell_back);
@@ -109,6 +154,18 @@ fn fuzz_executor_differential() {
     }
 
     eprintln!("ran {cases} cases from seed {start}; {soft_count} soft model divergences; {fallbacks} generator fallbacks");
+    eprintln!(
+        "outcomes: {} succeeded, {} failed ({} with a Ballista code, {} InvalidRegistryEntry); \
+         {} runs made CPIs; model compared {} runs and {} CPIs; {} runs with 2+ opens succeeded",
+        stats.succeeded,
+        stats.failed,
+        stats.ballista_codes,
+        stats.registry_entry_rejections,
+        stats.runs_with_cpis,
+        stats.model_compared,
+        stats.cpis_compared,
+        stats.multi_open_successes,
+    );
     for sample in &soft_samples {
         eprintln!("soft: {sample}");
     }

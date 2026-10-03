@@ -53,13 +53,13 @@ It does not guard against:
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/pyth-fresh-price-gate.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/pyth-fresh-price-gate.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#pyth-gate [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#pyth-gate [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/pyth-gate.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/pyth-gate.ts [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#pyth-gate [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#pyth-gate [Rust · Run]
 
 :::
 

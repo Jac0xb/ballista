@@ -32,13 +32,13 @@ The searcher is the wallet that signs, trades and pays the tip. The template:
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/jito-profit-guarded-tip.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/jito-profit-guarded-tip.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#jito-tip [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#jito-tip [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/jito-tip.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/jito-tip.ts [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#jito-tip [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#jito-tip [Rust · Run]
 
 :::
 

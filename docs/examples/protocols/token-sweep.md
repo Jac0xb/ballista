@@ -37,13 +37,13 @@ It guards against the market moving after the quote. It does not guard against:
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/token-sweep-into-swap.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/token-sweep-into-swap.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#token-sweep [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#token-sweep [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/token-sweep.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/token-sweep.ts [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#token-sweep [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#token-sweep [Rust · Run]
 
 :::
 

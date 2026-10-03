@@ -1,30 +1,5 @@
-/**
- * Sell an entire token balance, whatever it turns out to be.
- *
- * This is the smallest useful shape on the list and the one that appears everywhere: a fee
- * account, an airdrop claim, a vesting withdrawal, the dust left over from a route. The balance
- * is still moving when the transaction is signed, so the amount to sell does not exist yet.
- *
- * A route built with a fixed input amount fails when the balance came up short and strands the
- * difference when it came up long. Jupiter's `route` carries that amount as `in_amount`, after
- * the route plan and before the quote. So the caller hands over the route plan and the quote's
- * own numbers separately, and the template writes the instruction itself: the balance it reads
- * becomes `in_amount`, and the quoted output is rescaled to match. The plan splits its input by
- * percentage, so the same plan sells more or less. How far the balance may drift above the quote
- * is bounded twice: the rescaling is linear, so the price impact of the extra size has to fit
- * within `slippageBps`, and the swap has to stay within the pools and tick arrays the route's
- * accounts cover.
- *
- * Jupiter checks `route`'s destination by its mint alone, and a step pays whichever account it
- * names. A route that paid the proceeds into someone else's account of that mint, measured there,
- * would meet the quote with the seller's whole balance. So the template requires the seller to own
- * both token accounts: the balance it sells and the account the proceeds reach. The seller still
- * authorizes every step of the route, so a route's steps can also spend other token accounts the
- * seller owns, which neither balance shows.
- *
- * Both token accounts are pinned to the legacy SPL Token program, so a Token-2022 account fails
- * that account constraint instead of being read with the wrong layout.
- */
+/** Sell a token account's whole balance through Jupiter: docs/examples/protocols/token-sweep.md. */
+// #region template
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
@@ -180,5 +155,6 @@ export const tokenSweepIntoSwap = defineTemplate({
     ),
   ],
 });
+// #endregion template
 
 export const compiled = compileTemplate(tokenSweepIntoSwap);

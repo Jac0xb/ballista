@@ -53,13 +53,13 @@ It does not guard against:
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/jupiter-oracle-checked-swap.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/jupiter-oracle-checked-swap.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#jupiter-oracle-swap [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#jupiter-oracle-swap [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/jupiter-oracle-swap.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/jupiter-oracle-swap.ts [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#jupiter-oracle-swap [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#jupiter-oracle-swap [Rust · Run]
 
 :::
 

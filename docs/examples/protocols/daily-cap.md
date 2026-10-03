@@ -50,13 +50,13 @@ It does not guard against:
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/jupiter-daily-cap-swap.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/jupiter-daily-cap-swap.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#jupiter-daily-cap [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#jupiter-daily-cap [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/jupiter-daily-cap.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/jupiter-daily-cap.ts [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#jupiter-daily-cap [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#jupiter-daily-cap [Rust · Run]
 
 :::
 

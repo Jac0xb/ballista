@@ -1,43 +1,8 @@
 /**
- * Swap through Jupiter and prove the fill beat an independent oracle.
- *
- * Jupiter enforces the `slippageBps` it was given against the quote *it* produced. That protects
- * against movement between quote and execution; it does not protect against a bad quote, a
- * manipulated pool in the route, or a route built by someone other than the person signing.
- *
- * This template keeps a second opinion. It reads the Pyth price during execution, runs the route,
- * then measures how much actually left the source account and how much arrived, and requires the
- * fill to clear what the sold amount was worth at the oracle price less a tolerance. Two
- * independent sources have to agree before the transaction is allowed to stand.
- *
- * The feed must price the token being sold in the token being bought: SOL/USD when selling SOL
- * for USDC. The Pyth receiver owns every feed's price account alike, so the template requires the
- * account to carry `FEED_ID`. Without that, any feed's price would do, and USDC/USD's would value
- * each SOL sold at a dollar. The feed, the two mints it prices and the tolerance are constants, so
- * whoever builds the run cannot name another feed, another pair or a wider tolerance.
- *
- * Pyth's price is `price × 10^exponent` per whole token, so a fill in base units is worth
- * `sold × price × 10^(destinationDecimals + exponent − sourceDecimals)`. The template reads the
- * feed's exponent and both mints' decimals on chain and computes that scale itself, and checks
- * each token account against the mint it is supposed to hold so a caller cannot point the decimals
- * read at the wrong mint. The caller supplies only the route.
- *
- * Jupiter does not tie `route`'s source and destination accounts to the accounts its steps move.
- * It asks only that the source hold at least `in_amount` and the destination hold the destination
- * mint, and never who owns either. Put other accounts there, and both measured balances stay where
- * they were: nothing sold, a floor of nothing, and a fill check that passes at any price. So the
- * caller hands over the route in parts, as `splitJupiterRoute` splits the Swap API's data. The
- * template writes `in_amount` into the instruction itself and requires exactly that much to have
- * left `sourceAta`. A step also pays whichever account it names: a route that paid the fill into
- * someone else's account of the destination mint, measured there, would clear the fill check with
- * the trader's tokens. So the template requires the trader to own both token accounts.
- *
- * That does not cover everything: the signer authorizes every step of the route, so a route's steps
- * can also spend other token accounts the signer owns, which neither balance shows.
- *
- * A transaction cannot express this: the fill is only known after the route runs, and by then
- * every instruction is already committed.
+ * Sell SOL for USDC through Jupiter, checked against Pyth's price:
+ * docs/examples/protocols/jupiter-oracle-swap.md.
  */
+// #region template
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
@@ -290,5 +255,6 @@ export const jupiterOracleCheckedSwap = defineTemplate({
     ),
   ],
 });
+// #endregion template
 
 export const compiled = compileTemplate(jupiterOracleCheckedSwap);

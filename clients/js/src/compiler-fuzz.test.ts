@@ -57,6 +57,7 @@ import {
   type CompiledTemplate,
   type DataPart,
   type Expression,
+  type GroupFilter,
   type InputDefinition,
   type ReadType,
   type RegistryFieldType,
@@ -867,14 +868,46 @@ export class Generator {
           max: 0,
         })]);
       }
+      if (this.groups.length > 0) {
+        options.push([1, () => {
+          const group = rng.pick(this.groups);
+          const e = rng.chance(0.4) ? expression.groupLength(group) : expression.groupCount(group, this.groupFilter(scope));
+          return { e, type, max: 0 };
+        }]);
+      }
     } else if (type === 'i64') {
       options.push([1, () => ({ e: expression.clockUnixTimestamp(), type, max: 0 })]);
     } else if (type === 'bool') {
       options.push([2, () => ({ e: expression.accountField(rng.pick(anyAccount).reference, 'isEmpty'), type, max: 0 })]);
+      if (this.groups.length > 0) {
+        options.push([1, () => ({ e: expression.groupAny(rng.pick(this.groups), this.groupFilter(scope)), type, max: 0 })]);
+      }
     } else if (type === 'pubkey') {
       options.push([3, () => ({ e: expression.accountField(rng.pick(anyAccount).reference, rng.pick(['key', 'owner'] as const)), type, max: 0 })]);
     }
     return rng.weighted(options)();
+  }
+
+  /**
+   * A filter for `groupAny` or `groupCount`: one or two programs, one or two match values and up
+   * to two except keys, each a leaf, so the filter's data segments read registers that register
+   * reuse must keep alive. The data-length floor is usually the default, sometimes above it.
+   */
+  groupFilter(scope: Scope): GroupFilter {
+    const rng = this.rng;
+    const widths = { bool: 1, u64: 8, i64: 8, u128: 16, pubkey: 32 } as const;
+    const match = Array.from({ length: rng.range(1, 2) }, () => {
+      const kind = rng.pick(Object.keys(widths) as (keyof typeof widths)[]);
+      return { offset: rng.range(0, 64), equals: this.leaf(scope, kind).e, width: widths[kind] };
+    });
+    const floor = Math.max(...match.map((entry) => entry.offset + entry.width));
+    const exceptKeys = Array.from({ length: rng.range(0, 2) }, () => this.leaf(scope, 'pubkey').e);
+    return {
+      programs: rng.chance(0.5) ? [SYSTEM_PROGRAM_ADDRESS_BYTES] : [TOKEN_PROGRAM_ADDRESS_BYTES, SYSTEM_PROGRAM_ADDRESS_BYTES],
+      ...(rng.chance(0.3) ? { minDataLength: floor + rng.range(0, 8) } : {}),
+      match: match.map(({ offset, equals }) => ({ offset, equals })),
+      ...(exceptKeys.length > 0 ? { exceptKeys } : {}),
+    };
   }
 
   expr(scope: Scope, type: ValueKind, depth: number): Gen {
@@ -1795,6 +1828,37 @@ const VERIFIER_REGISTER_OPERANDS = new Map<number, readonly Operand[]>([
   [opcode.move, ['a']],
   [opcode.createPda, ['b']],
   [opcode.require, ['a']],
+  // Opcodes whose operands name no register: an input, a constant or a table index, an account
+  // reference, a loop's length, or a group index and the pubkey-table indices of its programs.
+  // Every value the derivations, outputs and group filters read comes through `segmentsRead`.
+  ...[
+    opcode.loadInput,
+    opcode.constBool,
+    opcode.constU64,
+    opcode.constI64,
+    opcode.constU128,
+    opcode.constPubkey,
+    opcode.constBytes,
+    opcode.accountKey,
+    opcode.accountOwner,
+    opcode.accountLamports,
+    opcode.accountDataLength,
+    opcode.accountIsEmpty,
+    opcode.clockSlot,
+    opcode.clockTimestamp,
+    opcode.loopIndex,
+    opcode.forEach,
+    opcode.derivePda,
+    opcode.returnData,
+    opcode.emit,
+    opcode.setReturnData,
+    opcode.instructionCount,
+    opcode.instructionIndex,
+    opcode.readRegistry,
+    opcode.groupLength,
+    opcode.groupAny,
+    opcode.groupCount,
+  ].map((code) => [code, []] as const),
 ]);
 const VERIFIER_READ_OPCODES = new Set<number>([
   opcode.readU8,
@@ -1808,19 +1872,34 @@ const VERIFIER_READ_OPCODES = new Set<number>([
   opcode.readI32,
 ]);
 
-/** The register operands `record` reads: a dynamic read's offset, a guard, a count, a key, or the table's. */
+/**
+ * The register operands `record` reads: a dynamic read's offset, a guard, a count, a key, or the
+ * table's. An opcode the table lacks is an error, not "reads none": a new opcode whose operands
+ * or segments read registers would otherwise go unchecked.
+ */
 function registerOperands(record: Record16): Operand[] {
   if (VERIFIER_READ_OPCODES.has(record.opcode)) return record.flags & DYNAMIC_OFFSET ? ['b'] : [];
   if (record.opcode === opcode.invoke || record.opcode === opcode.openRegistry) return record.b === NO_INDEX ? [] : ['b'];
   if (record.opcode === opcode.repeat) return ['b'];
-  return [...(VERIFIER_REGISTER_OPERANDS.get(record.opcode) ?? [])];
+  const operands = VERIFIER_REGISTER_OPERANDS.get(record.opcode);
+  if (operands === undefined) throw new Error(`the reuse check does not know opcode ${record.opcode}`);
+  return [...operands];
 }
 
-/** The data segments `record` reads as it runs: seeds, output parts, or an invoke's data. */
+/**
+ * The data segments `record` reads as it runs: seeds, output parts, an invoke's data, or a group
+ * filter's match values and except keys.
+ */
 function segmentsRead(program: DecodedProgram, record: Record16): Segment8[] {
   if (record.opcode === opcode.invoke) {
     const cpi = program.cpis[record.a];
     return cpi ? program.segments.slice(cpi.segmentStart, cpi.segmentStart + cpi.segmentLength) : [];
+  }
+  if (record.opcode === opcode.groupAny || record.opcode === opcode.groupCount) {
+    // `GroupScan`: the first segment in bytes 0 and 1, then the match and except counts.
+    const start = Number(record.immediate & 0xffffn);
+    const count = Number((record.immediate >> 16n) & 0xffn) + Number((record.immediate >> 24n) & 0xffn);
+    return program.segments.slice(start, start + count);
   }
   if ([opcode.derivePda, opcode.createPda, opcode.emit, opcode.setReturnData].includes(record.opcode as never)) {
     const start = Number(record.immediate & 0xffff_ffffn);
@@ -2083,6 +2162,28 @@ function collectSites(template: Mutable): Sites {
         name(node, 'account', 'account');
         name(node, 'field', 'field');
         break;
+      case 'groupLength':
+        name(node, 'group', 'group');
+        break;
+      case 'groupAny':
+      case 'groupCount': {
+        name(node, 'group', 'group');
+        const filter = node.filter as Mutable;
+        for (const entry of filter.match as Mutable[]) {
+          visitExpression(entry, 'equals');
+          sites.numbers.push({ parent: entry, key: 'offset' });
+        }
+        ((filter.exceptKeys ?? []) as unknown[]).forEach((_, index) => visitExpression(filter.exceptKeys as unknown[], index));
+        break;
+      }
+      case 'literal':
+      case 'clock':
+      case 'loopIndex':
+        break;
+      default:
+        // A new kind must say which names and subexpressions it holds, or renaming and mutation
+        // would silently skip them.
+        throw new Error(`collectSites does not know expression kind ${String(node.kind)}`);
     }
   };
   const visitParts = (parts: unknown[]) =>
@@ -3154,6 +3255,18 @@ describe('compiler fuzz', () => {
     console.log(`renaming: ${renamingProblems(fuzzCase.template, outcome, new Rng(fuzzCase.seed ^ 0x0a11a5), true).join('; ') || 'same'}`);
   });
 
+  test('the reuse check knows every opcode, and a group filter reads its segments', () => {
+    const record = (code: number, immediate = 0n): Record16 => ({ opcode: code, dst: 0, a: 0, b: NO_INDEX, c: NO_INDEX, flags: 0, immediate, reserved: 0 });
+    for (const code of Object.values(opcode)) expect(() => registerOperands(record(code)), `opcode ${code}`).not.toThrow();
+    expect(() => registerOperands(record(81))).toThrow('does not know opcode 81');
+    const segment = (register: number): Segment8 => ({ kind: 7, register, rest: '' });
+    const program = { segments: [segment(9), segment(1), segment(2), segment(3)], cpis: [] } as unknown as DecodedProgram;
+    // Segments 1 and 2 are the match, 3 the except key: start 1, one match, two excepts.
+    const filter = 1n | (1n << 16n) | (2n << 24n) | (64n << 32n);
+    for (const code of [opcode.groupAny, opcode.groupCount]) expect(registersRead(program, record(code, filter))).toEqual([1, 2, 3]);
+    expect(registersRead(program, record(opcode.groupLength))).toEqual([]);
+  });
+
   test('the generator covers the language', () => {
     const seen = new Set<string>();
     const visitExpression = (node: unknown): void => {
@@ -3193,7 +3306,8 @@ describe('compiler fuzz', () => {
       'expression:not', 'expression:select', 'expression:cast', 'expression:instructionCount',
       'expression:currentInstructionIndex', 'expression:instruction', 'expression:instructionAccount',
       'expression:instructionData', 'expression:instructionDataBytes', 'expression:accountDataBytes',
-      'expression:bytesLength', 'expression:registry',
+      'expression:bytesLength', 'expression:registry', 'expression:groupLength', 'expression:groupAny',
+      'expression:groupCount',
       'step:let', 'step:require', 'step:invoke', 'step:invoke:when', 'step:assign', 'step:forEach', 'step:repeat',
       'step:emit', 'step:setReturnData', 'step:setRegistry',
     ]) {

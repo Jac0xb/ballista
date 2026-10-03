@@ -9,9 +9,13 @@ publish = false
 [features]
 # Loads `target/deploy/ballista-cu-profile.so` and prints the phase breakdown.
 cu-profile = []
+# Critic tooling: with `SBF_TRACE_DIR` set, Mollusk writes a register trace (program counter
+# included) for every SBF invocation, which `scripts/critic/sbf_coverage.py` turns into coverage.
+sbf-trace = ["mollusk-svm/register-tracing"]
 
 [dependencies]
 ballista-common = { path = "../../common", features = ["proptest"] }
+ballista-fuzz-gen = { path = "../../fuzz-executor/gen" }
 base64 = "=0.22.1"
 proptest = "1.11"
 mollusk-svm = { version = "=0.14.0", features = ["inner-instructions", "precompiles"] }

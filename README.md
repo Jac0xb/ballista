@@ -11,8 +11,8 @@ repository. [Details](https://jac0xb.github.io/ballista/guide/security#audit-sta
 It is designed for the space between a one-off transaction and a bespoke smart contract: payroll
 batches, guarded token operations, account setup, treasury flows, post-CPI invariants, and other
 complex but finite orchestration. Templates can read accounts and the clock, perform checked typed
-math, require conditions, invoke arbitrary programs, and iterate one statically bounded account
-range. They keep state between runs only in the
+math, require conditions, invoke arbitrary programs, and run up to eight loops, each over rows of
+accounts or a counted number of passes with a fixed maximum. They keep state between runs only in the
 [registry entries](https://jac0xb.github.io/ballista/guide/registries) they declare, and cannot run
 unbounded loops, custody PDAs, or invent signer authority.
 

@@ -61,9 +61,14 @@ writes to the template.
 ## Privileges
 
 A declaration is a ceiling. A call can pass a declared account as a signer or as writable only if
-its declaration requires that privilege and the transaction granted it. Members of an
-[account group](/guide/account-groups) have no declaration, so a call passes each one as writable
-whenever the transaction marked it writable, and never as a signer.
+its declaration requires that privilege and the transaction granted it. The ceiling has two gaps:
+
+- **It bounds accounts, not calls.** A declared signer can be passed as a signer to every call in
+  the template, with whatever data each call builds. A call whose data comes from an input can be
+  any instruction the called program accepts from that signer.
+- **Group members have no declaration.** A call passes each
+  [account group](/guide/account-groups) member as writable whenever the transaction marked it
+  writable, though never as a signer.
 
 A template has no authority of its own: every call it makes, its signers could have made directly.
 What the template adds is that its steps and checks run together, in one transaction, exactly as

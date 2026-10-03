@@ -54,16 +54,26 @@ console.log(inspectTemplate(stored.payload));
 :::
 
 `inspectTemplate` returns counts only. `ProgramView` in Rust gives every table: account
-declarations, inputs, compiled instructions, calls, and their data. The byte layout is on
+declarations, inputs, compiled instructions, calls, and their data. The Rust tab prints each
+account's requirements and the signers each call passes. The byte layout is on
 [Wire format](/reference/wire-format).
 
 ## What to look for
 
-- **Signers and writable accounts.** A template can never do more with an account than its
-  declaration allows. These flags are the most it can ask of your wallet.
-- **Called programs.** Each call names a program account. Check that account pins an address you
-  recognise. The program does not require this pin; only the TypeScript compiler does.
-- **Pinned owners** on accounts whose data is read, so byte offsets mean what the template assumes.
+- **Signers and writable accounts.** A declared account's flags are the most any call can ask of
+  it, but one signer declaration lets every call pass it as a signer, so check each call that
+  does. [Account group](/guide/account-groups) members have no declaration: a call passes each one
+  as writable whenever the transaction marks it writable.
+- **Called programs.** Each call names a program account. Check that the account pins an address
+  you recognise, and that you trust whoever can upgrade that program. The Ballista program does
+  not require the pin; only the TypeScript compiler does.
+- **CPI data built from inputs.** A call whose data comes from an input sends whatever the caller
+  encodes. With a signer passed to it, that can be any instruction the called program accepts from
+  that signer.
+- **Types and identities** of accounts whose data is read: an owner pin alone doesn't fix either.
+  See [Pins](/guide/trust-model#pins).
+- **Distinct accounts.** Where two slots must hold different accounts, look for a `require` that
+  their keys differ. See [Aliased accounts](/guide/trust-model#aliased-accounts).
 - **Worst case.** `maxExpandedCpis` and the maximum batch rows say how much one run can do.
 
 ## What is missing

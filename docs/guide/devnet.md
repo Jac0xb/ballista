@@ -10,21 +10,24 @@ Where the Ballista program is deployed, and how to run and upload the example te
 
 ## Deployment policy
 
-Each release of the Ballista program is to be deployed immutably, under its own address and with
-no upgrade authority (the key that could replace a program's code). A finalized template (one the
-program has checked and locked after upload) cannot be edited either, so nothing can change what
-it does. A template belongs to the program deployment that finalized it. A new version of the
-program is a new deployment at a new address, and templates must be uploaded again under it.
+Each release of the Ballista program will be deployed immutably, under its own address and with
+no upgrade authority (the key that could replace a program's code). A
+[finalized](/reference/glossary#finalize) template can't be edited either, so once a release is
+deployed that way, nothing can change what Ballista does with a template. The programs a template
+calls keep their own upgrade authorities. A template belongs to the program deployment that
+finalized it: a new version of the program is a new deployment at a new address, and templates
+must be uploaded again under it.
 
 | Build | Program | Status |
 | --- | --- | --- |
-| Pre-release | [`BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD`](https://explorer.solana.com/address/BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD?cluster=devnet) | On devnet. Built before the current template format and before templates could derive program addresses on chain (`assertPda`, `assertAta`). Still has an upgrade authority. |
+| Pre-release | [`BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD`](https://explorer.solana.com/address/BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD?cluster=devnet) | On devnet. Built before the current template format and before templates could derive program addresses on chain (`assertPda`, `assertAta`). Has an upgrade authority, so you trust its holder: that key can change what every template on this build does. |
 | Current | Not deployed yet | Run it locally with the test suite |
 
 ::: warning Templates from this repository need the final deployment
 The devnet program above was built for an older template format. It rejects templates compiled
 from this repository with `InvalidTemplateProgram` (custom error 6002). Once the final program is
-deployed, pass its address to the SDKs. Until then, run templates locally with
+deployed, pass its address to the SDKs. Until then, run templates locally: on a local validator,
+as [Getting started](/guide/getting-started) does, or with
 `pnpm build:program && pnpm test:integration`, which builds the program and runs the test suite in
 Mollusk, a harness that runs Solana programs without a validator.
 :::
@@ -72,13 +75,12 @@ pnpm --dir clients/js exec tsx examples/ensure-usdc-ata.ts upload
 The example uploads to the pre-release program, so until the final program is deployed this
 upload is rejected with `InvalidTemplateProgram`, as described above.
 
-A template's address is a PDA (program derived address: an address computed from a program ID and
-seeds, with no private key). Its seeds are the word `template`, the creator, and the template ID,
-so anyone can work out the address in advance and send lamports (the smallest unit of SOL) to it.
-That does not block the ID. If the address already holds lamports when the template is created,
-the program tops the account up to the rent-exempt minimum (the balance an account needs to stay
-on chain) if needed, then allocates the account and assigns it to itself, signing for the
-template address.
+A template's address is a [PDA](/reference/glossary#pda) whose seeds are the word `template`, the
+creator, and the template ID, so anyone can work out the address in advance and send
+[lamports](/reference/glossary#lamports) to it. That does not block the ID. If the address already
+holds lamports when the template is created, the program tops the account up to the
+[rent-exempt](/reference/glossary#rent) minimum if needed, then allocates the account and assigns
+it to itself, signing for the template address.
 
 ## Inspect a template
 

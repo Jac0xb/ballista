@@ -148,7 +148,11 @@ def main():
             )
             elapsed = time.time() - start
             log = (logs / f"{name}.fuzz.log").read_text()
-            panic = next((line for line in log.splitlines() if "verify accepted" in line or "refused" in line or "count different" in line), "")
+            lines = log.splitlines()
+            panic = next(
+                (lines[i + 1] for i, line in enumerate(lines[:-1]) if "panicked at" in line),
+                "",
+            )
             found = f"crash in {elapsed:.0f} s: {panic[:90]}" if fuzzed not in (0, None) else f"survived {seconds} s"
             rows.append((name, f"{len(failed)} failing" if tests != 0 else "all pass", found))
             print(f"{name:32} tests: {rows[-1][1]:12} fuzz: {found}", flush=True)

@@ -142,5 +142,5 @@ fast. A mutant that survives both is a rule nothing here tests.
 
 The 14 mutants cover the CPI ceiling, declared accounts and groups, the CPI count,
 read-before-write, read bounds, return data, `EMIT` tags, registry entries and the sysvar pin.
-The stable tests catch every one, and so does `structured`, within 5 seconds of an empty corpus.
+The stable tests catch every one, and so does `structured`, within 10 seconds of an empty corpus.
 That includes the critic's `verify-cpi-privilege`, which the proptests in `common/tests` miss.

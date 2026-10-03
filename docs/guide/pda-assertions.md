@@ -3,16 +3,15 @@
 This page shows how a template checks that an account the caller passed is the PDA or associated
 token account it expects, and how to keep that check cheap.
 
-A PDA (program-derived address) is an address computed from a program's address, a list of seeds,
-and one extra seed byte called the bump. The bump is chosen so the address falls off the ed25519
-curve, which means no private key exists for it. The canonical bump is the first value, counting
-down from 255, that gives such an address, and programs normally create their accounts at that
-canonical address. An ATA (associated token account) is the token account at the Associated Token
-Program's PDA for a given wallet, token program, and mint.
+A [PDA](/reference/glossary#pda) is derived from a program's address, a list of seeds, and one
+extra seed byte called the bump, chosen so the address falls off the ed25519 curve and has no
+private key. The canonical bump is the first value, counting down from 255, that gives such an
+address, and programs normally create their accounts at that canonical address. An
+[ATA](/reference/glossary#ata) is the token account at the Associated Token Program's PDA for a
+given wallet, token program, and mint.
 
-These assertions prove how an address was derived. They do not let Ballista sign for the account:
-Ballista never signs a template's calls. Within a run, its only signature creates a
-[registry entry](/guide/registries)'s own account.
+These assertions prove how an address was derived. They do not let Ballista sign for the account;
+see [Signing](/guide/trust-model#signing).
 
 ## Assert an associated token account
 
@@ -114,9 +113,9 @@ for the bump.
 ## Supply the bump
 
 Finding the canonical bump on chain means hashing with 255, then 254, and so on until the result is
-off the curve. Solana charges 1,500 compute units (its measure of execution cost) for every attempt,
-and the number of attempts depends on the seeds. The caller can compute the bump off chain for
-free, so a template can take it as an input and derive the address once:
+off the curve. Solana charges 1,500 [compute units](/reference/glossary#compute-units) for every
+attempt, and the number of attempts depends on the seeds. The caller can compute the bump off
+chain for free, so a template can take it as an input and derive the address once:
 
 ```ts
 import { account, assertPda, expression } from '@jac0xb/ballista';

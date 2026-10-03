@@ -5,9 +5,10 @@ change, so what you read is what runs.
 
 ## 1. Find and fetch it
 
-A template's address is a PDA derived from `['template', creator, templateId]`. Derive it with
-`getTemplateAddress(creator, templateId)` in TypeScript (`@jac0xb/ballista/kit`) or
-`find_template_pda(&creator, template_id)` in Rust, then fetch the account over RPC.
+A template's address is a [PDA](/reference/glossary#pda) derived from
+`['template', creator, templateId]`. Derive it with `getTemplateAddress(creator, templateId)` in
+TypeScript (`@jac0xb/ballista/kit`) or `find_template_pda(&creator, template_id)` in Rust, then
+fetch the account over RPC.
 
 Check that the account is owned by the Ballista program you expect. Templates belong to the
 deployment that finalized them.

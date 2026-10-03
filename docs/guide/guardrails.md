@@ -128,8 +128,7 @@ layout, including another position.
 
 :::
 
-`assertPda` computes a [PDA](/reference/glossary#pda) from the protocol program and the seeds. If
-`position` has a different address, the run fails. The derivation searches for the bump (an extra
-seed byte that makes the result a valid PDA). The caller derives the
-same address to build the account list, as both Run tabs show. The check only proves how the
-accounts relate; it does not let Ballista sign for the PDA.
+`assertPda` computes a [PDA](/reference/glossary#pda) from the protocol program and the seeds,
+searching for the canonical bump, and the run fails if `position` has a different address. The
+caller derives the same address to build the account list, as both Run tabs show.
+[PDA and ATA assertions](/guide/pda-assertions) covers the bump and what it costs.

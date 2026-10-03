@@ -10,30 +10,9 @@ unaudited software and keep the value it controls to what you can afford to lose
 
 ## Checked on chain
 
-The Ballista program enforces these for every template, whichever SDK built it.
-
-**At upload** (the verifier, before a template is finalized):
-
-- the bytes are well formed, with no unknown instructions or reserved bits;
-- every value is set before it is read, and has the type each instruction expects;
-- every account reference points at a declared account;
-- no call passes a declared account as signer or writable unless its declaration requires that.
-  [Account-group](/guide/account-groups) members are the exception: they have no declaration and
-  are passed with the transaction's own writable flag, never as signers;
-- a program that is called is declared `executable`;
-- at most eight loops, never nested, each with a fixed maximum, and at most 64 calls even in the
-  worst case;
-- fixed-offset reads stay within the account's declared minimum length;
-- a [registry entry](/guide/registries) is opened at the top level before it is used, read and written only
-  through its declared fields, and never passed writable to a call.
-
-**At every run:**
-
-- each account matches its declaration: signer, writable, executable, address, owner and minimum
-  length;
-- inputs decode exactly, and the account and row counts are in range;
-- arithmetic and casts are checked, and a failed `require` stops the run;
-- the template is finalized, and the run never writes to it.
+The Ballista program checks every template once, at finalization, and checks every run against it,
+whichever SDK built the template. [Finalization checks](/guide/trust-model#finalization-checks)
+lists both.
 
 ## Checked only by the TypeScript compiler
 
@@ -66,13 +45,11 @@ checks, the template lifecycle and type safety, are written but blocked, so they
   - to read the Instructions sysvar and read-only accounts without copying them;
   - to read and write registry entries in place;
   - to build a PDA's seed buffer in place when deriving an address.
-- **No authority of its own.** Ballista never signs a template's calls. It owns two kinds of
-  accounts, templates and registry entries, and each holds only its rent lamports, plus anything
-  someone sends it. A template can only do what the transaction's own signers could do directly.
-- **State only in registry entries.** Ballista keeps run-to-run state only in
-  the [registry entries](/guide/registries) templates declare. Only a template's own runs can change its entries, a
-  run checks each entry against the template and key before using it, and within a run Ballista
-  signs only to create an entry's own account.
+- **No authority of its own.** Ballista never signs a template's calls, so a template can do only
+  what the transaction's signers could do directly. See [Signing](/guide/trust-model#signing).
+- **State only in registry entries.** Only a template's own runs can change its
+  [registry entries](/guide/registries), and a run checks each entry before using it. See
+  [State](/guide/trust-model#state).
 - **Immutable templates.** A finalized template cannot be changed, so what you reviewed is what
   runs.
 

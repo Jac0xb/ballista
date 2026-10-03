@@ -11,23 +11,79 @@ caller supplies, so its checks protect you only if you know which parts the call
 | Template author | The template, which cannot change once finalized (checked and locked on chain): account declarations, inputs, steps | What can happen, in what order, and under which conditions |
 | Caller | Every account, every input value, every signature | Which actual accounts and values the template works with |
 | Called programs | Their own instruction behavior and errors | What each call does with the accounts it receives |
-| Ballista | Checks at finalization, execution at run time, passing on signatures and write access, and the registry entries templates declare | Nothing else: it never signs a template's calls. It owns only template accounts and registry entries, which hold their rent lamports plus anything someone sends them. Nothing withdraws those lamports once a template is finalized, and run-to-run state lives only in registry entries |
+| Ballista | Checks at finalization and at run time, and the registry entries templates declare | Nothing else. It holds no authority of its own ([Signing](#signing)) and keeps state only in registry entries ([State](#state)) |
 
-Ballista never signs a template's calls. A CPI (a call from the template to another program) can pass a declared
-account as a signer (an account that signed the transaction) or as writable (allowed to change)
-only if the account's declaration requires that privilege and the outer transaction actually
-granted it. Members of an [account group](/guide/account-groups) are the exception: they have no
-declaration, so a call passes each one as writable whenever the transaction marked it writable, and
-never as a signer. A template has no authority of its own: every call it makes, the caller could
-have made directly with the same signatures. What the template adds is that its steps and checks run together, in one
-transaction, exactly as written.
+## Finalization checks
 
-Ballista keeps state in one place only: the [registry entries](/guide/registries) a template declares. Each entry is
-an account Ballista owns, at an address derived from the template, the registry and a key the
-template computes, and only that template's runs can change it. Before every use, a run checks that
-the entry belongs to the running template and the key it computed. Ballista signs for an entry
-only to create its account, the first time a run uses it, with the rent paid by a payer the run
-names. Entries are never closed, and anyone can read them.
+Finalization is the one-time check that locks a template on chain, at the end of its upload. The
+Ballista program finalizes a template only if:
+
+- **The bytes are sound.** The upload is complete and matches the hash recorded when it began, and
+  the bytes are well formed: a known format and version, no unknown instructions, and no reserved
+  bits or fields set.
+- **Every value is typed.** Each value is set before it is read and has the type each instruction
+  expects. A call's return data is read only straight after that call, and only if the call
+  always runs.
+- **Every account is declared.** Each account reference points at a declared account, and row
+  accounts and row inputs appear only inside a row loop.
+- **Calls stay within the declarations.** No call passes a declared account as a signer or as
+  writable unless its declaration requires that privilege (see [Privileges](#privileges)), and
+  every program the template calls, or derives a [PDA](/reference/glossary#pda) with, is declared
+  `executable`.
+- **Reads stay in bounds.** Each fixed-offset read stays within the account's declared minimum
+  length, and introspection reads only the Instructions sysvar, pinned to its address.
+- **The work is bounded.** Loops are never nested, and each has a fixed maximum, so even the worst
+  case stays within the [limits](/reference/limits) on accounts, calls, call data, seeds and
+  output.
+- **Registries and output follow their rules.** A
+  [registry entry](/reference/language#registries) is opened at the top level before it is used,
+  read and written only through its declared fields, and never passed writable to a call. Return
+  data is set once, after the last call, and every `emit` starts with its tag
+  ([output rules](/reference/language#output)).
+
+Finalization does not check that a called program's address is pinned (only the TypeScript
+compiler requires that; see [Pins](#pins)), what the called programs do, or who may run the
+template.
+
+Each run then checks every account against its declaration (signer, writable, executable,
+address, owner and minimum length), decodes the inputs exactly, and checks the account and row
+counts. Arithmetic and casts are checked, a failed `require` stops the run, and the run never
+writes to the template.
+
+## Privileges
+
+A declaration is a ceiling. A call can pass a declared account as a signer or as writable only if
+its declaration requires that privilege and the transaction granted it. Members of an
+[account group](/guide/account-groups) have no declaration, so a call passes each one as writable
+whenever the transaction marked it writable, and never as a signer.
+
+A template has no authority of its own: every call it makes, its signers could have made directly.
+What the template adds is that its steps and checks run together, in one transaction, exactly as
+written.
+
+## Signing
+
+Ballista signs with the seeds of its own PDAs in two places only:
+
+- **At upload**, to create the template's account at its address.
+- **When a run first opens a registry entry**, to create the entry's account. A payer the template
+  names pays its rent.
+
+A template's own calls never carry seeds, so Ballista never signs them, and no template can sign
+as a PDA. [`assertPda`](/guide/pda-assertions) checks how an address was derived; it does not let
+Ballista sign for it.
+
+## State
+
+Ballista keeps run-to-run state only in the [registry entries](/guide/registries) a template
+declares. Each entry is an account Ballista owns, at an address derived from the template, the
+registry and a key the template computes, and only that template's runs can change it. A run
+checks each entry against the template and the key before using it. Entries are never closed, and
+anyone can read them.
+
+Templates and registry entries are the only accounts Ballista owns. Each holds its rent plus
+anything someone sends it, and nothing withdraws those lamports from a finalized template or an
+entry.
 
 ## Aliased accounts
 
@@ -56,17 +112,6 @@ which program they target, so pinning the wrong address fails when you compile. 
 program does not check pins: at finalization it checks only that a called program is declared
 `executable`. A template built with the Rust `ProgramBuilder`, or by hand, can leave a program
 unpinned and still be finalized, so check the pins of any template you did not compile yourself.
-
-| Rule | Ballista program, on chain | TypeScript compiler |
-| --- | --- | --- |
-| A called program, or one used to derive a PDA, is declared `executable` | At finalization | Yes |
-| That program pins its `address` | No | Yes, unless `unsafeUnpinned` |
-| An account whose data is read pins its `owner` or `address` | No | Yes, unless `unsafeUnpinned` |
-| A call passes signer or writable only if the declaration requires it (group members aside) | At finalization | Yes |
-| A fixed-offset read stays within the account's minimum data length | At finalization | Raises `minDataLength` to fit |
-| Each account passed matches its declaration: signer, writable, executable, address, owner, length | On every run | The run builder checks pinned addresses |
-
-[Security posture](/guide/security) lists everything the program checks.
 
 ## Opting out
 

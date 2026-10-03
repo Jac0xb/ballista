@@ -1,9 +1,10 @@
 //! The registry examples from "Remember state between runs" (`docs/guide/registries.md`),
 //! authored in Rust with `ProgramBuilder`.
 //!
-//! Each template function builds the same bytes the TypeScript compiler produces for the
-//! TypeScript tab beside it on that page, and each run function the same run data and account
-//! flags as the TypeScript run.
+//! Each template function builds the same bytes the TypeScript compiler produces for the example
+//! of the same name in `clients/js/examples/docs/`, which the page shows beside it, and each run
+//! function the same run data and account flags as the TypeScript run. `tests/docs_examples.rs`
+//! checks both against `tests/fixtures/docs-examples.json`.
 //!
 //! ```bash
 //! cargo run -p ballista-sdk --example docs_language
@@ -28,18 +29,8 @@ fn main() {
             stats.registers
         );
     }
-    let key = |index: u8| Pubkey::new_from_array([index; 32]);
-    let runs = [
-        (
-            "daily-limit-per-caller",
-            run_daily_limit_per_caller(key(200), key(1), key(2), 1_000),
-        ),
-        (
-            "listed-callers-only",
-            run_listed_callers_only(key(200), key(1), key(2), None),
-        ),
-    ];
-    for (name, instruction) in runs {
+    for (name, run) in RUNS {
+        let instruction = run(0);
         println!(
             "{name:24} {:3} accounts  {:4} data bytes",
             instruction.accounts.len(),
@@ -57,6 +48,27 @@ pub const TEMPLATES: &[Example] = &[
     ("daily-limit-per-caller", daily_limit_per_caller),
     ("listed-callers-only", listed_callers_only),
 ];
+
+/// An example's name and a function that builds its run for a given number of batch rows. These
+/// templates have no batch, so every run ignores it.
+pub type ExampleRun = (&'static str, fn(usize) -> Instruction);
+
+/// Every run in this file, with the inputs the TypeScript runs in `docs-examples.test.ts` use. The
+/// page shows no run for `count-runs`.
+pub const RUNS: &[ExampleRun] = &[
+    ("daily-limit-per-caller", |_| {
+        run_daily_limit_per_caller(key(200), key(1), key(2), 1_000)
+    }),
+    // The author's run, the one that reads both inputs: key(6) is the AUTHOR stand-in, 32 sevens.
+    ("listed-callers-only", |_| {
+        run_listed_callers_only(key(200), key(6), key(2), Some((key(3), true)))
+    }),
+];
+
+/// A distinct placeholder key per position, standing in for real addresses.
+fn key(index: u8) -> Pubkey {
+    Pubkey::new_from_array([index + 1; 32])
+}
 
 // #region count-runs
 /// Count each caller's runs, in an entry of their own.

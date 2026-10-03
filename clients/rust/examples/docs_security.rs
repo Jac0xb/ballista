@@ -8,6 +8,10 @@
 //! `cargo test -p ballista-sdk` builds this file, so every snippet compiles. Running it builds the
 //! ATA template, stores it in a finalized template account, inspects that account, and builds a
 //! run. The pages include each function by its `#region` name.
+//!
+//! The ATA template and its run are twins of the TypeScript tabs beside them on the PDA and ATA
+//! assertions page, `clients/js/examples/docs/assert-recipient-ata.ts`: `tests/docs_examples.rs`
+//! holds them to the same bytes, run data and account flags.
 
 #![allow(dead_code)]
 
@@ -16,7 +20,7 @@ use solana_program::{instruction::Instruction, pubkey::Pubkey};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use ballista_sdk::{ballista_common::template::TemplateAccountHeader, template_hash};
 
-    let payload = assert_associated_token_account();
+    let payload = assert_recipient_ata();
     let mut header = TemplateAccountHeader::new_uploading(
         [1; 32],
         0,
@@ -30,10 +34,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     account_data.extend_from_slice(&payload);
     inspect_template(&account_data)?;
 
-    let key = |byte: u8| Pubkey::new_from_array([byte; 32]);
-    let run = assert_associated_token_account_run(key(200), key(1), key(2), key(3));
-    println!("run: {} accounts", run.accounts.len());
+    for (name, run) in RUNS {
+        println!("{name} run: {} accounts", run(0).accounts.len());
+    }
     Ok(())
+}
+
+/// An example's name and the function that builds its template.
+pub type Example = (&'static str, fn() -> Vec<u8>);
+
+/// The twin templates in this file, by the name `docs-examples.test.ts` records them under.
+pub const TEMPLATES: &[Example] = &[("assert-recipient-ata", assert_recipient_ata)];
+
+/// An example's name and a function that builds its run for a given number of batch rows. These
+/// templates have no batch, so every run ignores it.
+pub type ExampleRun = (&'static str, fn(usize) -> Instruction);
+
+/// Their runs, with the inputs the TypeScript runs in `docs-examples.test.ts` use.
+pub const RUNS: &[ExampleRun] = &[("assert-recipient-ata", |_| {
+    run_assert_recipient_ata(key(200), key(1), key(2), key(3))
+})];
+
+/// A distinct placeholder key per position, standing in for real addresses.
+fn key(index: u8) -> Pubkey {
+    Pubkey::new_from_array([index + 1; 32])
 }
 
 // #region inspect-template
@@ -80,7 +104,7 @@ pub fn inspect_template(account_data: &[u8]) -> Result<(), Box<dyn std::error::E
 
 // #region assert-ata-template
 /// Require `destination_ata` to be the associated token account of the recipient and mint.
-pub fn assert_associated_token_account() -> Vec<u8> {
+pub fn assert_recipient_ata() -> Vec<u8> {
     use ballista_sdk::{
         ballista_common::template::{ACCOUNT_EXECUTABLE, ACCOUNT_WRITABLE, DATA_REG_PUBKEY, OP_EQ},
         ProgramBuilder, Segment, ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -119,7 +143,7 @@ pub fn assert_associated_token_account() -> Vec<u8> {
 
 // #region assert-ata-run
 /// Derive the ATA as the template does, and pass the accounts in the order it declares them.
-pub fn assert_associated_token_account_run(
+pub fn run_assert_recipient_ata(
     template: Pubkey,
     recipient: Pubkey,
     mint: Pubkey,

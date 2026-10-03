@@ -71,8 +71,9 @@ The other methods:
   negative tests.
 
 [Template language](/reference/language#steps) says what each step does, and
-[Wire format](/reference/wire-format) lists every opcode. Callers pass fixed accounts in the order
-you declare them, then each row's accounts in the same way, and encode inputs in declaration order.
+[Wire format](/reference/wire-format) lists every opcode. Declaration order matters: callers pass
+the fixed accounts, then each row's accounts, and encode the inputs, all in the order you declare
+them.
 
 ### Checking a template
 
@@ -125,7 +126,7 @@ and never nest. A `repeat` body has no rows, and a template with a batch needs a
 
 | Call | Effect |
 | --- | --- |
-| `emit_data(parts)` | Logs the encoded `parts` as one `Program data:` line. The first part is a `Segment::Literal` tag |
+| `emit_data(parts)` | Logs the encoded `parts` as one `Program data:` line. The first part is a `Segment::Literal` tag of at least `MIN_EMIT_TAG_LEN` bytes that does not start with `RUN_EVENT_TAG_FAMILY` |
 | `set_return_data(parts)` | Sets the encoded `parts` as the run's return data |
 | `flags(PROGRAM_FLAG_EMIT_EVENT)` | Makes every successful run log its run event |
 

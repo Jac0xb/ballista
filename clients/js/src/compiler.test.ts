@@ -1983,11 +1983,11 @@ describe('rateLimit', () => {
   test('refills in u128, requires withinRateLimit, and writes both fields back', () => {
     const steps = limited().steps;
     expect(steps.map((item) => (item.kind === 'let' ? `let ${item.name}` : item.kind))).toEqual([
-      'let rateLimitLast',
-      'let rateLimitNow',
-      'let rateLimitSpent',
-      'let rateLimitRefill',
-      'let rateLimitTotal',
+      'let limitsLast',
+      'let limitsNow',
+      'let limitsSpent',
+      'let limitsRefill',
+      'let limitsTotal',
       'require',
       'setRegistry',
       'setRegistry',
@@ -1995,8 +1995,8 @@ describe('rateLimit', () => {
     // The run's time is the clock, but never earlier than the last spend, and it is what the run
     // writes back: after a clock that steps back, `lastSpend` stays put, so no later run refills
     // the same seconds twice, and the elapsed time is never below zero.
-    const last = expression.variable('rateLimitLast');
-    const now = expression.variable('rateLimitNow');
+    const last = expression.variable('limitsLast');
+    const now = expression.variable('limitsNow');
     expect(steps[0]).toMatchObject({ value: expression.registry('limits', 'lastSpend') });
     expect(steps[1]).toMatchObject({ value: expression.max(expression.clockUnixTimestamp(), last) });
     expect(steps[3]).toMatchObject({

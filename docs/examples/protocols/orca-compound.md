@@ -1,4 +1,4 @@
-# Compound the fees you collected
+# Compound collected fees
 
 <p class="protocol-line">Orca</p>
 

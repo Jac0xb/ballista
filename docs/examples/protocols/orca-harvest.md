@@ -1,4 +1,4 @@
-# Harvest only the positions that earned
+# Harvest positions that earned
 
 <p class="protocol-line">Orca</p>
 

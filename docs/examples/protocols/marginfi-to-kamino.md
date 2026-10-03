@@ -1,4 +1,4 @@
-# Move a marginfi position into Kamino
+# Move a position into Kamino
 
 <p class="protocol-line">marginfi · Kamino</p>
 

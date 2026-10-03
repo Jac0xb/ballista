@@ -1,4 +1,4 @@
-# Repay what the swap produced
+# Repay what a swap produced
 
 <p class="protocol-line">Kamino · Jupiter</p>
 

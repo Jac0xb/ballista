@@ -13,19 +13,19 @@ points, and check them against the protocols' current programs before you use th
 
 | Template | Protocol | Decided during the run |
 | --- | --- | --- |
-| [Deposit exactly what a swap produced](/examples/protocols/jupiter-deposit) | Jupiter → Kamino | How much the swap produced |
+| [Deposit what a swap produced](/examples/protocols/jupiter-deposit) | Jupiter → Kamino | How much the swap produced |
 | [Swap checked against an oracle](/examples/protocols/jupiter-oracle-swap) | Jupiter + Pyth | Whether the swap paid at least the oracle price, less a tolerance |
 | [Sell a whole balance](/examples/protocols/token-sweep) | SPL Token → Jupiter | How much there is to sell |
-| [Cap a caller's daily swaps](/examples/protocols/daily-cap) | Jupiter + registry | How much wrapped SOL this caller can still sell today |
-| [Pay a Jito tip only from profit](/examples/protocols/jito-tip) | Jupiter → Jito | Whether the trade's profit covered the tip |
-| [Settle at a signed quote](/examples/protocols/signed-quote) | Ed25519 → SPL Token | Whether the maker signed this quote for this taker, and it hasn't expired |
-| [Act only on a fresh price](/examples/protocols/pyth-gate) | Pyth → Jupiter | Whether the price is recent, precise and in range |
-| [Compound the fees you collected](/examples/protocols/orca-compound) | Orca | How much the position had earned |
-| [Harvest only the positions that earned](/examples/protocols/orca-harvest) | Orca | Which positions have earned enough to collect |
-| [Repay what the swap produced](/examples/protocols/kamino-repay) | Jupiter → Kamino | How much the swap produced |
+| [Cap a caller's daily swaps](/examples/protocols/daily-cap) | Jupiter + registry | How much wrapped SOL this caller can sell now, as its cap refills |
+| [Repay what a swap produced](/examples/protocols/kamino-repay) | Jupiter → Kamino | How much the swap produced |
 | [Liquidate with a minimum payout](/examples/protocols/kamino-liquidate) | Kamino | How much collateral the liquidator received |
 | [Withdraw everything, with a minimum](/examples/protocols/marginfi-withdraw) | marginfi | How much the withdrawal returned |
-| [Move a marginfi position into Kamino](/examples/protocols/marginfi-to-kamino) | marginfi → Kamino | How much marginfi released, to deposit in Kamino |
+| [Move a position into Kamino](/examples/protocols/marginfi-to-kamino) | marginfi → Kamino | How much marginfi released, to deposit in Kamino |
+| [Compound collected fees](/examples/protocols/orca-compound) | Orca | How much the position had earned |
+| [Harvest positions that earned](/examples/protocols/orca-harvest) | Orca | Which positions have earned enough to collect |
+| [Act only on a fresh price](/examples/protocols/pyth-gate) | Pyth → Jupiter | Whether the price is recent, precise and in range |
+| [Tip only from profit](/examples/protocols/jito-tip) | Jupiter → Jito | Whether the trade's profit covered the tip |
+| [Settle at a signed quote](/examples/protocols/signed-quote) | Ed25519 → SPL Token | Whether the maker signed this quote for this taker, and it hasn't expired |
 
 ## What has been tested
 
@@ -45,12 +45,8 @@ points, and check them against the protocols' current programs before you use th
   accounts by an opt-in test; see [reading offsets](#reading-offsets-from-an-account). The Kamino
   and marginfi templates don't read those protocols' accounts. They read SPL token accounts: their
   balances before and after each call and, where it matters, who owns them.
-- **Jupiter calls.** Seven templates call Jupiter's `route` instruction:
-  [deposit](/examples/protocols/jupiter-deposit), [oracle swap](/examples/protocols/jupiter-oracle-swap),
-  [sell](/examples/protocols/token-sweep), [daily cap](/examples/protocols/daily-cap),
-  [repay](/examples/protocols/kamino-repay), [price gate](/examples/protocols/pyth-gate) and
-  [Jito tip](/examples/protocols/jito-tip). Each
-  sends the `route` discriminator and passes the first accounts of `route` itself, in the order
+- **Jupiter calls.** The seven templates in the table that call Jupiter use its `route` instruction.
+  Each sends the `route` discriminator and passes the first accounts of `route` itself, in the order
   Jupiter's published interface lists them: the token program, the signer and, where the template
   measures them, the source and destination token accounts. The rest of the route's accounts
   arrive as an account group. A test that reads the templates checks this

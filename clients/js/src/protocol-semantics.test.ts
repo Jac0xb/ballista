@@ -39,6 +39,20 @@ import {
   tokenSweepIntoSwap,
 } from '../examples/protocols/index.js';
 import { QUOTE, QUOTE_TAG, signedQuote } from '../examples/protocols/signed-quote-settlement.js';
+import * as jitoTipModule from '../examples/protocols/jito-profit-guarded-tip.js';
+import * as dailyCapModule from '../examples/protocols/jupiter-daily-cap-swap.js';
+import * as depositModule from '../examples/protocols/jupiter-deposit-exact-output.js';
+import * as oracleSwapModule from '../examples/protocols/jupiter-oracle-checked-swap.js';
+import * as repayModule from '../examples/protocols/kamino-repay-swap-output.js';
+import * as pythGateModule from '../examples/protocols/pyth-fresh-price-gate.js';
+import * as sweepModule from '../examples/protocols/token-sweep-into-swap.js';
+import { jupiterOracleCheckedSwapFeeCap100 } from '../examples/scenarios/index.js';
+import { RAISED_PLATFORM_FEE_BPS } from '../examples/scenarios/raised-fee-cap.js';
+import {
+  MAX_PLATFORM_FEE_BPS as SPLIT_SELL_MAX_PLATFORM_FEE_BPS,
+  splitSellInner,
+  splitSellPayout,
+} from '../examples/scenarios/split-sell.js';
 import { buildJupiterDepositRun } from '../examples/protocols/run-jupiter-deposit.js';
 import { buildDailyCapRun } from '../examples/protocols/run/jupiter-daily-cap.js';
 import {
@@ -70,6 +84,17 @@ import {
 } from '../examples/protocols/shared.js';
 import { findRegistryEntryAddress } from './kit.js';
 
+/** Each Jupiter template's module, by export name, for the constants beside it. */
+const protocolModules: Record<string, { MAX_PLATFORM_FEE_BPS?: bigint }> = {
+  jitoProfitGuardedTip: jitoTipModule,
+  jupiterDailyCapSwap: dailyCapModule,
+  jupiterDepositExactOutput: depositModule,
+  jupiterOracleCheckedSwap: oracleSwapModule,
+  kaminoRepaySwapOutput: repayModule,
+  pythFreshPriceGate: pythGateModule,
+  tokenSweepIntoSwap: sweepModule,
+};
+
 type Invoke = Extract<Step, { kind: 'invoke' }>;
 type Require = Extract<Step, { kind: 'require' }>;
 
@@ -78,7 +103,7 @@ function steps(template: Template): Step[] {
   const visit = (list: Step[]) => {
     for (const step of list) {
       all.push(step);
-      if (step.kind === 'forEach') visit(step.steps);
+      if (step.kind === 'forEach' || step.kind === 'repeat') visit(step.steps);
     }
   };
   visit(template.steps);
@@ -250,6 +275,45 @@ describe('Jupiter calls are `route`, with its accounts in its order', () => {
   });
 });
 
+/**
+ * Jupiter's `route` pays `platform_fee_bps` of its output to the platform fee account, position 6
+ * of its list, which every template forwards in its group. Whoever builds the run picks both, so
+ * each template caps the rate at a constant of its own, 0 unless its author raises it, before the
+ * call.
+ */
+describe('every Jupiter route caps the platform fee', () => {
+  const capped: [string, Template, string, bigint][] = [
+    ...jupiterCalls.map(
+      ([name, template, { program }]) =>
+        [name, template, program, (protocolModules[name] ?? {}).MAX_PLATFORM_FEE_BPS] as [string, Template, string, bigint],
+    ),
+    ['splitSellPayout', splitSellPayout, 'jupiter', SPLIT_SELL_MAX_PLATFORM_FEE_BPS],
+    ['splitSellInner', splitSellInner, 'jupiter', SPLIT_SELL_MAX_PLATFORM_FEE_BPS],
+  ];
+
+  test.each(capped)('%s takes the fee as an input, writes it last, and caps it before the call', (_, template, program, cap) => {
+    expect(cap).toBe(0n);
+    expect(template.inputs?.platformFeeBps).toEqual({ type: 'u64' });
+    const [call] = invokesOf(template, program) as [Invoke];
+    expect(call.data.at(-1)).toEqual(data.encode('u8', expression.input('platformFeeBps')));
+
+    const check = requireLabeled(template, 'platformFeeWithinCap');
+    expect(check.condition).toEqual(expression.lessThanOrEqual(expression.input('platformFeeBps'), expression.u64(cap)));
+    const all = steps(template);
+    expect(all.indexOf(check)).toBeLessThan(all.indexOf(call));
+  });
+
+  test('the raised-cap scenario differs from the oracle swap only in its cap', () => {
+    const raised = requireLabeled(jupiterOracleCheckedSwapFeeCap100, 'platformFeeWithinCap');
+    expect(raised.condition).toEqual(
+      expression.lessThanOrEqual(expression.input('platformFeeBps'), expression.u64(RAISED_PLATFORM_FEE_BPS)),
+    );
+    const others = (template: Template) => template.steps.filter((step) => step.label !== 'platformFeeWithinCap');
+    expect(others(jupiterOracleCheckedSwapFeeCap100)).toEqual(others(jupiterOracleCheckedSwap));
+    expect({ ...jupiterOracleCheckedSwapFeeCap100, steps: [] }).toEqual({ ...jupiterOracleCheckedSwap, steps: [] });
+  });
+});
+
 describe('the oracle-checked swap', () => {
   const bindings = bindingsOf(jupiterOracleCheckedSwap);
   const check = requireLabeled(jupiterOracleCheckedSwap, 'fillBeatTheOracle');
@@ -322,12 +386,14 @@ describe('the oracle-checked swap', () => {
       expect(requireLabeled(jupiterOracleCheckedSwap, label).condition).toEqual(
         expression.equal(
           expression.accountData(account.fixed(name), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
-          expression.accountField(account.fixed('trader'), 'key'),
+          expression.variable('traderKey'),
         ),
       );
     }
+    // The key is read once, into `traderKey`, right before the two checks.
+    expect(bindingsOf(jupiterOracleCheckedSwap).get('traderKey')).toEqual([expression.accountKey('trader')]);
     const labels = jupiterOracleCheckedSwap.steps.map((step) => step.label);
-    expect(labels.indexOf('sellsTheTradersOwnTokens')).toBe(labels.indexOf('destinationHoldsTheDestinationMint') + 1);
+    expect(labels.indexOf('sellsTheTradersOwnTokens')).toBe(labels.indexOf('destinationHoldsTheDestinationMint') + 2);
     expect(labels.indexOf('proceedsGoToTheTrader')).toBe(labels.indexOf('sellsTheTradersOwnTokens') + 1);
     expect(labels.indexOf('proceedsGoToTheTrader')).toBeLessThan(labels.indexOf('swap'));
   });

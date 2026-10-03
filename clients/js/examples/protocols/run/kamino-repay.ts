@@ -2,7 +2,7 @@ import type { Address, Instruction } from '@solana/kit';
 
 import { buildKitRunInstruction, type KitAccountBinding } from '../../../src/kit.js';
 import { compiled } from '../kamino-repay-swap-output.js';
-import { JUPITER_V6, KAMINO_LEND, SYSVAR_INSTRUCTIONS } from '../shared.js';
+import { JUPITER_V6, KAMINO_LEND, SYSVAR_INSTRUCTIONS, splitJupiterRoute } from '../shared.js';
 import { KAMINO_FARMS_PROGRAM, kaminoFarmPair, type KaminoFarm } from './kamino.js';
 import { TOKEN_PROGRAM, at, pinned } from './programs.js';
 
@@ -22,16 +22,24 @@ export function buildKaminoRepayRun(input: {
   reserveLiquiditySupply: Address;
   /** The reserve's debt farm, if it has one. */
   debtFarm?: KaminoFarm;
-  /** `splitJupiterRoute(swapData).args`. */
-  routeArgs: Uint8Array;
+  /** The Swap API's `route` data. */
+  routeData: Uint8Array;
   minimumRepayment: bigint;
   /** The route's account list from the fifth account on. */
   routeAccounts: readonly KitAccountBinding[];
 }): Instruction {
+  const route = splitJupiterRoute(input.routeData);
   return buildKitRunInstruction({
     compiled,
     templateAddress: input.templateAddress,
-    inputs: { routeArgs: input.routeArgs, minimumRepayment: input.minimumRepayment },
+    inputs: {
+      routePlan: route.routePlan,
+      inAmount: route.inAmount,
+      quotedOutAmount: route.quotedOutAmount,
+      slippageBps: route.slippageBps,
+      platformFeeBps: route.platformFeeBps,
+      minimumRepayment: input.minimumRepayment,
+    },
     accounts: {
       jupiter: pinned(JUPITER_V6),
       kamino: pinned(KAMINO_LEND),

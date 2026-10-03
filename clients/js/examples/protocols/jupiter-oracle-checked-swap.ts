@@ -62,6 +62,9 @@ import {
 const balanceOf = (name: string) =>
   expression.accountData(account.fixed(name), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64');
 
+/** The route's platform fee account and rate are chosen by whoever builds the run: cap the rate. */
+export const MAX_PLATFORM_FEE_BPS = 0n;
+
 export const jupiterOracleCheckedSwap = defineTemplate({
   inputs: {
     /**
@@ -148,18 +151,20 @@ export const jupiterOracleCheckedSwap = defineTemplate({
     ),
 
     // Both ends of the swap are the trader's: the step that pays the fill can name any account of
-    // the destination mint, so the one measured must be the trader's.
+    // the destination mint, so the one measured must be the trader's. The key is read once: the
+    // template is at the runtime's 64 registers.
+    step.let('traderKey', expression.accountKey('trader')),
     step.require(
       expression.equal(
         expression.accountData(account.fixed('sourceAta'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
-        expression.accountField(account.fixed('trader'), 'key'),
+        expression.variable('traderKey'),
       ),
       'sellsTheTradersOwnTokens',
     ),
     step.require(
       expression.equal(
         expression.accountData(account.fixed('destinationAta'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
-        expression.accountField(account.fixed('trader'), 'key'),
+        expression.variable('traderKey'),
       ),
       'proceedsGoToTheTrader',
     ),
@@ -193,6 +198,12 @@ export const jupiterOracleCheckedSwap = defineTemplate({
 
     step.snapshot('sourceBefore', balanceOf('sourceAta'), 'readSourceBeforeSwap'),
     step.snapshot('balanceBefore', balanceOf('destinationAta'), 'readBalanceBeforeSwap'),
+
+    // The fee account sits in the route's own accounts: any nonzero rate pays whoever chose it.
+    step.require(
+      expression.lessThanOrEqual(expression.input('platformFeeBps'), expression.u64(MAX_PLATFORM_FEE_BPS)),
+      'platformFeeWithinCap',
+    ),
 
     // `route` takes the token program, the signer, and the user's source and destination token
     // accounts first; the route's own accounts follow as the group. Jupiter moves the accounts its
@@ -251,7 +262,8 @@ export const jupiterOracleCheckedSwap = defineTemplate({
               expression.cast('u64', expression.max(expression.subtract(expression.i64(0), expression.variable('scale')), expression.i64(0))),
             ),
           ),
-          expression.cast('u128', expression.subtract(expression.u64(10_000), expression.input('toleranceBps'))),
+          // In u128 throughout, so that one 10,000 serves as both the whole and the divisor.
+          expression.subtract(expression.u128(10_000), expression.cast('u128', expression.input('toleranceBps'))),
           expression.u128(10_000),
         ),
       ),

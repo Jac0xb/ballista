@@ -75,7 +75,11 @@ const PRICE_SCALE: u64 = 1_000_000;
 const ED25519_PUBLIC_KEY_OFFSET: u64 = 6;
 const ED25519_MESSAGE_DATA_OFFSET: u64 = 10;
 
-/// Jupiter `route`'s arguments after its discriminator, or its `route_plan`: at most 512 bytes.
+/// The route's platform fee account and rate are chosen by whoever builds the run: cap the rate.
+/// Each Jupiter template requires `platform_fee_bps` to be at most this before it calls `route`.
+const MAX_PLATFORM_FEE_BPS: u64 = 0;
+
+/// Jupiter `route`'s `route_plan`: at most 512 bytes.
 const ROUTE_ARGS_MAX: u16 = 512;
 /// What follows the plan in `route`'s data: `in_amount`, `quoted_out_amount` (u64 each),
 /// `slippage_bps` (u16) and `platform_fee_bps` (u8).
@@ -132,6 +136,14 @@ fn ed25519_header(message_len: u16) -> (u128, u128) {
     (mask, expected)
 }
 
+/// Requires the route's `platform_fee_bps` to be at most `cap`, the [`MAX_PLATFORM_FEE_BPS`]
+/// constant: the fee account sits in the route's own accounts, so any nonzero rate pays whoever
+/// chose it.
+fn require_platform_fee_within_cap(builder: &mut ProgramBuilder, platform_fee_bps: u8, cap: u8) {
+    let within_cap = builder.binary(OP_LTE, platform_fee_bps, cap);
+    builder.require(within_cap);
+}
+
 /// Requires an SPL token account to hold `mint`.
 fn require_mint(builder: &mut ProgramBuilder, token_account: u8, mint: u8) {
     require_key_at(builder, token_account, TOKEN_MINT, mint);
@@ -159,13 +171,23 @@ pub fn jupiter_deposit_exact_output() -> Vec<u8> {
     let reserve_collateral_mint = b.account(WRITE, None, None, 0);
     let reserve_destination_collateral = b.account(WRITE, None, None, 0);
     b.account_groups(2); // routeAccounts, farmAccounts
-    let route_args = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
+    let route_plan = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
+    let in_amount = b.input(VALUE_U64, 0);
+    let quoted_out_amount = b.input(VALUE_U64, 0);
+    let slippage_bps = b.input(VALUE_U64, 0);
+    let platform_fee_bps = b.input(VALUE_U64, 0);
     let minimum_out = b.input(VALUE_U64, 0);
 
-    let route_args = b.load_input(route_args);
+    let route_plan = b.load_input(route_plan);
+    let in_amount = b.load_input(in_amount);
+    let quoted_out_amount = b.load_input(quoted_out_amount);
+    let slippage_bps = b.load_input(slippage_bps);
+    let platform_fee_bps = b.load_input(platform_fee_bps);
     let minimum_out = b.load_input(minimum_out);
+    let max_platform_fee_bps = b.const_u64(MAX_PLATFORM_FEE_BPS);
 
     let balance_before = b.read(OP_READ_U64, destination_ata, TOKEN_AMOUNT);
+    require_platform_fee_within_cap(&mut b, platform_fee_bps, max_platform_fee_bps);
     let route = b.blob(&anchor("route"));
     let swap = b.cpi_with_group(
         jupiter,
@@ -175,10 +197,17 @@ pub fn jupiter_deposit_exact_output() -> Vec<u8> {
             (source_ata, WRITE),
             (destination_ata, WRITE),
         ],
-        &[Segment::Literal(route), Segment::Register(DATA_REG_BYTES, route_args)],
+        &[
+            Segment::Literal(route),
+            Segment::Register(DATA_REG_BYTES, route_plan),
+            Segment::Register(DATA_REG_U64, in_amount),
+            Segment::Register(DATA_REG_U64, quoted_out_amount),
+            Segment::Register(DATA_REG_U16, slippage_bps),
+            Segment::Register(DATA_REG_U8, platform_fee_bps),
+        ],
         0,
     );
-    b.set_cpi_max_data_len(swap, 8 + ROUTE_ARGS_MAX);
+    b.set_cpi_max_data_len(swap, 8 + ROUTE_ARGS_MAX + ROUTE_TAIL_LEN);
     b.invoke(swap, None);
 
     let balance_after = b.read(OP_READ_U64, destination_ata, TOKEN_AMOUNT);
@@ -245,8 +274,8 @@ pub fn jupiter_oracle_checked_swap() -> Vec<u8> {
     let full = b.const_u64(1);
     let sixty = b.const_i64(60);
     let zero = b.const_i64(0);
-    let bps = b.const_u64(10_000);
-    let bps_wide = b.const_u128(10_000);
+    let max_platform_fee_bps = b.const_u64(MAX_PLATFORM_FEE_BPS);
+    let bps = b.const_u128(10_000);
 
     // The verification level decides where every other field sits.
     let level = b.read(OP_READ_U8, price_update, PYTH_VERIFICATION_LEVEL);
@@ -267,8 +296,13 @@ pub fn jupiter_oracle_checked_swap() -> Vec<u8> {
     // The decimals below are read from these mints, and both accounts are the trader's.
     require_mint(&mut b, source_ata, source_mint);
     require_mint(&mut b, destination_ata, destination_mint);
-    require_owner(&mut b, source_ata, trader);
-    require_owner(&mut b, destination_ata, trader);
+    // The trader's key is read once: the template is at the runtime's 64 registers.
+    let trader_key = b.account_key(trader);
+    for token_account in [source_ata, destination_ata] {
+        let owner = b.read(OP_READ_PUBKEY, token_account, TOKEN_OWNER);
+        let owned = b.binary(OP_EQ, owner, trader_key);
+        b.require(owned);
+    }
 
     // scale = destination decimals + the price's exponent − source decimals.
     let destination_decimals = b.read(OP_READ_U8, destination_mint, MINT_DECIMALS);
@@ -285,6 +319,8 @@ pub fn jupiter_oracle_checked_swap() -> Vec<u8> {
 
     let source_before = b.read(OP_READ_U64, source_ata, TOKEN_AMOUNT);
     let balance_before = b.read(OP_READ_U64, destination_ata, TOKEN_AMOUNT);
+
+    require_platform_fee_within_cap(&mut b, platform_fee_bps, max_platform_fee_bps);
 
     let route = b.blob(&anchor("route"));
     let swap = b.cpi_with_group(
@@ -325,9 +361,9 @@ pub fn jupiter_oracle_checked_swap() -> Vec<u8> {
     let down = b.cast(OP_CAST_U64, down);
     let down = b.pow10(down);
     let at_oracle = b.mul_div(value, up, down);
+    let tolerance_bps = b.cast(OP_CAST_U128, tolerance_bps);
     let kept_bps = b.binary(OP_SUB, bps, tolerance_bps);
-    let kept_bps = b.cast(OP_CAST_U128, kept_bps);
-    let fair_out = b.mul_div(at_oracle, kept_bps, bps_wide);
+    let fair_out = b.mul_div(at_oracle, kept_bps, bps);
     let fair_out = b.cast(OP_CAST_U64, fair_out);
 
     let balance_after = b.read(OP_READ_U64, destination_ata, TOKEN_AMOUNT);
@@ -361,6 +397,7 @@ pub fn token_sweep_into_swap() -> Vec<u8> {
     let slippage_bps = b.load_input(slippage_bps);
     let platform_fee_bps = b.load_input(platform_fee_bps);
     let dust_floor = b.load_input(dust_floor);
+    let max_platform_fee_bps = b.const_u64(MAX_PLATFORM_FEE_BPS);
     let bps = b.const_u64(10_000);
     let bps_wide = b.const_u128(10_000);
 
@@ -381,6 +418,8 @@ pub fn token_sweep_into_swap() -> Vec<u8> {
     let quoted_out = b.cast(OP_CAST_U64, quoted_out);
 
     let proceeds_before = b.read(OP_READ_U64, destination_ata, TOKEN_AMOUNT);
+
+    require_platform_fee_within_cap(&mut b, platform_fee_bps, max_platform_fee_bps);
 
     let route = b.blob(&anchor("route"));
     let sell = b.cpi_with_group(
@@ -436,14 +475,23 @@ pub fn jito_profit_guarded_tip() -> Vec<u8> {
     let wsol_account = token_account(&mut b);
     let jito_tip = b.account(WRITE, None, Some(JITO_TIP_PAYMENT.to_bytes()), 0);
     b.account_groups(1); // strategyAccounts
-    let strategy_data = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
+    let route_plan = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
+    let in_amount = b.input(VALUE_U64, 0);
+    let quoted_out_amount = b.input(VALUE_U64, 0);
+    let slippage_bps = b.input(VALUE_U64, 0);
+    let platform_fee_bps = b.input(VALUE_U64, 0);
     let tip_lamports = b.input(VALUE_U64, 0);
     let minimum_edge = b.input(VALUE_U64, 0);
 
-    let strategy_data = b.load_input(strategy_data);
+    let route_plan = b.load_input(route_plan);
+    let in_amount = b.load_input(in_amount);
+    let quoted_out_amount = b.load_input(quoted_out_amount);
+    let slippage_bps = b.load_input(slippage_bps);
+    let platform_fee_bps = b.load_input(platform_fee_bps);
     let tip_lamports = b.load_input(tip_lamports);
     let minimum_edge = b.load_input(minimum_edge);
     let wrapped_sol = b.const_pubkey(WRAPPED_SOL_MINT.to_bytes());
+    let max_platform_fee_bps = b.const_u64(MAX_PLATFORM_FEE_BPS);
 
     // Wrapped SOL counts in lamports, so the profit is in the tip's own unit.
     let held = b.read(OP_READ_PUBKEY, wsol_account, TOKEN_MINT);
@@ -453,6 +501,7 @@ pub fn jito_profit_guarded_tip() -> Vec<u8> {
     require_owner(&mut b, wsol_account, searcher);
 
     let balance_before = b.read(OP_READ_U64, wsol_account, TOKEN_AMOUNT);
+    require_platform_fee_within_cap(&mut b, platform_fee_bps, max_platform_fee_bps);
     let route = b.blob(&anchor("route"));
     let strategy = b.cpi_with_group(
         strategy_program,
@@ -462,10 +511,17 @@ pub fn jito_profit_guarded_tip() -> Vec<u8> {
             (wsol_account, WRITE), // the round trip's source
             (wsol_account, WRITE), // and its destination
         ],
-        &[Segment::Literal(route), Segment::Register(DATA_REG_BYTES, strategy_data)],
+        &[
+            Segment::Literal(route),
+            Segment::Register(DATA_REG_BYTES, route_plan),
+            Segment::Register(DATA_REG_U64, in_amount),
+            Segment::Register(DATA_REG_U64, quoted_out_amount),
+            Segment::Register(DATA_REG_U16, slippage_bps),
+            Segment::Register(DATA_REG_U8, platform_fee_bps),
+        ],
         0,
     );
-    b.set_cpi_max_data_len(strategy, 8 + ROUTE_ARGS_MAX);
+    b.set_cpi_max_data_len(strategy, 8 + ROUTE_ARGS_MAX + ROUTE_TAIL_LEN);
     b.invoke(strategy, None);
 
     // balanceAfter ≥ balanceBefore + tip + edge: a loss fails here instead of underflowing.
@@ -502,7 +558,11 @@ pub fn pyth_fresh_price_gate() -> Vec<u8> {
     let maximum_confidence = b.input(VALUE_U64, 0);
     let floor_price = b.input(VALUE_I64, 0);
     let ceiling_price = b.input(VALUE_I64, 0);
-    let action_data = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
+    let route_plan = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
+    let in_amount = b.input(VALUE_U64, 0);
+    let quoted_out_amount = b.input(VALUE_U64, 0);
+    let slippage_bps = b.input(VALUE_U64, 0);
+    let platform_fee_bps = b.input(VALUE_U64, 0);
 
     let feed_id = b.load_input(feed_id);
     let exponent = b.load_input(exponent);
@@ -510,8 +570,13 @@ pub fn pyth_fresh_price_gate() -> Vec<u8> {
     let maximum_confidence = b.load_input(maximum_confidence);
     let floor_price = b.load_input(floor_price);
     let ceiling_price = b.load_input(ceiling_price);
-    let action_data = b.load_input(action_data);
+    let route_plan = b.load_input(route_plan);
+    let in_amount = b.load_input(in_amount);
+    let quoted_out_amount = b.load_input(quoted_out_amount);
+    let slippage_bps = b.load_input(slippage_bps);
+    let platform_fee_bps = b.load_input(platform_fee_bps);
     let full = b.const_u64(1);
+    let max_platform_fee_bps = b.const_u64(MAX_PLATFORM_FEE_BPS);
 
     let level = b.read(OP_READ_U8, price_update, PYTH_VERIFICATION_LEVEL);
     let is_full = b.binary(OP_EQ, level, full);
@@ -543,14 +608,22 @@ pub fn pyth_fresh_price_gate() -> Vec<u8> {
     let below_ceiling = b.binary(OP_LTE, price, ceiling_price);
     b.require(below_ceiling);
 
+    require_platform_fee_within_cap(&mut b, platform_fee_bps, max_platform_fee_bps);
     let route = b.blob(&anchor("route"));
     let act = b.cpi_with_group(
         action_program,
         &[(token_program, READ), (actor, SIGN)],
-        &[Segment::Literal(route), Segment::Register(DATA_REG_BYTES, action_data)],
+        &[
+            Segment::Literal(route),
+            Segment::Register(DATA_REG_BYTES, route_plan),
+            Segment::Register(DATA_REG_U64, in_amount),
+            Segment::Register(DATA_REG_U64, quoted_out_amount),
+            Segment::Register(DATA_REG_U16, slippage_bps),
+            Segment::Register(DATA_REG_U8, platform_fee_bps),
+        ],
         0,
     );
-    b.set_cpi_max_data_len(act, 8 + ROUTE_ARGS_MAX);
+    b.set_cpi_max_data_len(act, 8 + ROUTE_ARGS_MAX + ROUTE_TAIL_LEN);
     b.invoke(act, None);
     b.build().unwrap()
 }
@@ -776,16 +849,26 @@ pub fn kamino_repay_swap_output() -> Vec<u8> {
     let reserve_liquidity_mint = b.account(READ, None, None, 0);
     let reserve_liquidity_supply = b.account(WRITE, None, None, 0);
     b.account_groups(2); // routeAccounts, farmAccounts
-    let route_args = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
+    let route_plan = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
+    let in_amount = b.input(VALUE_U64, 0);
+    let quoted_out_amount = b.input(VALUE_U64, 0);
+    let slippage_bps = b.input(VALUE_U64, 0);
+    let platform_fee_bps = b.input(VALUE_U64, 0);
     let minimum_repayment = b.input(VALUE_U64, 0);
 
-    let route_args = b.load_input(route_args);
+    let route_plan = b.load_input(route_plan);
+    let in_amount = b.load_input(in_amount);
+    let quoted_out_amount = b.load_input(quoted_out_amount);
+    let slippage_bps = b.load_input(slippage_bps);
+    let platform_fee_bps = b.load_input(platform_fee_bps);
     let minimum_repayment = b.load_input(minimum_repayment);
+    let max_platform_fee_bps = b.const_u64(MAX_PLATFORM_FEE_BPS);
 
     // Kamino repays from any account the borrower may spend, so the swap must pay the borrower.
     require_owner(&mut b, borrowed_asset_ata, borrower);
 
     let balance_before = b.read(OP_READ_U64, borrowed_asset_ata, TOKEN_AMOUNT);
+    require_platform_fee_within_cap(&mut b, platform_fee_bps, max_platform_fee_bps);
     let route = b.blob(&anchor("route"));
     let swap = b.cpi_with_group(
         jupiter,
@@ -795,10 +878,17 @@ pub fn kamino_repay_swap_output() -> Vec<u8> {
             (collateral_ata, WRITE),
             (borrowed_asset_ata, WRITE),
         ],
-        &[Segment::Literal(route), Segment::Register(DATA_REG_BYTES, route_args)],
+        &[
+            Segment::Literal(route),
+            Segment::Register(DATA_REG_BYTES, route_plan),
+            Segment::Register(DATA_REG_U64, in_amount),
+            Segment::Register(DATA_REG_U64, quoted_out_amount),
+            Segment::Register(DATA_REG_U16, slippage_bps),
+            Segment::Register(DATA_REG_U8, platform_fee_bps),
+        ],
         0,
     );
-    b.set_cpi_max_data_len(swap, 8 + ROUTE_ARGS_MAX);
+    b.set_cpi_max_data_len(swap, 8 + ROUTE_ARGS_MAX + ROUTE_TAIL_LEN);
     b.invoke(swap, None);
 
     let balance_after = b.read(OP_READ_U64, borrowed_asset_ata, TOKEN_AMOUNT);
@@ -1216,6 +1306,7 @@ pub fn jupiter_daily_cap_swap() -> Vec<u8> {
     let wrapped_sol = b.const_pubkey(WRAPPED_SOL_MINT.to_bytes());
     let refill_per_second = b.const_u64(20_000);
     let cap = b.const_u64(1_728_000_000);
+    let max_platform_fee_bps = b.const_u64(MAX_PLATFORM_FEE_BPS);
     let key = b.account_key(actor);
     b.open_registry(spend, Some(key), actor, 0, 16, system_program);
 
@@ -1250,6 +1341,7 @@ pub fn jupiter_daily_cap_swap() -> Vec<u8> {
     b.write_registry(spend, 8, OP_READ_I64, now);
 
     let source_before = b.read(OP_READ_U64, source_ata, TOKEN_AMOUNT);
+    require_platform_fee_within_cap(&mut b, platform_fee_bps, max_platform_fee_bps);
     let route = b.blob(&anchor("route"));
     let swap = b.cpi_with_group(
         action_program,

@@ -1,6 +1,7 @@
 /**
  * Test-only templates for Ballista's runtime features: count loops beside row loops, `EMIT`,
- * `SET_RETURN_DATA`, and a nested Ballista run whose return data the outer run reads.
+ * `SET_RETURN_DATA`, and a nested Ballista run whose return data the outer run reads; and the
+ * oracle-checked swap with its platform-fee cap raised.
  *
  * They are not public examples. `src/protocol-examples.test.ts` compiles them into
  * `fixtures/protocol-scenarios.json`, and `tests/protocols/tests/runtime_scenarios.rs` runs them
@@ -8,5 +9,6 @@
  * each one proves.
  */
 export { nestedSplitSellPayout } from './nested-split-sell.js';
+export { jupiterOracleCheckedSwapFeeCap100 } from './raised-fee-cap.js';
 export { ballistaRelay, returnClaim } from './relay.js';
 export { splitSellInner, splitSellPayout } from './split-sell.js';

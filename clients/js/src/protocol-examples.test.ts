@@ -96,7 +96,7 @@ describe('runtime scenarios', () => {
   const entries = Object.entries(scenarios) as [string, Template][];
 
   test('every scenario is exported', () => {
-    expect(entries.length).toBe(5);
+    expect(entries.length).toBe(6);
   });
 
   test.each(entries)('%s compiles to a template the verifier can parse', compilesForTheVerifier);

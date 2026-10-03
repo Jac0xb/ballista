@@ -2,7 +2,8 @@
  * Build and send the Jupiter-into-Kamino run.
  *
  * This is the run side of `jupiter-deposit-exact-output.ts`, and it shows the two parts that are
- * not just account binding: handing Jupiter's `route` arguments through as a `bytes` input, and
+ * not just account binding: handing Jupiter's `route` arguments through in parts, split by
+ * `splitJupiterRoute` so that the template can cap the platform fee, and
  * handing the variable-length tail of Jupiter's account list, and of Kamino's, through as account
  * groups.
  *
@@ -76,8 +77,8 @@ export async function buildJupiterDepositRun(input: {
     throw new Error(`Template pins Jupiter v6; the API returned ${input.swap.programId}`);
   }
   const route = splitJupiterRoute(Uint8Array.from(Buffer.from(input.swap.data, 'base64')));
-  if (route.args.length > 512) {
-    throw new Error(`Route arguments are ${route.args.length} bytes; the template declares 512`);
+  if (route.routePlan.length > 512) {
+    throw new Error(`The route plan is ${route.routePlan.length} bytes; the template declares 512`);
   }
 
   const [tokenProgram, authority, source, destination] = input.swap.accounts;
@@ -110,7 +111,14 @@ export async function buildJupiterDepositRun(input: {
     compiled,
     programAddress: BALLISTA_ADDRESS,
     templateAddress,
-    inputs: { routeArgs: route.args, minimumOut: input.minimumOut },
+    inputs: {
+      routePlan: route.routePlan,
+      inAmount: route.inAmount,
+      quotedOutAmount: route.quotedOutAmount,
+      slippageBps: route.slippageBps,
+      platformFeeBps: route.platformFeeBps,
+      minimumOut: input.minimumOut,
+    },
     accounts: {
       jupiter: { address: address(JUPITER_V6) },
       kamino: { address: address(KAMINO_LEND) },

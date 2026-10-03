@@ -79,8 +79,8 @@ written.
 Ballista signs with the seeds of its own PDAs in two places only:
 
 - **At upload**, to create the template's account at its address.
-- **When a run first opens a registry entry**, to create the entry's account. A payer the template
-  names pays its rent.
+- **When a run opens a registry entry that doesn't exist yet**, to create its account. A payer the
+  template names pays the rent.
 
 A template's own calls never carry seeds, so Ballista never signs them, and no template can sign
 as a PDA. [`assertPda`](/guide/pda-assertions) checks how an address was derived; it does not let

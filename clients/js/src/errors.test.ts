@@ -189,6 +189,26 @@ describe('which program failed', () => {
     expect(decodeBallistaFailure(ballistaCode, logs, OTHER_DEPLOYMENT)).toMatchObject({ name: 'RequirementFailed' });
   });
 
+  // Bug (docs/superpowers/specs/2026-10-03-safety-properties.md, P91 and finding F9): in a nested
+  // run the inner run logs its failure first, so `failedProgram` finds Ballista and
+  // `explainRunError` maps the inner template's program counter onto the outer template's source
+  // map. Skipped until the SDK tells the two runs apart; it fails today, naming the outer
+  // `withinBudget` step.
+  test.skip('does not explain a failure inside a nested run by a step of the outer template', () => {
+    const failed = `failed: custom program error: 0x${ballistaCode.toString(16)}`;
+    const nestedRefused = [
+      `Program ${BALLISTA_PROGRAM_ADDRESS} invoke [1]`,
+      `Program ${BALLISTA_PROGRAM_ADDRESS} invoke [2]`,
+      `Program log: 0x${requirePc.toString(16)}, 0x28, 0xff, 0x9, 0xff`,
+      `Program ${BALLISTA_PROGRAM_ADDRESS} consumed 900 of 190000 compute units`,
+      `Program ${BALLISTA_PROGRAM_ADDRESS} ${failed}`,
+      `Program ${BALLISTA_PROGRAM_ADDRESS} consumed 4100 of 200000 compute units`,
+      `Program ${BALLISTA_PROGRAM_ADDRESS} ${failed}`,
+    ];
+    // The `require` that failed is the inner template's; it only shares the outer one's pc.
+    expect(explainRunError(ballistaCode, budgeted, { logs: nestedRefused })?.step).toBeUndefined();
+  });
+
   test('explains a run error only when Ballista failed, given the logs', () => {
     expect(explainRunError(6001, budgeted)?.message).toMatch(/^InvalidTemplateAccount/);
     expect(explainRunError(6001, budgeted, { logs: jupiterRefused })).toBeUndefined();

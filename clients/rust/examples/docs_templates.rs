@@ -96,6 +96,8 @@ pub const ALL: &[Example] = &[
         time_gated_governance_execution,
     ),
     ("bounded-keeper-crank", bounded_keeper_crank),
+    ("swap-and-return-what-arrived", swap_and_return_what_arrived),
+    ("nested-swap-then-deposit", nested_swap_then_deposit),
     ("row-amounts", row_amounts),
     ("budgeted-payroll", budgeted_payroll),
     ("exact-lamport-delta", exact_lamport_delta),
@@ -1599,6 +1601,123 @@ pub fn bounded_keeper_crank() -> Vec<u8> {
     builder.build().expect("template builds")
 }
 // #endregion bounded-keeper-crank
+
+// #region swap-and-return-what-arrived
+/// Swap, require at least `minimumOut` arrived, and return what arrived as a `u64`.
+pub fn swap_and_return_what_arrived() -> Vec<u8> {
+    use ballista_sdk::{
+        ballista_common::template::*, ProgramBuilder, Segment, SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID,
+    };
+
+    // A stand-in so the example runs as written: replace it with the swap program.
+    const SWAP_PROGRAM: [u8; 32] = SYSTEM_PROGRAM_ID.to_bytes();
+    const DATA_MAX: u16 = 256;
+    const AMOUNT_OFFSET: u64 = 64;
+
+    let mut builder = ProgramBuilder::new();
+    let swap_program = builder.account(ACCOUNT_EXECUTABLE, Some(SWAP_PROGRAM), None, 0);
+    let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+    let pool = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+    let received_tokens = builder.account(
+        ACCOUNT_WRITABLE,
+        None,
+        Some(TOKEN_PROGRAM_ID.to_bytes()),
+        165,
+    );
+    let minimum_out_input = builder.input(VALUE_U64, 0);
+    let swap_data_input = builder.input(VALUE_BYTES, DATA_MAX);
+
+    let minimum_out = builder.load_input(minimum_out_input);
+    let swap_data = builder.load_input(swap_data_input);
+
+    let before = builder.read(OP_READ_U64, received_tokens, AMOUNT_OFFSET);
+    let swap = builder.cpi(
+        swap_program,
+        &[
+            (payer, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+            (pool, ACCOUNT_WRITABLE),
+        ],
+        &[Segment::Register(DATA_REG_BYTES, swap_data)],
+    );
+    builder.set_cpi_max_data_len(swap, DATA_MAX);
+    builder.invoke(swap, None);
+
+    let after = builder.read(OP_READ_U64, received_tokens, AMOUNT_OFFSET);
+    let received = builder.binary(OP_SUB, after, before);
+    let enough = builder.binary(OP_GTE, received, minimum_out);
+    builder.require(enough);
+    // Last, after every call: a call would clear it.
+    builder.set_return_data(&[Segment::Register(DATA_REG_U64, received)]);
+    builder.build().expect("template builds")
+}
+// #endregion swap-and-return-what-arrived
+
+// #region nested-swap-then-deposit
+/// Run the inner swap template, then deposit exactly what it returned.
+pub fn nested_swap_then_deposit() -> Vec<u8> {
+    use ballista_sdk::{
+        ballista_common::{instruction::IX_RUN, template::*},
+        ProgramBuilder, Segment, ID, SYSTEM_PROGRAM_ID,
+    };
+
+    // Stand-ins so the example runs as written: replace them with the swap and vault programs,
+    // the vault's deposit discriminator, and the inner template's address (`find_template_pda`
+    // gives it).
+    const SWAP_PROGRAM: [u8; 32] = SYSTEM_PROGRAM_ID.to_bytes();
+    const VAULT_PROGRAM: [u8; 32] = SYSTEM_PROGRAM_ID.to_bytes();
+    const DEPOSIT_DISCRIMINATOR: [u8; 4] = [2, 0, 0, 0];
+    const INNER_TEMPLATE: [u8; 32] = [7; 32];
+    const RUN_MAX: u16 = 512;
+
+    let mut builder = ProgramBuilder::new();
+    let ballista = builder.account(ACCOUNT_EXECUTABLE, Some(ID.to_bytes()), None, 0);
+    let inner_template = builder.account(0, Some(INNER_TEMPLATE), None, 0);
+    let swap_program = builder.account(ACCOUNT_EXECUTABLE, Some(SWAP_PROGRAM), None, 0);
+    let vault_program = builder.account(ACCOUNT_EXECUTABLE, Some(VAULT_PROGRAM), None, 0);
+    let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+    let pool = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+    let received_tokens = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+    let inner_run_input = builder.input(VALUE_BYTES, RUN_MAX);
+
+    let inner_run = builder.load_input(inner_run_input);
+
+    // The inner template, then the inner run's accounts in the order it declares them.
+    let run_tag = builder.blob(&[IX_RUN]);
+    let run_inner = builder.cpi(
+        ballista,
+        &[
+            (inner_template, 0),
+            (swap_program, 0),
+            (payer, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+            (pool, ACCOUNT_WRITABLE),
+            (received_tokens, ACCOUNT_WRITABLE),
+        ],
+        &[
+            Segment::Literal(run_tag),
+            Segment::Register(DATA_REG_BYTES, inner_run),
+        ],
+    );
+    builder.set_cpi_max_data_len(run_inner, 1 + RUN_MAX);
+    builder.invoke(run_inner, None);
+    // Straight after the call.
+    let received = builder.return_data(OP_READ_U64, 0);
+
+    let deposit_ix = builder.blob(&DEPOSIT_DISCRIMINATOR);
+    let deposit = builder.cpi(
+        vault_program,
+        &[
+            (payer, ACCOUNT_SIGNER | ACCOUNT_WRITABLE),
+            (pool, ACCOUNT_WRITABLE),
+        ],
+        &[
+            Segment::Literal(deposit_ix),
+            Segment::Register(DATA_REG_U64, received),
+        ],
+    );
+    builder.invoke(deposit, None);
+    builder.build().expect("template builds")
+}
+// #endregion nested-swap-then-deposit
 
 // ------------------------------------------------------------------ guide pages
 

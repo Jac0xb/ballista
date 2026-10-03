@@ -186,6 +186,12 @@ pub const ALL: &[ExampleRun] = &[
         let rows: Vec<(Pubkey, Pubkey)> = markets.into_iter().zip(queues).collect();
         bounded_keeper_crank(key(200), key(1), &rows)
     }),
+    ("swap-and-return-what-arrived", |_| {
+        swap_and_return_what_arrived(key(200), key(1), key(2), key(3), 900, &stand_in_data())
+    }),
+    ("nested-swap-then-deposit", |_| {
+        nested_swap_then_deposit(key(200), key(1), key(2), key(3), 900, &stand_in_data())
+    }),
     ("row-amounts", |rows| {
         let payees: Vec<(Pubkey, u64)> = keys(10, rows)
             .into_iter()
@@ -1078,6 +1084,66 @@ pub fn bounded_keeper_crank(
     run_instruction(template, accounts, &[])
 }
 // #endregion bounded-keeper-crank
+
+// #region swap-and-return-what-arrived
+/// Run on its own, the template returns what arrived to whoever reads the transaction's return
+/// data.
+pub fn swap_and_return_what_arrived(
+    template: Pubkey,
+    payer: Pubkey,
+    pool: Pubkey,
+    received_tokens: Pubkey,
+    minimum_out: u64,
+    swap_data: &[u8],
+) -> Instruction {
+    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
+    use solana_program::instruction::AccountMeta;
+
+    const SWAP_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
+
+    let inputs = RunInputs::new().u64(minimum_out).bytes(swap_data).finish();
+    let accounts = vec![
+        AccountMeta::new_readonly(SWAP_PROGRAM, false),
+        AccountMeta::new(payer, true),
+        AccountMeta::new(pool, false),
+        AccountMeta::new(received_tokens, false),
+    ];
+    run_instruction(template, accounts, &inputs)
+}
+// #endregion swap-and-return-what-arrived
+
+// #region nested-swap-then-deposit
+/// `inner_run` is what the inner template's own run would carry: its inputs, encoded.
+pub fn nested_swap_then_deposit(
+    template: Pubkey,
+    payer: Pubkey,
+    pool: Pubkey,
+    received_tokens: Pubkey,
+    minimum_out: u64,
+    swap_data: &[u8],
+) -> Instruction {
+    use ballista_sdk::{run_instruction, RunInputs, ID, SYSTEM_PROGRAM_ID};
+    use solana_program::instruction::AccountMeta;
+
+    // The same stand-ins as the template.
+    const INNER_TEMPLATE: Pubkey = Pubkey::new_from_array([7; 32]);
+    const SWAP_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID;
+    const VAULT_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID;
+
+    let inner_run = RunInputs::new().u64(minimum_out).bytes(swap_data).finish();
+    let inputs = RunInputs::new().bytes(&inner_run).finish();
+    let accounts = vec![
+        AccountMeta::new_readonly(ID, false),
+        AccountMeta::new_readonly(INNER_TEMPLATE, false),
+        AccountMeta::new_readonly(SWAP_PROGRAM, false),
+        AccountMeta::new_readonly(VAULT_PROGRAM, false),
+        AccountMeta::new(payer, true),
+        AccountMeta::new(pool, false),
+        AccountMeta::new(received_tokens, false),
+    ];
+    run_instruction(template, accounts, &inputs)
+}
+// #endregion nested-swap-then-deposit
 
 // ------------------------------------------------------------------ guide pages
 

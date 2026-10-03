@@ -33,10 +33,20 @@ export const KAMINO_LEND = 'KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD' as cons
 export const ORCA_WHIRLPOOL = 'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc' as const;
 /** marginfi v2. */
 export const MARGINFI_V2 = 'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA' as const;
-/** Drift v2, from `declare_id!` in programs/drift/src/lib.rs. */
-export const DRIFT_V2 = 'dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH' as const;
 /** Pyth Solana receiver, the non-`pro-compatible` build. */
 export const PYTH_RECEIVER = 'rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ' as const;
+/** SPL Memo. Orca's v2 instructions take it, for Token-2022 transfers that require a memo. */
+export const MEMO_PROGRAM = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr' as const;
+/** The instructions sysvar. Every Kamino v2 lending instruction takes it as an account. */
+export const SYSVAR_INSTRUCTIONS = 'Sysvar1nstructions1111111111111111111111111' as const;
+/** Kamino Farms, which Kamino Lend invokes whenever a lending instruction touches a reserve with a farm. */
+export const KAMINO_FARMS = 'FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr' as const;
+
+/**
+ * Jito's Tip Payment program. It owns all eight tip accounts, as program addresses holding eight
+ * bytes of data, so none of them is a plain System account.
+ */
+export const JITO_TIP_PAYMENT = 'T1pyyaTNZsKv2WcRAB8oVnk93mLJw2XzjtVYqCsaHqt' as const;
 
 /**
  * The eight Jito tip accounts. A tip is a plain SOL transfer to one of these and may be made by
@@ -59,26 +69,45 @@ export const JITO_TIP_ACCOUNTS: readonly Address[] = [
 export const TOKEN_ACCOUNT_AMOUNT_OFFSET = 64;
 export const TOKEN_ACCOUNT_LENGTH = 165;
 
+/** SPL Token account: the mint is the first field. */
+export const TOKEN_ACCOUNT_MINT_OFFSET = 0;
+
+/** SPL Token account: the owner, the wallet the balance belongs to, follows the mint. */
+export const TOKEN_ACCOUNT_OWNER_OFFSET = 32;
+
+/** The wrapped SOL mint. Its token accounts count their balance in lamports. */
+export const WRAPPED_SOL_MINT = 'So11111111111111111111111111111111111111112' as const;
+
+/** SPL Token `Mint`: `decimals` is the u8 at offset 44 of the 82-byte layout. */
+export const SPL_MINT = { length: 82, decimals: 44 } as const;
+
 /**
  * Pyth `PriceUpdateV2`.
  *
  * The offsets depend on the account's verification level, which is why `verificationLevel` is
  * read first. `VerificationLevel` is a Borsh enum: `Full` serializes as one byte, `Partial {
  * num_signatures: u8 }` as two. Anchor writes the struct sequentially, so a `Full` account puts
- * every later field one byte earlier than a `Partial` one — and the account is allocated at the
+ * every later field one byte earlier than a `Partial` one. The account is allocated at the
  * larger size either way, leaving a trailing byte unused.
  *
  * Deriving offsets from `PriceUpdateV2::LEN = 8 + 32 + 2 + 32 + 8 + …` therefore gives the
- * `Partial` layout, which on devnet is the minority: of 4,000 accounts sampled, 3,323 were
- * `Full` and 677 `Partial`. Templates here require `Full` — it is the stronger guarantee anyway,
- * having all the signatures rather than some — and read at the `Full` offsets.
+ * `Partial` layout, while most accounts on devnet are `Full`. Templates here require `Full` (it is
+ * the stronger guarantee anyway, having all the signatures rather than some) and read at the
+ * `Full` offsets.
  */
 export const PYTH = {
   length: 134,
   /** 1 is `Full`, 0 is `Partial`. Read this before trusting any offset below. */
   verificationLevel: 40,
   verificationLevelFull: 1,
-  /** Offsets for a `Full` account. A `Partial` one shifts each by one. */
+  /**
+   * Offsets for a `Full` account. A `Partial` one shifts each by one.
+   *
+   * `feedId` is `price_message.feed_id`, the 32 bytes that say which feed the price belongs to:
+   * SOL/USD's is `ef0d8b6f…c280b56d`. The receiver owns every feed's account alike, so nothing
+   * else about the account says which one it is.
+   */
+  feedId: 41,
   price: 73,
   confidence: 81,
   exponent: 89,
@@ -99,6 +128,48 @@ export const ORCA_POSITION = {
 
 // ------------------------------------------------------------ instructions
 
+/**
+ * Jupiter v6 `route(route_plan: Vec<RoutePlanStep>, in_amount: u64, quoted_out_amount: u64,
+ * slippage_bps: u16, platform_fee_bps: u8)`, from the published CPI IDL (`jup-ag/jupiter-cpi`).
+ *
+ * Its accounts start `token_program`, `user_transfer_authority` (the one signer),
+ * `user_source_token_account` and `user_destination_token_account`; `destination_token_account`,
+ * `destination_mint`, `platform_fee_account`, `event_authority`, `program` and the route's own
+ * accounts follow. A template passes the first four itself and forwards the rest as an account
+ * group. Ask the Swap API for `useSharedAccounts: false`: the default, `shared_accounts_route`,
+ * orders its accounts differently.
+ */
+export const JUPITER_ROUTE = anchorDiscriminator('route');
+
+/** The accounts at the head of `route`'s list that a template passes itself. */
+export const JUPITER_ROUTE_FIXED_ACCOUNTS = 4;
+
+/** `in_amount`, `quoted_out_amount`, `slippage_bps` and `platform_fee_bps`: the bytes after the plan. */
+export const JUPITER_ROUTE_TAIL_LENGTH = 19;
+
+/** `route` instruction data as the Swap API returns it, split into the parts templates take. */
+export function splitJupiterRoute(data: Uint8Array) {
+  // Discriminator, the plan's u32 length prefix, and the tail.
+  const isRoute =
+    data.length >= 8 + 4 + JUPITER_ROUTE_TAIL_LENGTH &&
+    JUPITER_ROUTE.every((byte, index) => data[index] === byte);
+  if (!isRoute) {
+    throw new Error('Not Jupiter `route` data; request the Swap API with useSharedAccounts: false');
+  }
+  const tailStart = data.length - JUPITER_ROUTE_TAIL_LENGTH;
+  const tail = new DataView(data.buffer, data.byteOffset + tailStart, JUPITER_ROUTE_TAIL_LENGTH);
+  return {
+    /** Everything after the discriminator. */
+    args: data.slice(8),
+    /** The Borsh `route_plan` vector, length prefix included. */
+    routePlan: data.slice(8, tailStart),
+    inAmount: tail.getBigUint64(0, true),
+    quotedOutAmount: tail.getBigUint64(8, true),
+    slippageBps: tail.getUint16(16, true),
+    platformFeeBps: tail.getUint8(18),
+  };
+}
+
 /** `deposit_reserve_liquidity_and_obligation_collateral_v2(liquidity_amount: u64)`. */
 export const KAMINO_DEPOSIT = anchorDiscriminator('deposit_reserve_liquidity_and_obligation_collateral_v2');
 /** `repay_obligation_liquidity_v2(liquidity_amount: u64)`. */
@@ -114,25 +185,34 @@ export const KAMINO_REFRESH_OBLIGATION = anchorDiscriminator('refresh_obligation
 export const KAMINO_LIQUIDATE = anchorDiscriminator('liquidate_obligation_and_redeem_reserve_collateral_v2');
 /** `collect_fees()`. */
 export const ORCA_COLLECT_FEES = anchorDiscriminator('collect_fees');
-/** `increase_liquidity(liquidity_amount: u128, token_max_a: u64, token_max_b: u64)`. */
-export const ORCA_INCREASE_LIQUIDITY = anchorDiscriminator('increase_liquidity');
+/**
+ * `update_fees_and_rewards()`: folds the pool's fee growth into a position's `fee_owed_*`. Needs
+ * no signature; fails with `LiquidityZero` (6012) on a position without liquidity.
+ */
+export const ORCA_UPDATE_FEES_AND_REWARDS = anchorDiscriminator('update_fees_and_rewards');
+/**
+ * `increase_liquidity_by_token_amounts_v2(method: IncreaseLiquidityMethod, remaining_accounts_info:
+ * Option<RemainingAccountsInfo>)`. It takes `increase_liquidity_v2`'s accounts: whirlpool,
+ * token_program_a, token_program_b, memo_program, position_authority, position,
+ * position_token_account, token_mint_a, token_mint_b, token_owner_account_a,
+ * token_owner_account_b, token_vault_a, token_vault_b, tick_array_lower, tick_array_upper.
+ */
+export const ORCA_INCREASE_LIQUIDITY_BY_TOKEN_AMOUNTS_V2 = anchorDiscriminator(
+  'increase_liquidity_by_token_amounts_v2',
+);
+/**
+ * `IncreaseLiquidityMethod::ByTokenAmounts { token_max_a: u64, token_max_b: u64, min_sqrt_price:
+ * u128, max_sqrt_price: u128 }`, the enum's only variant, as its one-byte Borsh tag.
+ */
+export const ORCA_BY_TOKEN_AMOUNTS = Uint8Array.of(0);
 /** `lending_account_withdraw(amount: u64, withdraw_all: Option<bool>)`. */
 export const MARGINFI_WITHDRAW = anchorDiscriminator('lending_account_withdraw');
 /** `lending_account_deposit(amount: u64, ...)`. */
 export const MARGINFI_DEPOSIT = anchorDiscriminator('lending_account_deposit');
-/** `deposit(market_index: u16, amount: u64, reduce_only: bool)`. */
-export const DRIFT_DEPOSIT = anchorDiscriminator('deposit');
-/** `withdraw(market_index: u16, amount: u64, reduce_only: bool)`. */
-export const DRIFT_WITHDRAW = anchorDiscriminator('withdraw');
 
 /** Borsh `Option::None`. */
 export const OPTION_NONE = Uint8Array.of(0);
 /** Borsh `false`. */
 export const BORSH_FALSE = Uint8Array.of(0);
-
-/** A little-endian u16, for arguments such as Drift's `market_index`. */
-export function u16Bytes(value: number): Uint8Array<ArrayBuffer> {
-  const bytes = new Uint8Array(2);
-  new DataView(bytes.buffer).setUint16(0, value, true);
-  return bytes;
-}
+/** Borsh `true`. */
+export const BORSH_TRUE = Uint8Array.of(1);

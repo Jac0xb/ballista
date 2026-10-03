@@ -2,8 +2,13 @@
  * Build and send the Jupiter-into-Kamino run.
  *
  * This is the run side of `jupiter-deposit-exact-output.ts`, and it shows the two parts that are
- * not just account binding: handing Jupiter's own instruction through as a `bytes` input, and
- * handing Jupiter's variable-length account list through as an account group.
+ * not just account binding: handing Jupiter's `route` arguments through as a `bytes` input, and
+ * handing the variable-length tail of Jupiter's account list, and of Kamino's, through as account
+ * groups.
+ *
+ * Send it after Kamino's refreshes, in the same transaction: `refresh_reserve` for each reserve the
+ * obligation holds, then `refresh_obligation`. See `kamino_refreshes` in
+ * `clients/rust/examples/protocol_runs.rs`.
  *
  * Nothing here needs an RPC connection. Point `SOLANA_RPC_URL` and `BALLISTA_KEYPAIR` at a
  * cluster and feed `swapInstruction` from the Jupiter Swap API to actually send it.
@@ -13,7 +18,17 @@ import { address, getAddressDecoder, type Address, type Instruction } from '@sol
 import { explainRunError } from '../../src/index.js';
 import { BALLISTA_ADDRESS, buildKitRunInstruction, getTemplateAddress } from '../../src/kit.js';
 import { compiled } from './jupiter-deposit-exact-output.js';
-import { JUPITER_V6, KAMINO_LEND } from './shared.js';
+import {
+  JUPITER_ROUTE,
+  JUPITER_ROUTE_FIXED_ACCOUNTS,
+  JUPITER_V6,
+  KAMINO_FARMS,
+  KAMINO_LEND,
+  SYSVAR_INSTRUCTIONS,
+  splitJupiterRoute,
+} from './shared.js';
+
+const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
 /** The shape the Jupiter Swap API returns for `swapInstruction`. */
 export interface JupiterSwapInstruction {
@@ -33,18 +48,22 @@ export interface KaminoDepositAccounts {
   lendingMarket: Address;
   lendingMarketAuthority: Address;
   reserve: Address;
+  reserveLiquidityMint: Address;
   reserveLiquiditySupply: Address;
   reserveCollateralMint: Address;
   reserveDestinationDepositCollateral: Address;
+  /** The reserve's collateral farm and the obligation's user state in it, when the reserve has one. */
+  farm?: { reserveFarmState: Address; obligationFarmUserState: Address };
 }
 
 /**
  * Turns a Jupiter API response plus a Kamino reserve into one Ballista instruction.
  *
- * The owner appears twice on purpose: once as a declared account the template constrains and
- * passes to both programs, and once at the head of Jupiter's own list. Group members are
- * forwarded with the transaction's writable flag and never sign, so any signature Jupiter needs
- * comes from the declared slot.
+ * `route` starts its account list with the token program, the signing owner, and the owner's
+ * source and destination token accounts. The template passes those four itself, in that order,
+ * so this checks the API put them there and forwards only the rest as the group. Group members
+ * are forwarded with the transaction's writable flag and never sign, so the signature Jupiter
+ * needs comes from the template's declared `owner` slot.
  */
 export async function buildJupiterDepositRun(input: {
   creator: Address;
@@ -56,37 +75,60 @@ export async function buildJupiterDepositRun(input: {
   if (input.swap.programId !== JUPITER_V6) {
     throw new Error(`Template pins Jupiter v6; the API returned ${input.swap.programId}`);
   }
-  const routeData = Uint8Array.from(Buffer.from(input.swap.data, 'base64'));
-  if (routeData.length > 512) {
-    throw new Error(`Route data is ${routeData.length} bytes; the template declares 512`);
+  const route = splitJupiterRoute(Uint8Array.from(Buffer.from(input.swap.data, 'base64')));
+  if (route.args.length > 512) {
+    throw new Error(`Route arguments are ${route.args.length} bytes; the template declares 512`);
   }
 
-  // Jupiter's accounts, minus the owner, which the template already declares and passes first.
+  const [tokenProgram, authority, source, destination] = input.swap.accounts;
+  if (
+    tokenProgram?.pubkey !== TOKEN_PROGRAM ||
+    authority?.pubkey !== input.kamino.owner ||
+    !authority.isSigner ||
+    source === undefined ||
+    destination?.pubkey !== input.kamino.destinationAta
+  ) {
+    throw new Error(
+      'Expected `route` to start with the token program, the owner as signer, the source, and the destination the deposit draws from',
+    );
+  }
   const routeAccounts = input.swap.accounts
-    .filter((entry) => entry.pubkey !== input.kamino.owner)
+    .slice(JUPITER_ROUTE_FIXED_ACCOUNTS)
     .map((entry) => ({ address: address(entry.pubkey), writable: entry.isWritable }));
+  // Kamino's v2 tail: the farm pair, writable, when the reserve has a collateral farm, and the
+  // Kamino program for each when it does not; then the Farms program.
+  const farmAccounts = input.kamino.farm
+    ? [
+        { address: input.kamino.farm.obligationFarmUserState, writable: true },
+        { address: input.kamino.farm.reserveFarmState, writable: true },
+        { address: address(KAMINO_FARMS) },
+      ]
+    : [{ address: address(KAMINO_LEND) }, { address: address(KAMINO_LEND) }, { address: address(KAMINO_FARMS) }];
 
   const [templateAddress] = await getTemplateAddress(input.creator, input.templateId);
   return buildKitRunInstruction({
     compiled,
     programAddress: BALLISTA_ADDRESS,
     templateAddress,
-    inputs: { routeData, minimumOut: input.minimumOut },
+    inputs: { routeArgs: route.args, minimumOut: input.minimumOut },
     accounts: {
       jupiter: { address: address(JUPITER_V6) },
       kamino: { address: address(KAMINO_LEND) },
-      tokenProgram: { address: address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') },
+      tokenProgram: { address: address(TOKEN_PROGRAM) },
+      instructionsSysvar: { address: address(SYSVAR_INSTRUCTIONS) },
       owner: { address: input.kamino.owner },
+      sourceAta: { address: address(source.pubkey) },
       destinationAta: { address: input.kamino.destinationAta },
       obligation: { address: input.kamino.obligation },
       lendingMarket: { address: input.kamino.lendingMarket },
       lendingMarketAuthority: { address: input.kamino.lendingMarketAuthority },
       reserve: { address: input.kamino.reserve },
+      reserveLiquidityMint: { address: input.kamino.reserveLiquidityMint },
       reserveLiquiditySupply: { address: input.kamino.reserveLiquiditySupply },
       reserveCollateralMint: { address: input.kamino.reserveCollateralMint },
       reserveDestinationDepositCollateral: { address: input.kamino.reserveDestinationDepositCollateral },
     },
-    accountGroups: { routeAccounts },
+    accountGroups: { routeAccounts, farmAccounts },
   });
 }
 
@@ -101,13 +143,21 @@ export function describeFailure(code: number): string {
 
 if (process.argv[1]?.endsWith('run-jupiter-deposit.ts')) {
   const owner = placeholder(7);
+  // A `route` with an empty plan and a zeroed tail: the discriminator, a u32 zero, then 19 bytes.
+  const emptyRoute = Uint8Array.from([...JUPITER_ROUTE, 0, 0, 0, 0, ...new Uint8Array(19)]);
   void buildJupiterDepositRun({
     creator: owner,
     templateId: 0,
     swap: {
       programId: JUPITER_V6,
-      accounts: [{ pubkey: placeholder(8), isSigner: false, isWritable: true }],
-      data: Buffer.from(Uint8Array.of(1, 2, 3, 4)).toString('base64'),
+      accounts: [
+        { pubkey: TOKEN_PROGRAM, isSigner: false, isWritable: false },
+        { pubkey: owner, isSigner: true, isWritable: true },
+        { pubkey: placeholder(8), isSigner: false, isWritable: true },
+        { pubkey: placeholder(9), isSigner: false, isWritable: true },
+        { pubkey: placeholder(17), isSigner: false, isWritable: true },
+      ],
+      data: Buffer.from(emptyRoute).toString('base64'),
     },
     kamino: {
       owner,
@@ -119,6 +169,7 @@ if (process.argv[1]?.endsWith('run-jupiter-deposit.ts')) {
       reserveLiquiditySupply: placeholder(14),
       reserveCollateralMint: placeholder(15),
       reserveDestinationDepositCollateral: placeholder(16),
+      reserveLiquidityMint: placeholder(18),
     },
     minimumOut: 1_000_000n,
   }).then((instruction) => {

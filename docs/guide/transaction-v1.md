@@ -1,13 +1,19 @@
 # Transaction v1
 
-Transaction v1 raises the serialized transaction limit from 1,232 to 4,096 bytes. Ballista benefits
-because callers can pass larger inline account sets to one atomic `Run`; the stored template bytes
-remain in the template account and are not repeated in the transaction.
+Solana's version 1 transaction format (v1) raises the maximum size of a transaction from 1,232
+bytes to 4,096 bytes. Here is how to build one that runs a Ballista template.
 
-## Required resource config
+A template's steps are stored on chain in its template account, so a `Run` instruction carries
+only the template account, the run's accounts, and its inputs. Each account adds its 32-byte
+address to the transaction, so runs with many accounts gain the most from v1: more of them fit in
+one transaction, which still succeeds or fails as a whole.
 
-V1 resource defaults are zero. Set compute-unit and loaded-account-data limits in the message
-config; Compute Budget instructions do not set them for v1.
+## Set the resource limits
+
+A v1 transaction must declare two limits in its message: the compute-unit limit (compute units
+measure the work a transaction may do) and the loaded-account-data limit (how many bytes of account
+data it may load). Both default to zero. Compute Budget instructions, which set these limits for
+older transaction versions, do not set them for v1.
 
 ::: code-group
 
@@ -45,16 +51,20 @@ let message = Message::try_compile_with_config(
 
 :::
 
-The Ballista provider simulates once with maximum provisory limits, adds a configurable CU margin,
-and rounds loaded-account bytes up to a 32 KiB page.
+In TypeScript, `createComputeUnitProvider` fills in both limits. It simulates the transaction once
+with both limits at their maximums. It then sets the compute-unit limit to the measured amount plus
+a margin (`marginBps` is in basis points, so `1_000` adds 10%), and rounds the measured account
+data up to the next multiple of 32 KiB. In Rust, measure both values by simulating the transaction,
+then set them in the message's `TransactionConfig`.
 
-## Practical ceilings
+## Limits
 
-- V1 permits 64 inline addresses and does not use address lookup tables.
-- Ballista accepts at most 60 runtime account slots, leaving room for its program and template.
-- A 30-recipient Ballista SOL batch currently measures 1,240 bytes.
-- Compute and account locks will usually bind before the 4,096-byte packet ceiling.
-- Send and simulate large transactions using base64 encoding.
-- RPC readers must use `maxSupportedTransactionVersion: 1` for transactions and blocks.
+A v1 transaction lists at most 64 account addresses and cannot use address lookup tables, so a run
+fits about 60 runtime accounts. [Limits](/reference/limits#accounts-per-transaction) has the
+details, and when a larger run needs a v0 transaction instead.
+
+- A run of a 30-recipient SOL payroll template measures 1,240 bytes as a v1 transaction.
+- Encode large transactions as base64 when you send or simulate them.
+- When you fetch transactions or blocks over RPC, pass `maxSupportedTransactionVersion: 1`.
 
 See Solana's [larger transaction migration guide](https://solana.com/upgrades/larger-transaction-sizes).

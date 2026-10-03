@@ -1,8 +1,8 @@
 # Implementation plan
 
-This plan tracks the clean-break bounded orchestration VM. The 25 workflows in
-[use-case matrix](/use-cases) are acceptance scenarios for the language surface, subject to the
-external programs, accounts, and authorities listed there.
+This plan tracks the clean-break bounded orchestration VM. The measured recipes in the
+[cookbook](/examples/) are acceptance scenarios for the language surface, subject to the external
+programs, accounts, and authorities each one depends on.
 
 ## 1. Flat program and verifier
 

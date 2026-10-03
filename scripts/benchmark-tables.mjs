@@ -1,5 +1,5 @@
 /**
- * Writes the measured cost table under each example in `docs/examples/`.
+ * Writes the measured cost table under each example in `docs/guide/` and `docs/examples/`.
  *
  * Inputs are `fixtures/benchmarks.json` (written by `pnpm benchmarks`) and
  * `fixtures/benchmark-results.json` (written by the Mollusk benchmark in `tests/ballista`).
@@ -20,12 +20,13 @@ const signed = (value) => (value >= 0 ? `+${group(value)}` : `−${group(Math.ab
 
 const baselineLabel = {
   equivalent: 'Plain instructions',
-  weaker: 'Plain instructions, weaker',
-  impossible: 'Plain instructions, not equivalent',
+  weaker: 'Plain instructions, weaker checks',
+  impossible: 'Closest plain instructions',
 };
 
 const verdictSentence = {
-  equivalent: (note) => `${note} Ballista buys one instruction and a stored, verified shape, not a capability you lack.`,
+  equivalent: (note) =>
+    `${note} What the template adds is one instruction and a sequence of calls stored on chain, not something plain instructions cannot do.`,
   weaker: (note) => `${note} Enforcing that on chain any other way means deploying your own program.`,
   impossible: (note) => note,
 };
@@ -49,19 +50,27 @@ function table(name) {
   ];
   const instructionCount = item.baseline.instructionCount;
   const plural = instructionCount === 1 ? 'instruction' : 'instructions';
-  const scope = item.rowCount > 0 ? ` covering ${item.rowCount} rows` : '';
+  const scope = item.rowCount > 0 ? ` for ${item.rowCount} rows` : '';
   const standIn = item.standIn
-    ? ' The protocol call is stood in by a System transfer, so neither row includes the protocol\'s own work.'
+    ? ' A SOL transfer stands in for the protocol call, so neither column includes the protocol\'s own work.'
     : '';
   return [
     `<!-- benchmark:${name} -->`,
     '',
     ...rows,
     '',
-    `One Ballista instruction${scope} against ${instructionCount} plain ${plural}, measured with Mollusk.${standIn} ${verdictSentence[item.baseline.verdict](item.baseline.note)}`,
+    `One Ballista instruction${scope}, compared with ${instructionCount} plain ${plural}.${standIn} ${verdictSentence[item.baseline.verdict](item.baseline.note)}`,
     '',
     '<!-- /benchmark -->',
   ].join('\n');
+}
+
+/** A benchmark's `page` names a file in the guide or the cookbook; this is its site path. */
+function sitePath(page) {
+  for (const section of ['guide', 'examples']) {
+    if (existsSync(fileURLToPath(new URL(`docs/${section}/${page}.md`, root)))) return `${section}/${page}`;
+  }
+  throw new Error(`No page ${page}.md in docs/guide or docs/examples`);
 }
 
 const pages = new Map();
@@ -73,41 +82,26 @@ for (const [name, item] of Object.entries(benchmarks)) {
 /** Heading text by anchor, so the summary reads the way the cookbook does. */
 const titles = new Map();
 for (const page of pages.keys()) {
-  const text = readFileSync(fileURLToPath(new URL(`docs/examples/${page}.md`, root)), 'utf8');
+  const text = readFileSync(fileURLToPath(new URL(`docs/${sitePath(page)}.md`, root)), 'utf8');
   for (const line of text.split('\n')) {
     if (line.startsWith('## ')) titles.set(slug(line.slice(3)), line.slice(3).trim());
   }
 }
 
+// Only examples whose page keeps a `<!-- benchmark:name -->` marker get a table; the docs currently keep none.
 for (const [page, items] of pages) {
-  const path = fileURLToPath(new URL(`docs/examples/${page}.md`, root));
+  const path = fileURLToPath(new URL(`docs/${sitePath(page)}.md`, root));
   let text = readFileSync(path, 'utf8');
-  for (const { name, anchor } of items) {
-    const block = table(name);
+  let written = 0;
+  for (const { name } of items) {
     const existing = new RegExp(`<!-- benchmark:${name} -->[\\s\\S]*?<!-- /benchmark -->`);
-    if (existing.test(text)) {
-      text = text.replace(existing, block);
-      continue;
-    }
-    // Insert before the next top-level heading after this example's own heading.
-    const lines = text.split('\n');
-    const headingIndex = lines.findIndex(
-      (line) => line.startsWith('## ') && slug(line.slice(3)) === anchor,
-    );
-    if (headingIndex === -1) throw new Error(`No heading for ${anchor} in ${page}.md`);
-    let end = lines.length;
-    for (let index = headingIndex + 1; index < lines.length; index += 1) {
-      if (lines[index].startsWith('## ')) {
-        end = index;
-        break;
-      }
-    }
-    while (end > headingIndex && lines[end - 1].trim() === '') end -= 1;
-    lines.splice(end, 0, '', block);
-    text = lines.join('\n');
+    if (!existing.test(text)) continue;
+    text = text.replace(existing, table(name));
+    written += 1;
   }
+  if (!written) continue;
   writeFileSync(path, text.endsWith('\n') ? text : `${text}\n`);
-  console.log(`${page}.md: ${items.length} tables`);
+  console.log(`${page}.md: ${written} tables`);
 }
 
 // Most useful first: what no transaction can express, then what one expresses without enforcing,
@@ -132,7 +126,7 @@ const summary = [
       impossible: 'No, needs a program',
     }[item.baseline.verdict];
     const title = titles.get(item.anchor) ?? name;
-    return `| [${title}](/examples/${item.page}#${item.anchor}) | ${group(measured.ballistaComputeUnits)} | ${group(measured.baselineComputeUnits)} | ${group(item.ballistaTransactionBytes)} | ${group(item.baseline.transactionBytes)} | ${sol(item.upload.rentLamports)} SOL | ${verdict} |`;
+    return `| [${title}](/${sitePath(item.page)}#${item.anchor}) | ${group(measured.ballistaComputeUnits)} | ${group(measured.baselineComputeUnits)} | ${group(item.ballistaTransactionBytes)} | ${group(item.baseline.transactionBytes)} | ${sol(item.upload.rentLamports)} SOL | ${verdict} |`;
   }),
 ].join('\n');
 
@@ -228,6 +222,7 @@ function savingsCaption(sweeps) {
 const chartBlock = `<!-- benchmark:chart -->\n\n${savingsChart(sweeps)}\n\nMeasured: ${savingsCaption(sweeps)}.\n\n<!-- /benchmark -->`;
 for (const page of ['docs/benchmarks.md']) {
   const chartPagePath = fileURLToPath(new URL(page, root));
+  if (!existsSync(chartPagePath)) continue;
   const chartText = readFileSync(chartPagePath, 'utf8');
   const marker = /<!-- benchmark:chart -->[\s\S]*?<!-- \/benchmark -->/;
   if (!marker.test(chartText)) {
@@ -239,8 +234,9 @@ for (const page of ['docs/benchmarks.md']) {
 }
 
 const summaryBlock = `<!-- benchmark:summary -->\n\n${summary}\n\n<!-- /benchmark -->`;
-for (const page of ['docs/benchmarks.md', 'docs/examples/index.md']) {
+for (const page of ['docs/benchmarks.md']) {
   const summaryPath = fileURLToPath(new URL(page, root));
+  if (!existsSync(summaryPath)) continue;
   const summaryText = readFileSync(summaryPath, 'utf8');
   const marker = /<!-- benchmark:summary -->[\s\S]*?<!-- \/benchmark -->/;
   if (!marker.test(summaryText)) {
@@ -272,7 +268,8 @@ for (const groupName of profileOrder) {
   }
 }
 const profilePath = fileURLToPath(new URL('docs/cu-profile.md', root));
-let profileText = readFileSync(profilePath, 'utf8');
+const hasProfilePage = existsSync(profilePath);
+let profileText = hasProfilePage ? readFileSync(profilePath, 'utf8') : '';
 const profileMarker = /<!-- profile:table -->[\s\S]*?<!-- \/profile -->/;
 if (profileMarker.test(profileText)) {
   profileText = profileText.replace(
@@ -314,7 +311,7 @@ if (existsSync(phasesPath) && phasesMarker.test(profileText)) {
 } else {
   console.log('cu-profile.md: no phases marker, skipped');
 }
-writeFileSync(profilePath, profileText);
+if (hasProfilePage) writeFileSync(profilePath, profileText);
 
 function slug(heading) {
   return heading

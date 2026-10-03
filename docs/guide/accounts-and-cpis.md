@@ -1,103 +1,87 @@
 # Accounts and CPIs
 
-An account schema is a capability declaration. It states the maximum privilege a template may ever
-use for that slot, and `Run` rejects any account that does not satisfy it. A CPI inside the
-template can request that privilege or less, never more.
+This page explains how a template declares the accounts it uses and how it calls other programs
+through CPIs (cross-program invocations: one program calling another).
 
-This is what makes a finalized template safe to hand to a caller you do not control. The privileges
-are fixed when the template is authored and checked again at finalization, so reading the schema
-tells you the upper bound on what any run can do. Ballista forwards signer status from the outer
-transaction and never signs as its own PDA, so a template cannot manufacture authority that the
-transaction did not already carry.
+Each account a template uses is declared in its `accounts` section, with the requirements the
+caller's account must meet. It can be required to be a signer (it signed the transaction), writable
+(the transaction allows it to change), or executable (it is a program). A declaration can also fix
+the account's exact `address`, the program that owns it (`owner`), and a minimum data length
+(`minDataLength`). A run rejects any account that does not meet its declaration.
 
-```ts
-accounts: {
-  tokenProgram: {
-    executable: true,
-    address: TOKEN_PROGRAM_BYTES,
-  },
-  authority: { signer: true },
-  source: {
-    writable: true,
-    owner: TOKEN_PROGRAM_BYTES,
-    minDataLength: 165,
-  },
-  destination: {
-    writable: true,
-    owner: TOKEN_PROGRAM_BYTES,
-    minDataLength: 165,
-  },
-}
-```
+The declaration is also a ceiling. A CPI in the template may pass an account as a signer or as
+writable only if the account's declaration requires that privilege.
+
+That ceiling is what makes it safe to publish a template for callers you do not control. The
+privileges are fixed when the template is written and checked again at finalization, the one-time
+check that locks the template on chain, so the declarations tell you the most any run can do.
+Ballista passes on only the signatures the outer transaction already carries, and it never signs as
+a PDA (program-derived address: an address a program controls, with no private key) of its own, so
+a template cannot create authority the transaction did not already have.
 
 ## Protocol helper
 
-```ts
-tokenTransfer({
-  tokenProgram: account.fixed('tokenProgram'),
-  source: account.fixed('source'),
-  destination: account.fixed('destination'),
-  authority: account.fixed('authority'),
-  amount: expression.input('amount'),
-});
-```
-
-`tokenTransfer` is not a runtime opcode. It compiles to generic CPI accounts plus the Token
-Program's literal transfer discriminator and an encoded `u64` register.
-
-## Generic CPI
+This template moves tokens between two token accounts. Its `accounts` section shows each kind of
+requirement: a pinned program, a signer, and two writable token accounts pinned by owner and size.
 
 ::: code-group
 
-```ts [TypeScript · template]
-step.invoke({
-  program: account.fixed('program'),
-  accounts: [
-    { account: account.fixed('vault'), writable: true, signer: false },
-    { account: account.fixed('authority'), writable: false, signer: true },
-  ],
-  data: [
-    data.literal(MY_DISCRIMINATOR),
-    data.encode('u64', expression.input('amount')),
-    data.encode('bytes', expression.input('clientPayload')),
-  ],
-  when: expression.input('enabled'),
-});
-```
+<<< @/../clients/js/examples/docs/token-transfer.ts#template [TypeScript · Template]
 
-```rust [Rust · call]
-let run = ballista_sdk::run_instruction(
-    template,
-    vec![
-        AccountMeta::new_readonly(program, false),
-        AccountMeta::new(vault, false),
-        AccountMeta::new_readonly(authority, true),
-    ],
-    &encoded_inputs,
-);
-```
+<<< @/../clients/js/examples/docs/token-transfer.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#token-transfer [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#token-transfer [Rust · Run]
 
 :::
 
-The generated CPI data is capped at 4,096 bytes, and its maximum length is proven during template
-finalization.
+`tokenTransfer` is a shortcut, not a special instruction in the Ballista program. It compiles to an
+ordinary CPI: the Token Program's accounts, the byte that selects its Transfer instruction, and the
+amount encoded as a `u64`. The Rust tab builds exactly that CPI, and produces the same bytes.
+
+## Generic CPI
+
+`step.invoke` builds any CPI from parts: the program to call, the accounts with the privileges to
+pass, and the instruction data as a list of pieces, either literal bytes or encoded values. The
+optional `when` condition is covered [below](#conditional-invocation).
+
+::: code-group
+
+<<< @/../clients/js/examples/docs/generic-cpi.ts#template [TypeScript · Template]
+
+<<< @/../clients/js/examples/docs/generic-cpi.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#generic-cpi [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#generic-cpi [Rust · Run]
+
+:::
+
+`MY_PROGRAM` and `MY_DISCRIMINATOR` are placeholders for your program's address and instruction.
+A CPI's data can be at most 4,096 bytes. Finalization works out the largest size each CPI's data
+can reach, here 8 + 8 + 128 bytes, and rejects a template that could exceed the limit. The Rust
+builder cannot see a `bytes` input's maximum length from the segment, so the Rust tab states it with
+`set_cpi_max_data_len`.
 
 ## Account groups
 
-A CPI's declared account list is fixed when the template is authored. When a callee needs accounts
-the author cannot know in advance, such as the pools on a swap route, the template declares an
-account group and the invocation forwards it after its declared accounts. Members are supplied by
-the caller, carry no constraints, cannot be read, and never sign. See
-[Account groups](./account-groups) for the rules and a template that chooses between swaps at run
-time.
+A CPI's account list is fixed when the template is written. Some programs need accounts the author
+cannot know in advance, such as the pools along a swap route. For these, a template declares an
+account group: the caller supplies its members at run time, and the CPI passes them after its
+declared accounts. Group members have no requirements, cannot be read by the template, and are never
+passed as signers. [Account groups](./account-groups) covers the rules and shows a template that
+chooses between swaps at run time.
 
 ## Conditional invocation
 
-`when` makes a single CPI optional. Its boolean expression is evaluated at that point in the run.
-If the result is false the invocation is skipped and execution continues with the next step; the
-run event records which invocations actually fired.
+`when` makes a single CPI optional. Its condition is evaluated when the run reaches that step. If
+the condition is false, the call is skipped and the run continues with the next step. A template
+that emits a [run event](/guide/errors-and-events#run-events) records which calls actually ran.
 
-This is the counterpart to `step.require`, which aborts the whole transaction when its condition
-fails. Use `when` for work that is legitimately unnecessary, such as creating an account that may
-already exist, and `step.require` for a condition whose failure means something is wrong. A guarded
-invocation cannot be the source of a `returnData` read, because the value may never be produced.
+Compare `step.require`, which fails the whole transaction when its condition is false. Use `when`
+for work that is sometimes unnecessary, such as creating an account that may already exist. Use
+`step.require` for a condition whose failure means something is wrong.
+
+`expression.returnData` reads the data a called program returns, but not from a call with a `when`
+condition, because a skipped call returns nothing.

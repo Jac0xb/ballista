@@ -1,71 +1,61 @@
 # Assertions and snapshots
 
-`step.require(condition)` aborts the complete transaction unless its boolean expression is true.
-Conditions can combine account reads, inputs, time, checked math, comparisons, `AND`, `OR`, and
-`NOT`.
+This page shows how a template checks conditions with `step.require`, and how a snapshot lets it
+compare an account before and after a call.
+
+`step.require(condition)` fails the whole transaction unless its condition is true. A condition can
+combine account reads, inputs, the clock, checked arithmetic, comparisons, and the boolean
+operators `and`, `or`, and `not`.
 
 ## Why snapshots exist
 
-An expression is re-evaluated everywhere it appears. A read of an account balance compiles to a
-fresh read at each use site, so the same expression written before and after a CPI yields two
-different values, and there is no way to hold on to the first one. Comparing the balance after a
-transfer against a second read of the balance after that transfer proves nothing.
+An expression is evaluated again everywhere it appears. A read of an account's balance happens anew
+at each place it is used, so the same expression written before and after a CPI (a call to another
+program) gives two different values, and there is no way to keep the first one. Comparing the
+balance after a transfer with a second read of that same balance proves nothing.
 
-`step.snapshot(name, value)` evaluates its expression once, at that position in the step list, and
-keeps the result in a register for the rest of the run. That is what makes a before-and-after check
-expressible. The snapshot is the old value, and a later read of the same account is the new one.
+`step.snapshot(name, value)` evaluates its expression once, at that point in the steps, and keeps
+the result for the rest of the run. That makes a before-and-after check possible: the snapshot holds
+the old value, and a later read of the same account gives the new one.
 
-`step.let` is the identical operation under a name that reads better away from pre/post checks, and
-either can be read back with `expression.snapshot` or `expression.variable`. Both are immutable and
-lexically scoped. Neither allocates an account, costs rent, or survives the transaction: the name
-is resolved by the compiler and never reaches the wire format. Bindings created inside a loop body
-are rebuilt on each iteration and cannot be read after the loop ends.
+`step.let` does exactly the same thing, under a name that reads better when you are not comparing
+before and after. Read either back with `expression.snapshot` or `expression.variable`. These named
+values, called bindings, follow a few rules:
+
+- A name can be used only by the steps after it, and a name defined inside a loop body cannot be
+  read after the loop ends.
+- A binding cannot be changed, with one exception: inside a loop, `step.assign` can update a
+  variable that the loop carries from one pass to the next, as shown in
+  [Batch execution](/guide/batching#carry-a-total-across-rows).
+- Bindings create no accounts, cost no rent, and do not outlast the transaction. The compiler turns
+  each name into a numbered slot for the run's working values, and the name itself never goes on
+  chain. Bindings made inside a loop body are set again on every row.
 
 ## Exact lamport delta
 
+This template records the sender's balance in [lamports](/reference/glossary#lamports), transfers
+an amount, then requires that the balance fell by exactly that amount.
+
 ::: code-group
 
-```ts [TypeScript · template]
-steps: [
-  step.snapshot(
-    'before',
-    expression.accountField(account.fixed('sender'), 'lamports'),
-  ),
-  systemTransfer({
-    systemProgram: account.fixed('systemProgram'),
-    from: account.fixed('sender'),
-    to: account.fixed('recipient'),
-    lamports: expression.input('amount'),
-  }),
-  step.require(
-    expression.equal(
-      expression.accountField(account.fixed('sender'), 'lamports'),
-      expression.subtract(
-        expression.snapshot('before'),
-        expression.input('amount'),
-      ),
-    ),
-  ),
-]
-```
+<<< @/../clients/js/examples/docs/exact-lamport-delta.ts#template [TypeScript · Template]
 
-```rust [Rust · run]
-let amount = 50_000_000u64;
-let run = ballista_sdk::run_instruction(
-    delta_checked_template,
-    vec![
-        AccountMeta::new_readonly(system_program, false),
-        AccountMeta::new(sender, true),
-        AccountMeta::new(recipient, false),
-    ],
-    &amount.to_le_bytes(),
-);
-// A wrong post-CPI delta returns RequirementFailed and rolls back the transfer.
-```
+<<< @/../clients/js/examples/docs/exact-lamport-delta.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#exact-lamport-delta [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#exact-lamport-delta [Rust · Run]
 
 :::
 
+In Rust there are no names: the snapshot is simply the register that holds the first balance read,
+and the check after the transfer reads the balance into a new register.
+
 ## Token amount delta
+
+The same check works for tokens. An SPL token account stores its balance as a `u64` at byte offset
+64. [Exact token debit](/examples/token-accounts#exact-token-debit) is the complete template, in
+TypeScript and Rust.
 
 ```ts
 step.snapshot(
@@ -82,6 +72,9 @@ step.require(
 ```
 
 ## Compound guards
+
+Conditions can be combined. This one lets the run continue when it is enabled, the deadline has not
+passed, and the expected output meets the minimum, or when an emergency override is set.
 
 ```ts
 const canExecute = expression.and(

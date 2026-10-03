@@ -1,246 +1,115 @@
 # Token-account patterns
 
-Offsets below use the legacy SPL Token account layout. Pin the Token Program address, account owner,
-and minimum data length whenever reading raw fields.
+Templates that create, pay into, close and check SPL token accounts. An
+[ATA](/reference/glossary#ata) (associated token account) is the standard token account for a given
+wallet and mint. Each shows the template and the code that runs it, in TypeScript and Rust.
 
-Several patterns here are conveniences: a plain transaction sends the same instructions with the
-same guarantees, and the measured tables say so. The ones that earn a template read a balance or
-a flag mid-run — [forward the whole token balance](/examples/runtime-values#forward-the-whole-token-balance)
-and [consolidate only the funded accounts](/examples/loops#consolidate-only-the-funded-accounts).
+Most of these can also be done with plain instructions in one transaction. Templates earn their
+place when they read a balance or a flag while the transaction runs, as in
+[forward the whole token balance](/guide/runtime-values#forward-the-whole-token-balance) and
+[consolidate only the funded accounts](/guide/loops#consolidate-only-the-funded-accounts).
+
+Some recipes read a token account's balance straight from its data. In the SPL Token account
+layout, the balance is a `u64` at byte offset 64. When a template reads raw bytes like this, have it
+also require the Token Program's address, the account's owner and its minimum data length (165
+bytes for a token account), so it can't be handed a different kind of account.
 
 ## Assert, create, then transfer
 
-Validate that the destination is the recipient's canonical ATA, create it only when empty, then
-transfer tokens—all atomically.
+For each recipient, check that the destination is the recipient's ATA, create it if it doesn't
+exist yet, then transfer `amount` tokens to it. An ATA's address is a
+[PDA](/reference/glossary#pda) of the Associated Token Account program, and its seeds are the
+owner, the token program and the mint. `assertAta` derives that address and fails the run if the account
+passed in doesn't match. If any step fails, the whole run reverts.
+
+Each recipient is one row of a batch: two accounts, the recipient's wallet and its ATA.
+`step.forEach` runs the three steps once per row. The Rust template spells out what the two helpers
+compile to: a PDA derivation compared with the ATA's address, then the ATA program's `Create`
+guarded by `isEmpty`.
 
 ::: code-group
 
-```ts [TypeScript · loop body]
-step.forEach([
-  assertAta({
-    associatedTokenAccount: account.iteration('destinationAta'),
-    owner: account.iteration('recipient'),
-    mint: account.fixed('mint'),
-    tokenProgram: account.fixed('tokenProgram'),
-    associatedTokenProgram: account.fixed('associatedTokenProgram'),
-  }),
-  ensureAssociatedTokenAccount({
-    associatedTokenProgram: account.fixed('associatedTokenProgram'),
-    payer: account.fixed('payer'),
-    associatedTokenAccount: account.iteration('destinationAta'),
-    owner: account.iteration('recipient'),
-    mint: account.fixed('mint'),
-    systemProgram: account.fixed('systemProgram'),
-    tokenProgram: account.fixed('tokenProgram'),
-  }),
-  tokenTransfer({
-    tokenProgram: account.fixed('tokenProgram'),
-    source: account.fixed('source'),
-    destination: account.iteration('destinationAta'),
-    authority: account.fixed('authority'),
-    amount: expression.input('amount'),
-  }),
-]);
-```
+<<< @/../clients/js/examples/docs/assert-create-then-transfer.ts#template [TypeScript · Template]
 
-```rust [Rust · row bindings]
-for recipient in recipients {
-    let ata = get_associated_token_address_with_program_id(&recipient, &mint, &token_program);
-    metas.push(AccountMeta::new_readonly(recipient, false));
-    metas.push(AccountMeta::new(ata, false));
-}
-let run = ballista_sdk::run_instruction(template, metas, &amount.to_le_bytes());
-```
+<<< @/../clients/js/examples/docs/assert-create-then-transfer.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#assert-create-then-transfer [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#assert-create-then-transfer [Rust · Run]
 
 :::
-
-<!-- benchmark:assert-create-then-transfer -->
-
-| Cost | Ballista | Plain instructions | Difference |
-| --- | ---: | ---: | ---: |
-| Compute units, every run | 191,260 | 123,752 | +67,508 |
-| Transaction bytes, every run | 1,007 | 1,122 | −115 |
-| Compute units, upload once | 6,938 | none | — |
-| Transaction bytes, upload once | 747 in 1 transaction | none | — |
-| Rent locked in the template account | 0.00345 SOL for 551 bytes | none | — |
-
-One Ballista instruction covering 8 rows against 16 plain instructions, measured with Mollusk. ATA CreateIdempotent then Transfer per recipient. The ATA program derives the address itself, so the guarantee matches. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
-
-<!-- /benchmark -->
 
 ## Existing-account token payroll
 
+Send the same token amount to up to 32 token accounts that already exist. Each destination must be
+owned by the Token Program and be at least 165 bytes long, the size of a token account, so the
+template can't be pointed at a different kind of account.
+
 ::: code-group
 
-```ts [TypeScript · template]
-batch: {
-  maxIterations: 32,
-  row: {
-    destination: { writable: true, owner: TOKEN_PROGRAM_BYTES, minDataLength: 165 },
-  },
-},
-steps: [step.forEach([
-  tokenTransfer({
-    tokenProgram: account.fixed('tokenProgram'),
-    source: account.fixed('source'),
-    destination: account.iteration('destination'),
-    authority: account.fixed('authority'),
-    amount: expression.input('amount'),
-  }),
-])]
-```
+<<< @/../clients/js/examples/docs/existing-account-token-payroll.ts#template [TypeScript · Template]
 
-```rust [Rust · run]
-let mut metas = fixed_token_metas;
-metas.extend(token_accounts.iter().map(|key| AccountMeta::new(*key, false)));
-let run = ballista_sdk::run_instruction(template, metas, &amount.to_le_bytes());
-```
+<<< @/../clients/js/examples/docs/existing-account-token-payroll.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#existing-account-token-payroll [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#existing-account-token-payroll [Rust · Run]
 
 :::
-
-<!-- benchmark:existing-account-token-payroll -->
-
-| Cost | Ballista | Plain instructions | Difference |
-| --- | ---: | ---: | ---: |
-| Compute units, every run | 55,183 | 2,432 | +52,751 |
-| Transaction bytes, every run | 1,339 | 1,738 | −399 |
-| Compute units, upload once | 5,366 | none | — |
-| Transaction bytes, upload once | 451 in 1 transaction | none | — |
-| Rent locked in the template account | 0.00195 SOL for 255 bytes | none | — |
-
-One Ballista instruction covering 32 rows against 32 plain instructions, measured with Mollusk. One SPL Token transfer per destination does the same work. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
-
-<!-- /benchmark -->
 
 ## Conditional ATA setup
 
-Use ordinary ATA `Create`, not `CreateIdempotent`, so the `isEmpty` guard has observable value.
+Create an ATA only if it doesn't exist yet. `ensureAssociatedTokenAccount` calls the ATA program's
+`Create` instruction with a `when` condition that the account is empty, so a repeat run skips the
+call instead of failing. It uses `Create` rather than `CreateIdempotent` so that the condition is
+what does the work. `CreateIdempotent` sent as a plain instruction does the same job without a
+template.
 
 ::: code-group
 
-```ts [TypeScript · template]
-ensureAssociatedTokenAccount({
-  associatedTokenProgram: account.fixed('associatedTokenProgram'),
-  payer: account.fixed('payer'),
-  associatedTokenAccount: account.fixed('ata'),
-  owner: account.fixed('wallet'),
-  mint: account.fixed('mint'),
-  systemProgram: account.fixed('systemProgram'),
-  tokenProgram: account.fixed('tokenProgram'),
-});
-```
+<<< @/../clients/js/examples/docs/conditional-ata-setup.ts#template [TypeScript · Template]
 
-```rust [Rust · run]
-use solana_program::instruction::AccountMeta;
+<<< @/../clients/js/examples/docs/conditional-ata-setup.ts#run [TypeScript · Run]
 
-let run = ballista_sdk::run_instruction(
-    template,
-    vec![
-        AccountMeta::new_readonly(associated_program, false),
-        AccountMeta::new_readonly(token_program, false),
-        AccountMeta::new_readonly(system_program, false),
-        AccountMeta::new_readonly(mint, false),
-        AccountMeta::new(payer, true),
-        AccountMeta::new_readonly(wallet, false),
-        AccountMeta::new(ata, false),
-    ],
-    &[],
-);
-// Re-running skips ordinary Create when `ata` already contains data.
-```
+<<< @/../clients/rust/examples/docs_templates.rs#conditional-ata-setup [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#conditional-ata-setup [Rust · Run]
 
 :::
-
-<!-- benchmark:conditional-ata-setup -->
-
-| Cost | Ballista | Plain instructions | Difference |
-| --- | ---: | ---: | ---: |
-| Compute units, every run | 16,658 | 13,518 | +3,140 |
-| Transaction bytes, every run | 407 | 341 | +66 |
-| Compute units, upload once | 7,286 | none | — |
-| Transaction bytes, upload once | 508 in 1 transaction | none | — |
-| Rent locked in the template account | 0.00224 SOL for 312 bytes | none | — |
-
-One Ballista instruction against 1 plain instruction, measured with Mollusk. ATA CreateIdempotent is the same behavior in one instruction. Ballista buys one instruction and a stored, verified shape, not a capability you lack.
-
-<!-- /benchmark -->
 
 ## Close empty token accounts
 
-Read the token amount at offset 64 and invoke SPL Token `CloseAccount` only when it is zero.
+For each token account in the list, read its balance (the `u64` at byte offset 64) and call SPL
+Token's `CloseAccount` only if it is zero. Accounts that still hold tokens are skipped, so one
+funded account doesn't fail the whole run. Closing an account returns its rent (the SOL deposit
+that keeps an account open) to `rentDestination`.
 
 ::: code-group
 
-```ts [TypeScript · loop body]
-const isEmpty = expression.equal(
-  expression.accountData(account.iteration('tokenAccount'), 64, 'u64'),
-  expression.u64(0),
-);
+<<< @/../clients/js/examples/docs/close-empty-token-accounts.ts#template [TypeScript · Template]
 
-step.invoke({
-  program: account.fixed('tokenProgram'),
-  accounts: [
-    { account: account.iteration('tokenAccount'), writable: true, signer: false },
-    { account: account.fixed('rentDestination'), writable: true, signer: false },
-    { account: account.fixed('authority'), writable: false, signer: true },
-  ],
-  data: [data.literal(Uint8Array.of(9))],
-  when: isEmpty,
-});
-```
+<<< @/../clients/js/examples/docs/close-empty-token-accounts.ts#run [TypeScript · Run]
 
-```rust [Rust · account rows]
-let mut metas = fixed_metas;
-metas.extend(empty_candidates.iter().map(|key| AccountMeta::new(*key, false)));
-let run = ballista_sdk::run_instruction(template, metas, &[]);
-```
+<<< @/../clients/rust/examples/docs_templates.rs#close-empty-token-accounts [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#close-empty-token-accounts [Rust · Run]
 
 :::
-
-<!-- benchmark:close-empty-token-accounts -->
-
-| Cost | Ballista | Plain instructions, weaker | Difference |
-| --- | ---: | ---: | ---: |
-| Compute units, every run | 34,064 | 1,888 | +32,176 |
-| Transaction bytes, every run | 803 | 842 | −39 |
-| Compute units, upload once | 8,575 | none | — |
-| Transaction bytes, upload once | 471 in 1 transaction | none | — |
-| Rent locked in the template account | 0.00205 SOL for 275 bytes | none | — |
-
-One Ballista instruction covering 16 rows against 16 plain instructions, measured with Mollusk. CloseAccount per candidate works only while every candidate is empty: SPL Token rejects a funded account, which fails the whole transaction instead of skipping that row. Enforcing that on chain any other way means deploying your own program.
-
-<!-- /benchmark -->
 
 ## Exact token debit
 
+Transfer tokens, then check that the source balance dropped by exactly `amount`. The template
+records the balance before the transfer and compares it afterwards; any other change fails the
+whole run.
+
 ::: code-group
 
-```ts [TypeScript · invariant]
-step.snapshot('before', expression.accountData(account.fixed('source'), 64, 'u64')),
-tokenTransfer({ /* source, destination, authority, amount */ }),
-step.require(expression.equal(
-  expression.accountData(account.fixed('source'), 64, 'u64'),
-  expression.subtract(expression.snapshot('before'), expression.input('amount')),
-)),
-```
+<<< @/../clients/js/examples/docs/exact-token-debit.ts#template [TypeScript · Template]
 
-```rust [Rust · run]
-let run = ballista_sdk::run_instruction(template, token_metas, &amount.to_le_bytes());
-// Unexpected fees or debits make the post-CPI requirement fail atomically.
-```
+<<< @/../clients/js/examples/docs/exact-token-debit.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#exact-token-debit [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#exact-token-debit [Rust · Run]
 
 :::
-
-<!-- benchmark:exact-token-debit -->
-
-| Cost | Ballista | Plain instructions, weaker | Difference |
-| --- | ---: | ---: | ---: |
-| Compute units, every run | 3,780 | 76 | +3,704 |
-| Transaction bytes, every run | 316 | 250 | +66 |
-| Compute units, upload once | 6,338 | none | — |
-| Transaction bytes, upload once | 515 in 1 transaction | none | — |
-| Rent locked in the template account | 0.00227 SOL for 319 bytes | none | — |
-
-One Ballista instruction against 1 plain instruction, measured with Mollusk. A bare transfer moves the tokens; nothing proves the source was debited by exactly that amount and no more. Enforcing that on chain any other way means deploying your own program.
-
-<!-- /benchmark -->

@@ -1,5 +1,5 @@
 /**
- * Act only on a Pyth price that is fresh, confident, and inside a band — checked during
+ * Act only on a Pyth price that is fresh, confident, and inside a band. The checks run during
  * execution, not before signing.
  *
  * Inside a program this is `get_price_no_older_than`. A transaction cannot do it: it can read the
@@ -11,8 +11,22 @@
  * two, so every field after it sits one byte earlier in a `Full` account than in a `Partial`
  * one. Reading a price at a fixed offset without checking the level is reading whichever field
  * happens to be there. Requiring `Full` fixes the layout and is the stronger guarantee besides.
+ *
+ * The second pins the feed. The Pyth receiver owns every feed's price account alike, so the owner
+ * pin alone takes any feed's price, and a band set for SOL could be met by another asset's.
+ * `get_price_no_older_than` checks the feed id for the same reason; the template checks it
+ * against `feedId`.
+ *
+ * The third pins the exponent. A Pyth price is `price × 10^exponent`, and the bounds are raw
+ * integers at the exponent the caller set them for: SOL/USD's −8 makes them hundred-millionths of
+ * a dollar. If the feed's exponent ever changed, every bound would be off by a power of ten, so the
+ * template requires the account's exponent to equal `exponent`.
+ *
+ * The action here is a Jupiter `route`. It takes the token program and the signer first, so the
+ * template passes those two itself and the rest of the route's list arrives as a group.
  */
 import {
+  TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
   compileTemplate,
   data,
@@ -20,7 +34,7 @@ import {
   expression,
   step,
 } from '../../src/index.js';
-import { JUPITER_V6, PYTH, PYTH_RECEIVER, addressBytes } from './shared.js';
+import { JUPITER_ROUTE, JUPITER_V6, PYTH, PYTH_RECEIVER, addressBytes } from './shared.js';
 
 /** Valid only once the verification level has been pinned to `Full`; see the require below. */
 const price = expression.accountData(account.fixed('priceUpdate'), PYTH.price, 'i64');
@@ -29,21 +43,34 @@ const publishTime = expression.accountData(account.fixed('priceUpdate'), PYTH.pu
 
 export const pythFreshPriceGate = defineTemplate({
   inputs: {
+    /**
+     * The Pyth feed the price must come from, as its 32-byte id: SOL/USD's is
+     * `ef0d8b6f…c280b56d`.
+     */
+    feedId: { type: 'pubkey' },
+    /**
+     * The feed's exponent, which the three bounds below are in units of: SOL/USD's is −8. The
+     * account holds it as an i32.
+     */
+    exponent: { type: 'i64' },
     /** How stale a price may be, in seconds. */
     maximumAge: { type: 'i64' },
     /** The widest confidence interval the caller will act on. */
     maximumConfidence: { type: 'u64' },
     floorPrice: { type: 'i64' },
     ceilingPrice: { type: 'i64' },
+    /** Jupiter's `route` arguments: the Swap API's instruction data after the discriminator. */
     actionData: { type: 'bytes', maxLength: 512 },
   },
   accounts: {
     /**
      * Pinning the owner is what makes the offsets meaningful: without it a caller could pass any
-     * account whose bytes happen to satisfy the comparisons.
+     * account whose bytes happen to satisfy the comparisons. It does not say which feed the price
+     * belongs to; `priceIsTheExpectedFeed` does.
      */
     priceUpdate: { owner: addressBytes(PYTH_RECEIVER), minDataLength: PYTH.length },
     actionProgram: { executable: true, address: addressBytes(JUPITER_V6) },
+    tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
     actor: { signer: true, writable: true },
   },
   accountGroups: ['actionAccounts'],
@@ -55,6 +82,24 @@ export const pythFreshPriceGate = defineTemplate({
         expression.u64(PYTH.verificationLevelFull),
       ),
       'priceIsFullyVerified',
+    ),
+
+    // Which feed the price belongs to. Its offset, like the rest, assumes the level just pinned.
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('priceUpdate'), PYTH.feedId, 'pubkey'),
+        expression.input('feedId'),
+      ),
+      'priceIsTheExpectedFeed',
+    ),
+
+    // What the raw integers below mean. At another exponent each bound is off by a power of ten.
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('priceUpdate'), PYTH.exponent, 'i32'),
+        expression.input('exponent'),
+      ),
+      'priceExponentIsExpected',
     ),
 
     step.require(
@@ -76,9 +121,12 @@ export const pythFreshPriceGate = defineTemplate({
 
     step.invoke({
       program: account.fixed('actionProgram'),
-      accounts: [{ account: account.fixed('actor'), signer: true, writable: true }],
+      accounts: [
+        { account: account.fixed('tokenProgram'), signer: false, writable: false },
+        { account: account.fixed('actor'), signer: true, writable: false },
+      ],
       accountGroup: 'actionAccounts',
-      data: [data.encode('bytes', expression.input('actionData'))],
+      data: [data.literal(JUPITER_ROUTE), data.encode('bytes', expression.input('actionData'))],
       label: 'actOnTheOracle',
     }),
   ],

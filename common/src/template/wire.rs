@@ -22,10 +22,19 @@ pub const MAX_ROW_INPUTS: usize = 8;
 pub const MAX_INPUT_VALUES: usize = 256;
 /// Caller-sized account groups a template may declare and forward to CPIs.
 pub const MAX_ACCOUNT_GROUPS: usize = 8;
+/// Top-level loops a template may hold. They run one after another and never nest.
+pub const MAX_LOOPS: usize = 8;
 pub const MAX_PDA_SEEDS: usize = 15;
 pub const MAX_PDA_SEED_LEN: usize = 32;
 /// Maximum bytes of CPI return data the runtime exposes.
 pub const MAX_RETURN_DATA_LEN: usize = 1_024;
+
+/// `Sysvar1nstructions1111111111111111111111111`. Introspection opcodes read the transaction's
+/// instructions from this sysvar, which a template declares as a fixed account pinned to it.
+pub const INSTRUCTIONS_SYSVAR_ID: [u8; 32] = [
+    0x06, 0xa7, 0xd5, 0x17, 0x18, 0x7b, 0xd1, 0x66, 0x35, 0xda, 0xd4, 0x04, 0x55, 0xfd, 0xc2, 0xc0,
+    0xc1, 0x24, 0xc6, 0x8f, 0x21, 0x56, 0x75, 0xa5, 0xdb, 0xba, 0xcb, 0x5f, 0x08, 0x00, 0x00, 0x00,
+];
 
 pub const NO_INDEX: u8 = u8::MAX;
 pub const ITERATION_ACCOUNT_BIT: u8 = 0x80;
@@ -36,6 +45,11 @@ pub const ITERATION_INPUT_BIT: u8 = ITERATION_ACCOUNT_BIT;
 /// Program header flag: emit a `sol_log_data` event after a successful run.
 pub const PROGRAM_FLAG_EMIT_EVENT: u8 = 1 << 0;
 pub const PROGRAM_FLAGS_MASK: u8 = PROGRAM_FLAG_EMIT_EVENT;
+/// The run event's tag family: the first three bytes of its magic, `BEV1`, which every version of
+/// the event keeps. No [`OP_EMIT`] may start its log line with them.
+pub const RUN_EVENT_TAG_FAMILY: [u8; 3] = *b"BEV";
+/// The shortest literal tag an [`OP_EMIT`] may start with.
+pub const MIN_EMIT_TAG_LEN: usize = 4;
 
 /// Instruction flag (read opcodes only): the data offset comes from register `b` instead of the immediate.
 pub const INSTRUCTION_FLAG_DYNAMIC_OFFSET: u8 = 1 << 0;
@@ -47,7 +61,7 @@ pub const VERIFIER_ERROR_BASE: u32 = 6_100;
 
 /// Runtime error names in code order, starting at [`RUNTIME_ERROR_BASE`]. The program's error
 /// enum and the SDKs are checked against this table.
-pub const RUNTIME_ERROR_NAMES: [&str; 22] = [
+pub const RUNTIME_ERROR_NAMES: [&str; 25] = [
     "InvalidInstructionData",
     "InvalidTemplateAccount",
     "InvalidTemplateProgram",
@@ -70,6 +84,9 @@ pub const RUNTIME_ERROR_NAMES: [&str; 22] = [
     "ReturnDataMismatch",
     "AccountConstraintFailed",
     "CpiAccountLimitExceeded",
+    "LoopCountExceeded",
+    "InstructionOutOfRange",
+    "WritableAccountBytesRead",
 ];
 
 pub const ACCOUNT_SIGNER: u8 = 1 << 0;
@@ -137,6 +154,71 @@ pub const OP_MOVE: u8 = 49;
 /// Derives a PDA from the seeds in the immediate range plus the bump held in register `b`. Unlike
 /// [`OP_DERIVE_PDA`] this performs a single derivation instead of searching for the canonical bump.
 pub const OP_CREATE_PDA: u8 = 50;
+/// `a × b ÷ c` for three `u64`s or three `u128`s, rounded down, with the product computed exactly.
+pub const OP_MUL_DIV: u8 = 51;
+/// As [`OP_MUL_DIV`], rounded up.
+pub const OP_MUL_DIV_CEIL: u8 = 52;
+/// `a mod b` for matching `u64`, `i64` or `u128`; the result takes the dividend's sign.
+pub const OP_REM: u8 = 53;
+/// `a << b` for a `u64` or `u128` `a` and a `u64` `b`; fails rather than drop a set bit.
+pub const OP_SHL: u8 = 54;
+/// `a >> b`, rounding down; a shift of the full width or more gives zero.
+pub const OP_SHR: u8 = 55;
+/// `a & b` for two matching `u64` or `u128` registers.
+pub const OP_BIT_AND: u8 = 56;
+/// `a | b`, as [`OP_BIT_AND`].
+pub const OP_BIT_OR: u8 = 57;
+/// `a ^ b`, as [`OP_BIT_AND`].
+pub const OP_BIT_XOR: u8 = 58;
+/// `10^a` for a `u64` `a` of at most 38, as a `u128`.
+pub const OP_POW10: u8 = 59;
+/// A four-byte signed read, sign-extended into an `i64` register.
+pub const OP_READ_I32: u8 = 60;
+/// A loop that runs its body a counted number of times: `a` is the body length, `b` the `u64`
+/// register holding the count, read once when the loop starts, `c` the static maximum, and the
+/// immediate the carry mask, as for [`OP_FOREACH`]. It writes no register, so `dst` is
+/// [`NO_INDEX`]. A count above `c` fails the run.
+pub const OP_REPEAT: u8 = 61;
+/// Encodes the data segments the immediate names, as CPI data is encoded, and logs the bytes with
+/// `sol_log_data` as one field. Writes no register.
+///
+/// The first segment must be a literal tag of at least [`MIN_EMIT_TAG_LEN`] bytes that does not
+/// start with [`RUN_EVENT_TAG_FAMILY`]. A log line names the program that wrote it, Ballista, but
+/// not the template, so without a tag a template could log a byte-exact copy of the run event for
+/// any template address, and indexers could not tell the copy from the real one.
+pub const OP_EMIT: u8 = 62;
+/// Encodes the data segments the immediate names and sets the bytes as the run's return data.
+/// Allowed once, outside every loop, after the last invoke. Writes no register.
+pub const OP_SET_RETURN_DATA: u8 = 63;
+/// The number of instructions in the transaction. `a` is the Instructions sysvar account, as for
+/// every opcode up to `OP_READ_INSTRUCTION_BYTES`.
+pub const OP_INSTRUCTION_COUNT: u8 = 64;
+/// The index of the instruction running this template.
+pub const OP_INSTRUCTION_INDEX: u8 = 65;
+/// The program of the instruction whose `u64` index is in register `b`.
+pub const OP_INSTRUCTION_PROGRAM: u8 = 66;
+/// How many accounts instruction `b` names.
+pub const OP_INSTRUCTION_ACCOUNT_COUNT: u8 = 67;
+/// The key of account `c` of instruction `b`, both `u64` registers.
+pub const OP_INSTRUCTION_ACCOUNT: u8 = 68;
+/// The flags of account `c` of instruction `b`: bit 0 signer, bit 1 writable.
+pub const OP_INSTRUCTION_ACCOUNT_FLAGS: u8 = 69;
+/// The data length of instruction `b`.
+pub const OP_INSTRUCTION_DATA_LEN: u8 = 70;
+/// A typed read from instruction `b`'s data at the `u64` offset in register `c`. The immediate is
+/// the `OP_READ_*` opcode whose width and result type the read takes.
+pub const OP_READ_INSTRUCTION_DATA: u8 = 71;
+/// Exactly `immediate` bytes of instruction `b`'s data from the offset in register `c`, borrowed
+/// from the sysvar rather than copied.
+pub const OP_READ_INSTRUCTION_BYTES: u8 = 72;
+/// Exactly `immediate` bytes of account `a`'s data from the `u64` offset in register `b`. The
+/// account must be read-only in this instruction, which is enough to borrow the bytes for the
+/// whole run even when the transaction can write the account: programs Ballista calls cannot gain
+/// a privilege it lacks, the program that called Ballista is paused and cannot be re-entered, and
+/// after a CPI the runtime copies data back only into accounts that were writable in that CPI.
+pub const OP_READ_ACCOUNT_BYTES: u8 = 73;
+/// The length of the `bytes` value in register `a`, as a `u64`.
+pub const OP_BYTES_LEN: u8 = 74;
 
 pub const DATA_LITERAL: u8 = 0;
 pub const DATA_REG_U8: u8 = 1;
@@ -481,14 +563,59 @@ impl<'data> ProgramView<'data> {
         })
     }
 
-    pub fn account_constraint(&self, reference: u8, in_loop: bool) -> Option<&AccountConstraint> {
+    /// Splits a payload that [`ProgramView::parse`] and [`ProgramView::verify`] already accepted,
+    /// as they did for every finalized template.
+    ///
+    /// It checks the magic and version, so a payload of another layout is never read as this
+    /// one, and that the sections the header declares fill the payload exactly, which keeps every
+    /// slice in bounds. It skips the checks on reserved bytes, flags and the size cap, which
+    /// verification settled when the template was finalized. Returns `None` where `parse` would
+    /// fail on the structure.
+    #[inline(always)]
+    pub fn parse_finalized(data: &'data [u8]) -> Option<Self> {
+        let (header, mut remaining) = ProgramHeader::ref_from_prefix(data).ok()?;
+        if header.magic != TEMPLATE_PROGRAM_MAGIC || header.version != TEMPLATE_PROGRAM_VERSION {
+            return None;
+        }
+        let accounts = take_prefix::<AccountConstraint>(
+            &mut remaining,
+            header.fixed_account_count() + header.batch_stride(),
+        )?;
+        let inputs = take_prefix::<InputDescriptor>(&mut remaining, header.total_input_count())?;
+        let instructions =
+            take_prefix::<InstructionRecord>(&mut remaining, header.instruction_count())?;
+        let cpis = take_prefix::<CpiDescriptor>(&mut remaining, header.cpi_count())?;
+        let cpi_accounts =
+            take_prefix::<CpiAccountRecord>(&mut remaining, header.cpi_account_count())?;
+        let data_segments =
+            take_prefix::<DataSegment>(&mut remaining, header.data_segment_count())?;
+        let pubkeys = take_prefix::<PubkeyRecord>(&mut remaining, header.pubkey_count())?;
+        if remaining.len() != header.blob_len() {
+            return None;
+        }
+        Some(Self {
+            header,
+            accounts,
+            inputs,
+            instructions,
+            cpis,
+            cpi_accounts,
+            data_segments,
+            pubkeys,
+            blob: remaining,
+        })
+    }
+
+    /// The constraint an account reference names: a fixed account, or inside a loop over the batch
+    /// rows a row account.
+    pub fn account_constraint(&self, reference: u8, in_row_loop: bool) -> Option<&AccountConstraint> {
         if reference & ITERATION_ACCOUNT_BIT == 0 {
             return self
                 .accounts
                 .get(reference as usize)
                 .filter(|_| (reference as usize) < self.header.fixed_account_count());
         }
-        if !in_loop {
+        if !in_row_loop {
             return None;
         }
         let offset = (reference & !ITERATION_ACCOUNT_BIT) as usize;
@@ -499,15 +626,16 @@ impl<'data> ProgramView<'data> {
             .get(self.header.fixed_account_count() + offset)
     }
 
-    /// The descriptor a `LOAD_INPUT` operand names: a fixed input, or inside a loop a row input.
-    pub fn input_descriptor(&self, reference: u8, in_loop: bool) -> Option<&InputDescriptor> {
+    /// The descriptor a `LOAD_INPUT` operand names: a fixed input, or inside a loop over the batch
+    /// rows a row input.
+    pub fn input_descriptor(&self, reference: u8, in_row_loop: bool) -> Option<&InputDescriptor> {
         if reference & ITERATION_INPUT_BIT == 0 {
             return self
                 .inputs
                 .get(reference as usize)
                 .filter(|_| (reference as usize) < self.header.input_count());
         }
-        if !in_loop {
+        if !in_row_loop {
             return None;
         }
         let offset = (reference & !ITERATION_INPUT_BIT) as usize;
@@ -516,6 +644,18 @@ impl<'data> ProgramView<'data> {
         }
         self.inputs.get(self.header.input_count() + offset)
     }
+}
+
+/// Splits `count` records off the front of `data`. Every count a header holds fits in 16 bits and
+/// every record in 32 bytes, so the byte length cannot overflow.
+#[inline(always)]
+fn take_prefix<'data, T>(data: &mut &'data [u8], count: usize) -> Option<&'data [T]>
+where
+    T: FromBytes + KnownLayout + Immutable,
+{
+    let (records, suffix) = <[T]>::ref_from_prefix_with_elems(*data, count).ok()?;
+    *data = suffix;
+    Some(records)
 }
 
 fn take_records<T>(data: &[u8], count: usize) -> Result<(&[T], &[u8]), TemplateError>
@@ -571,6 +711,16 @@ pub enum TemplateError {
     InvalidMinIterations,
     /// The header declares more than `MAX_ACCOUNT_GROUPS` account groups.
     TooManyAccountGroups,
+    /// A `REPEAT` with an empty body, a zero maximum or a destination register, or inside another
+    /// loop; a loop past `MAX_LOOPS`; or a row account or row input named inside a `REPEAT` body.
+    InvalidLoop(usize),
+    /// An `EMIT` or `SET_RETURN_DATA` can encode more than `MAX_RETURN_DATA_LEN` bytes; an `EMIT`
+    /// does not start with a literal tag of at least `MIN_EMIT_TAG_LEN` bytes outside
+    /// `RUN_EVENT_TAG_FAMILY`; or a `SET_RETURN_DATA` repeats, sits in a loop, or precedes an
+    /// invoke.
+    InvalidOutput(usize),
+    /// An introspection opcode's account is not a fixed account pinned to the Instructions sysvar.
+    InvalidIntrospection(usize),
 }
 
 impl TemplateError {
@@ -610,6 +760,9 @@ impl TemplateError {
             TemplateError::InvalidReturnData(index) => (26, clamp(index)),
             TemplateError::InvalidMinIterations => (27, 0),
             TemplateError::TooManyAccountGroups => (28, 0),
+            TemplateError::InvalidLoop(index) => (29, clamp(index)),
+            TemplateError::InvalidOutput(index) => (30, clamp(index)),
+            TemplateError::InvalidIntrospection(index) => (31, clamp(index)),
         };
         (VERIFIER_ERROR_BASE + index, context)
     }
@@ -617,7 +770,7 @@ impl TemplateError {
 
 /// Verifier error names in code order, shared with the SDK through
 /// `fixtures/verifier-error-names.txt`.
-pub const VERIFIER_ERROR_NAMES: [&str; 29] = [
+pub const VERIFIER_ERROR_NAMES: [&str; 32] = [
     "Truncated",
     "PayloadTooLarge",
     "InvalidMagic",
@@ -647,6 +800,9 @@ pub const VERIFIER_ERROR_NAMES: [&str; 29] = [
     "InvalidReturnData",
     "InvalidMinIterations",
     "TooManyAccountGroups",
+    "InvalidLoop",
+    "InvalidOutput",
+    "InvalidIntrospection",
 ];
 
 /// Packs an error kind and a 16-bit context into one custom program error code.
@@ -753,13 +909,17 @@ mod tests {
             TemplateError::TooManyCpiAccounts(13),
             TemplateError::InvalidReturnData(14),
             TemplateError::InvalidMinIterations,
+            TemplateError::TooManyAccountGroups,
+            TemplateError::InvalidLoop(15),
+            TemplateError::InvalidOutput(15),
+            TemplateError::InvalidIntrospection(15),
         ];
         let mut codes: Vec<u32> = variants.iter().map(|error| error.code().0).collect();
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(codes.len(), variants.len());
         assert_eq!(codes[0], VERIFIER_ERROR_BASE);
-        assert_eq!(*codes.last().unwrap(), VERIFIER_ERROR_BASE + 27);
+        assert_eq!(*codes.last().unwrap(), VERIFIER_ERROR_BASE + 31);
         for variant in &variants {
             let (code, _) = variant.code();
             let name = format!("{variant:?}");
@@ -775,5 +935,10 @@ mod tests {
         assert_eq!(context, u16::MAX, "oversized contexts clamp");
         assert_eq!(decode_error(encode_error(kind, context)), (kind, context));
         assert_eq!(TemplateError::InvalidCpi(6).code(), (VERIFIER_ERROR_BASE + 15, 6));
+        assert_eq!(TemplateError::InvalidLoop(4).code(), (VERIFIER_ERROR_BASE + 29, 4));
+        assert_eq!(TemplateError::InvalidOutput(9).code(), (VERIFIER_ERROR_BASE + 30, 9));
+        let decoded = decode_ballista_error(encode_error(VERIFIER_ERROR_BASE + 30, 9));
+        assert_eq!(decoded.map(|error| error.name), Some("InvalidOutput"));
+        assert_eq!(decode_ballista_error(VERIFIER_ERROR_BASE + 32), None);
     }
 }

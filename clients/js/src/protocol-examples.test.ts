@@ -1,9 +1,13 @@
 /**
  * The live-protocol examples are real source files, and this is what keeps them real.
  *
- * Each one compiles here, and its payload is written to `fixtures/protocol-examples.json`, which
- * the Rust suite feeds to the on-chain verifier. A template that stops compiling, or that the
- * verifier would reject, fails the build rather than being discovered at upload time.
+ * Each one compiles here, and its payload — together with its fixed-account, input, row-input,
+ * batch-account and account-group order, and the step label of each program counter — is written
+ * to `fixtures/protocol-examples.json`. The Rust suite feeds the payload to the on-chain verifier,
+ * and the LiteSVM harness uses the recorded order to build each run instruction by name instead of
+ * by hand-copied position, and the labels to name the step a failed run stopped at. A
+ * template that stops compiling, or that the verifier would reject, fails the build rather than
+ * being discovered at upload time.
  *
  * Regenerate with `pnpm fixtures`.
  */
@@ -38,15 +42,33 @@ describe('live protocol examples', () => {
     expect(name).toMatch(/^[a-z]/);
   });
 
-  test('payloads are recorded for the Rust verifier', () => {
-    const payloads = Object.fromEntries(
-      entries.map(([name, template]) => [name, hex(compileTemplate(template).bytes)]),
+  test('payloads and account/input order are recorded for the Rust verifier', () => {
+    const fixture = Object.fromEntries(
+      entries.map(([name, template]) => {
+        const compiled = compileTemplate(template);
+        return [
+          name,
+          {
+            payload: hex(compiled.bytes),
+            fixedAccounts: compiled.fixedAccountOrder,
+            inputs: compiled.inputOrder,
+            rowInputs: compiled.rowInputOrder,
+            batchAccounts: compiled.batchAccountOrder,
+            accountGroups: compiled.accountGroupOrder,
+            // Program counter to step label. A labelled step spans several instructions, so a
+            // failure's pc names its step, never the other way round.
+            labels: Object.fromEntries(
+              compiled.sourceMap.filter((entry) => entry.label !== undefined).map((entry) => [entry.pc, entry.label]),
+            ),
+          },
+        ];
+      }),
     );
     if (UPDATE) {
-      writeFileSync(FIXTURE_PATH, `${JSON.stringify(payloads, null, 2)}\n`);
+      writeFileSync(FIXTURE_PATH, `${JSON.stringify(fixture, null, 2)}\n`);
       return;
     }
     expect(existsSync(FIXTURE_PATH), 'run `pnpm fixtures`').toBe(true);
-    expect(JSON.parse(readFileSync(FIXTURE_PATH, 'utf8'))).toEqual(payloads);
+    expect(JSON.parse(readFileSync(FIXTURE_PATH, 'utf8'))).toEqual(fixture);
   });
 });

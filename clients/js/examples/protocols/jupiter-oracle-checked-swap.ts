@@ -5,10 +5,34 @@
  * against movement between quote and execution; it does not protect against a bad quote, a
  * manipulated pool in the route, or a route built by someone other than the person signing.
  *
- * This template keeps a second opinion. It reads the Pyth price during execution, works out what
- * the input is worth at that price less a tolerance, runs the route, then measures the
- * destination account and requires the fill to clear that floor. Two independent sources have to
- * agree before the transaction is allowed to stand.
+ * This template keeps a second opinion. It reads the Pyth price during execution, runs the route,
+ * then measures how much actually left the source account and how much arrived, and requires the
+ * fill to clear what the sold amount was worth at the oracle price less a tolerance. Two
+ * independent sources have to agree before the transaction is allowed to stand.
+ *
+ * The feed must price the token being sold in the token being bought: SOL/USD when selling SOL
+ * for USDC. The Pyth receiver owns every feed's price account alike, so the template requires the
+ * account to carry the feed id the caller names. Without that, any feed's price would do, and
+ * USDC/USD's would value each SOL sold at a dollar.
+ *
+ * Pyth's price is `price × 10^exponent` per whole token, so a fill in base units is worth
+ * `sold × price × 10^(destinationDecimals + exponent − sourceDecimals)`. The template reads the
+ * feed's exponent and both mints' decimals on chain and computes that scale itself, and checks
+ * each token account against the mint it is supposed to hold so a caller cannot point the decimals
+ * read at the wrong mint. The caller supplies only the feed id, the route and the tolerance.
+ *
+ * Jupiter does not tie `route`'s source and destination accounts to the accounts its steps move.
+ * It asks only that the source hold at least `in_amount` and the destination hold the destination
+ * mint, and never who owns either. Put other accounts there, and both measured balances stay where
+ * they were: nothing sold, a floor of nothing, and a fill check that passes at any price. So the
+ * caller hands over the route in parts, as `splitJupiterRoute` splits the Swap API's data. The
+ * template writes `in_amount` into the instruction itself and requires exactly that much to have
+ * left `sourceAta`. A step also pays whichever account it names: a route that paid the fill into
+ * someone else's account of the destination mint, measured there, would clear the fill check with
+ * the trader's tokens. So the template requires the trader to own both token accounts.
+ *
+ * That does not cover everything: the signer authorizes every step of the route, so a route's steps
+ * can also spend other token accounts the signer owns, which neither balance shows.
  *
  * A transaction cannot express this: the fill is only known after the route runs, and by then
  * every instruction is already committed.
@@ -23,36 +47,58 @@ import {
   step,
 } from '../../src/index.js';
 import {
+  JUPITER_ROUTE,
   JUPITER_V6,
   PYTH,
   PYTH_RECEIVER,
+  SPL_MINT,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_LENGTH,
+  TOKEN_ACCOUNT_MINT_OFFSET,
+  TOKEN_ACCOUNT_OWNER_OFFSET,
   addressBytes,
 } from './shared.js';
 
+const balanceOf = (name: string) =>
+  expression.accountData(account.fixed(name), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64');
+
 export const jupiterOracleCheckedSwap = defineTemplate({
   inputs: {
-    routeData: { type: 'bytes', maxLength: 512 },
-    /** What is being sold, in the source token's base units. */
-    amountIn: { type: 'u64' },
     /**
-     * Scales the oracle price into output base units. The caller computes it from the two mints'
-     * decimals and the feed's exponent; it is a property of the pair, not of the market.
+     * The Pyth feed the price must come from, as its 32-byte id: SOL/USD's is
+     * `ef0d8b6f…c280b56d`. It must price the token sold in the token bought.
      */
-    priceScale: { type: 'u64' },
+    feedId: { type: 'pubkey' },
+    /** `route_plan` as the Swap API encoded it: the bytes between the discriminator and `in_amount`. */
+    routePlan: { type: 'bytes', maxLength: 512 },
+    /** The route's `in_amount`: what the route sells, and exactly what must leave `sourceAta`. */
+    inAmount: { type: 'u64' },
+    /** The quote's `quoted_out_amount`. */
+    quotedOutAmount: { type: 'u64' },
+    /** The quote's `slippage_bps`. */
+    slippageBps: { type: 'u64' },
+    /** The quote's `platform_fee_bps`. */
+    platformFeeBps: { type: 'u64' },
     /** How far below the oracle the fill may land, in basis points. */
     toleranceBps: { type: 'u64' },
   },
   accounts: {
     jupiter: { executable: true, address: addressBytes(JUPITER_V6) },
+    tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
     priceUpdate: { owner: addressBytes(PYTH_RECEIVER), minDataLength: PYTH.length },
     trader: { signer: true, writable: true },
+    sourceAta: {
+      writable: true,
+      owner: TOKEN_PROGRAM_ADDRESS_BYTES,
+      minDataLength: TOKEN_ACCOUNT_LENGTH,
+    },
     destinationAta: {
       writable: true,
       owner: TOKEN_PROGRAM_ADDRESS_BYTES,
       minDataLength: TOKEN_ACCOUNT_LENGTH,
     },
+    sourceMint: { owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: SPL_MINT.length },
+    destinationMint: { owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: SPL_MINT.length },
   },
   accountGroups: ['routeAccounts'],
   steps: [
@@ -63,6 +109,15 @@ export const jupiterOracleCheckedSwap = defineTemplate({
         expression.u64(PYTH.verificationLevelFull),
       ),
       'priceIsFullyVerified',
+    ),
+
+    // The owner pin takes any feed's price; the feed id is what says which one this is.
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('priceUpdate'), PYTH.feedId, 'pubkey'),
+        expression.input('feedId'),
+      ),
+      'priceIsTheExpectedFeed',
     ),
 
     step.require(
@@ -76,6 +131,55 @@ export const jupiterOracleCheckedSwap = defineTemplate({
       'oracleIsFresh',
     ),
 
+    // Each token account must hold the mint whose decimals scale it.
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('sourceAta'), TOKEN_ACCOUNT_MINT_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('sourceMint'), 'key'),
+      ),
+      'sourceHoldsTheSourceMint',
+    ),
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('destinationAta'), TOKEN_ACCOUNT_MINT_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('destinationMint'), 'key'),
+      ),
+      'destinationHoldsTheDestinationMint',
+    ),
+
+    // Both ends of the swap are the trader's: the step that pays the fill can name any account of
+    // the destination mint, so the one measured must be the trader's.
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('sourceAta'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('trader'), 'key'),
+      ),
+      'sellsTheTradersOwnTokens',
+    ),
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('destinationAta'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('trader'), 'key'),
+      ),
+      'proceedsGoToTheTrader',
+    ),
+
+    // price × 10^exponent is per whole token. In base units the fill is worth
+    // sold × price × 10^(destinationDecimals + exponent − sourceDecimals). The exponent is an
+    // i32 and usually negative, so split the power into a multiplier and a divisor, each ≥ 0,
+    // and let multiplyDivide apply both exactly.
+    step.let(
+      'scale',
+      expression.subtract(
+        expression.add(
+          expression.cast('i64', expression.accountData(account.fixed('destinationMint'), SPL_MINT.decimals, 'u8')),
+          expression.accountData(account.fixed('priceUpdate'), PYTH.exponent, 'i32'),
+        ),
+        expression.cast('i64', expression.accountData(account.fixed('sourceMint'), SPL_MINT.decimals, 'u8')),
+      ),
+      'computeDecimalScale',
+    ),
+
     // Pyth prices are signed; a negative or zero price means the feed is unusable here.
     step.let(
       'oraclePrice',
@@ -87,38 +191,76 @@ export const jupiterOracleCheckedSwap = defineTemplate({
       'oraclePriceIsPositive',
     ),
 
+    step.snapshot('sourceBefore', balanceOf('sourceAta'), 'readSourceBeforeSwap'),
+    step.snapshot('balanceBefore', balanceOf('destinationAta'), 'readBalanceBeforeSwap'),
+
+    // `route` takes the token program, the signer, and the user's source and destination token
+    // accounts first; the route's own accounts follow as the group. Jupiter moves the accounts its
+    // steps name, not necessarily these two, which is why `soldTheRouteInput` below exists.
+    step.invoke({
+      program: account.fixed('jupiter'),
+      accounts: [
+        { account: account.fixed('tokenProgram'), signer: false, writable: false },
+        { account: account.fixed('trader'), signer: true, writable: false },
+        { account: account.fixed('sourceAta'), signer: false, writable: true },
+        { account: account.fixed('destinationAta'), signer: false, writable: true },
+      ],
+      accountGroup: 'routeAccounts',
+      data: [
+        data.literal(JUPITER_ROUTE),
+        data.encode('bytes', expression.input('routePlan')),
+        data.encode('u64', expression.input('inAmount')),
+        data.encode('u64', expression.input('quotedOutAmount')),
+        data.encode('u16', expression.input('slippageBps')),
+        data.encode('u8', expression.input('platformFeeBps')),
+      ],
+      label: 'swap',
+    }),
+
+    // What actually left, whatever the route data claimed it would sell.
+    step.let(
+      'sold',
+      expression.subtract(expression.snapshot('sourceBefore'), balanceOf('sourceAta')),
+      'measureAmountSold',
+    ),
+
+    // The route sold `inAmount`, so that much must have left the account measured. If the steps
+    // moved other accounts, `sold` is 0 and so is the floor below, which any fill would clear.
+    step.require(
+      expression.equal(expression.variable('sold'), expression.input('inAmount')),
+      'soldTheRouteInput',
+    ),
+
+    // sold × price, scaled by 10^scale, is the fill at the oracle price in destination base
+    // units; multiplyDivide computes the exact product and applies it. sold × price fits u128
+    // because both factors are below 2^64. Using max with zero means at least one of the two
+    // powers of ten below is 1, so no select is needed: a select evaluates both branches, and
+    // the unused one would fail its cast.
     step.let(
       'fairOut',
-      expression.divide(
-        expression.multiply(
-          expression.multiply(expression.input('amountIn'), expression.input('priceScale')),
-          expression.subtract(expression.u64(10_000), expression.input('toleranceBps')),
+      expression.cast(
+        'u64',
+        expression.multiplyDivide(
+          expression.multiplyDivide(
+            expression.multiply(
+              expression.cast('u128', expression.variable('sold')),
+              expression.cast('u128', expression.variable('oraclePrice')),
+            ),
+            expression.powerOfTen(expression.cast('u64', expression.max(expression.variable('scale'), expression.i64(0)))),
+            expression.powerOfTen(
+              expression.cast('u64', expression.max(expression.subtract(expression.i64(0), expression.variable('scale')), expression.i64(0))),
+            ),
+          ),
+          expression.cast('u128', expression.subtract(expression.u64(10_000), expression.input('toleranceBps'))),
+          expression.u128(10_000),
         ),
-        expression.u64(10_000),
       ),
       'computeOracleFloor',
     ),
 
-    step.snapshot(
-      'balanceBefore',
-      expression.accountData(account.fixed('destinationAta'), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64'),
-      'readBalanceBeforeSwap',
-    ),
-
-    step.invoke({
-      program: account.fixed('jupiter'),
-      accounts: [{ account: account.fixed('trader'), signer: true, writable: true }],
-      accountGroup: 'routeAccounts',
-      data: [data.encode('bytes', expression.input('routeData'))],
-      label: 'swap',
-    }),
-
     step.require(
       expression.greaterThanOrEqual(
-        expression.subtract(
-          expression.accountData(account.fixed('destinationAta'), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64'),
-          expression.snapshot('balanceBefore'),
-        ),
+        expression.subtract(balanceOf('destinationAta'), expression.snapshot('balanceBefore')),
         expression.variable('fairOut'),
       ),
       'fillBeatTheOracle',

@@ -129,6 +129,12 @@ impl ProgramBuilder {
         (offset, bytes.len() as u16)
     }
 
+    /// Registers allocated so far: the register count the header would declare if the program
+    /// were built now.
+    pub fn register_count(&self) -> u8 {
+        self.next_register
+    }
+
     /// Allocates the next register index without emitting an instruction.
     pub fn register(&mut self) -> u8 {
         let register = self.next_register;
@@ -213,7 +219,8 @@ impl ProgramBuilder {
         self.op(OP_CLOCK_TIMESTAMP, NO_INDEX, NO_INDEX, NO_INDEX, 0)
     }
 
-    /// Emits a two-operand instruction (arithmetic, comparison, or boolean).
+    /// Emits a two-operand instruction: arithmetic, remainder, shift, bitwise, comparison, or
+    /// boolean.
     pub fn binary(&mut self, opcode: u8, left: u8, right: u8) -> u8 {
         self.op(opcode, left, right, NO_INDEX, 0)
     }
@@ -228,6 +235,57 @@ impl ProgramBuilder {
 
     pub fn cast(&mut self, opcode: u8, value: u8) -> u8 {
         self.op(opcode, value, NO_INDEX, NO_INDEX, 0)
+    }
+
+    /// `a × b ÷ c` with the product computed exactly, rounded down. All three share a type,
+    /// `u64` or `u128`.
+    pub fn mul_div(&mut self, a: u8, b: u8, c: u8) -> u8 {
+        self.op(OP_MUL_DIV, a, b, c, 0)
+    }
+
+    /// `a × b ÷ c`, rounded up.
+    pub fn mul_div_ceil(&mut self, a: u8, b: u8, c: u8) -> u8 {
+        self.op(OP_MUL_DIV_CEIL, a, b, c, 0)
+    }
+
+    /// `10^exponent` as a `u128`, from a `u64` register.
+    pub fn pow10(&mut self, exponent: u8) -> u8 {
+        self.op(OP_POW10, exponent, NO_INDEX, NO_INDEX, 0)
+    }
+
+    /// Emits one of the opcodes that read the Instructions sysvar in account `sysvar`, from
+    /// `OP_INSTRUCTION_COUNT` to `OP_INSTRUCTION_DATA_LEN`. `index` and `position` are `u64`
+    /// registers; pass `NO_INDEX` for an operand the opcode does not take.
+    pub fn introspect(&mut self, opcode: u8, sysvar: u8, index: u8, position: u8) -> u8 {
+        self.op(opcode, sysvar, index, position, 0)
+    }
+
+    /// A typed read from instruction `index`'s data at the `u64` offset in `offset`, with the
+    /// width and result type of `read_opcode`, one of the `OP_READ_*` opcodes.
+    pub fn read_instruction_data(
+        &mut self,
+        read_opcode: u8,
+        sysvar: u8,
+        index: u8,
+        offset: u8,
+    ) -> u8 {
+        self.op(OP_READ_INSTRUCTION_DATA, sysvar, index, offset, read_opcode as u64)
+    }
+
+    /// Exactly `len` bytes of instruction `index`'s data from the `u64` offset in `offset`.
+    pub fn read_instruction_bytes(&mut self, sysvar: u8, index: u8, offset: u8, len: u16) -> u8 {
+        self.op(OP_READ_INSTRUCTION_BYTES, sysvar, index, offset, len as u64)
+    }
+
+    /// Exactly `len` bytes of `account`'s data from the `u64` offset in `offset`. The run fails
+    /// unless the account is read-only in this instruction.
+    pub fn read_account_bytes(&mut self, account: u8, offset: u8, len: u16) -> u8 {
+        self.op(OP_READ_ACCOUNT_BYTES, account, offset, NO_INDEX, len as u64)
+    }
+
+    /// The length of the `bytes` value in `value`, as a `u64`.
+    pub fn bytes_len(&mut self, value: u8) -> u8 {
+        self.op(OP_BYTES_LEN, value, NO_INDEX, NO_INDEX, 0)
     }
 
     pub fn loop_index(&mut self) -> u8 {
@@ -340,6 +398,23 @@ impl ProgramBuilder {
         index
     }
 
+    /// Emits a REPEAT whose body is produced by `body` and returns the REPEAT's index. The body
+    /// runs as many times as the `u64` in register `count` holds when the loop starts; a count
+    /// above `max` fails the run.
+    pub fn repeat(
+        &mut self,
+        count: u8,
+        max: u8,
+        carry_mask: u64,
+        body: impl FnOnce(&mut Self),
+    ) -> usize {
+        let index = self.emit(record(OP_REPEAT, NO_INDEX, 0, count, max, 0, carry_mask));
+        body(self);
+        let body_len = (self.instructions.len() - index - 1) as u8;
+        self.instructions[index].a = body_len;
+        index
+    }
+
     /// Pushes PDA seed segments and emits DERIVE_PDA against `program`.
     pub fn derive_pda(&mut self, program: u8, seeds: &[Segment]) -> u8 {
         let start = self.segments.len() as u16;
@@ -368,6 +443,39 @@ impl ProgramBuilder {
             NO_INDEX,
             range_immediate(start, seeds.len() as u16),
         )
+    }
+
+    /// Pushes `parts` and emits an `EMIT`, which logs their encoding as one `Program data:` field.
+    /// Returns the instruction's index. (`emit` itself appends a raw record.)
+    ///
+    /// The verifier accepts the log only if its first part is a literal tag of at least
+    /// [`MIN_EMIT_TAG_LEN`] bytes that does not start with [`RUN_EVENT_TAG_FAMILY`], the run
+    /// event's. Like the rest of the builder, this does not check it, so tests can build a log the
+    /// verifier refuses.
+    pub fn emit_data(&mut self, parts: &[Segment]) -> usize {
+        self.output(OP_EMIT, parts)
+    }
+
+    /// Pushes `parts` and emits a `SET_RETURN_DATA`, which makes their encoding the run's return
+    /// data. Returns the instruction's index.
+    pub fn set_return_data(&mut self, parts: &[Segment]) -> usize {
+        self.output(OP_SET_RETURN_DATA, parts)
+    }
+
+    fn output(&mut self, opcode: u8, parts: &[Segment]) -> usize {
+        let start = self.segments.len() as u16;
+        for part in parts {
+            self.push_segment(*part);
+        }
+        self.emit(record(
+            opcode,
+            NO_INDEX,
+            NO_INDEX,
+            NO_INDEX,
+            NO_INDEX,
+            0,
+            range_immediate(start, parts.len() as u16),
+        ))
     }
 
     /// Mutable access to the emitted instructions, for negative tests.
@@ -590,6 +698,71 @@ mod tests {
         let stats = program.verify().unwrap();
         assert_eq!(stats.batch_stride, 1);
         assert_eq!(stats.max_expanded_cpis, 4);
+    }
+
+    #[test]
+    fn repeat_patches_the_body_length_and_records_its_count_and_maximum() {
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(3);
+        let total = builder.const_u64(0);
+        let index = builder.repeat(count, 5, 1 << total, |body| {
+            let step = body.loop_index();
+            let sum = body.binary(OP_ADD, total, step);
+            body.mov(total, sum);
+        });
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let repeat = program.instructions[index];
+        assert_eq!(
+            (repeat.opcode, repeat.dst, repeat.a, repeat.b, repeat.c, repeat.flags),
+            (OP_REPEAT, NO_INDEX, 3, count, 5, 0)
+        );
+        assert_eq!(repeat.immediate(), 1 << total);
+    }
+
+    #[test]
+    fn output_helpers_push_their_parts_and_write_no_register() {
+        let mut builder = ProgramBuilder::new();
+        let amount = builder.const_u64(7);
+        let flag = builder.const_bool(true);
+        let tag = builder.blob(b"TAG1");
+        let logged = builder.emit_data(&[
+            Segment::Literal(tag),
+            Segment::Register(DATA_REG_U64, amount),
+        ]);
+        let returned = builder.set_return_data(&[Segment::Register(DATA_REG_BOOL, flag)]);
+        assert_eq!((logged, returned), (2, 3));
+
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        assert_eq!(program.header.register_count(), 2, "outputs allocate no register");
+        let emit = &program.instructions[logged];
+        assert_eq!(emit.opcode, OP_EMIT);
+        assert_eq!(
+            [emit.dst, emit.a, emit.b, emit.c, emit.flags],
+            [NO_INDEX, NO_INDEX, NO_INDEX, NO_INDEX, 0]
+        );
+        assert_eq!(emit.blob_range(), (0, 2), "segments 0 and 1");
+        let set = &program.instructions[returned];
+        assert_eq!(set.opcode, OP_SET_RETURN_DATA);
+        assert_eq!(
+            [set.dst, set.a, set.b, set.c, set.flags],
+            [NO_INDEX, NO_INDEX, NO_INDEX, NO_INDEX, 0]
+        );
+        assert_eq!(set.blob_range(), (2, 1), "segment 2");
+        let kinds: Vec<(u8, u8)> = program
+            .data_segments
+            .iter()
+            .map(|segment| (segment.kind, segment.register))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (DATA_LITERAL, NO_INDEX),
+                (DATA_REG_U64, amount),
+                (DATA_REG_BOOL, flag)
+            ]
+        );
     }
 
     #[test]

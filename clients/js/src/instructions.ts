@@ -3,6 +3,7 @@ import {
   MAX_TEMPLATE_PAYLOAD_LENGTH,
   PROGRAM_FLAG_EMIT_EVENT,
   TEMPLATE_PROGRAM_VERSION,
+  opcode,
   type CompiledTemplate,
   type CompileStats,
 } from './compiler.js';
@@ -365,18 +366,21 @@ export function inspectTemplate(bytes: Uint8Array): CompileStats {
     blobLength;
   if (bytes.length !== expectedLength) throw new RangeError('Template section lengths do not match');
   const instructionStart = 24 + (fixedAccounts + batchStride) * 8 + (inputs + rowInputs) * 4;
-  const opcodes = Array.from({ length: instructions }, (_, index) => {
+  const records = Array.from({ length: instructions }, (_, index) => {
     const offset = instructionStart + index * 16;
-    return { opcode: bytes[offset]!, a: bytes[offset + 2]! };
+    return { opcode: bytes[offset]!, a: bytes[offset + 2]!, c: bytes[offset + 4]! };
   });
+  // Every loop's body runs at most its maximum number of times: the batch's for a FOREACH, and the
+  // `c` operand for a REPEAT. Loops never nest, so each body is a flat run of records.
   let maxExpandedCpis = 0;
-  for (let programCounter = 0; programCounter < opcodes.length; programCounter += 1) {
-    const instruction = opcodes[programCounter]!;
-    if (instruction.opcode === 42) {
-      const body = opcodes.slice(programCounter + 1, programCounter + 1 + instruction.a);
-      maxExpandedCpis += body.filter((record) => record.opcode === 41).length * batchMaxIterations;
-      programCounter += instruction.a;
-    } else if (instruction.opcode === 41) {
+  for (let programCounter = 0; programCounter < records.length; programCounter += 1) {
+    const record = records[programCounter]!;
+    if (record.opcode === opcode.forEach || record.opcode === opcode.repeat) {
+      const passes = record.opcode === opcode.forEach ? batchMaxIterations : record.c;
+      const body = records.slice(programCounter + 1, programCounter + 1 + record.a);
+      maxExpandedCpis += body.filter((inner) => inner.opcode === opcode.invoke).length * passes;
+      programCounter += record.a;
+    } else if (record.opcode === opcode.invoke) {
       maxExpandedCpis += 1;
     }
   }

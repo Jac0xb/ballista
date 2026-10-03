@@ -39,6 +39,37 @@ impl RegisterInfo {
     pub const fn is_numeric(self) -> bool {
         matches!(self.value_type, VALUE_U64 | VALUE_I64 | VALUE_U128)
     }
+
+    /// Whether this register holds one of the two types the bitwise, shift, and multiply-divide
+    /// opcodes accept: `i64` is signed and excluded.
+    pub const fn is_unsigned(self) -> bool {
+        matches!(self.value_type, VALUE_U64 | VALUE_U128)
+    }
+}
+
+/// Where an instruction sits, which decides what it may name. `LOOP_INDEX` needs a loop; row
+/// accounts and row inputs need a loop over the batch rows. A count loop has an index but no
+/// rows, so one flag cannot say both.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LoopScope {
+    /// Outside every loop.
+    Root,
+    /// Inside a `FOREACH` body.
+    Rows,
+    /// Inside a `REPEAT` body.
+    Count,
+}
+
+impl LoopScope {
+    /// Whether `LOOP_INDEX` is allowed here.
+    pub const fn in_loop(self) -> bool {
+        !matches!(self, LoopScope::Root)
+    }
+
+    /// Whether row accounts and row inputs are allowed here.
+    pub const fn in_row_loop(self) -> bool {
+        matches!(self, LoopScope::Rows)
+    }
 }
 
 impl ProgramView<'_> {
@@ -123,7 +154,8 @@ impl ProgramView<'_> {
         let mut registers = [None; MAX_REGISTERS];
         let mut program_counter = 0usize;
         let mut root_cpis = 0usize;
-        let mut foreach_count = 0usize;
+        let mut loops = 0usize;
+        let mut row_loops = 0usize;
         let mut max_cpi_data_len = 0usize;
         // The previous root-level instruction, if the previous instruction was not a loop body.
         let mut previous: Option<&InstructionRecord> = None;
@@ -131,11 +163,29 @@ impl ProgramView<'_> {
         while program_counter < self.instructions.len() {
             let instruction = &self.instructions[program_counter];
             self.verify_record_header(instruction, program_counter)?;
-            if instruction.opcode == OP_FOREACH {
-                foreach_count += 1;
-                if header.batch_stride() == 0 || foreach_count > 1 || instruction.a == 0 {
-                    return Err(TemplateError::InvalidBatch);
+            if matches!(instruction.opcode, OP_FOREACH | OP_REPEAT) {
+                loops += 1;
+                if loops > MAX_LOOPS {
+                    return Err(TemplateError::InvalidLoop(program_counter));
                 }
+                // A FOREACH makes one pass per batch row. A REPEAT makes at most `c` passes,
+                // counted by the u64 its register `b` holds when the loop starts.
+                let (scope, max_passes) = if instruction.opcode == OP_FOREACH {
+                    if header.batch_stride() == 0 || instruction.a == 0 {
+                        return Err(TemplateError::InvalidBatch);
+                    }
+                    row_loops += 1;
+                    (LoopScope::Rows, header.batch_max_iterations())
+                } else {
+                    // A REPEAT writes no register, so its destination is reserved: a stored
+                    // template is never verified again, so a field accepted with any value now
+                    // could never take a meaning later. FOREACH shipped without this check.
+                    if instruction.a == 0 || instruction.c == 0 || instruction.dst != NO_INDEX {
+                        return Err(TemplateError::InvalidLoop(program_counter));
+                    }
+                    self.require_type(&registers, instruction.b, VALUE_U64)?;
+                    (LoopScope::Count, instruction.c as usize)
+                };
                 let body_start = program_counter + 1;
                 let body_end = body_start
                     .checked_add(instruction.a as usize)
@@ -148,12 +198,13 @@ impl ProgramView<'_> {
                 self.verify_carry_before(carry, &registers)?;
                 let mut body_registers = registers;
                 let (body_cpis, body_max_data) =
-                    self.verify_range(body_start, body_end, true, &mut body_registers)?;
+                    self.verify_range(body_start, body_end, scope, &mut body_registers)?;
                 verify_carry_after(carry, &registers, &body_registers)?;
+                // The worst case runs every loop to its maximum.
                 root_cpis = root_cpis
                     .checked_add(
                         body_cpis
-                            .checked_mul(header.batch_max_iterations())
+                            .checked_mul(max_passes)
                             .ok_or(TemplateError::CountOverflow)?,
                     )
                     .ok_or(TemplateError::CountOverflow)?;
@@ -166,7 +217,7 @@ impl ProgramView<'_> {
             let (cpis, data_len) = self.verify_instruction(
                 instruction,
                 program_counter,
-                false,
+                LoopScope::Root,
                 previous,
                 &mut registers,
             )?;
@@ -176,9 +227,8 @@ impl ProgramView<'_> {
             program_counter += 1;
         }
 
-        if (header.batch_stride() == 0 && foreach_count != 0)
-            || (header.batch_stride() != 0 && foreach_count != 1)
-        {
+        // A batch is iterated by at least one FOREACH, and a FOREACH needs a batch to iterate.
+        if (header.batch_stride() == 0) != (row_loops == 0) {
             return Err(TemplateError::InvalidBatch);
         }
         if root_cpis > MAX_EXPANDED_CPIS {
@@ -210,22 +260,21 @@ impl ProgramView<'_> {
         &self,
         instruction: &InstructionRecord,
         instruction_index: usize,
-        in_loop: bool,
+        scope: LoopScope,
         previous: Option<&InstructionRecord>,
         registers: &mut [Option<RegisterInfo>; MAX_REGISTERS],
     ) -> Result<(usize, usize), TemplateError> {
         self.verify_record_header(instruction, instruction_index)?;
-        if instruction.opcode == OP_FOREACH {
-            return Err(TemplateError::InvalidBatch);
-        }
-        self.verify_instruction(instruction, instruction_index, in_loop, previous, registers)
+        self.verify_instruction(instruction, instruction_index, scope, previous, registers)
     }
 
+    /// Verifies a loop body. Loops never nest: `verify_instruction` rejects a loop instruction,
+    /// since only `verify` starts one, at the root.
     fn verify_range(
         &self,
         start: usize,
         end: usize,
-        in_loop: bool,
+        scope: LoopScope,
         registers: &mut [Option<RegisterInfo>; MAX_REGISTERS],
     ) -> Result<(usize, usize), TemplateError> {
         let mut cpis = 0usize;
@@ -234,11 +283,8 @@ impl ProgramView<'_> {
         for index in start..end {
             let instruction = &self.instructions[index];
             self.verify_record_header(instruction, index)?;
-            if instruction.opcode == OP_FOREACH {
-                return Err(TemplateError::InvalidBatch);
-            }
             let (instruction_cpis, data_len) =
-                self.verify_instruction(instruction, index, in_loop, previous, registers)?;
+                self.verify_instruction(instruction, index, scope, previous, registers)?;
             cpis += instruction_cpis;
             max_data_len = max_data_len.max(data_len);
             previous = Some(instruction);
@@ -291,15 +337,21 @@ impl ProgramView<'_> {
         &self,
         instruction: &InstructionRecord,
         instruction_index: usize,
-        in_loop: bool,
+        scope: LoopScope,
         previous: Option<&InstructionRecord>,
         registers: &mut [Option<RegisterInfo>; MAX_REGISTERS],
     ) -> Result<(usize, usize), TemplateError> {
         let scalar = |value_type| RegisterInfo::scalar(value_type);
+        // Row accounts and row inputs resolve only in a FOREACH body. A REPEAT body has an index
+        // but no rows, and naming a row there has its own error.
+        let in_row_loop = scope.in_row_loop();
+        if scope == LoopScope::Count && self.names_row(instruction) {
+            return Err(TemplateError::InvalidLoop(instruction_index));
+        }
         match instruction.opcode {
             OP_LOAD_INPUT => {
                 let input = self
-                    .input_descriptor(instruction.a, in_loop)
+                    .input_descriptor(instruction.a, in_row_loop)
                     .ok_or(TemplateError::InvalidInstruction(instruction_index))?;
                 let info = if input.value_type == VALUE_BYTES {
                     RegisterInfo::bytes(input.max_len())
@@ -337,48 +389,128 @@ impl ProgramView<'_> {
                 self.write_register(registers, instruction.dst, RegisterInfo::bytes(len))?;
             }
             OP_ACCOUNT_KEY | OP_ACCOUNT_OWNER => {
-                self.require_account(instruction.a, in_loop)?;
+                self.require_account(instruction.a, in_row_loop)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_PUBKEY))?;
             }
             OP_ACCOUNT_LAMPORTS | OP_ACCOUNT_DATA_LEN => {
-                self.require_account(instruction.a, in_loop)?;
+                self.require_account(instruction.a, in_row_loop)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
             }
             OP_ACCOUNT_IS_EMPTY => {
-                self.require_account(instruction.a, in_loop)?;
+                self.require_account(instruction.a, in_row_loop)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_BOOL))?;
             }
             OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_U128
-            | OP_READ_PUBKEY | OP_READ_BOOL => {
+            | OP_READ_PUBKEY | OP_READ_BOOL | OP_READ_I32 => {
                 if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
-                    self.require_account(instruction.a, in_loop)?;
+                    self.require_account(instruction.a, in_row_loop)?;
                     self.require_type(registers, instruction.b, VALUE_U64)?;
                     if instruction.immediate() != 0 {
                         return Err(TemplateError::InvalidFlags(instruction_index));
                     }
                 } else {
-                    self.verify_read_bounds(instruction, instruction_index, in_loop)?;
+                    self.verify_read_bounds(instruction, instruction_index, in_row_loop)?;
                 }
-                let value_type = match instruction.opcode {
-                    OP_READ_I64 => VALUE_I64,
-                    OP_READ_U128 => VALUE_U128,
-                    OP_READ_PUBKEY => VALUE_PUBKEY,
-                    OP_READ_BOOL => VALUE_BOOL,
-                    _ => VALUE_U64,
-                };
-                self.write_register(registers, instruction.dst, scalar(value_type))?;
+                self.write_register(
+                    registers,
+                    instruction.dst,
+                    scalar(read_type(instruction.opcode)),
+                )?;
             }
             OP_CLOCK_SLOT => self.write_register(registers, instruction.dst, scalar(VALUE_U64))?,
             OP_CLOCK_TIMESTAMP => {
                 self.write_register(registers, instruction.dst, scalar(VALUE_I64))?
             }
-            OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_MIN | OP_MAX => {
+            OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_REM | OP_MIN | OP_MAX => {
                 let left = self.read_register(registers, instruction.a)?;
                 let right = self.read_register(registers, instruction.b)?;
                 if left != right || !left.is_numeric() {
                     return Err(TemplateError::TypeMismatch);
                 }
                 self.write_register(registers, instruction.dst, left)?;
+            }
+            OP_BIT_AND | OP_BIT_OR | OP_BIT_XOR => {
+                let left = self.read_register(registers, instruction.a)?;
+                let right = self.read_register(registers, instruction.b)?;
+                if left != right || !left.is_unsigned() {
+                    return Err(TemplateError::TypeMismatch);
+                }
+                self.write_register(registers, instruction.dst, left)?;
+            }
+            OP_SHL | OP_SHR => {
+                let value = self.read_register(registers, instruction.a)?;
+                self.require_type(registers, instruction.b, VALUE_U64)?;
+                if !value.is_unsigned() {
+                    return Err(TemplateError::TypeMismatch);
+                }
+                self.write_register(registers, instruction.dst, value)?;
+            }
+            OP_MUL_DIV | OP_MUL_DIV_CEIL => {
+                let a = self.read_register(registers, instruction.a)?;
+                let b = self.read_register(registers, instruction.b)?;
+                let c = self.read_register(registers, instruction.c)?;
+                if a != b || a != c || !a.is_unsigned() {
+                    return Err(TemplateError::TypeMismatch);
+                }
+                self.write_register(registers, instruction.dst, a)?;
+            }
+            OP_POW10 => {
+                self.require_type(registers, instruction.a, VALUE_U64)?;
+                self.write_register(registers, instruction.dst, scalar(VALUE_U128))?;
+            }
+            OP_INSTRUCTION_COUNT | OP_INSTRUCTION_INDEX => {
+                self.require_instructions_sysvar(instruction, instruction_index)?;
+                self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
+            }
+            OP_INSTRUCTION_PROGRAM | OP_INSTRUCTION_ACCOUNT_COUNT | OP_INSTRUCTION_DATA_LEN => {
+                self.require_instructions_sysvar(instruction, instruction_index)?;
+                self.require_type(registers, instruction.b, VALUE_U64)?;
+                let value_type = if instruction.opcode == OP_INSTRUCTION_PROGRAM {
+                    VALUE_PUBKEY
+                } else {
+                    VALUE_U64
+                };
+                self.write_register(registers, instruction.dst, scalar(value_type))?;
+            }
+            OP_INSTRUCTION_ACCOUNT | OP_INSTRUCTION_ACCOUNT_FLAGS => {
+                self.require_instructions_sysvar(instruction, instruction_index)?;
+                self.require_type(registers, instruction.b, VALUE_U64)?;
+                self.require_type(registers, instruction.c, VALUE_U64)?;
+                let value_type = if instruction.opcode == OP_INSTRUCTION_ACCOUNT {
+                    VALUE_PUBKEY
+                } else {
+                    VALUE_U64
+                };
+                self.write_register(registers, instruction.dst, scalar(value_type))?;
+            }
+            OP_READ_INSTRUCTION_DATA => {
+                self.require_instructions_sysvar(instruction, instruction_index)?;
+                self.require_type(registers, instruction.b, VALUE_U64)?;
+                self.require_type(registers, instruction.c, VALUE_U64)?;
+                // The immediate names a read opcode, as `RETURN_DATA`'s `a` does. `read_type` falls
+                // back to `u64` for any other opcode, so the selector must be a read first.
+                let selector = u8::try_from(instruction.immediate())
+                    .ok()
+                    .filter(|selector| read_width(*selector) != 0)
+                    .ok_or(TemplateError::InvalidInstruction(instruction_index))?;
+                self.write_register(registers, instruction.dst, scalar(read_type(selector)))?;
+            }
+            OP_READ_INSTRUCTION_BYTES => {
+                self.require_instructions_sysvar(instruction, instruction_index)?;
+                self.require_type(registers, instruction.b, VALUE_U64)?;
+                self.require_type(registers, instruction.c, VALUE_U64)?;
+                let len = byte_read_len(instruction, instruction_index)?;
+                self.write_register(registers, instruction.dst, RegisterInfo::bytes(len))?;
+            }
+            OP_READ_ACCOUNT_BYTES => {
+                self.require_account(instruction.a, in_row_loop)?;
+                self.require_type(registers, instruction.b, VALUE_U64)?;
+                let len = byte_read_len(instruction, instruction_index)?;
+                self.write_register(registers, instruction.dst, RegisterInfo::bytes(len))?;
+            }
+            OP_BYTES_LEN => {
+                self.require_type(registers, instruction.a, VALUE_BYTES)?;
+                self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
             }
             OP_EQ | OP_NE => {
                 let left = self.read_register(registers, instruction.a)?;
@@ -432,7 +564,7 @@ impl ProgramView<'_> {
                 self.write_register(registers, instruction.dst, scalar(target))?;
             }
             OP_LOOP_INDEX => {
-                if !in_loop {
+                if !scope.in_loop() {
                     return Err(TemplateError::InvalidInstruction(instruction_index));
                 }
                 self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
@@ -454,35 +586,54 @@ impl ProgramView<'_> {
                 {
                     return Err(TemplateError::InvalidReturnData(instruction_index));
                 }
-                let value_type = match instruction.a {
-                    OP_READ_I64 => VALUE_I64,
-                    OP_READ_U128 => VALUE_U128,
-                    OP_READ_PUBKEY => VALUE_PUBKEY,
-                    OP_READ_BOOL => VALUE_BOOL,
-                    _ => VALUE_U64,
-                };
-                self.write_register(registers, instruction.dst, scalar(value_type))?;
+                self.write_register(registers, instruction.dst, scalar(read_type(instruction.a)))?;
             }
             OP_DERIVE_PDA => {
-                self.verify_pda_seeds(instruction, instruction_index, in_loop, registers)?;
+                self.verify_pda_seeds(instruction, instruction_index, in_row_loop, registers)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_PUBKEY))?;
             }
             OP_CREATE_PDA => {
                 // The bump completes the seed list, so it is a plain u64 the template computed or
                 // read from an input; the executor rejects one that does not fit in a byte.
                 self.require_type(registers, instruction.b, VALUE_U64)?;
-                self.verify_pda_seeds(instruction, instruction_index, in_loop, registers)?;
+                self.verify_pda_seeds(instruction, instruction_index, in_row_loop, registers)?;
                 self.write_register(registers, instruction.dst, scalar(VALUE_PUBKEY))?;
+            }
+            OP_EMIT => {
+                self.verify_output(instruction, instruction_index, registers)?;
+                self.verify_emit_tag(instruction, instruction_index)?;
+            }
+            OP_SET_RETURN_DATA => {
+                self.verify_output(instruction, instruction_index, registers)?;
+                // The runtime clears return data whenever a program is invoked, CPIs included, so
+                // what a run returns is set once, outside every loop, after its last invoke. Loops
+                // run forward, so every instruction that can run later sits at a later index.
+                // Checked after `verify_output`, as `EMIT`'s tag is, so a bad segment reports its
+                // own error first.
+                let later = self
+                    .instructions
+                    .get(instruction_index.saturating_add(1)..)
+                    .unwrap_or(&[]);
+                if scope.in_loop()
+                    || later
+                        .iter()
+                        .any(|record| matches!(record.opcode, OP_INVOKE | OP_SET_RETURN_DATA))
+                {
+                    return Err(TemplateError::InvalidOutput(instruction_index));
+                }
             }
             OP_REQUIRE => self.require_type(registers, instruction.a, VALUE_BOOL)?,
             OP_INVOKE => {
                 if instruction.b != NO_INDEX {
                     self.require_type(registers, instruction.b, VALUE_BOOL)?;
                 }
-                let max_data = self.verify_cpi(instruction.a as usize, in_loop, registers)?;
+                let max_data = self.verify_cpi(instruction.a as usize, in_row_loop, registers)?;
                 return Ok((1, max_data));
             }
+            // `verify` starts every loop at the root, so a loop reaching here is inside a body, or
+            // verified one instruction at a time. A FOREACH keeps the error it shipped with.
             OP_FOREACH => return Err(TemplateError::InvalidBatch),
+            OP_REPEAT => return Err(TemplateError::InvalidLoop(instruction_index)),
             _ => return Err(TemplateError::InvalidInstruction(instruction_index)),
         }
         Ok((0, 0))
@@ -494,11 +645,11 @@ impl ProgramView<'_> {
         &self,
         instruction: &InstructionRecord,
         instruction_index: usize,
-        in_loop: bool,
+        in_row_loop: bool,
         registers: &[Option<RegisterInfo>; MAX_REGISTERS],
     ) -> Result<(), TemplateError> {
         let program = self
-            .account_constraint(instruction.a, in_loop)
+            .account_constraint(instruction.a, in_row_loop)
             .ok_or(TemplateError::InvalidInstruction(instruction_index))?;
         if program.flags & ACCOUNT_EXECUTABLE == 0 {
             return Err(TemplateError::InvalidInstruction(instruction_index));
@@ -515,8 +666,7 @@ impl ProgramView<'_> {
             .iter()
             .enumerate()
         {
-            let seed_len =
-                self.verify_pda_seed_segment(segment_start + offset, segment, registers)?;
+            let seed_len = self.verify_segment(segment_start + offset, segment, registers)?;
             if seed_len > MAX_PDA_SEED_LEN {
                 return Err(TemplateError::InvalidDataSegment(segment_start + offset));
             }
@@ -524,7 +674,78 @@ impl ProgramView<'_> {
         Ok(())
     }
 
-    fn verify_pda_seed_segment(
+    /// Shared by `EMIT` and `SET_RETURN_DATA`. The record names no register, and its immediate
+    /// names a non-empty, in-bounds run of data segments, encoded as invocation data is. Their
+    /// widths, a `bytes` register counted at its maximum length, must sum to at most
+    /// `MAX_RETURN_DATA_LEN`, the return-data limit, which also bounds a log line.
+    fn verify_output(
+        &self,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
+        registers: &[Option<RegisterInfo>; MAX_REGISTERS],
+    ) -> Result<(), TemplateError> {
+        if [instruction.dst, instruction.a, instruction.b, instruction.c] != [NO_INDEX; 4] {
+            return Err(TemplateError::InvalidInstruction(instruction_index));
+        }
+        let (segment_start, segment_len) = instruction.blob_range();
+        let segment_end = segment_start
+            .checked_add(segment_len)
+            .ok_or(TemplateError::CountOverflow)?;
+        if segment_len == 0 || segment_end > self.data_segments.len() {
+            return Err(TemplateError::InvalidInstruction(instruction_index));
+        }
+        let mut max_len = 0usize;
+        for (offset, segment) in self.data_segments[segment_start..segment_end]
+            .iter()
+            .enumerate()
+        {
+            let len = self.verify_segment(segment_start + offset, segment, registers)?;
+            max_len = max_len
+                .checked_add(len)
+                .ok_or(TemplateError::CountOverflow)?;
+        }
+        if max_len > MAX_RETURN_DATA_LEN {
+            return Err(TemplateError::InvalidOutput(instruction_index));
+        }
+        Ok(())
+    }
+
+    /// An `EMIT` starts with a literal tag of at least `MIN_EMIT_TAG_LEN` bytes outside the run
+    /// event's family, `RUN_EVENT_TAG_FAMILY`. A log line names the program that wrote it but not
+    /// the template, so an untagged line could be a byte-exact run event for any template address.
+    /// Checked after `verify_output`, so a bad segment reports its own error first.
+    fn verify_emit_tag(
+        &self,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
+    ) -> Result<(), TemplateError> {
+        let (segment_start, _) = instruction.blob_range();
+        let tag = self
+            .data_segments
+            .get(segment_start)
+            .filter(|segment| segment.kind == DATA_LITERAL)
+            .and_then(|segment| {
+                self.blob
+                    .get(segment.offset()..segment.offset() + segment.len())
+            });
+        match tag {
+            Some(tag)
+                if tag.len() >= MIN_EMIT_TAG_LEN && !tag.starts_with(&RUN_EVENT_TAG_FAMILY) =>
+            {
+                Ok(())
+            }
+            _ => Err(TemplateError::InvalidOutput(instruction_index)),
+        }
+    }
+
+    /// Checks one data segment of a PDA seed or an output and returns the most bytes it can
+    /// encode: a literal's length, a register kind's width, or a `bytes` register's maximum
+    /// length. Invocation data applies the same widths in `verify_cpi`.
+    ///
+    /// Inlined into both callers. With the outputs as a second caller, the compiler kept it out of
+    /// line, and creating a cookbook template that derives a PDA cost about 80 compute units more.
+    #[inline(always)]
+    fn verify_segment(
         &self,
         index: usize,
         segment: &DataSegment,
@@ -591,10 +812,10 @@ impl ProgramView<'_> {
         &self,
         instruction: &InstructionRecord,
         instruction_index: usize,
-        in_loop: bool,
+        in_row_loop: bool,
     ) -> Result<(), TemplateError> {
         let constraint = self
-            .account_constraint(instruction.a, in_loop)
+            .account_constraint(instruction.a, in_row_loop)
             .ok_or(TemplateError::InvalidAccountConstraint(instruction.a as usize))?;
         let width = read_width(instruction.opcode);
         let end = usize::try_from(instruction.immediate())
@@ -644,14 +865,14 @@ impl ProgramView<'_> {
     fn verify_cpi(
         &self,
         index: usize,
-        in_loop: bool,
+        in_row_loop: bool,
         registers: &[Option<RegisterInfo>; MAX_REGISTERS],
     ) -> Result<usize, TemplateError> {
         let descriptor = self.verify_cpi_shape(index)?;
         let account_end = descriptor.account_start() + descriptor.account_len as usize;
         let segment_end = descriptor.segment_start() + descriptor.segment_len as usize;
         let program = self
-            .account_constraint(descriptor.program_account, in_loop)
+            .account_constraint(descriptor.program_account, in_row_loop)
             .ok_or(TemplateError::InvalidCpi(index))?;
         if program.flags & ACCOUNT_EXECUTABLE == 0 {
             return Err(TemplateError::InvalidCpi(index));
@@ -662,7 +883,7 @@ impl ProgramView<'_> {
                 return Err(TemplateError::InvalidCpi(index));
             }
             let constraint = self
-                .account_constraint(cpi_account.account, in_loop)
+                .account_constraint(cpi_account.account, in_row_loop)
                 .ok_or(TemplateError::InvalidCpi(index))?;
             if cpi_account.flags & !constraint.flags != 0 {
                 return Err(TemplateError::InvalidCpi(index));
@@ -735,10 +956,61 @@ impl ProgramView<'_> {
         index == NO_INDEX || (index as usize) < self.pubkeys.len()
     }
 
-    fn require_account(&self, reference: u8, in_loop: bool) -> Result<(), TemplateError> {
-        self.account_constraint(reference, in_loop)
+    /// Introspection reads the Instructions sysvar, so `a` must be a fixed account pinned to its
+    /// address. The executor borrows that account's data for the whole run on the strength of it.
+    fn require_instructions_sysvar(
+        &self,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
+    ) -> Result<(), TemplateError> {
+        // `in_row_loop` is false, so a row account never matches, even inside a loop body.
+        let pinned = self
+            .account_constraint(instruction.a, false)
+            .filter(|constraint| constraint.address_index != NO_INDEX)
+            .and_then(|constraint| self.pubkeys.get(constraint.address_index as usize))
+            .is_some_and(|address| address.bytes == INSTRUCTIONS_SYSVAR_ID);
+        if !pinned {
+            return Err(TemplateError::InvalidIntrospection(instruction_index));
+        }
+        Ok(())
+    }
+
+    fn require_account(&self, reference: u8, in_row_loop: bool) -> Result<(), TemplateError> {
+        self.account_constraint(reference, in_row_loop)
             .map(|_| ())
             .ok_or(TemplateError::InvalidAccountConstraint(reference as usize))
+    }
+
+    /// Whether `instruction` names a row account or a row input, which only a FOREACH body has.
+    /// An operand this does not list still cannot name a row outside a FOREACH: the lookup
+    /// rejects it, only with that operand's own error instead of `InvalidLoop`.
+    ///
+    /// One check on each instruction in a `REPEAT` body, rather than a scope on every account
+    /// lookup: in the loops prototype, threading the scope through `require_account`,
+    /// `verify_read_bounds`, `verify_pda_seeds` and `verify_cpi` cost 56 compute units on
+    /// `create template, payroll 30 rows`, and this check 24.
+    ///
+    /// The opcodes that read the Instructions sysvar are left out on purpose: their account must
+    /// be a fixed one, so a row account there is `InvalidIntrospection` in every scope, a `REPEAT`
+    /// body included.
+    fn names_row(&self, instruction: &InstructionRecord) -> bool {
+        let row_account = |reference: u8| reference & ITERATION_ACCOUNT_BIT != 0;
+        match instruction.opcode {
+            OP_LOAD_INPUT => instruction.a & ITERATION_INPUT_BIT != 0,
+            OP_ACCOUNT_KEY | OP_ACCOUNT_OWNER | OP_ACCOUNT_LAMPORTS | OP_ACCOUNT_DATA_LEN
+            | OP_ACCOUNT_IS_EMPTY | OP_DERIVE_PDA | OP_CREATE_PDA | OP_READ_ACCOUNT_BYTES => {
+                row_account(instruction.a)
+            }
+            OP_INVOKE => self.cpis.get(instruction.a as usize).is_some_and(|descriptor| {
+                let start = descriptor.account_start();
+                row_account(descriptor.program_account)
+                    || self
+                        .cpi_accounts
+                        .get(start..start + descriptor.account_len as usize)
+                        .is_some_and(|records| records.iter().any(|record| row_account(record.account)))
+            }),
+            opcode => read_width(opcode) != 0 && row_account(instruction.a),
+        }
     }
 
     fn write_register(
@@ -785,6 +1057,18 @@ const fn is_value_type(value_type: u8) -> bool {
     )
 }
 
+/// The length a byte read's immediate names: 1 to `MAX_INPUT_BYTES`, the bound on every `bytes`
+/// value, so the result fits wherever a `bytes` input would.
+fn byte_read_len(
+    instruction: &InstructionRecord,
+    instruction_index: usize,
+) -> Result<usize, TemplateError> {
+    usize::try_from(instruction.immediate())
+        .ok()
+        .filter(|len| (1..=MAX_INPUT_BYTES).contains(len))
+        .ok_or(TemplateError::InvalidInstruction(instruction_index))
+}
+
 fn valid_range(total: usize, offset: usize, len: usize) -> bool {
     offset.checked_add(len).is_some_and(|end| end <= total)
 }
@@ -809,11 +1093,25 @@ pub const fn read_width(opcode: u8) -> usize {
     match opcode {
         OP_READ_U8 | OP_READ_BOOL => 1,
         OP_READ_U16 => 2,
-        OP_READ_U32 => 4,
+        OP_READ_U32 | OP_READ_I32 => 4,
         OP_READ_U64 | OP_READ_I64 => 8,
         OP_READ_U128 => 16,
         OP_READ_PUBKEY => 32,
         _ => 0,
+    }
+}
+
+/// Register type produced by each `OP_READ_*` opcode; also the result type `OP_RETURN_DATA`
+/// selects when its width operand names one of them. Any other opcode falls back to `VALUE_U64`,
+/// so callers must first confirm the opcode is actually a read (or that `read_width` is nonzero),
+/// as every call site does.
+pub const fn read_type(opcode: u8) -> u8 {
+    match opcode {
+        OP_READ_I64 | OP_READ_I32 => VALUE_I64,
+        OP_READ_U128 => VALUE_U128,
+        OP_READ_PUBKEY => VALUE_PUBKEY,
+        OP_READ_BOOL => VALUE_BOOL,
+        _ => VALUE_U64,
     }
 }
 
@@ -1008,6 +1306,38 @@ mod tests {
             (OP_REQUIRE, None, None, Err(TemplateError::RegisterNotInitialized(0))),
             (OP_LOAD_INPUT, None, None, Err(TemplateError::InvalidInstruction(0))),
             (OP_LOOP_INDEX, None, None, Err(TemplateError::InvalidInstruction(0))),
+            (OP_REM, Some(VALUE_U64), Some(VALUE_U64), Ok(())),
+            (OP_REM, Some(VALUE_I64), Some(VALUE_I64), Ok(())),
+            (OP_REM, Some(VALUE_U128), Some(VALUE_U128), Ok(())),
+            (OP_REM, Some(VALUE_U64), Some(VALUE_I64), Err(TemplateError::TypeMismatch)),
+            (OP_REM, Some(VALUE_BOOL), Some(VALUE_BOOL), Err(TemplateError::TypeMismatch)),
+            (OP_SHL, Some(VALUE_U64), Some(VALUE_U64), Ok(())),
+            (OP_SHR, Some(VALUE_U128), Some(VALUE_U64), Ok(())),
+            (OP_SHL, Some(VALUE_I64), Some(VALUE_U64), Err(TemplateError::TypeMismatch)),
+            (OP_SHR, Some(VALUE_U64), Some(VALUE_U128), Err(TemplateError::TypeMismatch)),
+            (OP_SHL, Some(VALUE_U64), None, Err(TemplateError::RegisterNotInitialized(1))),
+            (OP_BIT_AND, Some(VALUE_U64), Some(VALUE_U64), Ok(())),
+            (OP_BIT_OR, Some(VALUE_U128), Some(VALUE_U128), Ok(())),
+            (OP_BIT_XOR, Some(VALUE_I64), Some(VALUE_I64), Err(TemplateError::TypeMismatch)),
+            (OP_BIT_AND, Some(VALUE_U64), Some(VALUE_U128), Err(TemplateError::TypeMismatch)),
+            (OP_BIT_OR, Some(VALUE_BOOL), Some(VALUE_BOOL), Err(TemplateError::TypeMismatch)),
+            (OP_POW10, Some(VALUE_U64), None, Ok(())),
+            (OP_POW10, Some(VALUE_I64), None, Err(TemplateError::TypeMismatch)),
+            (OP_POW10, Some(VALUE_U128), None, Err(TemplateError::TypeMismatch)),
+            (OP_POW10, None, None, Err(TemplateError::RegisterNotInitialized(0))),
+            // An output names its parts in the immediate and no register at all.
+            (OP_EMIT, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
+            (
+                OP_SET_RETURN_DATA,
+                Some(VALUE_U64),
+                Some(VALUE_U64),
+                Err(TemplateError::InvalidInstruction(2)),
+            ),
+            (OP_BYTES_LEN, Some(VALUE_BYTES), None, Ok(())),
+            (OP_BYTES_LEN, Some(VALUE_U64), None, Err(TemplateError::TypeMismatch)),
+            (OP_BYTES_LEN, Some(VALUE_PUBKEY), None, Err(TemplateError::TypeMismatch)),
+            (OP_BYTES_LEN, None, None, Err(TemplateError::RegisterNotInitialized(0))),
+            (OP_BYTES_LEN + 1, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
             (39, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
             (0xfe, Some(VALUE_U64), Some(VALUE_U64), Err(TemplateError::InvalidInstruction(2))),
         ];
@@ -1022,6 +1352,492 @@ mod tests {
             }
             let result = verify_builder(&builder).map(|_| ());
             assert_eq!(&result, expected, "opcode {opcode} with a={a:?} b={b:?}");
+        }
+    }
+
+    /// `(opcode, operand types for a/b/c, expected outcome)`, for
+    /// [`multiply_divide_takes_three_matching_unsigned_operands`].
+    type MulDivTypeCase = (u8, [Option<u8>; 3], Result<(), TemplateError>);
+
+    #[test]
+    fn multiply_divide_takes_three_matching_unsigned_operands() {
+        let cases: &[MulDivTypeCase] = &[
+            (OP_MUL_DIV, [Some(VALUE_U64); 3], Ok(())),
+            (OP_MUL_DIV_CEIL, [Some(VALUE_U128); 3], Ok(())),
+            (OP_MUL_DIV, [Some(VALUE_I64); 3], Err(TemplateError::TypeMismatch)),
+            (
+                OP_MUL_DIV,
+                [Some(VALUE_U64), Some(VALUE_U64), Some(VALUE_U128)],
+                Err(TemplateError::TypeMismatch),
+            ),
+            (
+                OP_MUL_DIV_CEIL,
+                [Some(VALUE_U128), Some(VALUE_U64), Some(VALUE_U128)],
+                Err(TemplateError::TypeMismatch),
+            ),
+            (
+                OP_MUL_DIV,
+                [Some(VALUE_U64), Some(VALUE_U64), None],
+                Err(TemplateError::RegisterNotInitialized(2)),
+            ),
+        ];
+        for (opcode, types, expected) in cases {
+            let mut builder = ProgramBuilder::new();
+            let a = typed_register(&mut builder, types[0]);
+            let b = typed_register(&mut builder, types[1]);
+            let c = typed_register(&mut builder, types[2]);
+            builder.op(*opcode, a, b, c, 0);
+            let outcome = verify_builder(&builder).map(|_| ());
+            assert_eq!(&outcome, expected, "opcode {opcode} with {types:?}");
+        }
+    }
+
+    #[test]
+    fn destination_types() {
+        // Every new math opcode pins its destination's type: a witness of that type must be
+        // accepted, and a witness of either other numeric type must be rejected.
+        let cases: &[(u8, [u8; 3], u8)] = &[
+            (OP_MUL_DIV, [VALUE_U64; 3], VALUE_U64),
+            (OP_MUL_DIV_CEIL, [VALUE_U128; 3], VALUE_U128),
+            (OP_REM, [VALUE_U64, VALUE_U64, VALUE_U64], VALUE_U64),
+            (OP_REM, [VALUE_I64, VALUE_I64, VALUE_U64], VALUE_I64),
+            (OP_SHL, [VALUE_U128, VALUE_U64, VALUE_U64], VALUE_U128),
+            (OP_SHR, [VALUE_U64, VALUE_U64, VALUE_U64], VALUE_U64),
+            (OP_BIT_AND, [VALUE_U64, VALUE_U64, VALUE_U64], VALUE_U64),
+            (OP_BIT_XOR, [VALUE_U128, VALUE_U128, VALUE_U64], VALUE_U128),
+            (OP_POW10, [VALUE_U64, VALUE_U64, VALUE_U64], VALUE_U128),
+        ];
+        for (opcode, types, expected) in cases {
+            for witness in [VALUE_U64, VALUE_I64, VALUE_U128] {
+                let mut builder = ProgramBuilder::new();
+                let a = typed_register(&mut builder, Some(types[0]));
+                let b = typed_register(&mut builder, Some(types[1]));
+                let c = typed_register(&mut builder, Some(types[2]));
+                let result = builder.op(*opcode, a, b, c, 0);
+                let other = typed_register(&mut builder, Some(witness));
+                builder.binary(OP_EQ, result, other);
+                let outcome = verify_builder(&builder).map(|_| ());
+                if witness == *expected {
+                    assert_eq!(outcome, Ok(()), "opcode {opcode} dst should be {expected}");
+                } else {
+                    assert_eq!(
+                        outcome,
+                        Err(TemplateError::TypeMismatch),
+                        "opcode {opcode} dst vs {witness}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn math_ops_reject_flags() {
+        // None of these are read opcodes, so the dynamic-offset flag is never theirs to claim.
+        for opcode in [
+            OP_MUL_DIV, OP_MUL_DIV_CEIL, OP_REM, OP_SHL, OP_SHR, OP_BIT_AND, OP_BIT_OR,
+            OP_BIT_XOR, OP_POW10,
+        ] {
+            let mut builder = ProgramBuilder::new();
+            let a = builder.const_u64(1);
+            let b = builder.const_u64(1);
+            let c = builder.const_u64(1);
+            builder.op(opcode, a, b, c, 0);
+            assert!(verify_builder(&builder).is_ok(), "opcode {opcode} unflagged");
+            builder.instructions_mut()[3].flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET;
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidFlags(3)),
+                "opcode {opcode}"
+            );
+        }
+    }
+
+    #[test]
+    fn i32_reads_are_typed_i64() {
+        // A fixed-offset i32 read is typed i64: it adds to an i64 and not to a u64.
+        let mut builder = ProgramBuilder::new();
+        let feed = builder.account(0, None, None, 8);
+        let exponent = builder.read(OP_READ_I32, feed, 4);
+        let one = builder.const_i64(1);
+        builder.binary(OP_ADD, exponent, one);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()));
+
+        let mut builder = ProgramBuilder::new();
+        let feed = builder.account(0, None, None, 8);
+        let exponent = builder.read(OP_READ_I32, feed, 4);
+        let one = builder.const_u64(1);
+        builder.binary(OP_ADD, exponent, one);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(TemplateError::TypeMismatch));
+
+        // The four bytes must fit the declared minimum data length, as for every fixed read.
+        let mut builder = ProgramBuilder::new();
+        let feed = builder.account(0, None, None, 8);
+        builder.read(OP_READ_I32, feed, 5);
+        assert!(matches!(verify_builder(&builder), Err(TemplateError::ReadOutOfBounds(_))));
+
+        // As a `RETURN_DATA` selector this opcode picks a four-byte width; that path's typing is
+        // checked by `return_data_i32_selector_is_i64`.
+        assert_eq!(read_width(OP_READ_I32), 4);
+    }
+
+    #[test]
+    fn dynamic_i32_read() {
+        // A dynamic-offset i32 read is typed i64 too, and still needs a u64 offset register and
+        // a zero immediate.
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 0);
+        let offset = builder.const_u64(4);
+        let value = builder.read_dynamic(OP_READ_I32, account, offset);
+        let one = builder.const_i64(1);
+        builder.binary(OP_ADD, value, one);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()));
+
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 0);
+        let offset = builder.const_i64(4);
+        builder.read_dynamic(OP_READ_I32, account, offset);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TypeMismatch));
+
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 0);
+        let offset = builder.const_u64(4);
+        builder.read_dynamic(OP_READ_I32, account, offset);
+        builder.instructions_mut()[1].immediate_le = 8u64.to_le_bytes();
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidFlags(1)));
+    }
+
+    #[test]
+    fn return_data_i32_selector_is_i64() {
+        for (witness, expected) in [
+            (VALUE_I64, Ok(())),
+            (VALUE_U64, Err(TemplateError::TypeMismatch)),
+        ] {
+            let mut builder = ProgramBuilder::new();
+            let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+            let cpi = builder.cpi(program, &[], &[]);
+            builder.invoke(cpi, None);
+            let value = builder.return_data(OP_READ_I32, MAX_RETURN_DATA_LEN as u64 - 4);
+            let other = typed_register(&mut builder, Some(witness));
+            builder.binary(OP_ADD, value, other);
+            assert_eq!(verify_builder(&builder).map(|_| ()), expected, "witness {witness}");
+        }
+
+        // The four bytes must still fit inside the return-data buffer, as for any width.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        builder.invoke(cpi, None);
+        builder.return_data(OP_READ_I32, MAX_RETURN_DATA_LEN as u64 - 3);
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::InvalidReturnData(1))
+        );
+    }
+
+    /// A builder whose fixed account 0 is pinned to the Instructions sysvar.
+    fn with_sysvar() -> (ProgramBuilder, u8) {
+        let mut builder = ProgramBuilder::new();
+        let sysvar = builder.account(0, Some(INSTRUCTIONS_SYSVAR_ID), None, 0);
+        (builder, sysvar)
+    }
+
+    /// A valid use of `opcode`, one of `OP_INSTRUCTION_COUNT` to `OP_BYTES_LEN`, as the last
+    /// instruction of its program. Returns the builder and the result register.
+    fn introspection_program(opcode: u8) -> (ProgramBuilder, u8) {
+        let (mut builder, sysvar) = with_sysvar();
+        let zero = builder.const_u64(0);
+        let result = match opcode {
+            OP_READ_INSTRUCTION_DATA => {
+                builder.read_instruction_data(OP_READ_U64, sysvar, zero, zero)
+            }
+            OP_READ_INSTRUCTION_BYTES => builder.read_instruction_bytes(sysvar, zero, zero, 8),
+            OP_READ_ACCOUNT_BYTES => builder.read_account_bytes(sysvar, zero, 8),
+            OP_BYTES_LEN => {
+                let bytes = builder.const_bytes(&[1, 2]);
+                builder.bytes_len(bytes)
+            }
+            _ => builder.introspect(opcode, sysvar, zero, zero),
+        };
+        (builder, result)
+    }
+
+    #[test]
+    fn introspection_and_byte_opcodes_type_their_results() {
+        let cases = [
+            (OP_INSTRUCTION_COUNT, VALUE_U64),
+            (OP_INSTRUCTION_INDEX, VALUE_U64),
+            (OP_INSTRUCTION_PROGRAM, VALUE_PUBKEY),
+            (OP_INSTRUCTION_ACCOUNT_COUNT, VALUE_U64),
+            (OP_INSTRUCTION_ACCOUNT, VALUE_PUBKEY),
+            (OP_INSTRUCTION_ACCOUNT_FLAGS, VALUE_U64),
+            (OP_INSTRUCTION_DATA_LEN, VALUE_U64),
+            (OP_READ_INSTRUCTION_DATA, VALUE_U64),
+            (OP_READ_INSTRUCTION_BYTES, VALUE_BYTES),
+            (OP_READ_ACCOUNT_BYTES, VALUE_BYTES),
+            (OP_BYTES_LEN, VALUE_U64),
+        ];
+        for (opcode, expected) in cases {
+            for witness in [VALUE_U64, VALUE_PUBKEY, VALUE_BYTES] {
+                let (mut builder, result) = introspection_program(opcode);
+                let other = typed_register(&mut builder, Some(witness));
+                builder.binary(OP_EQ, result, other);
+                let outcome = verify_builder(&builder).map(|_| ());
+                if witness == expected {
+                    assert_eq!(outcome, Ok(()), "opcode {opcode}");
+                } else {
+                    assert_eq!(
+                        outcome,
+                        Err(TemplateError::TypeMismatch),
+                        "opcode {opcode} vs {witness}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn introspection_needs_a_fixed_account_pinned_to_the_instructions_sysvar() {
+        for opcode in OP_INSTRUCTION_COUNT..=OP_READ_INSTRUCTION_BYTES {
+            let immediate = match opcode {
+                OP_READ_INSTRUCTION_DATA => OP_READ_U64 as u64,
+                OP_READ_INSTRUCTION_BYTES => 8,
+                _ => 0,
+            };
+            // Unpinned but owned by the sysvar's address, and pinned to another address.
+            for address in [None, Some([7; 32])] {
+                let mut builder = ProgramBuilder::new();
+                let account = builder.account(0, address, Some(INSTRUCTIONS_SYSVAR_ID), 0);
+                let zero = builder.const_u64(0);
+                builder.op(opcode, account, zero, zero, immediate);
+                assert_eq!(
+                    verify_builder(&builder),
+                    Err(TemplateError::InvalidIntrospection(1)),
+                    "opcode {opcode} with address {address:?}"
+                );
+            }
+            // An account the schema does not declare.
+            let (mut builder, _) = with_sysvar();
+            let zero = builder.const_u64(0);
+            builder.op(opcode, 1, zero, zero, immediate);
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidIntrospection(1)),
+                "opcode {opcode} with an undeclared account"
+            );
+            // A row account pinned to the sysvar is still not a fixed account.
+            let mut builder = ProgramBuilder::new();
+            let row = builder.row_account(0, Some(INSTRUCTIONS_SYSVAR_ID), None, 0);
+            builder.batch(1, 0);
+            let zero = builder.const_u64(0);
+            builder.for_each(0, |body| {
+                body.op(opcode, row, zero, zero, immediate);
+            });
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidIntrospection(2)),
+                "opcode {opcode} on a row account"
+            );
+            // In a REPEAT body, which has no rows, it is the same error: the verifier's row check
+            // for count loops leaves these opcodes to their own.
+            let mut builder = ProgramBuilder::new();
+            let row = builder.row_account(0, Some(INSTRUCTIONS_SYSVAR_ID), None, 0);
+            builder.batch(1, 0);
+            let zero = builder.const_u64(0);
+            builder.repeat(zero, 1, 0, |body| {
+                body.op(opcode, row, zero, zero, immediate);
+            });
+            builder.for_each(0, |body| {
+                body.loop_index();
+            });
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidIntrospection(2)),
+                "opcode {opcode} on a row account in a REPEAT"
+            );
+            // The pinned fixed account works inside a loop body too.
+            let mut builder = ProgramBuilder::new();
+            let sysvar = builder.account(0, Some(INSTRUCTIONS_SYSVAR_ID), None, 0);
+            builder.row_account(0, None, None, 0);
+            builder.batch(1, 0);
+            let zero = builder.const_u64(0);
+            builder.for_each(0, |body| {
+                body.op(opcode, sysvar, zero, zero, immediate);
+            });
+            assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()), "opcode {opcode} in a loop");
+        }
+    }
+
+    #[test]
+    fn introspection_indexes_positions_and_offsets_are_u64_registers() {
+        let indexed = [
+            (OP_INSTRUCTION_PROGRAM, 0),
+            (OP_INSTRUCTION_ACCOUNT_COUNT, 0),
+            (OP_INSTRUCTION_ACCOUNT, 0),
+            (OP_INSTRUCTION_ACCOUNT_FLAGS, 0),
+            (OP_INSTRUCTION_DATA_LEN, 0),
+            (OP_READ_INSTRUCTION_DATA, OP_READ_U8 as u64),
+            (OP_READ_INSTRUCTION_BYTES, 1),
+        ];
+        for (opcode, immediate) in indexed {
+            let (mut builder, sysvar) = with_sysvar();
+            let index = builder.const_i64(0);
+            let zero = builder.const_u64(0);
+            builder.op(opcode, sysvar, index, zero, immediate);
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::TypeMismatch),
+                "opcode {opcode} index"
+            );
+
+            let (mut builder, sysvar) = with_sysvar();
+            let index = builder.register();
+            let zero = builder.const_u64(0);
+            builder.op(opcode, sysvar, index, zero, immediate);
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::RegisterNotInitialized(index)),
+                "opcode {opcode} unset index"
+            );
+        }
+        // The account opcodes take a position in `c`, the data reads an offset.
+        let positioned = [
+            (OP_INSTRUCTION_ACCOUNT, 0),
+            (OP_INSTRUCTION_ACCOUNT_FLAGS, 0),
+            (OP_READ_INSTRUCTION_DATA, OP_READ_U8 as u64),
+            (OP_READ_INSTRUCTION_BYTES, 1),
+        ];
+        for (opcode, immediate) in positioned {
+            let (mut builder, sysvar) = with_sysvar();
+            let zero = builder.const_u64(0);
+            let position = builder.const_u128(0);
+            builder.op(opcode, sysvar, zero, position, immediate);
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::TypeMismatch),
+                "opcode {opcode} c"
+            );
+        }
+    }
+
+    #[test]
+    fn instruction_data_reads_take_a_read_opcode_as_their_width() {
+        let selectors = [
+            (OP_READ_U8, VALUE_U64),
+            (OP_READ_U16, VALUE_U64),
+            (OP_READ_I32, VALUE_I64),
+            (OP_READ_I64, VALUE_I64),
+            (OP_READ_BOOL, VALUE_BOOL),
+            (OP_READ_U128, VALUE_U128),
+            (OP_READ_PUBKEY, VALUE_PUBKEY),
+        ];
+        for (selector, witness) in selectors {
+            let (mut builder, sysvar) = with_sysvar();
+            let zero = builder.const_u64(0);
+            let value = builder.read_instruction_data(selector, sysvar, zero, zero);
+            let other = typed_register(&mut builder, Some(witness));
+            builder.binary(OP_EQ, value, other);
+            assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()), "selector {selector}");
+        }
+        // Anything but a read opcode is refused, including a read opcode above the low byte.
+        let immediates = [
+            0,
+            OP_ADD as u64,
+            OP_READ_INSTRUCTION_DATA as u64,
+            0x100 | OP_READ_U64 as u64,
+            u64::MAX,
+        ];
+        for immediate in immediates {
+            let (mut builder, sysvar) = with_sysvar();
+            let zero = builder.const_u64(0);
+            builder.op(OP_READ_INSTRUCTION_DATA, sysvar, zero, zero, immediate);
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidInstruction(1)),
+                "immediate {immediate:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn byte_reads_take_one_to_1024_bytes_and_are_typed_that_long() {
+        for opcode in [OP_READ_INSTRUCTION_BYTES, OP_READ_ACCOUNT_BYTES] {
+            let lengths = [
+                (0, Err(TemplateError::InvalidInstruction(1))),
+                (1, Ok(())),
+                (MAX_INPUT_BYTES as u64, Ok(())),
+                (MAX_INPUT_BYTES as u64 + 1, Err(TemplateError::InvalidInstruction(1))),
+                (u64::MAX, Err(TemplateError::InvalidInstruction(1))),
+            ];
+            for (len, expected) in lengths {
+                let (mut builder, sysvar) = with_sysvar();
+                let zero = builder.const_u64(0);
+                builder.op(opcode, sysvar, zero, zero, len);
+                assert_eq!(
+                    verify_builder(&builder).map(|_| ()),
+                    expected,
+                    "opcode {opcode} len {len}"
+                );
+            }
+            // A CPI that forwards the bytes must declare exactly their length.
+            let (mut builder, sysvar) = with_sysvar();
+            let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+            let zero = builder.const_u64(0);
+            let bytes = builder.op(opcode, sysvar, zero, zero, 40);
+            let cpi = builder.cpi(program, &[], &[Segment::Register(DATA_REG_BYTES, bytes)]);
+            builder.set_cpi_max_data_len(cpi, 40);
+            builder.invoke(cpi, None);
+            assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()), "opcode {opcode}");
+            builder.set_cpi_max_data_len(cpi, 41);
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidCpi(0)),
+                "opcode {opcode}"
+            );
+        }
+    }
+
+    #[test]
+    fn account_byte_reads_take_any_declared_account_and_a_u64_offset() {
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 0);
+        let offset = builder.const_u64(0);
+        builder.read_account_bytes(account, offset, 8);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()), "a fixed account, unpinned");
+
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let offset = builder.const_u64(0);
+        builder.for_each(0, |body| {
+            body.read_account_bytes(row, offset, 8);
+        });
+        assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()), "a row account in its loop");
+
+        let mut builder = ProgramBuilder::new();
+        let offset = builder.const_u64(0);
+        builder.read_account_bytes(3, offset, 8);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidAccountConstraint(3)));
+
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(0, None, None, 0);
+        let offset = builder.const_i64(0);
+        builder.read_account_bytes(account, offset, 8);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TypeMismatch));
+    }
+
+    #[test]
+    fn introspection_and_byte_opcodes_reject_flags() {
+        // None of them is a read opcode, so the dynamic-offset flag is never theirs to claim.
+        for opcode in OP_INSTRUCTION_COUNT..=OP_BYTES_LEN {
+            let (mut builder, _) = introspection_program(opcode);
+            assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()), "opcode {opcode} unflagged");
+            let last = builder.instructions_mut().len() - 1;
+            builder.instructions_mut()[last].flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET;
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidFlags(last)),
+                "opcode {opcode}"
+            );
         }
     }
 
@@ -1165,14 +1981,14 @@ mod tests {
         builder.for_each(0, |body| body.require(condition));
         assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
 
-        // Two loops.
+        // Two loops over the same rows.
         let mut builder = ProgramBuilder::new();
         builder.row_account(0, None, None, 0);
         builder.batch(2, 0);
         let condition = builder.const_bool(true);
         builder.for_each(0, |body| body.require(condition));
         builder.for_each(0, |body| body.require(condition));
-        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
+        assert!(verify_builder(&builder).is_ok());
 
         // Nested loop.
         let mut builder = ProgramBuilder::new();
@@ -1251,6 +2067,306 @@ mod tests {
         let stats = verify_builder(&builder).unwrap();
         assert_eq!(stats.max_expanded_cpis, 30);
         assert_eq!(stats.batch_stride, 1);
+    }
+
+    #[test]
+    fn count_loops_take_a_u64_count_a_body_and_a_maximum() {
+        // A count loop with the index, and a carried total that leaves the loop.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(3);
+        let total = builder.const_u64(0);
+        builder.repeat(count, 4, 1 << total, |body| {
+            let index = body.loop_index();
+            let sum = body.binary(OP_ADD, total, index);
+            body.mov(total, sum);
+        });
+        let same = builder.binary(OP_EQ, total, total);
+        builder.require(same);
+        assert!(verify_builder(&builder).is_ok());
+
+        // An empty body or a zero maximum is not a loop.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let repeat = builder.repeat(count, 1, 0, |_| {});
+        builder.const_bool(true);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidLoop(repeat)));
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let repeat = builder.repeat(count, 0, 0, |body| {
+            body.loop_index();
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidLoop(repeat)));
+
+        // The count is read when the loop starts, so it must already hold a u64.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.register();
+        builder.repeat(count, 1, 0, |body| {
+            body.loop_index();
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::RegisterNotInitialized(count)));
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_i64(1);
+        builder.repeat(count, 1, 0, |body| {
+            body.loop_index();
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::TypeMismatch));
+        let mut builder = ProgramBuilder::new();
+        builder.repeat(9, 1, 0, |body| {
+            body.loop_index();
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidRegister(9)));
+
+        // A body past the end of the program, and flags, which only reads take.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let repeat = builder.repeat(count, 1, 0, |body| {
+            body.loop_index();
+        });
+        builder.instructions_mut()[repeat].a = 200;
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidInstruction(repeat)));
+        builder.instructions_mut()[repeat].a = 1;
+        builder.instructions_mut()[repeat].flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET;
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidFlags(repeat)));
+
+        // A REPEAT writes no register, so its destination is reserved, whatever register it names.
+        builder.instructions_mut()[repeat].flags = 0;
+        assert!(verify_builder(&builder).is_ok());
+        for dst in [0, 1, MAX_REGISTERS as u8, NO_INDEX - 1] {
+            builder.instructions_mut()[repeat].dst = dst;
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidLoop(repeat)),
+                "destination {dst}"
+            );
+        }
+        // FOREACH shipped accepting any destination, and templates that verify today must keep
+        // verifying, so its destination stays unchecked.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let condition = builder.const_bool(true);
+        let foreach = builder.for_each(0, |body| body.require(condition));
+        builder.instructions_mut()[foreach].dst = 0;
+        assert!(verify_builder(&builder).is_ok());
+
+        // Carried registers follow the FOREACH rules: set before the loop, and the same type after.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let total = builder.register();
+        builder.repeat(count, 1, 1 << total, |body| {
+            let index = body.loop_index();
+            body.mov(total, index);
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCarry(total)));
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let total = builder.const_u64(0);
+        builder.repeat(count, 1, 1 << total, |body| {
+            let flag = body.const_bool(true);
+            body.mov(total, flag);
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCarry(total)));
+
+        // Registers written in the body are gone after it.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let mut inner = NO_INDEX;
+        builder.repeat(count, 1, 0, |body| {
+            inner = body.loop_index();
+        });
+        let same = builder.binary(OP_EQ, inner, inner);
+        builder.require(same);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::RegisterNotInitialized(inner)));
+
+        // One instruction at a time, a loop is never accepted, in any scope, with the error a
+        // nested one gets.
+        let mut builder = ProgramBuilder::new();
+        builder.const_bool(true);
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut registers = [None; MAX_REGISTERS];
+        let repeat = record(OP_REPEAT, NO_INDEX, 1, 0, 1, 0, 0);
+        let foreach = record(OP_FOREACH, NO_INDEX, 1, NO_INDEX, NO_INDEX, 0, 0);
+        for scope in [LoopScope::Root, LoopScope::Rows, LoopScope::Count] {
+            assert_eq!(
+                program.verify_single_instruction(&repeat, 3, scope, None, &mut registers),
+                Err(TemplateError::InvalidLoop(3)),
+                "{scope:?}"
+            );
+            assert_eq!(
+                program.verify_single_instruction(&foreach, 3, scope, None, &mut registers),
+                Err(TemplateError::InvalidBatch),
+                "{scope:?}"
+            );
+        }
+    }
+
+    /// An executable program, a writable row account with a pinned owner and eight bytes of data,
+    /// a batch of two rows, and one `u64` row input.
+    fn declare_rows(builder: &mut ProgramBuilder) -> (u8, u8, u8) {
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let row = builder.row_account(ACCOUNT_WRITABLE, None, Some([2; 32]), 8);
+        builder.batch(2, 0);
+        let amount = builder.row_input(VALUE_U64, 0);
+        (program, row, amount)
+    }
+
+    /// `(what, emit)`: a body that names a row, for
+    /// [`count_loop_bodies_have_an_index_but_no_rows`]. `emit` takes the program, row account and
+    /// row input from [`declare_rows`], and names the row in the last instruction it emits.
+    type RowCase = (&'static str, fn(&mut ProgramBuilder, u8, u8, u8));
+
+    #[test]
+    fn count_loop_bodies_have_an_index_but_no_rows() {
+        let cases: [RowCase; 6] = [
+            ("row input", |body, _, _, amount| {
+                body.load_input(amount);
+            }),
+            ("row account field", |body, _, row, _| {
+                body.account_key(row);
+            }),
+            ("row account read", |body, _, row, _| {
+                body.read(OP_READ_U64, row, 0);
+            }),
+            ("row account read at a register offset", |body, _, row, _| {
+                let offset = body.const_u64(0);
+                body.read_dynamic(OP_READ_U64, row, offset);
+            }),
+            ("row account bytes", |body, _, row, _| {
+                let offset = body.const_u64(0);
+                body.read_account_bytes(row, offset, 8);
+            }),
+            ("invoke passing a row account", |body, program, row, _| {
+                let cpi = body.cpi(program, &[(row, ACCOUNT_WRITABLE)], &[]);
+                body.invoke(cpi, None);
+            }),
+        ];
+        for (what, emit) in cases {
+            // Inside a FOREACH the row is there.
+            let mut builder = ProgramBuilder::new();
+            let (program, row, amount) = declare_rows(&mut builder);
+            builder.for_each(0, |body| emit(body, program, row, amount));
+            assert!(verify_builder(&builder).is_ok(), "{what} in a FOREACH");
+            // Inside a REPEAT it is not, though the FOREACH before it iterates the rows.
+            let count = builder.const_u64(1);
+            builder.repeat(count, 1, 0, |body| emit(body, program, row, amount));
+            let last = builder.instructions_mut().len() - 1;
+            assert_eq!(
+                verify_builder(&builder),
+                Err(TemplateError::InvalidLoop(last)),
+                "{what} in a REPEAT"
+            );
+        }
+    }
+
+    #[test]
+    fn a_template_holds_up_to_eight_loops_in_sequence_and_none_nested() {
+        // Two FOREACH loops over the same rows, with a REPEAT between them.
+        let mut builder = ProgramBuilder::new();
+        let row = builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let count = builder.const_u64(2);
+        builder.for_each(0, |body| {
+            body.account_lamports(row);
+        });
+        builder.repeat(count, 2, 0, |body| {
+            body.loop_index();
+        });
+        builder.for_each(0, |body| {
+            body.account_key(row);
+        });
+        assert!(verify_builder(&builder).is_ok());
+
+        // A count loop needs no batch, but a batch still needs a FOREACH.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(2);
+        builder.repeat(count, 2, 0, |body| {
+            body.loop_index();
+        });
+        assert!(verify_builder(&builder).is_ok());
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
+
+        // Eight loops, and not a ninth.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        for _ in 0..MAX_LOOPS {
+            builder.repeat(count, 1, 0, |body| {
+                body.loop_index();
+            });
+        }
+        assert!(verify_builder(&builder).is_ok());
+        let ninth = builder.repeat(count, 1, 0, |body| {
+            body.loop_index();
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidLoop(ninth)));
+
+        // No nesting: a REPEAT inside any body is InvalidLoop; a FOREACH is InvalidBatch, as before.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let count = builder.const_u64(1);
+        let mut inner = 0;
+        builder.for_each(0, |body| {
+            inner = body.repeat(count, 1, 0, |inner_body| {
+                inner_body.loop_index();
+            });
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidLoop(inner)));
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let mut inner = 0;
+        builder.repeat(count, 1, 0, |body| {
+            inner = body.repeat(count, 1, 0, |inner_body| {
+                inner_body.loop_index();
+            });
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidLoop(inner)));
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let count = builder.const_u64(1);
+        builder.repeat(count, 1, 0, |body| {
+            body.for_each(0, |inner_body| {
+                inner_body.loop_index();
+            });
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
+
+        // Return data never follows a loop: the invoke that set it ran in the body.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(program, &[], &[]);
+        let count = builder.const_u64(1);
+        builder.repeat(count, 1, 0, |body| body.invoke(cpi, None));
+        let read = builder.instructions_mut().len();
+        builder.return_data(OP_READ_U64, 0);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidReturnData(read)));
+    }
+
+    #[test]
+    fn worst_case_invocations_add_up_over_every_loop() {
+        // One invoke at the root, one per batch row, and two per REPEAT pass.
+        let build = |rows: u8, max: u8| {
+            let mut builder = ProgramBuilder::new();
+            let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+            builder.row_account(0, None, None, 0);
+            builder.batch(rows, 0);
+            let cpi = builder.cpi(program, &[], &[]);
+            let count = builder.const_u64(1);
+            builder.invoke(cpi, None);
+            builder.for_each(0, |body| body.invoke(cpi, None));
+            builder.repeat(count, max, 0, |body| {
+                body.invoke(cpi, None);
+                body.invoke(cpi, None);
+            });
+            verify_builder(&builder)
+        };
+        // 1 + 21 × 1 + 21 × 2 = 64.
+        assert_eq!(build(21, 21).unwrap().max_expanded_cpis, 64);
+        assert_eq!(build(22, 21), Err(TemplateError::ExcessiveCpiExpansion));
+        assert_eq!(build(21, 22), Err(TemplateError::ExcessiveCpiExpansion));
     }
 
     #[test]
@@ -1730,6 +2846,7 @@ mod tests {
             (OP_READ_I64, 8),
             (OP_READ_U128, 16),
             (OP_READ_PUBKEY, 32),
+            (OP_READ_I32, 4),
         ];
         for (opcode, width) in widths {
             let mut builder = ProgramBuilder::new();
@@ -1942,6 +3059,7 @@ mod tests {
             (OP_READ_I64, 8),
             (OP_READ_U128, 16),
             (OP_READ_PUBKEY, 32),
+            (OP_READ_I32, 4),
         ] {
             let mut builder = ProgramBuilder::new();
             let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
@@ -2044,6 +3162,399 @@ mod tests {
             body.require(same);
         });
         assert!(verify_builder(&builder).is_ok());
+    }
+
+    #[test]
+    fn outputs_are_encoded_like_invocation_data_up_to_the_return_data_limit() {
+        // Literal bytes, a u64 narrowed to two bytes, a pubkey, and a bytes input counted at its
+        // maximum length. Neither output is an invocation.
+        let mut builder = ProgramBuilder::new();
+        let owner = builder.account(0, None, None, 0);
+        let memo_input = builder.input(VALUE_BYTES, 16);
+        let memo = builder.load_input(memo_input);
+        let amount = builder.const_u64(7);
+        let key = builder.account_key(owner);
+        let tag = builder.blob(b"TAG1");
+        builder.emit_data(&[
+            Segment::Literal(tag),
+            Segment::Register(DATA_REG_U16, amount),
+            Segment::Register(DATA_REG_PUBKEY, key),
+            Segment::Register(DATA_REG_BYTES, memo),
+        ]);
+        builder.set_return_data(&[Segment::Register(DATA_REG_U64, amount)]);
+        let stats = verify_builder(&builder).unwrap();
+        assert_eq!((stats.cpis, stats.max_expanded_cpis, stats.max_cpi_data_len), (0, 0, 0));
+
+        // A 1,024-byte bytes input fills the limit; one more literal byte passes it.
+        let at_limit = |extra: usize| {
+            let mut builder = ProgramBuilder::new();
+            let input = builder.input(VALUE_BYTES, MAX_INPUT_BYTES as u16);
+            let value = builder.load_input(input);
+            let literal = builder.blob(&vec![0; extra]);
+            let at = builder.set_return_data(&[
+                Segment::Register(DATA_REG_BYTES, value),
+                Segment::Literal(literal),
+            ]);
+            (verify_builder(&builder).map(|_| ()), at)
+        };
+        assert_eq!(at_limit(0).0, Ok(()));
+        let (outcome, at) = at_limit(1);
+        assert_eq!(outcome, Err(TemplateError::InvalidOutput(at)));
+
+        // EMIT has the same bound, and a select counts its longer branch: 1,000 bytes, after a tag
+        // of padding.
+        let emit_with_padding = |padding: usize| {
+            let mut builder = ProgramBuilder::new();
+            let condition = builder.const_bool(true);
+            let short = builder.const_bytes(&[1; 4]);
+            let long = builder.const_bytes(&[2; 1_000]);
+            let selected = builder.select(condition, short, long);
+            let literal = builder.blob(&vec![0; padding]);
+            let at = builder.emit_data(&[
+                Segment::Literal(literal),
+                Segment::Register(DATA_REG_BYTES, selected),
+            ]);
+            (verify_builder(&builder).map(|_| ()), at)
+        };
+        assert_eq!(emit_with_padding(24).0, Ok(()));
+        let (outcome, at) = emit_with_padding(25);
+        assert_eq!(outcome, Err(TemplateError::InvalidOutput(at)));
+    }
+
+    #[test]
+    fn output_segments_follow_the_segment_rules() {
+        // Each case builds a CPI with two segments first, so the output's own segment is at
+        // index 2: errors name the segment's place in the whole table. The segment rules come
+        // before an EMIT's tag, so these untagged logs fail on their segment.
+        let check = |mutate: &dyn Fn(&mut ProgramBuilder, u8), expected: TemplateError| {
+            let mut builder = ProgramBuilder::new();
+            let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+            let amount = builder.const_u64(1);
+            let literal = builder.blob(&[2, 0, 0, 0]);
+            let cpi = builder.cpi(
+                program,
+                &[],
+                &[Segment::Literal(literal), Segment::Register(DATA_REG_U64, amount)],
+            );
+            builder.invoke(cpi, None);
+            mutate(&mut builder, amount);
+            assert_eq!(verify_builder(&builder), Err(expected), "{expected:?}");
+        };
+        check(
+            &|builder, amount| {
+                builder.emit_data(&[Segment::Register(DATA_REG_I64, amount)]);
+            },
+            TemplateError::TypeMismatch,
+        );
+        check(
+            &|builder, _| {
+                let unset = builder.register();
+                builder.emit_data(&[Segment::Register(DATA_REG_U64, unset)]);
+            },
+            TemplateError::RegisterNotInitialized(1),
+        );
+        check(
+            &|builder, amount| {
+                builder.emit_data(&[Segment::Register(0xfe, amount)]);
+            },
+            TemplateError::InvalidDataSegment(2),
+        );
+        check(
+            &|builder, _| {
+                builder.emit_data(&[Segment::Literal((2, 3))]);
+            },
+            TemplateError::InvalidDataSegment(2),
+        );
+        check(
+            &|builder, _| {
+                builder.emit_data(&[Segment::Literal((0, 1))]);
+                builder.segments_mut()[2].register = 0;
+            },
+            TemplateError::InvalidDataSegment(2),
+        );
+        check(
+            &|builder, amount| {
+                builder.emit_data(&[Segment::Register(DATA_REG_U64, amount)]);
+                builder.segments_mut()[2].len_le = [1, 0];
+            },
+            TemplateError::InvalidDataSegment(2),
+        );
+        check(
+            &|builder, amount| {
+                builder.emit_data(&[Segment::Register(DATA_REG_U64, amount)]);
+                builder.segments_mut()[2].offset_le = [1, 0];
+            },
+            TemplateError::InvalidDataSegment(2),
+        );
+        check(
+            &|builder, amount| {
+                builder.emit_data(&[Segment::Register(DATA_REG_U64, amount)]);
+                builder.segments_mut()[2].reserved = [0, 1];
+            },
+            TemplateError::InvalidDataSegment(2),
+        );
+    }
+
+    #[test]
+    fn output_records_name_a_non_empty_range_and_no_register() {
+        // Either output names both segments in the table: a tag, then the amount.
+        let with_output = |opcode: u8, mutate: &dyn Fn(&mut InstructionRecord)| {
+            let mut builder = ProgramBuilder::new();
+            let amount = builder.const_u64(1);
+            let tag = builder.blob(b"TAG1");
+            let parts = [Segment::Literal(tag), Segment::Register(DATA_REG_U64, amount)];
+            let at = if opcode == OP_EMIT {
+                builder.emit_data(&parts)
+            } else {
+                builder.set_return_data(&parts)
+            };
+            mutate(&mut builder.instructions_mut()[at]);
+            (verify_builder(&builder).map(|_| ()), at)
+        };
+        for opcode in [OP_EMIT, OP_SET_RETURN_DATA] {
+            assert_eq!(with_output(opcode, &|_| {}).0, Ok(()), "opcode {opcode}");
+            for mutate in [
+                (|record: &mut InstructionRecord| record.dst = 0) as fn(&mut InstructionRecord),
+                |record| record.a = 0,
+                |record| record.b = 0,
+                |record| record.c = 0,
+                |record| record.immediate_le = range_immediate(0, 0).to_le_bytes(),
+                |record| record.immediate_le = range_immediate(2, 1).to_le_bytes(),
+                |record| record.immediate_le = range_immediate(0, 3).to_le_bytes(),
+            ] {
+                let (outcome, at) = with_output(opcode, &mutate);
+                assert_eq!(
+                    outcome,
+                    Err(TemplateError::InvalidInstruction(at)),
+                    "opcode {opcode}"
+                );
+            }
+            let (outcome, at) =
+                with_output(opcode, &|record| record.flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET);
+            assert_eq!(outcome, Err(TemplateError::InvalidFlags(at)), "opcode {opcode}");
+        }
+    }
+
+    /// A log line names the program that wrote it, not the template, so an `EMIT` starts with a
+    /// literal tag of four bytes or more, and never with the run event's family: otherwise any
+    /// template could log a byte-exact run event for any template address.
+    #[test]
+    fn an_emit_starts_with_a_tag_outside_the_run_event_family() {
+        let emit = |parts: &dyn Fn(&mut ProgramBuilder, u8) -> Vec<Segment>| {
+            let mut builder = ProgramBuilder::new();
+            let amount = builder.const_u64(1);
+            let parts = parts(&mut builder, amount);
+            let at = builder.emit_data(&parts);
+            (verify_builder(&builder).map(|_| ()), at)
+        };
+
+        // A tag of four bytes or more, alone or before the data, including tags that only
+        // resemble the family.
+        for tag in [&b"TAG1"[..], b"a longer tag", b"BEU1", b"bev1", b"XBEV"] {
+            let tagged = emit(&|builder, amount| {
+                vec![
+                    Segment::Literal(builder.blob(tag)),
+                    Segment::Register(DATA_REG_U64, amount),
+                ]
+            });
+            assert_eq!(tagged.0, Ok(()), "{tag:?}");
+            assert_eq!(
+                emit(&|builder, _| vec![Segment::Literal(builder.blob(tag))]).0,
+                Ok(())
+            );
+        }
+
+        // No tag, a register before the tag, and a three-byte tag, even with a fourth literal
+        // byte after it: the tag is the first segment alone.
+        for parts in [
+            (|_: &mut ProgramBuilder, amount: u8| vec![Segment::Register(DATA_REG_U64, amount)])
+                as fn(&mut ProgramBuilder, u8) -> Vec<Segment>,
+            |builder, amount| {
+                vec![
+                    Segment::Register(DATA_REG_U64, amount),
+                    Segment::Literal(builder.blob(b"TAG1")),
+                ]
+            },
+            |builder, amount| {
+                vec![
+                    Segment::Literal(builder.blob(b"TAG")),
+                    Segment::Register(DATA_REG_U64, amount),
+                ]
+            },
+            |builder, _| {
+                vec![
+                    Segment::Literal(builder.blob(b"TAG")),
+                    Segment::Literal(builder.blob(b"1")),
+                ]
+            },
+        ] {
+            let (outcome, at) = emit(&parts);
+            assert_eq!(outcome, Err(TemplateError::InvalidOutput(at)));
+        }
+
+        // The run event's magic, any other version of it, and a byte-exact event: magic, bytecode
+        // version, iterations, invokes reached, the mask of those that ran, template address.
+        let mut event = b"BEV1".to_vec();
+        event.extend_from_slice(&[TEMPLATE_PROGRAM_VERSION, 0, 1]);
+        event.extend_from_slice(&1u64.to_le_bytes());
+        event.extend_from_slice(&[9; 32]);
+        for tag in [&b"BEV1"[..], b"BEV2", b"BEV\0", b"BEVERAGE", &event] {
+            let (outcome, at) = emit(&|builder, _| vec![Segment::Literal(builder.blob(tag))]);
+            assert_eq!(outcome, Err(TemplateError::InvalidOutput(at)), "{tag:?}");
+        }
+
+        // Return data is read by the caller that invoked the run, never mistaken for a log, so it
+        // needs no tag.
+        let mut builder = ProgramBuilder::new();
+        let amount = builder.const_u64(1);
+        builder.set_return_data(&[Segment::Register(DATA_REG_U64, amount)]);
+        assert!(verify_builder(&builder).is_ok());
+    }
+
+    #[test]
+    fn return_data_is_set_once_outside_every_loop_after_the_last_invoke() {
+        let transfer = |builder: &mut ProgramBuilder| {
+            let system = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+            builder.cpi(system, &[], &[])
+        };
+        let result = |builder: &mut ProgramBuilder| {
+            let value = builder.const_u64(7);
+            builder.set_return_data(&[Segment::Register(DATA_REG_U64, value)])
+        };
+
+        // After the last invoke, with outputs logged anywhere else, it verifies.
+        let mut builder = ProgramBuilder::new();
+        let cpi = transfer(&mut builder);
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let count = builder.const_u64(3);
+        let tag = builder.blob(b"TAG1");
+        builder.emit_data(&[
+            Segment::Literal(tag),
+            Segment::Register(DATA_REG_U64, count),
+        ]);
+        builder.for_each(0, |body| {
+            let row = body.loop_index();
+            body.emit_data(&[Segment::Literal(tag), Segment::Register(DATA_REG_U8, row)]);
+            body.invoke(cpi, None);
+        });
+        builder.invoke(cpi, None);
+        result(&mut builder);
+        assert!(verify_builder(&builder).is_ok());
+
+        // Before an invoke.
+        let mut builder = ProgramBuilder::new();
+        let cpi = transfer(&mut builder);
+        let at = result(&mut builder);
+        builder.invoke(cpi, None);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidOutput(at)));
+
+        // Before a loop whose body invokes.
+        let mut builder = ProgramBuilder::new();
+        let cpi = transfer(&mut builder);
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let at = result(&mut builder);
+        builder.for_each(0, |body| body.invoke(cpi, None));
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidOutput(at)));
+
+        // Inside a loop.
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(2, 0);
+        let value = builder.const_u64(7);
+        let mut at = 0;
+        builder.for_each(0, |body| {
+            at = body.set_return_data(&[Segment::Register(DATA_REG_U64, value)]);
+        });
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidOutput(at)));
+
+        // Twice: the first names the error.
+        let mut builder = ProgramBuilder::new();
+        let at = result(&mut builder);
+        result(&mut builder);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidOutput(at)));
+
+        // The single-instruction entry point the specifications use never indexes out of range.
+        let mut builder = ProgramBuilder::new();
+        result(&mut builder);
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut registers = [None; MAX_REGISTERS];
+        registers[0] = Some(RegisterInfo::scalar(VALUE_U64));
+        let record = program.instructions[1];
+        assert_eq!(
+            program.verify_single_instruction(
+                &record,
+                usize::MAX,
+                LoopScope::Root,
+                None,
+                &mut registers
+            ),
+            Ok((0, 0))
+        );
+    }
+
+    /// A count loop, the loops phase's `REPEAT`, is a loop like any other.
+    #[test]
+    fn return_data_is_not_set_inside_a_count_loop() {
+        // REPEAT: `a` is the body length, `b` the u64 count register, `c` the static maximum.
+        let with_body = |body: &dyn Fn(&mut ProgramBuilder, u8) -> usize| {
+            let mut builder = ProgramBuilder::new();
+            let count = builder.const_u64(2);
+            let value = builder.const_u64(7);
+            builder.emit(record(OP_REPEAT, NO_INDEX, 1, count, 2, 0, 0));
+            let at = body(&mut builder, value);
+            (verify_builder(&builder).map(|_| ()), at)
+        };
+        let (outcome, at) = with_body(&|builder, value| {
+            builder.set_return_data(&[Segment::Register(DATA_REG_U64, value)])
+        });
+        assert_eq!(outcome, Err(TemplateError::InvalidOutput(at)));
+        let (outcome, _) = with_body(&|builder, value| {
+            let tag = builder.blob(b"TAG1");
+            builder.emit_data(&[
+                Segment::Literal(tag),
+                Segment::Register(DATA_REG_U64, value),
+            ])
+        });
+        assert_eq!(outcome, Ok(()));
+    }
+
+    /// As an `EMIT` checks its segments before its tag, a `SET_RETURN_DATA` checks them before
+    /// where it sits, so a misplaced output with a bad segment reports the segment.
+    #[test]
+    fn return_data_reports_a_bad_segment_before_its_placement() {
+        // Inside a loop, naming a register that holds no value.
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let unset = builder.register();
+        builder.repeat(count, 1, 0, |body| {
+            body.set_return_data(&[Segment::Register(DATA_REG_U64, unset)]);
+        });
+        assert_eq!(
+            verify_builder(&builder),
+            Err(TemplateError::RegisterNotInitialized(unset))
+        );
+
+        // Before an invoke, with a segment of no known kind. The invocation has no data, so the
+        // output's segment is the table's first.
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(system, &[], &[]);
+        let value = builder.const_u64(7);
+        builder.set_return_data(&[Segment::Register(0xfe, value)]);
+        builder.invoke(cpi, None);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidDataSegment(0)));
+
+        // With good segments, the placement still decides.
+        let mut builder = ProgramBuilder::new();
+        let system = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        let cpi = builder.cpi(system, &[], &[]);
+        let value = builder.const_u64(7);
+        let at = builder.set_return_data(&[Segment::Register(DATA_REG_U64, value)]);
+        builder.invoke(cpi, None);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidOutput(at)));
     }
 
     #[test]
@@ -2181,7 +3692,7 @@ mod tests {
     /// Every compiler fixture must parse and verify; the TypeScript suite keeps the files current.
     #[test]
     fn every_shared_fixture_parses_and_verifies() {
-        let fixtures: [(&str, &str); 14] = [
+        let fixtures: [(&str, &str); 19] = [
             ("system-transfer", include_str!("../../../fixtures/system-transfer.hex")),
             ("batch-transfer-30", include_str!("../../../fixtures/batch-transfer-30.hex")),
             ("ensure-ata", include_str!("../../../fixtures/ensure-ata.hex")),
@@ -2202,6 +3713,14 @@ mod tests {
             ("pinned-mint-read", include_str!("../../../fixtures/pinned-mint-read.hex")),
             ("payroll-row-amounts", include_str!("../../../fixtures/payroll-row-amounts.hex")),
             ("group-forward-transfer", include_str!("../../../fixtures/group-forward-transfer.hex")),
+            ("math-ops", include_str!("../../../fixtures/math-ops.hex")),
+            ("output", include_str!("../../../fixtures/output.hex")),
+            ("loops", include_str!("../../../fixtures/loops.hex")),
+            ("introspection", include_str!("../../../fixtures/introspection.hex")),
+            (
+                "signed-quote-settlement",
+                include_str!("../../../fixtures/signed-quote-settlement.hex"),
+            ),
         ];
         for (name, hex) in fixtures {
             let bytes = decode_hex(hex);
@@ -2214,12 +3733,13 @@ mod tests {
         }
 
         // The live-protocol examples in `clients/js/examples/protocols` are compiled by the
-        // TypeScript suite into this file. They target programs no test can invoke, but the
-        // verifier is exactly the check that matters for them: it is what the chain runs before
-        // a template is allowed to be stored.
+        // TypeScript suite into this file, alongside the fixed-account, input and group order the
+        // LiteSVM harness uses to build each run instruction by name. They target programs no
+        // test can invoke, but the verifier is exactly the check that matters for them: it is
+        // what the chain runs before a template is allowed to be stored.
         let protocols = include_str!("../../../fixtures/protocol-examples.json");
         let mut examples = 0usize;
-        for entry in protocols.split('"').filter(|part| part.len() > 64) {
+        for entry in payload_values(protocols) {
             let bytes = decode_hex(entry);
             let program = ProgramView::parse(&bytes)
                 .unwrap_or_else(|error| panic!("protocol example {examples}: {error}"));
@@ -2235,6 +3755,21 @@ mod tests {
         let event = decode_hex(include_str!("../../../fixtures/event-flag.hex"));
         let program = ProgramView::parse(&event).unwrap();
         assert_eq!(program.header.flags(), PROGRAM_FLAG_EMIT_EVENT);
+    }
+
+    /// Each `"payload": "<hex>"` value in `protocol-examples.json`, in file order. The fixture
+    /// now also carries account and input names alongside each payload, so picking out quoted
+    /// strings over some length is no longer safe; reading the `payload` key explicitly is.
+    fn payload_values(json: &str) -> impl Iterator<Item = &str> {
+        const KEY: &str = "\"payload\":";
+        let mut rest = json;
+        std::iter::from_fn(move || {
+            let after_key = &rest[rest.find(KEY)? + KEY.len()..];
+            let open = after_key.find('"')? + 1;
+            let close = open + after_key[open..].find('"')?;
+            rest = &after_key[close + 1..];
+            Some(&after_key[open..close])
+        })
     }
 
     fn decode_hex(value: &str) -> Vec<u8> {

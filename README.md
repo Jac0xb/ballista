@@ -16,8 +16,8 @@ compilation; there is no Borsh AST to allocate or deserialize during `Run`.
 
 Explore the [documentation and dual TypeScript/Rust examples](https://jac0xb.github.io/ballista/).
 
-Ballista is a clean break from the legacy Borsh task format. Old task accounts are not executable
-by the 0.3 runtime.
+Ballista is a clean break from the legacy Borsh task format. Old task accounts cannot run on the
+current program.
 
 ## Devnet deployment
 
@@ -28,9 +28,9 @@ by the 0.3 runtime.
 - Explorer IDL: [`JDQL78RmakzfYKcWzAC56CmUGNhCMtje3HvDCyiH2xCX`](https://explorer.solana.com/address/JDQL78RmakzfYKcWzAC56CmUGNhCMtje3HvDCyiH2xCX?cluster=devnet)
 
 That deployment is an earlier pre-release build and rejects templates compiled from this
-repository with `UnsupportedVersion`. The program is deployed once and immutably; until that
-deployment exists, run templates locally with `pnpm build:program && pnpm test:integration`. See
-the [deployment policy](https://jac0xb.github.io/ballista/guide/devnet).
+repository with `InvalidTemplateProgram` (custom error 6002). A release will be deployed once and
+made immutable; until then, run templates locally with `pnpm build:program && pnpm test:integration`.
+See the [deployment policy](https://jac0xb.github.io/ballista/guide/devnet).
 
 The checked-in [IDL](idl/ballista.json) is published through Solana's Program Metadata program.
 It describes Ballista's accounts and instructions for Explorer discovery; instruction fields marked
@@ -198,8 +198,8 @@ Only uploading templates can be cancelled. Finalized bytes are immutable and can
 The 80-byte account header records creator, ID, upload state, lengths, bump, and SHA-256 payload
 hash. The payload is a canonical series of fixed-size Zerocopy record tables followed by constant
 pubkeys and literal bytes. See [the scope and limits](docs/scope.md) and the
-[25-use-case capability matrix](docs/use-cases.md). Current packet, compute, and heap observations are in
-[the measurements note](docs/benchmarks.md).
+[examples](docs/examples/index.md). Transaction sizes and compute are in
+[Limits](docs/reference/limits.md#transaction-ceilings).
 
 ## Repository layout
 

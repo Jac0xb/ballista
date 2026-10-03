@@ -5,7 +5,7 @@ members = [
   "clients/rust",
   "common",
 ]
-exclude = ["tests/ballista", "certora"]
+exclude = ["tests/ballista", "tests/protocols", "certora"]
 default-members = [
   "programs/ballista",
   "clients/rust",

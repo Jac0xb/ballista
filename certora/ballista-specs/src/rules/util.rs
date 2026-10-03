@@ -235,9 +235,14 @@ pub fn runtime_type(value: RuntimeValue<'_>) -> Option<u8> {
     }
 }
 
-/// Whether an accepted instruction writes its destination register.
+/// Whether an accepted instruction writes its destination register. A loop opcode writes nothing
+/// itself; the instructions in its body do. The output opcodes name no register at all: the
+/// verifier requires `dst` to be `NO_INDEX`.
 pub fn writes_destination(opcode: u8) -> bool {
-    !matches!(opcode, OP_REQUIRE | OP_INVOKE | OP_FOREACH)
+    !matches!(
+        opcode,
+        OP_REQUIRE | OP_INVOKE | OP_FOREACH | OP_REPEAT | OP_EMIT | OP_SET_RETURN_DATA
+    )
 }
 
 /// The constants above are derived from `ProgramBuilder`; these tests keep them honest and print
@@ -324,6 +329,13 @@ mod tests {
     }
 
     #[test]
+    fn outputs_do_not_write_a_destination() {
+        assert!(!writes_destination(OP_EMIT));
+        assert!(!writes_destination(OP_SET_RETURN_DATA));
+        assert!(writes_destination(OP_MOVE));
+    }
+
+    #[test]
     fn pick_yields_the_first_option_under_the_host_runtime() {
         // The host runtime answers every nondeterministic bool with `false`.
         assert_eq!(pick!(7u8, 8, 9), 7);
@@ -341,7 +353,7 @@ mod abi_sizes {
     fn summarized_functions_return_the_sizes_the_summaries_assume() {
         // bounded_invoke and create_template_account: one word in r0.
         assert_eq!(size_of::<pinocchio::ProgramResult>(), 8);
-        // FixedSink::push_bytes: three 32-bit words through r1.
+        // The three ByteSink::push_bytes implementations: three 32-bit words through r1.
         assert_eq!(size_of::<ballista::processor::execute::RunResult<()>>(), 12);
         // ProgramView::verify: two 64-bit words through r1.
         assert_eq!(

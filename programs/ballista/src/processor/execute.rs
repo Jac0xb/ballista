@@ -1,6 +1,8 @@
+use core::mem::MaybeUninit;
+
 use ballista_common::template::*;
 use pinocchio::{
-    cpi::invoke_with_bounds,
+    cpi::{invoke_signed_unchecked, CpiAccount},
     error::ProgramError,
     instruction::{InstructionAccount, InstructionView},
     sysvars::{clock::Clock, Sysvar},
@@ -8,10 +10,17 @@ use pinocchio::{
 };
 use solana_address::Address;
 
+use super::{introspect, math};
 use crate::error::{vm_error, BallistaError};
+use crate::utils::pda;
 
 /// A typed register value. Public for formal specifications; the module is private otherwise.
+///
+/// `repr(C, u8)` puts every payload at offset 8, after the one-byte tag. With Rust's default
+/// layout the byte-array payloads start at offset 1 while the integers start at 8, so the compiler
+/// split every copy and every store of a value into unaligned byte, half, and word pieces.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C, u8)]
 pub enum RuntimeValue<'data> {
     Unset,
     Bool(bool),
@@ -26,7 +35,10 @@ pub enum RuntimeValue<'data> {
 ///
 /// VM failures carry their location into the custom error code so callers can tell which
 /// instruction or account failed. Failures returned by the runtime or by an invoked program pass
-/// through untouched so their codes are never confused with Ballista's.
+/// through unchanged, including custom codes that fall in Ballista's own range: Anchor programs
+/// number their errors from 6000 too (Orca, Jupiter, Kamino and marginfi among them), so a
+/// callee's 6001 is the same number as Ballista's `InvalidTemplateAccount`. A code on its own
+/// does not say which program raised it; the transaction logs show which program failed.
 #[derive(Debug, PartialEq, Eq)]
 pub enum RunError {
     /// A VM failure whose context (the program counter) is attached by the dispatch loop.
@@ -53,6 +65,11 @@ pub type RunResult<T> = Result<T, RunError>;
 
 impl RunError {
     /// Maps a failure raised while executing `instruction` at `pc`, logging the location.
+    ///
+    /// Out of line and cold: a run fails at most once, so the dispatch loop keeps only a branch to
+    /// here and none of the logging in its own body.
+    #[cold]
+    #[inline(never)]
     fn at(self, pc: usize, instruction: &InstructionRecord) -> ProgramError {
         match self {
             RunError::Program(error) => error,
@@ -80,6 +97,8 @@ impl RunError {
     }
 
     /// Maps a failure raised before the first instruction runs (input or account validation).
+    #[cold]
+    #[inline(never)]
     fn before_execution(self) -> ProgramError {
         match self {
             RunError::Program(error) => error,
@@ -110,14 +129,26 @@ fn log_failure(a: u64, b: u64, c: u64, d: u64, e: u64) {
     let _ = (a, b, c, d, e);
 }
 
-/// Per-run state: buffers allocated once and reused by every CPI, so heap use does not grow with
-/// the number of invocations (the default SBF allocator never frees), plus the invoke trace.
+/// Per-run state: buffers allocated once and reused by every CPI and every loop, so heap use does
+/// not grow with the number of invocations or loops (the default SBF allocator never frees), plus
+/// the invoke trace.
 pub struct Scratch<'data> {
     metas: Vec<InstructionAccount<'data>>,
     views: Vec<&'data AccountView>,
     data: Vec<u8>,
-    /// Program invoked by the most recent executed CPI, for return-data provenance checks.
-    last_invoked: Option<[u8; 32]>,
+    /// The bytes an `EMIT` or `SET_RETURN_DATA` encodes. Never `data`: inside a batch, `data` can
+    /// hold a loop-invariant invocation payload that the next row sends again without encoding
+    /// it, and an output written there would replace it.
+    ///
+    /// `None` until the run's first output, which allocates the buffer at `MAX_RETURN_DATA_LEN`
+    /// bytes, the most any verified output encodes, for every later output to reuse. It is leaked
+    /// rather than owned: the SBF heap never frees, so that costs nothing, and a null reference is
+    /// the cheapest field to initialize. Every run pays for that store, one compute unit here
+    /// against two for an `Option<Vec<u8>>` and three or four for an empty `Vec<u8>`.
+    output: Option<&'data mut Vec<u8>>,
+    /// Program invoked by the most recent executed CPI, for return-data provenance checks. A
+    /// reference into the account, not a copy: an address never changes during a run.
+    last_invoked: Option<&'data Address>,
     /// Invoke instructions reached so far, counted across loop iterations.
     expanded: u8,
     /// Bit `n` is set when the `n`th reached invoke actually ran (its guard was true).
@@ -134,8 +165,24 @@ pub struct Scratch<'data> {
     /// Whether that descriptor's data bytes are the same on every row, so `data` can be kept as
     /// well as the account list. Encoding them again costs more than resolving the accounts.
     data_invariant: bool,
-    /// Its program account, resolved once when it is not a row account.
-    built_program: Option<&'data AccountView>,
+    /// What the repeat pass needs from that descriptor, taken when its list was built.
+    built_call: Option<BuiltCall<'data>>,
+    /// The registers as the running loop found them, plus every value it has carried so far; each
+    /// pass starts from them. Loops never nest, so at most one runs at a time and one buffer
+    /// serves every loop of a run: the first allocates it, and every later one copies into it.
+    snapshot: Vec<RuntimeValue<'data>>,
+}
+
+/// The parts of a cached descriptor the repeat pass reads, looked up and checked once when its
+/// account list is built rather than again on every row.
+#[derive(Clone, Copy)]
+struct BuiltCall<'data> {
+    records: &'data [CpiAccountRecord],
+    segments: &'data [DataSegment],
+    max_data_len: usize,
+    program_account: u8,
+    /// The program account, resolved once when it is not a row account.
+    program: Option<&'data AccountView>,
 }
 
 impl<'data> Scratch<'data> {
@@ -151,6 +198,7 @@ impl<'data> Scratch<'data> {
             metas: Vec::with_capacity(MAX_CPI_ACCOUNTS),
             views: Vec::with_capacity(MAX_CPI_ACCOUNTS),
             data: Vec::with_capacity(max_data),
+            output: None,
             last_invoked: None,
             expanded: 0,
             executed: 0,
@@ -158,7 +206,8 @@ impl<'data> Scratch<'data> {
             cache_cpi: None,
             built: false,
             data_invariant: false,
-            built_program: None,
+            built_call: None,
+            snapshot: Vec::new(),
         }
     }
 
@@ -228,13 +277,16 @@ pub fn run<'data>(
     Ok(())
 }
 
-/// Magic prefix of the run event emitted through `sol_log_data` when the template opts in.
+/// Magic prefix of the run event emitted through `sol_log_data` when the template opts in. Its
+/// first three bytes are `RUN_EVENT_TAG_FAMILY`, which the verifier refuses as an `EMIT` tag, so no
+/// template can log a line that reads as a run event. A later version keeps them.
 pub const EVENT_MAGIC: [u8; 4] = *b"BEV1";
 /// Size of the run event: magic, bytecode version, iterations, expanded invokes, executed mask,
 /// template address.
 pub const EVENT_LEN: usize = 4 + 1 + 1 + 1 + 8 + 32;
 
-/// Encodes the run event. Indexers decode it from the `Program data:` log line.
+/// Encodes the run event. Indexers decode it from the `Program data:` log line. `iterations` is
+/// the number of batch rows the run was given; a count loop's passes are not counted in it.
 pub fn encode_event(
     iterations: usize,
     expanded: u8,
@@ -251,6 +303,7 @@ pub fn encode_event(
     event
 }
 
+/// Logs `event` as one `Program data:` field: the run event, and every `EMIT`.
 #[inline(always)]
 fn emit_event(event: &[u8]) {
     #[cfg(target_os = "solana")]
@@ -270,11 +323,15 @@ pub fn parse_run_inputs<'data>(
 ) -> RunResult<Vec<RuntimeValue<'data>>> {
     let fixed = program.header.input_count();
     let row = program.inputs.get(fixed..).unwrap_or(&[]);
-    let descriptors = program.inputs[..fixed.min(program.inputs.len())]
-        .iter()
-        .chain((0..iterations).flat_map(|_| row.iter()));
-    let count = fixed + iterations * row.len();
-    parse_sequence(descriptors, count, data)
+    // `iterations` is bounded by the runtime account count, so this cannot overflow. Checked
+    // arithmetic would cost a 128-bit multiply on SBF.
+    let count = fixed.wrapping_add(iterations.wrapping_mul(row.len()));
+    let mut reader = InputReader::new(data, count);
+    reader.read_all(&program.inputs[..fixed.min(program.inputs.len())])?;
+    for _ in 0..iterations {
+        reader.read_all(row)?;
+    }
+    reader.finish(count)
 }
 
 /// Decodes a flat sequence of input values.
@@ -283,65 +340,128 @@ pub fn parse_inputs<'data>(
     descriptors: &[InputDescriptor],
     data: &'data [u8],
 ) -> RunResult<Vec<RuntimeValue<'data>>> {
-    parse_sequence(descriptors.iter(), descriptors.len(), data)
+    let mut reader = InputReader::new(data, descriptors.len());
+    reader.read_all(descriptors)?;
+    reader.finish(descriptors.len())
 }
 
-fn parse_sequence<'data, 'd>(
-    descriptors: impl Iterator<Item = &'d InputDescriptor>,
-    count: usize,
-    mut data: &'data [u8],
-) -> RunResult<Vec<RuntimeValue<'data>>> {
-    let mut inputs = vec![RuntimeValue::Unset; count];
-    for (index, descriptor) in descriptors.enumerate() {
-        let fail = || RunError::VmAt(BallistaError::InvalidRunInputs, clamp(index));
-        let value = match descriptor.value_type {
-            VALUE_BOOL => {
-                let (value, remaining) = take::<1>(data).map_err(|_| fail())?;
-                data = remaining;
-                match value[0] {
-                    0 => RuntimeValue::Bool(false),
-                    1 => RuntimeValue::Bool(true),
-                    _ => return Err(fail()),
-                }
+/// Decodes run input values in order, each straight into its slot.
+struct InputReader<'data> {
+    data: &'data [u8],
+    values: Vec<RuntimeValue<'data>>,
+}
+
+impl<'data> InputReader<'data> {
+    #[inline(always)]
+    fn new(data: &'data [u8], count: usize) -> Self {
+        // A verified template declares at most `MAX_INPUT_VALUES` values; the cap lets the
+        // compiler drop the allocation's overflow check. Anything past it would still fit, after
+        // one reallocation.
+        Self {
+            data,
+            values: Vec::with_capacity(count.min(MAX_INPUT_VALUES)),
+        }
+    }
+
+    /// Decodes one value per descriptor. A failure names the value's running index.
+    #[inline(always)]
+    fn read_all(&mut self, descriptors: &[InputDescriptor]) -> RunResult<()> {
+        for descriptor in descriptors {
+            if !self.read(descriptor) {
+                return Err(RunError::VmAt(
+                    BallistaError::InvalidRunInputs,
+                    clamp(self.values.len()),
+                ));
             }
+        }
+        Ok(())
+    }
+
+    /// Decodes the value `descriptor` names from the front of the remaining bytes, returning
+    /// false when they do not hold a valid value of that type. Each arm stores its value
+    /// straight into the next slot rather than through a copy of the whole enum.
+    #[inline(always)]
+    fn read(&mut self, descriptor: &InputDescriptor) -> bool {
+        let data = self.data;
+        let rest = match descriptor.value_type {
             VALUE_U64 => {
-                let (value, remaining) = take::<8>(data).map_err(|_| fail())?;
-                data = remaining;
-                RuntimeValue::U64(u64::from_le_bytes(*value))
-            }
-            VALUE_I64 => {
-                let (value, remaining) = take::<8>(data).map_err(|_| fail())?;
-                data = remaining;
-                RuntimeValue::I64(i64::from_le_bytes(*value))
-            }
-            VALUE_U128 => {
-                let (value, remaining) = take::<16>(data).map_err(|_| fail())?;
-                data = remaining;
-                RuntimeValue::U128(*value)
+                let Some((bytes, rest)) = data.split_first_chunk::<8>() else {
+                    return false;
+                };
+                self.values
+                    .push(RuntimeValue::U64(u64::from_le_bytes(*bytes)));
+                rest
             }
             VALUE_PUBKEY => {
-                let (value, remaining) = take::<32>(data).map_err(|_| fail())?;
-                data = remaining;
-                RuntimeValue::Pubkey(*value)
+                let Some((bytes, rest)) = data.split_first_chunk::<32>() else {
+                    return false;
+                };
+                self.values.push(RuntimeValue::Pubkey(*bytes));
+                rest
+            }
+            VALUE_BOOL => {
+                let Some((&byte, rest)) = data.split_first() else {
+                    return false;
+                };
+                let value = match byte {
+                    0 => false,
+                    1 => true,
+                    _ => return false,
+                };
+                self.values.push(RuntimeValue::Bool(value));
+                rest
+            }
+            VALUE_I64 => {
+                let Some((bytes, rest)) = data.split_first_chunk::<8>() else {
+                    return false;
+                };
+                self.values
+                    .push(RuntimeValue::I64(i64::from_le_bytes(*bytes)));
+                rest
+            }
+            VALUE_U128 => {
+                let Some((bytes, rest)) = data.split_first_chunk::<16>() else {
+                    return false;
+                };
+                self.values.push(RuntimeValue::U128(*bytes));
+                rest
             }
             VALUE_BYTES => {
-                let (len, remaining) = take::<2>(data).map_err(|_| fail())?;
+                let Some((len, rest)) = data.split_first_chunk::<2>() else {
+                    return false;
+                };
                 let len = u16::from_le_bytes(*len) as usize;
-                let (bytes, remaining) = remaining.split_at_checked(len).ok_or_else(fail)?;
                 if len > descriptor.max_len() {
-                    return Err(fail());
+                    return false;
                 }
-                data = remaining;
-                RuntimeValue::Bytes(bytes)
+                let Some((bytes, rest)) = rest.split_at_checked(len) else {
+                    return false;
+                };
+                self.values.push(RuntimeValue::Bytes(bytes));
+                rest
             }
-            _ => return Err(fail()),
+            _ => return false,
         };
-        inputs[index] = value;
+        self.data = rest;
+        true
     }
-    if !data.is_empty() {
-        return Err(RunError::VmAt(BallistaError::InvalidRunInputs, clamp(count)));
+
+    /// Rejects trailing bytes, naming the index after the last value.
+    #[inline(always)]
+    fn finish(mut self, count: usize) -> RunResult<Vec<RuntimeValue<'data>>> {
+        if !self.data.is_empty() {
+            return Err(RunError::VmAt(
+                BallistaError::InvalidRunInputs,
+                clamp(count),
+            ));
+        }
+        // Only an inputs table shorter than its header leaves values undecoded, and they read as
+        // unset, as they always have.
+        if self.values.len() < count {
+            self.values.resize(count, RuntimeValue::Unset);
+        }
+        Ok(self.values)
     }
-    Ok(inputs)
 }
 
 /// Checks the runtime accounts against the schema and returns where everything falls.
@@ -456,6 +576,19 @@ pub fn validate_account(
     Ok(())
 }
 
+/// What every instruction of one run can read or write, gathered so the dispatch loop takes one
+/// pointer instead of seven arguments: SBF passes only five in registers and spills the rest to
+/// the stack on every call.
+struct Machine<'run, 'data> {
+    program: &'run ProgramView<'data>,
+    inputs: &'run [RuntimeValue<'data>],
+    accounts: &'data [AccountView],
+    registers: &'run mut [RuntimeValue<'data>],
+    scratch: &'run mut Scratch<'data>,
+    /// Batch rows supplied to this run.
+    iterations: usize,
+}
+
 fn execute_root<'data>(
     program: &ProgramView<'data>,
     inputs: &[RuntimeValue<'data>],
@@ -464,101 +597,237 @@ fn execute_root<'data>(
     registers: &mut [RuntimeValue<'data>],
     scratch: &mut Scratch<'data>,
 ) -> ProgramResult {
-    let mut pc = 0usize;
-    while pc < program.instructions.len() {
-        let instruction = &program.instructions[pc];
-        if instruction.opcode == OP_FOREACH {
-            let body_start = pc + 1;
-            let body_end = body_start
-                .checked_add(instruction.a as usize)
-                .filter(|end| *end <= program.instructions.len())
-                .ok_or_else(|| {
-                    RunError::from(BallistaError::InvalidTemplateProgram).at(pc, instruction)
-                })?;
-            // Registers written inside the body are discarded after each iteration, except the
-            // ones named in the carry mask, which flow into the next iteration and out of the loop.
-            let carry = instruction.immediate();
-            let mut base_registers = registers.to_vec();
-            let (cache_cpi, data_invariant) =
-                loop_cache_plan(program, &program.instructions[body_start..body_end]);
-            scratch.cache_cpi = cache_cpi;
-            scratch.data_invariant = data_invariant;
-            scratch.built = false;
-            for iteration in 0..iterations {
-                registers.copy_from_slice(&base_registers);
-                let row_base = program.header.fixed_account_count()
-                    + iteration * program.header.batch_stride();
-                execute_range(
-                    program,
-                    inputs,
-                    accounts,
-                    registers,
-                    scratch,
-                    body_start,
-                    body_end,
-                    Some((iteration, row_base)),
-                )?;
-                if carry != 0 {
-                    for (register, slot) in base_registers.iter_mut().enumerate() {
-                        if register < 64 && carry & (1u64 << register) != 0 {
-                            *slot = registers[register];
-                        }
-                    }
-                }
-            }
-            registers.copy_from_slice(&base_registers);
-            scratch.cache_cpi = None;
-            scratch.built = false;
-            scratch.data_invariant = false;
-            pc = body_end;
+    let mut machine = Machine {
+        program,
+        inputs,
+        accounts,
+        registers,
+        scratch,
+        iterations,
+    };
+    dispatch(&mut machine)
+}
+
+/// The dispatch loop, for the whole program including every loop body. `step` is inlined here, so
+/// an instruction costs a dispatch rather than a call. A loop body runs in this same loop: reaching
+/// the end of the body hands over to `next_pass`, which rewinds to the body's first
+/// instruction until every pass has run, so a pass costs no call and no frame.
+#[inline(never)]
+fn dispatch<'data>(machine: &mut Machine<'_, 'data>) -> ProgramResult {
+    let instructions = machine.program.instructions;
+    let mut rest = instructions;
+    let mut current: Option<Loop> = None;
+    let mut loop_context: Option<(usize, usize)> = None;
+    loop {
+        let [instruction, tail @ ..] = rest else {
+            // The end of the program, or of one pass over a loop body.
+            let Some(active) = &mut current else {
+                return Ok(());
+            };
+            loop_context = next_pass(machine, active);
+            rest = if loop_context.is_some() {
+                &instructions[active.body_start..active.body_end]
+            } else {
+                let body_end = active.body_end;
+                current = None;
+                &instructions[body_end..]
+            };
             continue;
+        };
+        if let Err(error) = step(machine, instruction, loop_context) {
+            let pc = index_of(instructions, instruction);
+            // `step` fails a loop instruction, as an opcode it does not run, before reading an
+            // operand. At the root that failure is where the loop starts, which keeps both loop
+            // kinds off the path of every other instruction. Only the root can hold a loop: inside
+            // a body the failure stands.
+            if matches!(instruction.opcode, OP_FOREACH | OP_REPEAT) && loop_context.is_none() {
+                let (start, end) = enter_loop(machine, pc, instruction, &mut current)?;
+                loop_context = current.as_ref().map(|active| (active.pass, active.row_base));
+                rest = &instructions[start..end];
+                continue;
+            }
+            return Err(error.at(pc, instruction));
         }
-        execute_instruction(
-            program,
-            inputs,
-            accounts,
-            registers,
-            scratch,
-            instruction,
-            None,
-        )
-        .map_err(|error| error.at(pc, instruction))?;
-        pc += 1;
+        rest = tail;
     }
-    Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn execute_range<'data>(
-    program: &ProgramView<'data>,
-    inputs: &[RuntimeValue<'data>],
-    accounts: &'data [AccountView],
-    registers: &mut [RuntimeValue<'data>],
-    scratch: &mut Scratch<'data>,
-    start: usize,
-    end: usize,
-    loop_context: Option<(usize, usize)>,
-) -> ProgramResult {
-    for pc in start..end {
-        let instruction = &program.instructions[pc];
-        if instruction.opcode == OP_FOREACH {
-            return Err(RunError::from(BallistaError::InvalidTemplateProgram).at(pc, instruction));
-        }
-        execute_instruction(
-            program,
-            inputs,
-            accounts,
-            registers,
-            scratch,
-            instruction,
-            loop_context,
-        )
-        .map_err(|error| error.at(pc, instruction))?;
-    }
-    Ok(())
+/// The index of `instruction` within `instructions`, which holds it. Only a failure or a loop
+/// entry needs it, so the dispatch loop walks a slice instead of counting.
+#[inline(always)]
+fn index_of(instructions: &[InstructionRecord], instruction: &InstructionRecord) -> usize {
+    (instruction as *const InstructionRecord as usize)
+        .wrapping_sub(instructions.as_ptr() as usize)
+        / core::mem::size_of::<InstructionRecord>()
 }
 
+/// The row base of a count loop, which has no rows. It is far past any account index, so a row
+/// account named there resolves to nothing, though the verifier already rejects one; and far
+/// below `usize::MAX`, so adding a row offset cannot wrap it back into range.
+pub const NO_ROWS: usize = usize::MAX / 2;
+
+/// A loop in progress: a FOREACH over the batch rows or a REPEAT over a count. The kind decides
+/// only how the loop starts, as its pass count, first row base and stride, so it is not stored.
+struct Loop {
+    body_start: usize,
+    body_end: usize,
+    /// Passes to run: one per batch row for FOREACH, the count for REPEAT.
+    passes: usize,
+    /// Added to `row_base` after each pass: the batch stride for FOREACH, and zero for REPEAT,
+    /// whose base stays `NO_ROWS`.
+    stride: usize,
+    /// The registers the carry mask names, in ascending order: the first `carried_len` entries.
+    /// Listed once at loop entry so a pass copies just these instead of testing every register.
+    carried: [u8; MAX_REGISTERS],
+    carried_len: usize,
+    /// Whether the body names a destination outside the carry mask. When it does not, every
+    /// register already equals its snapshot at the end of a pass (the carried ones were just
+    /// copied into it), so the restore would copy the file onto itself and is skipped.
+    restore: bool,
+    /// The pass running now, from zero: the value `LOOP_INDEX` reads.
+    pass: usize,
+    /// Where the current pass's row starts among the runtime accounts; `NO_ROWS` for REPEAT.
+    row_base: usize,
+}
+
+/// Starts the loop at `pc`: checks its body range, finds how many passes it makes, snapshots the
+/// registers, and decides what the loop's invocations can reuse between passes. With a pass to
+/// run, fills `slot` in place and returns the body's range; with none, leaves it empty and
+/// returns the code after the loop.
+#[inline(never)]
+fn enter_loop(
+    machine: &mut Machine<'_, '_>,
+    pc: usize,
+    instruction: &InstructionRecord,
+    slot: &mut Option<Loop>,
+) -> Result<(usize, usize), ProgramError> {
+    let program = machine.program;
+    let body_start = pc + 1;
+    let body_end = body_start
+        .checked_add(instruction.a as usize)
+        .filter(|end| *end <= program.instructions.len())
+        .ok_or_else(|| RunError::from(BallistaError::InvalidTemplateProgram).at(pc, instruction))?;
+    // FOREACH makes one pass per batch row, starting at the first row. REPEAT makes as many
+    // passes as its count register holds now, read once so the body cannot change it, and has
+    // no rows.
+    let (passes, row_base, stride) = if instruction.opcode == OP_FOREACH {
+        (
+            machine.iterations,
+            program.header.fixed_account_count(),
+            program.header.batch_stride(),
+        )
+    } else {
+        let count = loop_count(machine.registers, instruction)
+            .map_err(|error| error.at(pc, instruction))?;
+        (count, NO_ROWS, 0)
+    };
+    // Registers written inside the body are discarded after each pass, except the ones named in
+    // the carry mask, which flow into the next pass and out of the loop.
+    let carry = instruction.immediate();
+    let register_count = machine.registers.len();
+    // Every write goes through an instruction's `dst`, whatever its opcode, so a body whose
+    // destinations are all carried registers, or not registers at all, leaves nothing to restore.
+    let restore = program.instructions[body_start..body_end].iter().any(|record| {
+        let dst = record.dst as usize;
+        dst < register_count && (dst >= MAX_REGISTERS || carry & (1u64 << dst) == 0)
+    });
+    let (cache_cpi, data_invariant) =
+        loop_cache_plan(program, &program.instructions[body_start..body_end]);
+    machine.scratch.cache_cpi = cache_cpi;
+    machine.scratch.data_invariant = data_invariant;
+    machine.scratch.built = false;
+    if passes == 0 {
+        finish_loop(machine);
+        return Ok((body_end, program.instructions.len()));
+    }
+    // `run` allocates exactly the header's one-byte count of registers. Sliced by that count
+    // rather than by the file's own length, the copy is visibly small and needs no overflow
+    // check, which on SBF is a 128-bit multiply.
+    let registers = &machine.registers[..program.header.register_count()];
+    let snapshot = &mut machine.scratch.snapshot;
+    if snapshot.len() == registers.len() {
+        snapshot.copy_from_slice(registers);
+    } else {
+        *snapshot = registers.to_vec();
+    }
+    // Built in place: moving a finished loop into the slot would copy it with a syscall.
+    let active = slot.insert(Loop {
+        body_start,
+        body_end,
+        passes,
+        stride,
+        carried: [0; MAX_REGISTERS],
+        carried_len: 0,
+        restore,
+        pass: 0,
+        row_base,
+    });
+    for register in 0..register_count.min(MAX_REGISTERS) {
+        if carry & (1u64 << register) != 0 {
+            active.carried[active.carried_len] = register as u8;
+            active.carried_len += 1;
+        }
+    }
+    // The first pass starts from registers equal to the snapshot, so it needs no restore.
+    Ok((body_start, body_end))
+}
+
+/// The pass count a REPEAT names: register `b`, which must hold a `u64` no greater than the
+/// static maximum in `c`.
+#[inline(always)]
+fn loop_count(registers: &[RuntimeValue<'_>], instruction: &InstructionRecord) -> RunResult<usize> {
+    let count = match registers.get(instruction.b as usize) {
+        Some(RuntimeValue::U64(count)) => *count,
+        Some(RuntimeValue::Unset) | None => return Err(BallistaError::InvalidRegister.into()),
+        Some(_) => return Err(BallistaError::TypeMismatch.into()),
+    };
+    if count > instruction.c as u64 {
+        return Err(BallistaError::LoopCountExceeded.into());
+    }
+    // At most 255, so it fits.
+    Ok(count as usize)
+}
+
+/// Ends one pass over a loop body: keeps the carried registers, then either restores the
+/// snapshot for the next pass and returns its loop context, or restores it for the code after the
+/// loop and returns `None`.
+#[inline(never)]
+fn next_pass(machine: &mut Machine<'_, '_>, active: &mut Loop) -> Option<(usize, usize)> {
+    let snapshot = &mut machine.scratch.snapshot;
+    for &register in &active.carried[..active.carried_len] {
+        let register = register as usize;
+        snapshot[register] = machine.registers[register];
+    }
+    if active.restore {
+        machine.registers.copy_from_slice(snapshot);
+    }
+    // Neither add wraps: a loop makes at most 255 passes, a FOREACH's row base stays below the
+    // runtime account count, and a REPEAT's stays `NO_ROWS`, since its stride is zero.
+    active.pass = active.pass.wrapping_add(1);
+    if active.pass < active.passes {
+        // Row `n` starts at `fixed + n * stride`; stepping by the stride avoids a checked
+        // multiplication, which SBF implements with a 128-bit multiply routine of about fifty
+        // instructions. A REPEAT's stride is zero.
+        active.row_base = active.row_base.wrapping_add(active.stride);
+        return Some((active.pass, active.row_base));
+    }
+    finish_loop(machine);
+    None
+}
+
+/// Clears the loop's invocation cache once the loop is over.
+fn finish_loop(machine: &mut Machine<'_, '_>) {
+    machine.scratch.cache_cpi = None;
+    machine.scratch.built = false;
+    machine.scratch.data_invariant = false;
+}
+
+/// Executes one instruction from its parts, for the unit tests and the formal specifications. The
+/// dispatch loop calls `step` directly. `iterations` is only read by the loop's own batch
+/// handling, never by `step`, so zero stands in for it here.
+#[cfg(any(test, feature = "spec-api"))]
 #[allow(clippy::too_many_arguments)]
+#[inline(always)]
 pub fn execute_instruction<'data>(
     program: &ProgramView<'data>,
     inputs: &[RuntimeValue<'data>],
@@ -568,6 +837,31 @@ pub fn execute_instruction<'data>(
     instruction: &InstructionRecord,
     loop_context: Option<(usize, usize)>,
 ) -> RunResult<()> {
+    let mut machine = Machine {
+        program,
+        inputs,
+        accounts,
+        registers,
+        scratch,
+        iterations: 0,
+    };
+    step(&mut machine, instruction, loop_context)
+}
+
+/// Executes one instruction; `dispatch` inlines it. It takes the whole `Machine` so that its call
+/// to `extended_instruction` can pass one pointer: the machine's fields, the instruction and the
+/// loop context came to nine words, too many for registers, and five went on the stack.
+#[inline(always)]
+fn step<'data>(
+    machine: &mut Machine<'_, 'data>,
+    instruction: &InstructionRecord,
+    loop_context: Option<(usize, usize)>,
+) -> RunResult<()> {
+    let program = machine.program;
+    let inputs = machine.inputs;
+    let accounts = machine.accounts;
+    let registers = &mut *machine.registers;
+    let scratch = &mut *machine.scratch;
     let dst = instruction.dst as usize;
     match instruction.opcode {
         OP_LOAD_INPUT => {
@@ -579,7 +873,14 @@ pub fn execute_instruction<'data>(
                 if offset >= program.header.row_input_count() {
                     return Err(BallistaError::InvalidTemplateProgram.into());
                 }
-                program.header.input_count() + iteration * program.header.row_input_count() + offset
+                // The row count, the input counts, and so the index are all below 256 × 256, so
+                // none of this can wrap, and `get` bounds-checks the result regardless. A checked
+                // multiplication would call SBF's 128-bit multiply routine on every row input load.
+                program
+                    .header
+                    .input_count()
+                    .wrapping_add(iteration.wrapping_mul(program.header.row_input_count()))
+                    .wrapping_add(offset)
             };
             let value = *inputs
                 .get(index)
@@ -611,7 +912,7 @@ pub fn execute_instruction<'data>(
             set(registers, dst, RuntimeValue::Bytes(bytes))?;
         }
         OP_ACCOUNT_KEY => {
-            let account = resolve_account(program, accounts, instruction.a, loop_context)?;
+            let account = resolve(program, accounts, instruction.a, loop_context)?;
             set(
                 registers,
                 dst,
@@ -619,7 +920,7 @@ pub fn execute_instruction<'data>(
             )?;
         }
         OP_ACCOUNT_OWNER => {
-            let account = resolve_account(program, accounts, instruction.a, loop_context)?;
+            let account = resolve(program, accounts, instruction.a, loop_context)?;
             set(
                 registers,
                 dst,
@@ -627,32 +928,23 @@ pub fn execute_instruction<'data>(
             )?;
         }
         OP_ACCOUNT_LAMPORTS => {
-            let account = resolve_account(program, accounts, instruction.a, loop_context)?;
+            let account = resolve(program, accounts, instruction.a, loop_context)?;
             set(registers, dst, RuntimeValue::U64(account.lamports()))?;
         }
         OP_ACCOUNT_DATA_LEN => {
-            let account = resolve_account(program, accounts, instruction.a, loop_context)?;
+            let account = resolve(program, accounts, instruction.a, loop_context)?;
             set(registers, dst, RuntimeValue::U64(account.data_len() as u64))?;
         }
         OP_ACCOUNT_IS_EMPTY => {
-            let account = resolve_account(program, accounts, instruction.a, loop_context)?;
+            let account = resolve(program, accounts, instruction.a, loop_context)?;
             set(registers, dst, RuntimeValue::Bool(account.is_data_empty()))?;
         }
+        // `OP_READ_I32` is left out of this arm on purpose and reaches `read_account` through `_`.
+        // A case of its own reshapes the comparison tree this match compiles to (see `_` below):
+        // it cost "run, sum 30 rows" 60 compute units, a template that never reads an i32.
         OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_U128
         | OP_READ_PUBKEY | OP_READ_BOOL => {
-            let account = resolve_account(program, accounts, instruction.a, loop_context)?;
-            let offset = if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
-                match get(registers, instruction.b)? {
-                    RuntimeValue::U64(value) => usize::try_from(value)
-                        .map_err(|_| BallistaError::InvalidRuntimeAccount)?,
-                    _ => return Err(BallistaError::TypeMismatch.into()),
-                }
-            } else {
-                instruction.immediate() as usize
-            };
-            let data = account.try_borrow()?;
-            let value = read_value(instruction.opcode, &data, offset)?;
-            set(registers, dst, value)?;
+            read_account(program, accounts, registers, instruction, loop_context)?
         }
         OP_CLOCK_SLOT => set(registers, dst, RuntimeValue::U64(Clock::get()?.slot))?,
         OP_CLOCK_TIMESTAMP => set(
@@ -661,19 +953,22 @@ pub fn execute_instruction<'data>(
             RuntimeValue::I64(Clock::get()?.unix_timestamp),
         )?,
         OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_MIN | OP_MAX => {
-            let left = get(registers, instruction.a)?;
-            let right = get(registers, instruction.b)?;
-            set(registers, dst, arithmetic(instruction.opcode, left, right)?)?;
+            let left = operand(registers, instruction.a)?;
+            let right = operand(registers, instruction.b)?;
+            let value = arithmetic(instruction.opcode, *left, *right)
+                .map_err(|error| unset_first(error, left, right))?;
+            set(registers, dst, value)?;
         }
         OP_EQ | OP_NE | OP_LT | OP_LTE | OP_GT | OP_GTE => {
-            let left = get(registers, instruction.a)?;
-            let right = get(registers, instruction.b)?;
-            let result = compare(instruction.opcode, left, right)?;
+            let left = operand(registers, instruction.a)?;
+            let right = operand(registers, instruction.b)?;
+            let result = compare(instruction.opcode, *left, *right)
+                .map_err(|error| unset_first(error, left, right))?;
             set(registers, dst, RuntimeValue::Bool(result))?;
         }
         OP_AND | OP_OR => {
-            let left = as_bool(get(registers, instruction.a)?)?;
-            let right = as_bool(get(registers, instruction.b)?)?;
+            let left = read_bool(registers, instruction.a)?;
+            let right = read_bool(registers, instruction.b)?;
             set(
                 registers,
                 dst,
@@ -687,19 +982,21 @@ pub fn execute_instruction<'data>(
         OP_NOT => set(
             registers,
             dst,
-            RuntimeValue::Bool(!as_bool(get(registers, instruction.a)?)?),
+            RuntimeValue::Bool(!read_bool(registers, instruction.a)?),
         )?,
         OP_SELECT => {
-            let condition = as_bool(get(registers, instruction.a)?)?;
+            let condition = read_bool(registers, instruction.a)?;
             let selected = if condition {
-                get(registers, instruction.b)?
+                *read(registers, instruction.b)?
             } else {
-                get(registers, instruction.c)?
+                *read(registers, instruction.c)?
             };
             set(registers, dst, selected)?;
         }
         OP_CAST_U64 | OP_CAST_I64 | OP_CAST_U128 => {
-            let value = cast(instruction.opcode, get(registers, instruction.a)?)?;
+            let source = operand(registers, instruction.a)?;
+            let value = cast(instruction.opcode, *source)
+                .map_err(|error| unset_first(error, source, source))?;
             set(registers, dst, value)?;
         }
         OP_LOOP_INDEX => {
@@ -707,56 +1004,15 @@ pub fn execute_instruction<'data>(
             set(registers, dst, RuntimeValue::U64(iteration as u64))?;
         }
         OP_MOVE => {
-            let value = get(registers, instruction.a)?;
+            let value = *read(registers, instruction.a)?;
             set(registers, dst, value)?;
         }
         OP_DERIVE_PDA | OP_CREATE_PDA => {
-            let program_account = resolve_account(program, accounts, instruction.a, loop_context)?;
-            let (start, count) = instruction.blob_range();
-            if count == 0 || count > MAX_PDA_SEEDS {
-                return Err(BallistaError::InvalidTemplateProgram.into());
-            }
-            let end = start
-                .checked_add(count)
-                .ok_or(BallistaError::InvalidTemplateProgram)?;
-            let segments = program
-                .data_segments
-                .get(start..end)
-                .ok_or(BallistaError::InvalidTemplateProgram)?;
-            let mut storage = [[0u8; MAX_PDA_SEED_LEN]; MAX_PDA_SEEDS];
-            let mut lengths = [0usize; MAX_PDA_SEEDS];
-            for (slot, segment) in segments.iter().enumerate() {
-                let mut sink = FixedSink::new(&mut storage[slot]);
-                encode_segment(program, registers, segment, &mut sink)?;
-                lengths[slot] = sink.len;
-            }
-            // One extra slot holds the caller-supplied bump for CREATE_PDA.
-            let mut bump = [0u8; 1];
-            let mut seeds: [&[u8]; MAX_PDA_SEEDS + 1] = [&[]; MAX_PDA_SEEDS + 1];
-            let derived = if instruction.opcode == OP_CREATE_PDA {
-                let RuntimeValue::U64(value) = get(registers, instruction.b)? else {
-                    return Err(BallistaError::TypeMismatch.into());
-                };
-                bump[0] = u8::try_from(value).map_err(|_| BallistaError::InvalidPdaDerivation)?;
-                for slot in 0..count {
-                    seeds[slot] = &storage[slot][..lengths[slot]];
-                }
-                seeds[count] = &bump;
-                Address::create_program_address(&seeds[..count + 1], program_account.address())
-                    .map_err(|_| BallistaError::InvalidPdaDerivation)?
-            } else {
-                for slot in 0..count {
-                    seeds[slot] = &storage[slot][..lengths[slot]];
-                }
-                let (derived, _) =
-                    Address::try_find_program_address(&seeds[..count], program_account.address())
-                        .ok_or(BallistaError::InvalidPdaDerivation)?;
-                derived
-            };
-            set(registers, dst, RuntimeValue::Pubkey(derived.to_bytes()))?;
+            let derived = derive_pda(program, accounts, registers, instruction, loop_context)?;
+            set(registers, dst, RuntimeValue::Pubkey(derived))?;
         }
         OP_REQUIRE => {
-            if !as_bool(get(registers, instruction.a)?)? {
+            if !read_bool(registers, instruction.a)? {
                 return Err(BallistaError::RequirementFailed.into());
             }
         }
@@ -765,7 +1021,7 @@ pub fn execute_instruction<'data>(
             let slot = scratch.expanded;
             scratch.expanded = scratch.expanded.saturating_add(1);
             scratch.last_invoked = None;
-            if instruction.b != NO_INDEX && !as_bool(get(registers, instruction.b)?)? {
+            if instruction.b != NO_INDEX && !read_bool(registers, instruction.b)? {
                 return Ok(());
             }
             invoke_cpi(
@@ -780,9 +1036,247 @@ pub fn execute_instruction<'data>(
                 scratch.executed |= 1u64 << slot;
             }
         }
-        _ => return Err(BallistaError::InvalidTemplateProgram.into()),
+        // Every opcode from `OP_MUL_DIV` up, and any the executor does not run. SBF has no
+        // indirect jump, so this match compiles to a tree of comparisons, and a case added here
+        // reshapes the tree for every other opcode. Keep this arm one unconditional call: LLVM
+        // folds a guard or an `if` on the opcode back into the match as a case of its own, and
+        // that measured exactly as badly as giving the math opcodes an arm. Add new opcodes
+        // inside `extended_instruction`, never as an arm here. The commits "Keep the math opcodes
+        // out of the dispatch loop's way" and "Route new opcodes through a thin out-of-line
+        // helper" measure the alternatives; `fixtures/cu-ceilings.json` and
+        // `fixtures/example-ceilings.json` hold the line.
+        _ => extended_instruction(machine, instruction, loop_context)?,
     }
     Ok(())
+}
+
+/// Runs every opcode from `OP_MUL_DIV` up out of line, the introspection and byte opcodes among
+/// them; any other opcode it sees is one the executor does not run, and fails. As arms of the
+/// dispatch loop, the math opcodes cost every run compute units whether it used them or not; behind
+/// this call they cost only the templates that use them.
+///
+/// It returns `RunResult<()>` and writes the destination register itself. Returning the value
+/// instead would give the dispatch loop a return slot of its own for this call, and LLVM hoists
+/// such a slot's address to the loop's entry, where every run pays for it: that is how
+/// `#[inline(never)]` on `math::integer` and `math::pow10` cost 12 more units per run. Each arm
+/// also stores its own result: a value merged from the arms into one store after the match is
+/// written piecewise, which cost each opcode 4 to 18 units.
+#[inline(never)]
+fn extended_instruction<'data>(
+    machine: &mut Machine<'_, 'data>,
+    instruction: &InstructionRecord,
+    loop_context: Option<(usize, usize)>,
+) -> RunResult<()> {
+    let registers = &mut *machine.registers;
+    let dst = instruction.dst as usize;
+    match instruction.opcode {
+        OP_MUL_DIV | OP_MUL_DIV_CEIL => mul_div_instruction(registers, instruction),
+        OP_POW10 => {
+            let exponent = operand(registers, instruction.a)?;
+            let value =
+                math::pow10(*exponent).map_err(|error| unset_first(error, exponent, exponent))?;
+            set(registers, dst, value)
+        }
+        OP_REM | OP_SHL | OP_SHR | OP_BIT_AND | OP_BIT_OR | OP_BIT_XOR => {
+            let left = operand(registers, instruction.a)?;
+            let right = operand(registers, instruction.b)?;
+            let value = math::integer(instruction.opcode, *left, *right)
+                .map_err(|error| unset_first(error, left, right))?;
+            set(registers, dst, value)
+        }
+        OP_READ_I32 => read_account(
+            machine.program,
+            machine.accounts,
+            registers,
+            instruction,
+            loop_context,
+        ),
+        // Introspection names a fixed account, so it resolves without the loop context. The count
+        // and the index are two bytes at either end of the sysvar and need no parsing.
+        OP_INSTRUCTION_COUNT | OP_INSTRUCTION_INDEX => {
+            let sysvar = resolve(machine.program, machine.accounts, instruction.a, None)?;
+            let value = introspect::count_or_index(instruction.opcode, sysvar)?;
+            set(registers, dst, RuntimeValue::U64(value))
+        }
+        // Parsing the sysvar and reading byte ranges run in their own frames. Each helper takes
+        // four words, all passed in registers: one that took the loop context as well would take
+        // words from the stack, and their loads would run on entry here, for every opcode.
+        //
+        // The seven reads are listed, not written as a range. rustc tests a range pattern apart
+        // from the match's switch, on the way to the fallback arm, where it cost every loop entry
+        // and every output 5 compute units.
+        OP_INSTRUCTION_PROGRAM
+        | OP_INSTRUCTION_ACCOUNT_COUNT
+        | OP_INSTRUCTION_ACCOUNT
+        | OP_INSTRUCTION_ACCOUNT_FLAGS
+        | OP_INSTRUCTION_DATA_LEN
+        | OP_READ_INSTRUCTION_DATA
+        | OP_READ_INSTRUCTION_BYTES => {
+            let sysvar = resolve(machine.program, machine.accounts, instruction.a, None)?;
+            introspect::read_instruction(sysvar, registers, instruction)
+        }
+        OP_READ_ACCOUNT_BYTES => {
+            let account = resolve(machine.program, machine.accounts, instruction.a, loop_context)?;
+            introspect::read_account_bytes(account, registers, instruction)
+        }
+        OP_BYTES_LEN => {
+            let length = introspect::bytes_len(operand(registers, instruction.a)?)?;
+            set(registers, dst, RuntimeValue::U64(length))
+        }
+        _ => write_output(machine, instruction),
+    }
+}
+
+/// `EMIT` and `SET_RETURN_DATA`, reached through `extended_instruction`'s fallback arm so that
+/// its match keeps its shape. Every opcode the executor does not run arrives here too, and fails
+/// before anything is read.
+///
+/// The output's parts are encoded into the run's output buffer, exactly as invocation data is,
+/// then logged as one `Program data:` field or set as the run's return data. The verifier bounds
+/// every output at `MAX_RETURN_DATA_LEN` bytes, and admits one `SET_RETURN_DATA`, outside every
+/// loop and after the last invoke, because the runtime clears return data whenever a program is
+/// invoked. It also requires every `EMIT` to start with a literal tag outside the run event's
+/// family, so no log reads as a run event; nothing here checks that again. A `cu-profile` build
+/// replaces the return data with the profile record once the run ends; see `profile::report`.
+///
+/// Cold, so the register allocator charges this call rather than the math arms beside it. Without
+/// that, keeping `instruction` alive for the call cost the math opcodes spills, and the math
+/// fixture cost 37 compute units more. A loop still passes through here on entry, as an opcode
+/// the executor does not run, which costs each loop 8 compute units.
+#[cold]
+#[inline(never)]
+fn write_output(machine: &mut Machine<'_, '_>, instruction: &InstructionRecord) -> RunResult<()> {
+    let emit = match instruction.opcode {
+        OP_EMIT => true,
+        OP_SET_RETURN_DATA => false,
+        _ => return Err(BallistaError::InvalidTemplateProgram.into()),
+    };
+    let (start, count) = instruction.blob_range();
+    let segments = start
+        .checked_add(count)
+        .and_then(|end| machine.program.data_segments.get(start..end))
+        .ok_or(BallistaError::InvalidTemplateProgram)?;
+    let buffer = machine
+        .scratch
+        .output
+        .get_or_insert_with(|| Box::leak(Box::new(Vec::with_capacity(MAX_RETURN_DATA_LEN))));
+    buffer.clear();
+    let mut sink = OutputSink(buffer);
+    for segment in segments {
+        encode_segment(machine.program, machine.registers, segment, &mut sink)?;
+    }
+    let bytes = sink.0.as_slice();
+    if bytes.len() > MAX_RETURN_DATA_LEN {
+        return Err(BallistaError::InvalidTemplateProgram.into());
+    }
+    if emit {
+        emit_event(bytes);
+    } else {
+        pinocchio::cpi::set_return_data(bytes);
+    }
+    Ok(())
+}
+
+/// `MUL_DIV` and `MUL_DIV_CEIL`, out of line from `extended_instruction`. Inside it, their three
+/// operands and the call to `math::mul_div` nearly doubled the helper's stack use, 160 bytes to
+/// 312, and each multiply-divide cost about 25 units more than it does from here.
+#[inline(never)]
+fn mul_div_instruction<'data>(
+    registers: &mut [RuntimeValue<'data>],
+    instruction: &InstructionRecord,
+) -> RunResult<()> {
+    let a = operand(registers, instruction.a)?;
+    let b = operand(registers, instruction.b)?;
+    let c = operand(registers, instruction.c)?;
+    // `c` fills both slots: `unset_first` only needs to know whether it is `Unset`.
+    let value = math::mul_div(instruction.opcode == OP_MUL_DIV_CEIL, *a, *b, *c)
+        .map_err(|error| unset_first(unset_first(error, a, b), c, c))?;
+    set(registers, instruction.dst as usize, value)
+}
+
+/// Reads a typed value from an account's data into the destination register, for the read arm of
+/// the dispatch loop and for `READ_I32` in `extended_instruction`. Inlined into both: out of line,
+/// it would add a call to every read in every template.
+#[inline(always)]
+fn read_account<'data>(
+    program: &ProgramView<'data>,
+    accounts: &'data [AccountView],
+    registers: &mut [RuntimeValue<'data>],
+    instruction: &InstructionRecord,
+    loop_context: Option<(usize, usize)>,
+) -> RunResult<()> {
+    let account = resolve(program, accounts, instruction.a, loop_context)?;
+    let offset = if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
+        match registers.get(instruction.b as usize) {
+            Some(RuntimeValue::U64(value)) => {
+                usize::try_from(*value).map_err(|_| BallistaError::InvalidRuntimeAccount)?
+            }
+            Some(RuntimeValue::Unset) | None => return Err(BallistaError::InvalidRegister.into()),
+            Some(_) => return Err(BallistaError::TypeMismatch.into()),
+        }
+    } else {
+        instruction.immediate() as usize
+    };
+    let data = account.try_borrow()?;
+    decode_value(instruction.opcode, &data, offset, |value| {
+        set(registers, instruction.dst as usize, value)
+    })
+}
+
+/// Derives the address a `DERIVE_PDA` or `CREATE_PDA` names. Out of line: its seed buffers are
+/// most of a kilobyte, and inlined into the dispatch loop they cost every other instruction a
+/// larger frame to set up.
+#[inline(never)]
+fn derive_pda<'data>(
+    program: &ProgramView<'data>,
+    accounts: &'data [AccountView],
+    registers: &[RuntimeValue<'data>],
+    instruction: &InstructionRecord,
+    loop_context: Option<(usize, usize)>,
+) -> RunResult<[u8; 32]> {
+    let program_account = resolve_account(program, accounts, instruction.a, loop_context)?;
+    let (start, count) = instruction.blob_range();
+    if count == 0 || count > MAX_PDA_SEEDS {
+        return Err(BallistaError::InvalidTemplateProgram.into());
+    }
+    let end = start
+        .checked_add(count)
+        .ok_or(BallistaError::InvalidTemplateProgram)?;
+    let segments = program
+        .data_segments
+        .get(start..end)
+        .ok_or(BallistaError::InvalidTemplateProgram)?;
+    let mut storage = [[0u8; MAX_PDA_SEED_LEN]; MAX_PDA_SEEDS];
+    let mut lengths = [0usize; MAX_PDA_SEEDS];
+    for (slot, segment) in segments.iter().enumerate() {
+        let mut sink = FixedSink::new(&mut storage[slot]);
+        encode_segment(program, registers, segment, &mut sink)?;
+        lengths[slot] = sink.len;
+    }
+    // One extra slot holds the caller-supplied bump for CREATE_PDA.
+    let mut bump = [0u8; 1];
+    let mut seeds: [&[u8]; MAX_PDA_SEEDS + 1] = [&[]; MAX_PDA_SEEDS + 1];
+    let derived = if instruction.opcode == OP_CREATE_PDA {
+        let RuntimeValue::U64(value) = get(registers, instruction.b)? else {
+            return Err(BallistaError::TypeMismatch.into());
+        };
+        bump[0] = u8::try_from(value).map_err(|_| BallistaError::InvalidPdaDerivation)?;
+        for slot in 0..count {
+            seeds[slot] = &storage[slot][..lengths[slot]];
+        }
+        seeds[count] = &bump;
+        pda::create_program_address(&seeds[..count + 1], program_account.address())
+            .ok_or(BallistaError::InvalidPdaDerivation)?
+    } else {
+        for slot in 0..count {
+            seeds[slot] = &storage[slot][..lengths[slot]];
+        }
+        let (derived, _) =
+            pda::try_find_program_address(&seeds[..count], program_account.address())
+                .ok_or(BallistaError::InvalidPdaDerivation)?;
+        derived
+    };
+    Ok(derived.to_bytes())
 }
 
 /// Reads a typed value from the return data of the CPI that just ran.
@@ -806,7 +1300,7 @@ fn read_return_data<'data>(
     if size == 0 {
         return Err(BallistaError::MissingReturnData.into());
     }
-    if program_id != expected_program {
+    if &program_id != expected_program.as_array() {
         return Err(BallistaError::ReturnDataMismatch.into());
     }
     let bytes = &buffer[..size.min(MAX_RETURN_DATA_LEN)];
@@ -860,24 +1354,48 @@ fn blob_range<'data>(
         .ok_or_else(|| BallistaError::InvalidTemplateProgram.into())
 }
 
+#[inline(always)]
 pub fn read_value<'data>(opcode: u8, data: &[u8], offset: usize) -> RunResult<RuntimeValue<'data>> {
-    Ok(match opcode {
-        OP_READ_U8 => RuntimeValue::U64(read_array::<1>(data, offset)?[0] as u64),
-        OP_READ_U16 => RuntimeValue::U64(u16::from_le_bytes(*read_array(data, offset)?) as u64),
-        OP_READ_U32 => RuntimeValue::U64(u32::from_le_bytes(*read_array(data, offset)?) as u64),
-        OP_READ_U64 => RuntimeValue::U64(u64::from_le_bytes(*read_array(data, offset)?)),
-        OP_READ_I64 => RuntimeValue::I64(i64::from_le_bytes(*read_array(data, offset)?)),
-        OP_READ_U128 => RuntimeValue::U128(*read_array(data, offset)?),
-        OP_READ_PUBKEY => RuntimeValue::Pubkey(*read_array(data, offset)?),
-        OP_READ_BOOL => match read_array::<1>(data, offset)?[0] {
-            0 => RuntimeValue::Bool(false),
-            1 => RuntimeValue::Bool(true),
-            _ => return Err(BallistaError::TypeMismatch.into()),
-        },
-        _ => return Err(BallistaError::InvalidTemplateProgram.into()),
-    })
+    decode_value(opcode, data, offset, Ok)
 }
 
+/// Decodes the value a read opcode names at `offset` and hands it to `sink`. Each opcode calls
+/// `sink` with its own variant, so a sink that stores to a register writes only that variant's
+/// bytes instead of a whole value merged from all eight.
+#[inline(always)]
+fn decode_value<'data, T>(
+    opcode: u8,
+    data: &[u8],
+    offset: usize,
+    sink: impl FnOnce(RuntimeValue<'data>) -> RunResult<T>,
+) -> RunResult<T> {
+    match opcode {
+        OP_READ_U8 => sink(RuntimeValue::U64(read_array::<1>(data, offset)?[0] as u64)),
+        OP_READ_U16 => sink(RuntimeValue::U64(
+            u16::from_le_bytes(*read_array(data, offset)?) as u64,
+        )),
+        OP_READ_U32 => sink(RuntimeValue::U64(
+            u32::from_le_bytes(*read_array(data, offset)?) as u64,
+        )),
+        OP_READ_U64 => sink(RuntimeValue::U64(u64::from_le_bytes(*read_array(data, offset)?))),
+        OP_READ_I64 => sink(RuntimeValue::I64(i64::from_le_bytes(*read_array(data, offset)?))),
+        OP_READ_I32 => sink(RuntimeValue::I64(
+            i32::from_le_bytes(*read_array(data, offset)?) as i64,
+        )),
+        OP_READ_U128 => sink(RuntimeValue::U128(*read_array(data, offset)?)),
+        OP_READ_PUBKEY => sink(RuntimeValue::Pubkey(*read_array(data, offset)?)),
+        OP_READ_BOOL => match read_array::<1>(data, offset)?[0] {
+            0 => sink(RuntimeValue::Bool(false)),
+            1 => sink(RuntimeValue::Bool(true)),
+            _ => Err(BallistaError::TypeMismatch.into()),
+        },
+        _ => Err(BallistaError::InvalidTemplateProgram.into()),
+    }
+}
+
+// Out of line so the invocation's setup is never inlined into the dispatch loop, where its locals
+// and register pressure would weigh on every other instruction.
+#[inline(never)]
 fn invoke_cpi<'data>(
     program: &ProgramView<'data>,
     accounts: &'data [AccountView],
@@ -887,107 +1405,146 @@ fn invoke_cpi<'data>(
     scratch: &mut Scratch<'data>,
 ) -> RunResult<()> {
     crate::profile::setup_begin();
-    let descriptor = program
-        .cpis
-        .get(cpi_index)
-        .ok_or(BallistaError::InvalidTemplateProgram)?;
-    let account_len = descriptor.account_len as usize;
-    if account_len > MAX_CPI_ACCOUNTS {
-        return Err(BallistaError::InvalidTemplateProgram.into());
-    }
-    let account_end = descriptor
-        .account_start()
-        .checked_add(account_len)
-        .ok_or(BallistaError::InvalidTemplateProgram)?;
-    let records = program
-        .cpi_accounts
-        .get(descriptor.account_start()..account_end)
-        .ok_or(BallistaError::InvalidTemplateProgram)?;
-    let segment_end = descriptor
-        .segment_start()
-        .checked_add(descriptor.segment_len as usize)
-        .ok_or(BallistaError::InvalidTemplateProgram)?;
-    let segments = program
-        .data_segments
-        .get(descriptor.segment_start()..segment_end)
-        .ok_or(BallistaError::InvalidTemplateProgram)?;
-
     // A batch invoking the same descriptor every row rebuilds an account list whose fixed entries
     // are identical each time. Resolving one costs about 93 compute units, so the repeat pass
-    // touches only the slots that name a row account.
+    // touches only the slots that name a row account, and takes what it needs from the descriptor
+    // from the pass that built the list, where the lookups were already checked.
     let cacheable = scratch.cache_cpi == Some(cpi_index);
-    let reused = cacheable && scratch.built;
-    if reused {
-        rebind_row_accounts(program, accounts, records, loop_context, scratch)?;
+    // Set together with `built`, once the list is complete, so present exactly when it can be
+    // reused.
+    let built_call = if cacheable && scratch.built {
+        scratch.built_call
     } else {
-        scratch.built = false;
-        scratch.metas.clear();
-        scratch.views.clear();
-        scratch.data.clear();
-        for record in records {
-            let account = resolve_account(program, accounts, record.account, loop_context)?;
-            scratch.metas.push(InstructionAccount::new(
-                account.address(),
-                record.flags & ACCOUNT_WRITABLE != 0,
-                record.flags & ACCOUNT_SIGNER != 0,
-            ));
-            scratch.views.push(account);
-        }
-        if let Some(group) = descriptor.account_group() {
-            // Group accounts are forwarded with the transaction's writable flag and never as
-            // signers: a template delegates signatures only through declared slots. Their range
-            // comes from the run layout, so it is the same on every iteration.
-            let (start, len) = *scratch
-                .groups
-                .get(group)
+        None
+    };
+    let reused = built_call.is_some();
+    let (records, segments, max_data_len, program_reference, known_program) =
+        if let Some(call) = built_call {
+            rebind_row_accounts(program, accounts, call.records, loop_context, scratch)?;
+            (
+                call.records,
+                call.segments,
+                call.max_data_len,
+                call.program_account,
+                call.program,
+            )
+        } else {
+            let descriptor = program
+                .cpis
+                .get(cpi_index)
                 .ok_or(BallistaError::InvalidTemplateProgram)?;
-            let total = account_len + len as usize;
-            if total > MAX_CPI_ACCOUNTS {
-                return Err(RunError::VmAt(
-                    BallistaError::CpiAccountLimitExceeded,
-                    clamp(total),
-                ));
+            let account_len = descriptor.account_len as usize;
+            if account_len > MAX_CPI_ACCOUNTS {
+                return Err(BallistaError::InvalidTemplateProgram.into());
             }
-            let range = start as usize..start as usize + len as usize;
-            let group_accounts = accounts
-                .get(range)
-                .ok_or(BallistaError::InvalidRuntimeAccount)?;
-            for account in group_accounts {
-                scratch.metas.push(InstructionAccount::new(
+            let account_end = descriptor
+                .account_start()
+                .checked_add(account_len)
+                .ok_or(BallistaError::InvalidTemplateProgram)?;
+            let records = program
+                .cpi_accounts
+                .get(descriptor.account_start()..account_end)
+                .ok_or(BallistaError::InvalidTemplateProgram)?;
+            let segment_end = descriptor
+                .segment_start()
+                .checked_add(descriptor.segment_len as usize)
+                .ok_or(BallistaError::InvalidTemplateProgram)?;
+            let segments = program
+                .data_segments
+                .get(descriptor.segment_start()..segment_end)
+                .ok_or(BallistaError::InvalidTemplateProgram)?;
+
+            scratch.built = false;
+            scratch.metas.clear();
+            scratch.views.clear();
+            // Both lists hold `MAX_CPI_ACCOUNTS` and `account_len` is at most that, so the records
+            // fit; writing the slots directly skips a capacity check and a length update per push.
+            let mut count = 0;
+            let slots = records
+                .iter()
+                .zip(scratch.metas.spare_capacity_mut())
+                .zip(scratch.views.spare_capacity_mut());
+            for ((record, meta), view) in slots {
+                let account = resolve_account(program, accounts, record.account, loop_context)?;
+                meta.write(InstructionAccount::new(
                     account.address(),
-                    account.is_writable(),
-                    false,
+                    record.flags & ACCOUNT_WRITABLE != 0,
+                    record.flags & ACCOUNT_SIGNER != 0,
                 ));
-                scratch.views.push(account);
+                view.write(account);
+                count += 1;
             }
-        }
-        scratch.built_program = None;
-        scratch.built = cacheable;
-    }
+            if count < records.len() {
+                return Err(BallistaError::InvalidTemplateProgram.into());
+            }
+            // SAFETY: the loop initialized the first `count` slots of both lists, which were empty.
+            unsafe {
+                scratch.metas.set_len(count);
+                scratch.views.set_len(count);
+            }
+            if let Some(group) = descriptor.account_group() {
+                // Group accounts are forwarded with the transaction's writable flag and never as
+                // signers: a template delegates signatures only through declared slots. Their range
+                // comes from the run layout, so it is the same on every iteration.
+                let (start, len) = *scratch
+                    .groups
+                    .get(group)
+                    .ok_or(BallistaError::InvalidTemplateProgram)?;
+                let total = account_len + len as usize;
+                if total > MAX_CPI_ACCOUNTS {
+                    return Err(RunError::VmAt(
+                        BallistaError::CpiAccountLimitExceeded,
+                        clamp(total),
+                    ));
+                }
+                let range = start as usize..start as usize + len as usize;
+                let group_accounts = accounts
+                    .get(range)
+                    .ok_or(BallistaError::InvalidRuntimeAccount)?;
+                for account in group_accounts {
+                    scratch.metas.push(InstructionAccount::new(
+                        account.address(),
+                        account.is_writable(),
+                        false,
+                    ));
+                    scratch.views.push(account);
+                }
+            }
+            (
+                records,
+                segments,
+                descriptor.max_data_len(),
+                descriptor.program_account,
+                None,
+            )
+        };
 
     if !(reused && scratch.data_invariant) {
         scratch.data.clear();
         for segment in segments {
             encode_segment(program, registers, segment, &mut scratch.data)?;
         }
-        if scratch.data.len() > descriptor.max_data_len() || scratch.data.len() > MAX_CPI_DATA_LEN {
+        if scratch.data.len() > max_data_len || scratch.data.len() > MAX_CPI_DATA_LEN {
             return Err(BallistaError::CpiDataTooLarge.into());
         }
     }
 
-    // A template that invokes once takes the same path it always did; only a cacheable batch
-    // consults the remembered program account.
-    let program_account = if !cacheable {
-        resolve_account(program, accounts, descriptor.program_account, loop_context)?
-    } else if let Some(account) = scratch.built_program {
-        account
-    } else {
-        let account = resolve_account(program, accounts, descriptor.program_account, loop_context)?;
-        if descriptor.program_account & ITERATION_ACCOUNT_BIT == 0 {
-            scratch.built_program = Some(account);
-        }
-        account
+    // The program account is resolved on every invocation except a batch's repeat pass, which
+    // remembers it when it is not a row account.
+    let program_account = match known_program {
+        Some(account) => account,
+        None => resolve_account(program, accounts, program_reference, loop_context)?,
     };
+    if cacheable && !reused {
+        scratch.built = true;
+        scratch.built_call = Some(BuiltCall {
+            records,
+            segments,
+            max_data_len,
+            program_account: program_reference,
+            program: (program_reference & ITERATION_ACCOUNT_BIT == 0).then_some(program_account),
+        });
+    }
     let instruction = InstructionView {
         program_id: program_account.address(),
         accounts: scratch.metas.as_slice(),
@@ -998,7 +1555,7 @@ fn invoke_cpi<'data>(
     let invoked = bounded_invoke(&instruction, scratch.views.as_slice());
     crate::profile::cpi_end();
     invoked?;
-    scratch.last_invoked = Some(program_account.address().to_bytes());
+    scratch.last_invoked = Some(program_account.address());
     Ok(())
 }
 
@@ -1020,8 +1577,8 @@ fn sole_invoked_cpi(body: &[InstructionRecord]) -> Option<usize> {
     only
 }
 
-/// What a batch can reuse between rows: the descriptor every invoke in the body names, if they
-/// all name the same one, and whether its data bytes are the same on every row. Decided once, at
+/// What a loop can reuse between passes: the descriptor every invoke in the body names, if they
+/// all name the same one, and whether its data bytes are the same on every pass. Decided once, at
 /// loop entry, and out of line so the decision does not bloat the interpreter's own loop.
 #[inline(never)]
 fn loop_cache_plan(program: &ProgramView<'_>, body: &[InstructionRecord]) -> (Option<usize>, bool) {
@@ -1038,7 +1595,7 @@ fn loop_cache_plan(program: &ProgramView<'_>, body: &[InstructionRecord]) -> (Op
 }
 
 /// The registers a loop body can write. Every other register is restored from the pre-loop
-/// snapshot each iteration, so its value is the same on every row.
+/// snapshot after each pass, so its value is the same on every pass.
 fn registers_written(body: &[InstructionRecord]) -> u64 {
     let mut written = 0u64;
     for record in body {
@@ -1049,7 +1606,7 @@ fn registers_written(body: &[InstructionRecord]) -> u64 {
     written
 }
 
-/// Whether a descriptor's data bytes are identical on every row: each segment is either a
+/// Whether a descriptor's data bytes are identical on every pass: each segment is either a
 /// literal, or reads a register the body never writes.
 fn cpi_data_is_loop_invariant(
     program: &ProgramView<'_>,
@@ -1082,43 +1639,85 @@ fn rebind_row_accounts<'data>(
     loop_context: Option<(usize, usize)>,
     scratch: &mut Scratch<'data>,
 ) -> RunResult<()> {
-    for (slot, record) in records.iter().enumerate() {
+    // The list was built from these same records, one entry each, so the three walk in step. A
+    // slot's flags come from its record and do not change between rows; only the account does.
+    let slots = records
+        .iter()
+        .zip(scratch.metas.iter_mut())
+        .zip(scratch.views.iter_mut());
+    for ((record, meta), view) in slots {
         if record.account & ITERATION_ACCOUNT_BIT == 0 {
             continue;
         }
         let account = resolve_account(program, accounts, record.account, loop_context)?;
-        let (meta, view) = scratch
-            .metas
-            .get_mut(slot)
-            .zip(scratch.views.get_mut(slot))
-            .ok_or(BallistaError::InvalidTemplateProgram)?;
-        *meta = InstructionAccount::new(
-            account.address(),
-            record.flags & ACCOUNT_WRITABLE != 0,
-            record.flags & ACCOUNT_SIGNER != 0,
-        );
+        meta.address = account.address();
         *view = account;
     }
     Ok(())
 }
 
-/// Performs the CPI in its own stack frame. `invoke_with_bounds` places a `MAX_CPI_ACCOUNTS`-slot
-/// account array on the stack; combined with the caller's locals that exceeded the fixed 4 KiB
-/// frame of SBPF version 0, so the array gets a frame to itself.
+/// Performs the CPI in its own stack frame. The call needs a `MAX_CPI_ACCOUNTS`-slot account
+/// array on the stack; combined with the caller's locals that exceeded the fixed 4 KiB frame of
+/// SBPF version 0, so the array gets a frame to itself.
+///
+/// This is `invoke_with_bounds` without its first check on each account: that the view's address
+/// matches the meta's. Ballista writes each meta from the very view beside it, so the pair always
+/// matches. A writable account whose data is borrowed is still refused, with the same error.
 #[inline(never)]
 fn bounded_invoke(instruction: &InstructionView, views: &[&AccountView]) -> ProgramResult {
-    invoke_with_bounds::<MAX_CPI_ACCOUNTS, _>(instruction, views)
+    let count = instruction.accounts.len();
+    if count > MAX_CPI_ACCOUNTS {
+        return Err(ProgramError::InvalidArgument);
+    }
+    if views.len() < count {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+    let mut infos = [const { MaybeUninit::<CpiAccount>::uninit() }; MAX_CPI_ACCOUNTS];
+    for ((info, meta), view) in infos.iter_mut().zip(instruction.accounts).zip(views) {
+        if meta.is_writable {
+            view.check_borrow_mut()?;
+        }
+        CpiAccount::init_from_account_view(view, info);
+    }
+    // SAFETY: the loop initialized the first `count` slots, since `count` is at most the length
+    // of all three sequences, and no writable account's data is borrowed.
+    unsafe {
+        invoke_signed_unchecked(
+            instruction,
+            core::slice::from_raw_parts(infos.as_ptr().cast::<CpiAccount>(), count),
+            &[],
+        );
+    }
+    Ok(())
 }
 
-/// Destination for encoded segment bytes: a `Vec` for CPI data or a fixed stack buffer for PDA
-/// seeds. Spec builds keep `push_bytes` out of line so the prover can summarize the copy inside.
+/// Destination for encoded segment bytes: a `Vec` for CPI data, the output buffer for `EMIT` and
+/// `SET_RETURN_DATA`, or a fixed stack buffer for PDA seeds. Spec builds keep `push_bytes` out of
+/// line so the prover can summarize the copy inside.
 pub trait ByteSink {
     fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()>;
 }
 
 impl ByteSink for Vec<u8> {
-    #[cfg_attr(feature = "spec-api", inline(never))] fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()> {
+    #[cfg_attr(feature = "spec-api", inline(never))]
+    #[cfg_attr(not(feature = "spec-api"), inline(always))]
+    fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()> {
         self.extend_from_slice(bytes);
+        Ok(())
+    }
+}
+
+/// The output buffer as a byte sink. A type of its own rather than the `Vec<u8>` sink, so the
+/// output opcodes get their own copy of the segment encoder: sharing the invocation's copy made
+/// the compiler stop inlining it into `invoke_cpi`, which cost every invocation about 50 compute
+/// units.
+struct OutputSink<'buffer>(&'buffer mut Vec<u8>);
+
+impl ByteSink for OutputSink<'_> {
+    #[cfg_attr(feature = "spec-api", inline(never))]
+    #[cfg_attr(not(feature = "spec-api"), inline(always))]
+    fn push_bytes(&mut self, bytes: &[u8]) -> RunResult<()> {
+        self.0.extend_from_slice(bytes);
         Ok(())
     }
 }
@@ -1225,6 +1824,18 @@ pub fn resolve_account<'data>(
     reference: u8,
     loop_context: Option<(usize, usize)>,
 ) -> RunResult<&'data AccountView> {
+    resolve(program, accounts, reference, loop_context)
+}
+
+/// `resolve_account`, always inlined, for the dispatch loop's account instructions. The
+/// invocation builder keeps calling `resolve_account` and its own inlining.
+#[inline(always)]
+fn resolve<'data>(
+    program: &ProgramView<'_>,
+    accounts: &'data [AccountView],
+    reference: u8,
+    loop_context: Option<(usize, usize)>,
+) -> RunResult<&'data AccountView> {
     let index = if reference & ITERATION_ACCOUNT_BIT == 0 {
         let index = reference as usize;
         if index >= program.header.fixed_account_count() {
@@ -1237,13 +1848,17 @@ pub fn resolve_account<'data>(
         if offset >= program.header.batch_stride() {
             return Err(BallistaError::InvalidRuntimeAccount.into());
         }
-        row_base + offset
+        // In a FOREACH a row starts below the runtime account count, which is at most 120; in a
+        // REPEAT the base is `NO_ROWS`, far below `usize::MAX`. The offset is below the stride, so
+        // neither add wraps, and the lookup below bounds-checks the index regardless.
+        row_base.wrapping_add(offset)
     };
     accounts
         .get(index)
         .ok_or_else(|| BallistaError::InvalidRuntimeAccount.into())
 }
 
+#[inline(always)]
 pub fn arithmetic<'data>(
     opcode: u8,
     left: RuntimeValue<'data>,
@@ -1285,6 +1900,7 @@ pub fn arithmetic<'data>(
     })
 }
 
+#[inline(always)]
 pub fn compare(opcode: u8, left: RuntimeValue<'_>, right: RuntimeValue<'_>) -> RunResult<bool> {
     macro_rules! compare_values {
         ($left:expr, $right:expr) => {
@@ -1327,6 +1943,7 @@ pub fn compare(opcode: u8, left: RuntimeValue<'_>, right: RuntimeValue<'_>) -> R
     })
 }
 
+#[inline(always)]
 pub fn cast(opcode: u8, value: RuntimeValue<'_>) -> RunResult<RuntimeValue<'_>> {
     match opcode {
         OP_CAST_U64 => Ok(RuntimeValue::U64(match value {
@@ -1359,6 +1976,7 @@ pub fn cast(opcode: u8, value: RuntimeValue<'_>) -> RunResult<RuntimeValue<'_>> 
     }
 }
 
+#[inline(always)]
 pub fn set<'data>(
     registers: &mut [RuntimeValue<'data>],
     index: usize,
@@ -1378,6 +1996,64 @@ pub fn get<'data>(registers: &[RuntimeValue<'data>], index: u8) -> RunResult<Run
     }
 }
 
+/// The initialized register at `index`, borrowed where it lives. Handlers match on the reference,
+/// so they load only the tag and the payload they use instead of copying a whole value out.
+#[inline(always)]
+fn read<'registers, 'data>(
+    registers: &'registers [RuntimeValue<'data>],
+    index: u8,
+) -> RunResult<&'registers RuntimeValue<'data>> {
+    match registers.get(index as usize) {
+        Some(RuntimeValue::Unset) | None => Err(BallistaError::InvalidRegister.into()),
+        Some(value) => Ok(value),
+    }
+}
+
+/// The boolean in register `index`: `InvalidRegister` if it is unset or out of range, then
+/// `TypeMismatch` if it holds another type, the same order `as_bool(get(..)?)` reports them in.
+#[inline(always)]
+fn read_bool(registers: &[RuntimeValue<'_>], index: u8) -> RunResult<bool> {
+    match registers.get(index as usize) {
+        Some(RuntimeValue::Bool(value)) => Ok(*value),
+        other => Err(not_a_bool(other)),
+    }
+}
+
+/// Why a register that `read_bool` expected to hold a boolean does not.
+#[cold]
+#[inline(never)]
+fn not_a_bool(register: Option<&RuntimeValue<'_>>) -> RunError {
+    match register {
+        Some(RuntimeValue::Unset) | None => BallistaError::InvalidRegister.into(),
+        Some(_) => BallistaError::TypeMismatch.into(),
+    }
+}
+
+/// The register at `index`, unset or not; out of range is `InvalidRegister`. For handlers whose
+/// type match already rejects an unset value: they test the type they expect first and sort out
+/// an unset operand only once that test fails, through `unset_first`.
+#[inline(always)]
+fn operand<'registers, 'data>(
+    registers: &'registers [RuntimeValue<'data>],
+    index: u8,
+) -> RunResult<&'registers RuntimeValue<'data>> {
+    registers
+        .get(index as usize)
+        .ok_or_else(|| BallistaError::InvalidRegister.into())
+}
+
+/// The error an operation on `left` and `right` reports once it has failed. Reading an unset
+/// operand fails before the operation runs, with `InvalidRegister`, exactly as `get` would have.
+#[cold]
+#[inline(never)]
+fn unset_first(error: RunError, left: &RuntimeValue<'_>, right: &RuntimeValue<'_>) -> RunError {
+    if matches!(left, RuntimeValue::Unset) || matches!(right, RuntimeValue::Unset) {
+        BallistaError::InvalidRegister.into()
+    } else {
+        error
+    }
+}
+
 pub fn as_bool(value: RuntimeValue<'_>) -> RunResult<bool> {
     match value {
         RuntimeValue::Bool(value) => Ok(value),
@@ -1393,6 +2069,7 @@ pub fn as_u128(value: RuntimeValue<'_>) -> RunResult<u128> {
     }
 }
 
+#[inline(always)]
 pub fn read_array<const N: usize>(data: &[u8], offset: usize) -> RunResult<&[u8; N]> {
     offset
         .checked_add(N)
@@ -1401,6 +2078,7 @@ pub fn read_array<const N: usize>(data: &[u8], offset: usize) -> RunResult<&[u8;
         .ok_or_else(|| BallistaError::InvalidRuntimeAccount.into())
 }
 
+#[cfg(test)]
 fn take<const N: usize>(data: &[u8]) -> RunResult<(&[u8; N], &[u8])> {
     let (bytes, remaining) = data
         .split_at_checked(N)
@@ -1460,6 +2138,10 @@ mod tests {
         let event = encode_event(3, 5, 0b10110, &template);
         assert_eq!(event.len(), EVENT_LEN);
         assert_eq!(&event[..4], b"BEV1");
+        assert!(
+            EVENT_MAGIC.starts_with(&RUN_EVENT_TAG_FAMILY),
+            "the verifier reserves this family, so no EMIT can log a line that reads as the event"
+        );
         assert_eq!(event[4], TEMPLATE_PROGRAM_VERSION);
         assert_eq!(event[5], 3, "iterations");
         assert_eq!(event[6], 5, "expanded invokes");
@@ -1927,6 +2609,208 @@ mod tests {
         assert_eq!(take::<1>(&[1, 2]), Ok((&[1], &[2][..])));
     }
 
+    /// The typed handlers test the type they expect before looking for an unset operand, so this
+    /// pins what they report: an unset or out-of-range operand is `InvalidRegister`, as reading it
+    /// with `get` first always was, and only a set operand of the wrong type is `TypeMismatch`.
+    #[test]
+    fn unset_operands_report_invalid_register_before_type_mismatch() {
+        let mut builder = ProgramBuilder::new();
+        builder.account(0, None, None, 0);
+        for _ in 0..4 {
+            builder.register();
+        }
+        builder.const_bool(true);
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut scratch = Scratch::new(&program);
+        let accounts = [];
+        // r0 unset, r1 u64, r2 bool, r3 i64; register 4 is out of range.
+        let mut registers = vec![Unset, U64(7), Bool(true), I64(-1)];
+        let mut run = |record: InstructionRecord| {
+            execute_instruction(&program, &[], &accounts, &mut registers, &mut scratch, &record, None)
+        };
+        let invalid = Err(err(BallistaError::InvalidRegister));
+        let mismatch = Err(err(BallistaError::TypeMismatch));
+        for opcode in [
+            OP_ADD, OP_EQ, OP_LT, OP_REM, OP_SHL, OP_SHR, OP_BIT_AND, OP_BIT_OR, OP_BIT_XOR,
+        ] {
+            assert_eq!(run(record(opcode, 1, 0, 1, NO_INDEX, 0, 0)), invalid, "unset left, {opcode}");
+            assert_eq!(run(record(opcode, 1, 1, 0, NO_INDEX, 0, 0)), invalid, "unset right, {opcode}");
+            assert_eq!(run(record(opcode, 1, 0, 2, NO_INDEX, 0, 0)), invalid, "unset beside a bool, {opcode}");
+            assert_eq!(run(record(opcode, 1, 3, 0, NO_INDEX, 0, 0)), invalid, "a mismatched left does not win, {opcode}");
+            assert_eq!(run(record(opcode, 1, 4, 1, NO_INDEX, 0, 0)), invalid, "out of range, {opcode}");
+            assert_eq!(run(record(opcode, 1, 1, 3, NO_INDEX, 0, 0)), mismatch, "u64 against i64, {opcode}");
+        }
+        assert_eq!(run(record(OP_POW10, 1, 0, NO_INDEX, NO_INDEX, 0, 0)), invalid);
+        assert_eq!(run(record(OP_POW10, 1, 2, NO_INDEX, NO_INDEX, 0, 0)), mismatch);
+        for opcode in [OP_MUL_DIV, OP_MUL_DIV_CEIL] {
+            assert_eq!(run(record(opcode, 1, 0, 1, 1, 0, 0)), invalid, "unset a, {opcode}");
+            assert_eq!(run(record(opcode, 1, 1, 0, 1, 0, 0)), invalid, "unset b, {opcode}");
+            assert_eq!(run(record(opcode, 1, 1, 1, 0, 0, 0)), invalid, "unset c, {opcode}");
+            assert_eq!(run(record(opcode, 1, 1, 1, 3, 0, 0)), mismatch, "u64 against i64 in c, {opcode}");
+        }
+        assert_eq!(run(record(OP_CAST_U128, 1, 0, NO_INDEX, NO_INDEX, 0, 0)), invalid);
+        assert_eq!(run(record(OP_CAST_U128, 1, 2, NO_INDEX, NO_INDEX, 0, 0)), mismatch);
+        for opcode in [OP_AND, OP_OR] {
+            assert_eq!(run(record(opcode, 1, 0, 2, NO_INDEX, 0, 0)), invalid);
+            assert_eq!(run(record(opcode, 1, 2, 0, NO_INDEX, 0, 0)), invalid);
+            assert_eq!(run(record(opcode, 1, 1, 0, NO_INDEX, 0, 0)), mismatch, "the left operand is read first");
+        }
+        assert_eq!(run(record(OP_NOT, 1, 0, NO_INDEX, NO_INDEX, 0, 0)), invalid);
+        assert_eq!(run(record(OP_NOT, 1, 1, NO_INDEX, NO_INDEX, 0, 0)), mismatch);
+        assert_eq!(run(record(OP_REQUIRE, NO_INDEX, 0, NO_INDEX, NO_INDEX, 0, 0)), invalid);
+        assert_eq!(run(record(OP_REQUIRE, NO_INDEX, 3, NO_INDEX, NO_INDEX, 0, 0)), mismatch);
+        assert_eq!(run(record(OP_SELECT, 1, 0, 1, 1, 0, 0)), invalid);
+        assert_eq!(run(record(OP_SELECT, 1, 2, 0, 1, 0, 0)), invalid, "the selected operand is unset");
+        assert_eq!(run(record(OP_MOVE, 1, 0, NO_INDEX, NO_INDEX, 0, 0)), invalid);
+        assert_eq!(registers[1], U64(7), "no failed instruction wrote its destination");
+    }
+
+    /// An opcode the executor does not run reaches `extended_instruction` through the fallback
+    /// arm, as every opcode from `OP_MUL_DIV` up does. It must still fail as an invalid program
+    /// before anything else is checked: an operand or destination out of range must not turn the
+    /// failure into `InvalidRegister`, and nothing may be written.
+    #[test]
+    fn opcodes_the_executor_does_not_run_fail_before_reading_operands() {
+        let mut builder = ProgramBuilder::new();
+        builder.register();
+        builder.const_bool(true);
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut scratch = Scratch::new(&program);
+        let mut registers = vec![U64(7)];
+        // 39 is unassigned, and so is every number after `OP_BYTES_LEN`, 74, the last opcode the
+        // runtime extensions take. FOREACH and REPEAT fail here too: at the root, the dispatch
+        // loop starts a loop from that failure, and inside a body the failure stands.
+        for opcode in [0, 39, OP_FOREACH, OP_REPEAT, OP_BYTES_LEN + 1, 0xfe, u8::MAX] {
+            for dst in [0, 9] {
+                assert_eq!(
+                    execute_instruction(
+                        &program,
+                        &[],
+                        &[],
+                        &mut registers,
+                        &mut scratch,
+                        &record(opcode, dst, 9, 9, 9, 0, 0),
+                        None,
+                    ),
+                    Err(err(BallistaError::InvalidTemplateProgram)),
+                    "opcode {opcode}, destination {dst}"
+                );
+            }
+        }
+        assert_eq!(registers[0], U64(7));
+        assert!(
+            scratch.output.is_none(),
+            "the reject path, which every loop entry takes, allocates no output buffer"
+        );
+    }
+
+    /// `EMIT` and `SET_RETURN_DATA` encode into their own buffer. `data` may hold an invocation
+    /// payload that a batch sends again without encoding it, so an output must never write there.
+    #[test]
+    fn outputs_encode_into_their_own_buffer() {
+        let mut builder = ProgramBuilder::new();
+        let amount = builder.const_u64(0x0102);
+        let key = builder.const_pubkey([7; 32]);
+        let tag = builder.blob(b"OUT1");
+        let logged = builder.emit_data(&[
+            Segment::Literal(tag),
+            Segment::Register(DATA_REG_U16, amount),
+            Segment::Register(DATA_REG_PUBKEY, key),
+        ]);
+        let returned = builder.set_return_data(&[Segment::Register(DATA_REG_U64, amount)]);
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut scratch = Scratch::new(&program);
+        assert!(
+            scratch.output.is_none(),
+            "no buffer before the run's first output"
+        );
+        scratch.data.extend_from_slice(b"cached payload");
+        let mut registers = vec![U64(0x0102), Pubkey([7; 32])];
+
+        execute_instruction(
+            &program,
+            &[],
+            &[],
+            &mut registers,
+            &mut scratch,
+            &program.instructions[logged],
+            None,
+        )
+        .unwrap();
+        let mut expected = b"OUT1".to_vec();
+        expected.extend_from_slice(&0x0102u16.to_le_bytes());
+        expected.extend_from_slice(&[7; 32]);
+        assert_eq!(scratch.output.as_deref(), Some(&expected));
+        assert_eq!(scratch.data, b"cached payload", "the invocation buffer is untouched");
+        // The first output allocates the most any output encodes; later ones reuse it.
+        let buffer = scratch.output.as_ref().unwrap();
+        assert_eq!(buffer.capacity(), MAX_RETURN_DATA_LEN);
+        let allocated = buffer.as_ptr();
+
+        execute_instruction(
+            &program,
+            &[],
+            &[],
+            &mut registers,
+            &mut scratch,
+            &program.instructions[returned],
+            None,
+        )
+        .unwrap();
+        assert_eq!(scratch.output.as_deref(), Some(&0x0102u64.to_le_bytes().to_vec()));
+        assert_eq!(scratch.output.as_ref().unwrap().as_ptr(), allocated, "no second allocation");
+        assert_eq!(scratch.data, b"cached payload");
+        assert_eq!(registers, vec![U64(0x0102), Pubkey([7; 32])], "outputs write no register");
+    }
+
+    /// Outputs fail like invocation data does on a bad register, and as an invalid program on a
+    /// shape the verifier rules out.
+    #[test]
+    fn outputs_reject_bad_operands_and_unverified_shapes() {
+        let mut builder = ProgramBuilder::new();
+        for _ in 0..3 {
+            builder.register();
+        }
+        // r0 is unset, r1 holds a u64 too wide for a u8, r2 holds an i64.
+        let unset = builder.emit_data(&[Segment::Register(DATA_REG_U64, 0)]);
+        let narrow = builder.emit_data(&[Segment::Register(DATA_REG_U8, 1)]);
+        let mistyped = builder.set_return_data(&[Segment::Register(DATA_REG_U64, 2)]);
+        let long = builder.blob(&[0; MAX_RETURN_DATA_LEN + 1]);
+        let too_long = builder.emit_data(&[Segment::Literal(long)]);
+        let past_the_table = builder.emit(record(
+            OP_EMIT,
+            NO_INDEX,
+            NO_INDEX,
+            NO_INDEX,
+            NO_INDEX,
+            0,
+            range_immediate(4, 1),
+        ));
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut scratch = Scratch::new(&program);
+        let mut registers = vec![Unset, U64(256), I64(-1)];
+        let mut run = |index: usize| {
+            execute_instruction(
+                &program,
+                &[],
+                &[],
+                &mut registers,
+                &mut scratch,
+                &program.instructions[index],
+                None,
+            )
+        };
+        assert_eq!(run(unset), Err(err(BallistaError::InvalidRegister)));
+        assert_eq!(run(narrow), Err(err(BallistaError::ArithmeticOverflow)));
+        assert_eq!(run(mistyped), Err(err(BallistaError::TypeMismatch)));
+        assert_eq!(run(too_long), Err(err(BallistaError::InvalidTemplateProgram)));
+        assert_eq!(run(past_the_table), Err(err(BallistaError::InvalidTemplateProgram)));
+    }
+
     #[test]
     fn typed_reads_cover_every_width_and_reject_unknown_opcodes() {
         let data = [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
@@ -1959,5 +2843,185 @@ mod tests {
             read_value(OP_ADD, &data, 0),
             Err(err(BallistaError::InvalidTemplateProgram))
         );
+    }
+
+    /// A REPEAT runs its body as many times as its count register held when the loop started, and
+    /// a carried register leaves the loop with the last pass's value.
+    #[test]
+    fn count_loops_run_their_body_count_times_and_carry_values_out() {
+        let mut builder = ProgramBuilder::new();
+        let rounds_input = builder.input(VALUE_U64, 0);
+        let total = builder.const_u64(0);
+        let rounds = builder.load_input(rounds_input);
+        let repeat = builder.repeat(rounds, 4, 1 << total, |body| {
+            let index = body.loop_index();
+            let sum = body.binary(OP_ADD, total, index);
+            body.mov(total, sum);
+        });
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let run = |rounds: RuntimeValue<'static>| {
+            let inputs = [rounds];
+            let mut registers = vec![Unset; program.header.register_count()];
+            let mut scratch = Scratch::new(&program);
+            let result = execute_root(&program, &inputs, &[], 0, &mut registers, &mut scratch);
+            (result, registers[total as usize])
+        };
+        // 0 + 1 + … + (rounds − 1), and no pass at all for zero rounds.
+        for (rounds, expected) in [(0u64, 0u64), (1, 0), (3, 3), (4, 6)] {
+            assert_eq!(run(U64(rounds)), (Ok(()), U64(expected)), "{rounds} rounds");
+        }
+        let at_repeat = |kind: BallistaError| {
+            Err(ProgramError::Custom(encode_error(kind.code(), repeat as u16)))
+        };
+        // A count above the maximum fails at the REPEAT, before its body runs.
+        assert_eq!(run(U64(5)).0, at_repeat(BallistaError::LoopCountExceeded));
+        assert_eq!(run(U64(u64::MAX)).0, at_repeat(BallistaError::LoopCountExceeded));
+        // The count is an operand like any other: it must be set and be a u64.
+        assert_eq!(run(I64(1)).0, at_repeat(BallistaError::TypeMismatch));
+        assert_eq!(run(Unset).0, at_repeat(BallistaError::InvalidRegister));
+    }
+
+    /// A REPEAT reads its count once, when the loop starts. A body that carries the count register
+    /// and rewrites it, up or down, still makes as many passes as the count held then, and the
+    /// rewritten value leaves the loop.
+    #[test]
+    fn rewriting_the_count_in_the_body_leaves_the_passes_unchanged() {
+        for (raise, count_after) in [(true, 6), (false, 0)] {
+            let mut builder = ProgramBuilder::new();
+            let count = builder.const_u64(3);
+            let passes = builder.const_u64(0);
+            builder.repeat(count, 8, (1 << count) | (1 << passes), |body| {
+                let one = body.const_u64(1);
+                let next = body.binary(OP_ADD, passes, one);
+                body.mov(passes, next);
+                // One more on every pass, or zero.
+                let rewritten = if raise {
+                    body.binary(OP_ADD, count, one)
+                } else {
+                    body.const_u64(0)
+                };
+                body.mov(count, rewritten);
+            });
+            let bytes = builder.build().unwrap();
+            let program = ProgramView::parse(&bytes).unwrap();
+            assert!(program.verify().is_ok());
+            let mut registers = vec![Unset; program.header.register_count()];
+            let mut scratch = Scratch::new(&program);
+            assert_eq!(
+                execute_root(&program, &[], &[], 0, &mut registers, &mut scratch),
+                Ok(())
+            );
+            assert_eq!(registers[passes as usize], U64(3), "raise {raise}");
+            assert_eq!(registers[count as usize], U64(count_after), "raise {raise}");
+        }
+    }
+
+    /// Loops run one after another, and each FOREACH starts again at the first row.
+    #[test]
+    fn loops_run_in_sequence_and_every_foreach_starts_at_the_first_row() {
+        let mut builder = ProgramBuilder::new();
+        builder.row_account(0, None, None, 0);
+        builder.batch(3, 0);
+        let amount = builder.row_input(VALUE_U64, 0);
+        let first = builder.const_u64(0);
+        let passes = builder.const_u64(0);
+        let second = builder.const_u64(0);
+        let three = builder.const_u64(3);
+        builder.for_each(1 << first, |body| {
+            let value = body.load_input(amount);
+            let sum = body.binary(OP_ADD, first, value);
+            body.mov(first, sum);
+        });
+        builder.repeat(three, 3, 1 << passes, |body| {
+            let one = body.const_u64(1);
+            let sum = body.binary(OP_ADD, passes, one);
+            body.mov(passes, sum);
+        });
+        builder.for_each(1 << second, |body| {
+            let value = body.load_input(amount);
+            let index = body.loop_index();
+            let weighted = body.binary(OP_MUL, value, index);
+            let sum = body.binary(OP_ADD, second, weighted);
+            body.mov(second, sum);
+        });
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let inputs = [U64(10), U64(20), U64(30)];
+        let mut registers = vec![Unset; program.header.register_count()];
+        let mut scratch = Scratch::new(&program);
+        execute_root(&program, &inputs, &[], 3, &mut registers, &mut scratch).unwrap();
+        assert_eq!(registers[first as usize], U64(60));
+        assert_eq!(registers[passes as usize], U64(3));
+        // 10 × 0 + 20 × 1 + 30 × 2: the second FOREACH read every row again, with its index.
+        assert_eq!(registers[second as usize], U64(80));
+    }
+
+    /// The bump heap never frees, so every loop of a run snapshots its registers into the buffer
+    /// the first loop allocated.
+    #[test]
+    fn every_loop_of_a_run_snapshots_into_one_buffer() {
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(2);
+        let first = builder.repeat(count, 2, 0, |body| {
+            body.loop_index();
+        });
+        let second = builder.repeat(count, 2, 0, |body| {
+            body.loop_index();
+        });
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut registers = vec![Unset; program.header.register_count()];
+        registers[count as usize] = U64(2);
+        let mut scratch = Scratch::new(&program);
+        let mut machine = Machine {
+            program: &program,
+            inputs: &[],
+            accounts: &[],
+            registers: &mut registers,
+            scratch: &mut scratch,
+            iterations: 0,
+        };
+        let mut slot = None;
+        let body = enter_loop(&mut machine, first, &program.instructions[first], &mut slot);
+        assert_eq!(body, Ok((first + 1, first + 2)));
+        // A count loop has an index and no rows.
+        assert_eq!(slot.as_ref().map(|active| (active.pass, active.row_base)), Some((0, NO_ROWS)));
+        let buffer = machine.scratch.snapshot.as_ptr();
+        slot = None;
+        enter_loop(&mut machine, second, &program.instructions[second], &mut slot).unwrap();
+        assert_eq!(machine.scratch.snapshot.as_ptr(), buffer, "the second loop reuses the first one's buffer");
+    }
+
+    /// Loops never nest: a loop instruction inside a body is an opcode the executor does not run.
+    #[test]
+    fn a_loop_inside_a_loop_body_fails_as_an_invalid_program() {
+        let mut builder = ProgramBuilder::new();
+        let count = builder.const_u64(1);
+        let mut inner = 0;
+        builder.repeat(count, 1, 0, |body| {
+            inner = body.repeat(count, 1, 0, |inner_body| {
+                inner_body.loop_index();
+            });
+        });
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let mut registers = vec![Unset; program.header.register_count()];
+        let mut scratch = Scratch::new(&program);
+        assert_eq!(
+            execute_root(&program, &[], &[], 0, &mut registers, &mut scratch),
+            Err(ProgramError::Custom(encode_error(
+                BallistaError::InvalidTemplateProgram.code(),
+                inner as u16
+            )))
+        );
+    }
+
+    #[test]
+    fn i32_reads_sign_extend() {
+        let data = [0xf8, 0xff, 0xff, 0xff, 0x2a, 0x00, 0x00, 0x00];
+        assert_eq!(read_value(OP_READ_I32, &data, 0), Ok(RuntimeValue::I64(-8)));
+        assert_eq!(read_value(OP_READ_I32, &data, 4), Ok(RuntimeValue::I64(42)));
+        assert!(read_value(OP_READ_I32, &data, 5).is_err());
     }
 }

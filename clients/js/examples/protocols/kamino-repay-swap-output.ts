@@ -1,14 +1,28 @@
 /**
  * Deleverage: swap collateral into the borrowed asset and repay exactly what the swap produced.
  *
- * `repay_obligation_liquidity_v2(liquidity_amount: u64)` wants a number that depends on two
- * things nobody knows at signing: what the swap returns, and what the debt has grown to. Interest
- * accrues per slot, so a figure quoted to the client is already stale; and repaying more than is
- * owed is rejected.
+ * `repay_obligation_liquidity_v2(liquidity_amount: u64)` takes the amount as an argument, and the
+ * amount worth repaying is what the swap returns, which nobody knows at signing.
  *
- * The template swaps, measures what landed, and repays the smaller of that and the wallet's
- * balance. Kamino's `refresh_reserve` runs first because a repayment is priced against a
- * refreshed reserve.
+ * The template swaps, measures what landed in the borrowed-asset account, and repays exactly
+ * that.
+ *
+ * The run names that account, and Kamino repays from any account the borrower may spend,
+ * including one whose owner approved the borrower as a delegate. It repays at most the debt, and
+ * the rest of the swap stays in the account. So the borrower must own it (`swapPaysTheBorrower`).
+ *
+ * The repayment is Kamino's `_v2` handler: the v1 handler refuses every caller but Kamino itself
+ * and a short whitelist. v2 takes the 9 accounts declared below, then `farmAccounts`, its tail:
+ * - the obligation's farm user state and the reserve's debt farm, or the Kamino program for each
+ *   when the reserve has no debt farm (the main market's SOL and USDC reserves have none);
+ * - the lending market authority;
+ * - the Farms program.
+ * A group carries them so each keeps its own writable flag.
+ *
+ * Kamino takes a repayment only against a reserve and an obligation refreshed in the same slot,
+ * and does not care where in the transaction that happened. Put `refresh_reserve` for each
+ * reserve the obligation holds, then `refresh_obligation` with them, before this run. The swap in
+ * between does not touch Kamino.
  */
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -20,18 +34,21 @@ import {
   step,
 } from '../../src/index.js';
 import {
+  JUPITER_ROUTE,
   JUPITER_V6,
   KAMINO_LEND,
-  KAMINO_REFRESH_RESERVE,
   KAMINO_REPAY,
+  SYSVAR_INSTRUCTIONS,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_LENGTH,
+  TOKEN_ACCOUNT_OWNER_OFFSET,
   addressBytes,
 } from './shared.js';
 
 export const kaminoRepaySwapOutput = defineTemplate({
   inputs: {
-    routeData: { type: 'bytes', maxLength: 512 },
+    /** Jupiter's `route` arguments: the Swap API's instruction data after the discriminator. */
+    routeArgs: { type: 'bytes', maxLength: 512 },
     /** Repaying dust costs more in fees than it saves in interest. */
     minimumRepayment: { type: 'u64' },
   },
@@ -39,7 +56,11 @@ export const kaminoRepaySwapOutput = defineTemplate({
     jupiter: { executable: true, address: addressBytes(JUPITER_V6) },
     kamino: { executable: true, address: addressBytes(KAMINO_LEND) },
     tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
-    borrower: { signer: true, writable: true },
+    instructionsSysvar: { address: addressBytes(SYSVAR_INSTRUCTIONS) },
+    /** Signs the swap and the repayment; Kamino declares it a bare signer, so it is read-only. */
+    borrower: { signer: true },
+    /** The collateral the route sells. */
+    collateralAta: { writable: true },
     /** Receives the swap output and funds the repayment. */
     borrowedAssetAta: {
       writable: true,
@@ -49,11 +70,23 @@ export const kaminoRepaySwapOutput = defineTemplate({
     obligation: { writable: true },
     lendingMarket: {},
     repayReserve: { writable: true },
+    reserveLiquidityMint: {},
     reserveLiquiditySupply: { writable: true },
-    reservePriceFeed: {},
   },
-  accountGroups: ['routeAccounts'],
+  /**
+   * `routeAccounts`: Jupiter's own list, whose length depends on the route. `farmAccounts`:
+   * Kamino's v2 tail, described above.
+   */
+  accountGroups: ['routeAccounts', 'farmAccounts'],
   steps: [
+    step.require(
+      expression.equal(
+        expression.accountData(account.fixed('borrowedAssetAta'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('borrower'), 'key'),
+      ),
+      'swapPaysTheBorrower',
+    ),
+
     step.snapshot(
       'balanceBefore',
       expression.accountData(account.fixed('borrowedAssetAta'), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64'),
@@ -62,9 +95,16 @@ export const kaminoRepaySwapOutput = defineTemplate({
 
     step.invoke({
       program: account.fixed('jupiter'),
-      accounts: [{ account: account.fixed('borrower'), signer: true, writable: true }],
+      // `route` takes the token program, the signer, and the user's source and destination token
+      // accounts first; the route's own accounts follow as the group.
+      accounts: [
+        { account: account.fixed('tokenProgram'), signer: false, writable: false },
+        { account: account.fixed('borrower'), signer: true, writable: false },
+        { account: account.fixed('collateralAta'), signer: false, writable: true },
+        { account: account.fixed('borrowedAssetAta'), signer: false, writable: true },
+      ],
       accountGroup: 'routeAccounts',
-      data: [data.encode('bytes', expression.input('routeData'))],
+      data: [data.literal(JUPITER_ROUTE), data.encode('bytes', expression.input('routeArgs'))],
       label: 'swapCollateralIntoDebtAsset',
     }),
 
@@ -82,39 +122,25 @@ export const kaminoRepaySwapOutput = defineTemplate({
       'swapWorthRepaying',
     ),
 
-    // Interest is priced off a refreshed reserve, so refresh inside the same transaction.
     step.invoke({
       program: account.fixed('kamino'),
       accounts: [
-        { account: account.fixed('repayReserve'), signer: false, writable: true },
-        { account: account.fixed('lendingMarket'), signer: false, writable: false },
-        { account: account.fixed('reservePriceFeed'), signer: false, writable: false },
-      ],
-      data: [data.literal(KAMINO_REFRESH_RESERVE)],
-      label: 'refreshReserve',
-    }),
-
-    step.invoke({
-      program: account.fixed('kamino'),
-      accounts: [
-        { account: account.fixed('borrower'), signer: true, writable: true },
+        { account: account.fixed('borrower'), signer: true, writable: false },
         { account: account.fixed('obligation'), signer: false, writable: true },
         { account: account.fixed('lendingMarket'), signer: false, writable: false },
         { account: account.fixed('repayReserve'), signer: false, writable: true },
+        { account: account.fixed('reserveLiquidityMint'), signer: false, writable: false },
         { account: account.fixed('reserveLiquiditySupply'), signer: false, writable: true },
+        // The repayment draws from the account the swap paid into.
         { account: account.fixed('borrowedAssetAta'), signer: false, writable: true },
         { account: account.fixed('tokenProgram'), signer: false, writable: false },
+        { account: account.fixed('instructionsSysvar'), signer: false, writable: false },
       ],
+      accountGroup: 'farmAccounts',
       data: [
         data.literal(KAMINO_REPAY),
-        // Cap at the wallet balance: the swap output is the intent, the balance is the truth.
-        data.encode(
-          'u64',
-          expression.min(
-            expression.variable('swapped'),
-            expression.accountData(account.fixed('borrowedAssetAta'), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64'),
-          ),
-        ),
+        // Exactly what the swap produced, measured a moment ago.
+        data.encode('u64', expression.variable('swapped')),
       ],
       label: 'repayWhatTheSwapProduced',
     }),

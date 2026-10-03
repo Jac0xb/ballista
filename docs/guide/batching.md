@@ -1,266 +1,128 @@
 # Batch execution
 
-A template may declare one repeated account row, and beside it a row of inputs. The caller supplies
-rows after the fixed accounts, and the VM infers the iteration count from the remaining account
-count. Each row's input values travel in the run data, so every iteration can carry its own
-amount, recipient-specific parameter, or flag. A template can require a minimum number of rows so
-a batch cannot succeed vacuously with none.
+This page shows how a template repeats its steps over a list of rows, such as paying 30 recipients
+in one run, and the limits that apply.
+
+A template can declare one batch: a row of accounts, and optionally a row of input values, that the
+caller repeats once per item. The caller passes the rows after the template's fixed accounts (the
+ones declared in `accounts`), and the program works out the number of rows from how many accounts
+follow, not counting members of [account groups](./account-groups). Each row's input values travel
+in the run data, so every row can carry its own amount or flag. A template can also require a
+minimum number of rows, so that a run with no rows fails instead of succeeding without doing
+anything.
 
 ## Thirty-recipient payroll
 
+This template sends the same number of [lamports](/reference/glossary#lamports) from a treasury,
+which must sign, to each of 1 to 30 recipients. `step.forEach` runs its steps once per row, and
+`account.iteration('recipient')` refers to the current row's account. The same template appears on
+[payment patterns](/examples/payments#bounded-sol-payroll).
+
 ::: code-group
 
-```ts [TypeScript · template]
-const payroll = defineTemplate({
-  inputs: { lamportsPerRecipient: { type: 'u64' } },
-  accounts: {
-    systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
-    treasury: { signer: true, writable: true },
-  },
-  batch: {
-    maxIterations: 30,
-    minIterations: 1,
-    row: { recipient: { writable: true } },
-  },
-  steps: [
-    step.forEach([
-      systemTransfer({
-        systemProgram: account.fixed('systemProgram'),
-        from: account.fixed('treasury'),
-        to: account.iteration('recipient'),
-        lamports: expression.input('lamportsPerRecipient'),
-      }),
-    ]),
-  ],
-});
-```
+<<< @/../clients/js/examples/docs/bounded-sol-payroll.ts#template [TypeScript · Template]
 
-```ts [TypeScript · run]
-const instruction = buildKitRunInstruction({
-  compiled,
-  templateAddress,
-  inputs: { lamportsPerRecipient: 10_000n },
-  accounts: {
-    systemProgram: { address: SYSTEM_PROGRAM_ADDRESS },
-    treasury: { address: treasury },
-  },
-  batchRows: recipients.map((recipient) => ({ recipient: { address: recipient } })),
-});
-// Throws before sending if there are more than 30 rows or fewer than 1.
-```
+<<< @/../clients/js/examples/docs/bounded-sol-payroll.ts#run [TypeScript · Run]
 
-```rust [Rust · template]
-let mut builder = ProgramBuilder::new();
-let system = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ID.to_bytes()), None, 0);
-let treasury = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
-let recipient = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
-builder.batch(30, 1);
-let lamports_input = builder.input(VALUE_U64, 0);
-let lamports = builder.load_input(lamports_input);
-let discriminator = builder.blob(&[2, 0, 0, 0]);
-let transfer = builder.cpi(
-    system,
-    &[(treasury, ACCOUNT_SIGNER | ACCOUNT_WRITABLE), (recipient, ACCOUNT_WRITABLE)],
-    &[Segment::Literal(discriminator), Segment::Register(DATA_REG_U64, lamports)],
-);
-builder.for_each(0, |body| body.invoke(transfer, None));
-let payload = builder.build()?;
-```
+<<< @/../clients/rust/examples/docs_templates.rs#bounded-sol-payroll [Rust · Template]
 
-```rust [Rust · inputs and run]
-let inputs = RunInputs::new().u64(lamports_per_recipient).finish();
-let mut accounts = vec![
-    AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-    AccountMeta::new(treasury, true),
-];
-accounts.extend(recipients.iter().map(|key| AccountMeta::new(*key, false)));
-let run = ballista_sdk::run_instruction(template, accounts, &inputs);
-```
+<<< @/../clients/rust/examples/docs_runs.rs#bounded-sol-payroll [Rust · Run]
 
 :::
 
 ## A different amount per row
 
-`batch.rowInputs` declares inputs that are carried once per iteration. Inside `forEach`,
-`expression.rowInput(name)` reads the current row's value. At run time the caller passes one
-input record per row, in the same order as the rows.
+`batch.rowInputs` declares inputs that every row carries. Inside `forEach`,
+`expression.rowInput(name)` reads the current row's value. At run time the caller passes one set of
+values per row, in the same order as the rows.
 
 ::: code-group
 
-```ts [TypeScript · template]
-const payroll = defineTemplate({
-  accounts: {
-    systemProgram: { executable: true, address: SYSTEM_PROGRAM_ADDRESS_BYTES },
-    treasury: { signer: true, writable: true },
-  },
-  batch: {
-    maxIterations: 30,
-    minIterations: 1,
-    row: { recipient: { writable: true } },
-    rowInputs: { amount: { type: 'u64' } },
-  },
-  steps: [
-    step.forEach([
-      systemTransfer({
-        systemProgram: account.fixed('systemProgram'),
-        from: account.fixed('treasury'),
-        to: account.iteration('recipient'),
-        lamports: expression.rowInput('amount'),
-      }),
-    ]),
-  ],
-});
-```
+<<< @/../clients/js/examples/docs/row-amounts.ts#template [TypeScript · Template]
 
-```ts [TypeScript · run]
-const instruction = buildKitRunInstruction({
-  compiled,
-  templateAddress,
-  accounts: {
-    systemProgram: { address: SYSTEM_PROGRAM_ADDRESS },
-    treasury: { address: treasury },
-  },
-  batchRows: payees.map((payee) => ({ recipient: { address: payee.address } })),
-  batchInputs: payees.map((payee) => ({ amount: payee.lamports })),
-});
-```
+<<< @/../clients/js/examples/docs/row-amounts.ts#run [TypeScript · Run]
 
-```rust [Rust · template]
-let mut builder = ProgramBuilder::new();
-let system = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ID.to_bytes()), None, 0);
-let treasury = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
-let recipient = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
-builder.batch(30, 1);
-let amount_input = builder.row_input(VALUE_U64, 0);
-let discriminator = builder.blob(&[2, 0, 0, 0]);
-builder.for_each(0, |body| {
-    let amount = body.load_input(amount_input);
-    let transfer = body.cpi(
-        system,
-        &[(treasury, ACCOUNT_SIGNER | ACCOUNT_WRITABLE), (recipient, ACCOUNT_WRITABLE)],
-        &[Segment::Literal(discriminator), Segment::Register(DATA_REG_U64, amount)],
-    );
-    body.invoke(transfer, None);
-});
-```
+<<< @/../clients/rust/examples/docs_templates.rs#row-amounts [Rust · Template]
 
-```rust [Rust · inputs and run]
-// Fixed inputs first (none here), then one row of values per recipient, in row order.
-let mut inputs = RunInputs::new();
-for payee in &payees {
-    inputs = inputs.u64(payee.lamports);
-}
-let run = ballista_sdk::run_instruction(template, accounts, &inputs.finish());
-```
+<<< @/../clients/rust/examples/docs_runs.rs#row-amounts [Rust · Run]
 
 :::
 
-Row inputs share the input table with the fixed inputs (32 descriptors in total, at most 8 per row),
-and the run may carry at most 256 values: fixed inputs plus row inputs times the maximum iteration
-count. Encoded run data is still capped at 1,024 bytes, which is the practical bound on `bytes` row
-inputs. A run whose row values do not match its rows fails with `InvalidRunInputs`, and the error's
-context is the index of the first missing or malformed value, counting fixed values first.
+These limits apply to row inputs:
 
-Rows carry values and accounts, not CPI shapes: an `invoke` inside the loop forwards the same
-[account group](./account-groups) on every iteration.
+- Fixed inputs and row inputs together are limited to 32 declarations, with at most 8 per row.
+- A run can carry at most 256 values: the fixed inputs plus the row inputs times the template's
+  maximum number of rows.
+- The whole run data is limited to 1,024 bytes, which in practice bounds `bytes` row inputs.
+
+If the row values do not match the rows, the run fails with `InvalidRunInputs`, and the error
+reports the index of the first missing or malformed value, counting fixed values first.
+
+Rows supply accounts and values, not new calls: the loop body's [CPIs](/reference/glossary#cpi) are
+the same for every row. An `invoke` inside the loop that forwards an account group forwards the
+same group on every row.
 
 ## Carry a total across rows
 
-Registers written inside the loop body are discarded after each iteration, except the ones the
-loop carries. A carried variable is defined before the loop, reassigned inside it, and readable
-after it, so a template can enforce a bound over the whole batch.
+Values set inside the loop body are discarded after each row, unless the loop carries them. A
+carried variable is defined with `step.let` before the loop, listed in the loop's `carry` option,
+updated inside the loop with `step.assign`, and still readable after the loop ends. That lets a
+template enforce a limit over the whole batch, such as a total budget.
 
 ::: code-group
 
-```ts [TypeScript · template]
-steps: [
-  step.let('total', expression.u64(0)),
-  step.forEach(
-    [
-      systemTransfer({ /* row transfer as above */ }),
-      step.assign(
-        'total',
-        expression.add(expression.variable('total'), expression.input('lamportsPerRecipient')),
-      ),
-    ],
-    { carry: ['total'] },
-  ),
-  step.require(
-    expression.lessThanOrEqual(expression.variable('total'), expression.input('budget')),
-    'withinBudget',
-  ),
-]
-```
+<<< @/../clients/js/examples/docs/budgeted-payroll.ts#template [TypeScript · Template]
 
-```ts [TypeScript · run]
-const instruction = buildKitRunInstruction({
-  compiled,
-  templateAddress,
-  inputs: { lamportsPerRecipient: 10_000n, budget: 250_000n },
-  accounts: { systemProgram: { address: SYSTEM_PROGRAM_ADDRESS }, treasury: { address: treasury } },
-  batchRows: recipients.map((recipient) => ({ recipient: { address: recipient } })),
-});
+<<< @/../clients/js/examples/docs/budgeted-payroll.ts#run [TypeScript · Run]
 
-// A breach fails the labelled require; the code's high bits name the instruction:
-explainRunError(code, compiled)?.message; // 'RequirementFailed at steps[2] (withinBudget)'
-```
+<<< @/../clients/rust/examples/docs_templates.rs#budgeted-payroll [Rust · Template]
 
-```rust [Rust · template]
-let amount_input = builder.input(VALUE_U64, 0);
-let budget_input = builder.input(VALUE_U64, 0);
-let amount = builder.load_input(amount_input);
-let budget = builder.load_input(budget_input);
-let total = builder.const_u64(0);
-builder.for_each(1 << total, |body| {
-    body.invoke(transfer, None);
-    let sum = body.binary(OP_ADD, total, amount);
-    body.mov(total, sum);
-});
-let within = builder.binary(OP_LTE, total, budget);
-builder.require(within);
-```
-
-```rust [Rust · inputs and run]
-let inputs = RunInputs::new().u64(lamports_per_recipient).u64(budget).finish();
-let run = ballista_sdk::run_instruction(template, accounts, &inputs);
-```
+<<< @/../clients/rust/examples/docs_runs.rs#budgeted-payroll [Rust · Run]
 
 :::
 
-The carry mask lives in the `forEach` instruction's immediate. The verifier requires every carried
-register to be initialized before the loop and to keep its type through the body; a carried `bytes`
-value must also keep its maximum length.
+The `require` carries the label `withinBudget`, so a run that goes over budget fails with an error
+that names that step; the TypeScript Run tab shows how to read it with `explainRunError`.
+
+In Rust, values live in registers (numbered slots the builder hands back), and the first argument to
+`for_each` lists the registers to carry as a bit mask: `1 << total` carries the register that holds
+the total, and `0` carries nothing. Finalization, the one-time check before a template is locked on
+chain, confirms that every carried value is set before the loop and keeps its type through the loop
+body. A carried `bytes` value must also keep its maximum length.
 
 ## Stride-two rows
 
-```ts
-batch: {
-  maxIterations: 20,
-  row: {
-    owner: {},
-    tokenAccount: { writable: true },
-  },
-},
-steps: [
-  step.forEach([
-    assertAta({
-      associatedTokenAccount: account.iteration('tokenAccount'),
-      owner: account.iteration('owner'),
-      mint: account.fixed('mint'),
-      tokenProgram: account.fixed('tokenProgram'),
-      associatedTokenProgram: account.fixed('associatedTokenProgram'),
-    }),
-    ensureAssociatedTokenAccount({ /* row account references */ }),
-    tokenTransfer({ /* row destination */ }),
-  ]),
-]
-```
+A row can hold more than one account. The number of accounts in each row is its stride; here each
+row has two, a recipient's wallet and a token account. For every row, the template checks that the
+token account is the wallet's [ATA](/reference/glossary#ata), creates the account if it does not
+exist, and transfers tokens to it. The same template appears on
+[token-account patterns](/examples/token-accounts#assert-create-then-transfer).
 
-The row stride must be `1..=8`, the tail count must divide evenly by the stride, and rows cannot
-exceed `maxIterations` or fall below `minIterations`. There is no nested loop, backward jump, or
-condition-controlled `while`. Root steps may execute before and after the loop.
+::: code-group
+
+<<< @/../clients/js/examples/docs/assert-create-then-transfer.ts#template [TypeScript · Template]
+
+<<< @/../clients/js/examples/docs/assert-create-then-transfer.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#assert-create-then-transfer [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#assert-create-then-transfer [Rust · Run]
+
+:::
+
+The caller passes each row's accounts together, in the order `row` declares them: wallet, ATA,
+wallet, ATA, and so on.
+
+A row holds 1 to 8 accounts. The accounts passed for rows must make up a whole number of rows, and
+the row count must lie between `minIterations` and `maxIterations`. A template can have up to eight
+loops, run one after another. There are no nested loops, no backward jumps, and no `while` loops
+that run until a condition changes. Steps outside a loop can run before it and after it.
 
 ::: warning Count CPIs, not just rows
-The hard ceiling is 64 expanded CPIs. A 30-row body with two CPIs expands to 60; a third CPI would
-make the template invalid at finalization.
+A template can make at most 64 CPIs, counted for the worst case: the calls outside loops, plus
+each loop's calls times its maximum (`maxIterations` for `forEach`, `max` for `repeat`). Calls with
+a `when` condition count too. A 30-row
+loop with two calls counts as 60; a third call in the loop body would make 90, and finalization
+would reject the template. The stride-two example above makes two calls per row, so its 8 rows count
+as 16.
 :::

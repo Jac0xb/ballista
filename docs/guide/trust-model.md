@@ -1,65 +1,88 @@
 # Trust model
 
-Ballista runs other people's programs with the caller's accounts. Knowing exactly who is protected
-from whom is the difference between a template that is a guarantee and one that is a suggestion.
+This page explains who controls what when a template runs, what an account declaration can
+guarantee, and where those guarantees stop. A template calls other programs with accounts the
+caller supplies, so its checks protect you only if you know which parts the caller controls.
 
 ## Who supplies what
 
 | Party | Supplies | Controls |
 | --- | --- | --- |
-| Template author | The immutable bytecode: account constraints, inputs, steps | What can happen, in what order, under which conditions |
-| Caller | Every runtime account, every input value, every signature | Which concrete accounts the template sees |
-| Invoked programs | Their own instruction semantics and errors | What each CPI does with the accounts it receives |
-| Ballista | Verification at finalize, execution at run, privilege forwarding | Nothing else: no PDA signing, no custody, no state |
+| Template author | The template, which cannot change once finalized (checked and locked on chain): account declarations, inputs, steps | What can happen, in what order, and under which conditions |
+| Caller | Every account, every input value, every signature | Which actual accounts and values the template works with |
+| Called programs | Their own instruction behavior and errors | What each call does with the accounts it receives |
+| Ballista | Checks at finalization, execution at run time, passing on signatures and write access | Nothing else: it never signs for a PDA (program-derived address), holds no funds, and keeps no state between runs |
 
-Ballista never signs. A CPI can only mark an account as a signer or writable if the account
-constraint declared that privilege and the outer transaction actually granted it. Everything the
-template does, the caller could have done in a hand-built transaction. What the template adds is
-that the steps, guards, and invariants run atomically and exactly as written.
+Ballista never signs. A CPI (a call from the template to another program) can pass a declared
+account as a signer (an account that signed the transaction) or as writable (allowed to change)
+only if the account's declaration requires that privilege and the outer transaction actually
+granted it. Members of an [account group](/guide/account-groups) are the exception: they have no
+declaration, so a call passes each one as writable whenever the transaction marked it writable, and
+never as a signer. A template has no authority of its own: every call it makes, the caller could
+have made directly with the same signatures. What the template adds is that its steps and checks run together, in one
+transaction, exactly as written.
 
 ## Pins
 
-An account constraint can pin two facts about the account the caller passes:
+To pin a fact about an account is to fix it in the template, so that a run fails if the caller
+passes an account that does not match. An account declaration can pin two facts:
 
-- **`address`** fixes the account to one key. Every program a template invokes or derives PDAs
-  with must be pinned this way, otherwise the caller can substitute any executable and the
-  template's CPIs mean nothing.
-- **`owner`** fixes the program that owns the account's data, so fixed-offset reads have a known
-  layout. A `u64` at offset 64 is a token balance only if the Token Program owns the account.
+- **`address`** fixes the account to one exact address. Pin every program a template calls, or
+  derives a PDA with, this way. Otherwise the caller could substitute any program, and the
+  template's calls would mean nothing.
+- **`owner`** fixes the program that owns the account, so the template knows the layout of its
+  data. A `u64` at byte offset 64 is a token balance only if the Token Program owns the account.
 
-The compiler enforces both by default and refuses to compile a template that invokes an unpinned
-program or reads data from an account with neither pin. Helpers such as `systemTransfer` also
-declare which program they target, so pinning the wrong address is a compile error, not a runtime
-surprise.
+Only the TypeScript compiler enforces these two rules, unless you opt out as described below. It
+refuses a template that calls a program without a pinned address, or that reads the data of an
+account that pins neither its owner nor its address. Helpers such as `systemTransfer` also declare
+which program they target, so pinning the wrong address fails when you compile. The Ballista
+program does not check pins: at finalization it checks only that a called program is declared
+`executable`. A template built with the Rust `ProgramBuilder`, or by hand, can leave a program
+unpinned and still be finalized, so check the pins of any template you did not compile yourself.
 
-Static reads raise the account's minimum data length automatically, and the verifier rejects any
-read that extends past the declared minimum. A read that could fail at run time therefore fails at
-compile time instead.
+| Rule | Ballista program, on chain | TypeScript compiler |
+| --- | --- | --- |
+| A called program, or one used to derive a PDA, is declared `executable` | At finalization | Yes |
+| That program pins its `address` | No | Yes, unless `unsafeUnpinned` |
+| An account whose data is read pins its `owner` or `address` | No | Yes, unless `unsafeUnpinned` |
+| A call passes signer or writable only if the declaration requires it (group members aside) | At finalization | Yes |
+| A fixed-offset read stays within the account's minimum data length | At finalization | Raises `minDataLength` to fit |
+| Each account passed matches its declaration: signer, writable, executable, address, owner, length | On every run | The run builder checks pinned addresses |
+
+[Security posture](/guide/security) lists everything the program checks.
 
 ## Opting out
 
-`unsafeUnpinned: true` on an account constraint disables the pin requirements for that account.
-The template then trusts whatever the caller supplies. This is reasonable when the caller is the
-only party affected, for example a wallet's own maintenance template. It is not reasonable when a
-third party relies on the template as a guard, because the caller can then point the CPI at a
-program of their choosing.
+`unsafeUnpinned: true` on an account declaration turns off both compiler requirements for that
+account, and the template then accepts whatever the caller passes. That is reasonable when the
+caller is the only party affected, such as a wallet's own maintenance template. It is not
+reasonable when someone else relies on the template as a safeguard, because the caller can then
+point a call at any program they choose.
 
-The flag is deliberately verbose so it stands out in review.
+The flag's name is long on purpose, so that it stands out in code review. It exists only in the
+TypeScript template document and is not stored on chain.
 
 ## Error attribution
 
-Errors raised by an invoked program pass through `Run` untouched, including custom codes that
-happen to fall in Ballista's own numeric range. Ballista's failures are typed separately inside the
-executor and only then mapped to codes, so a callee's `6001` is never mistaken for
-`InvalidTemplateAccount`. See [Errors and events](/guide/errors-and-events) for the code layout.
+Errors raised by a called program pass through a run unchanged, including custom codes that happen
+to fall in Ballista's own ranges. Inside the program, Ballista keeps its own failures separate from
+a callee's errors and only turns them into codes at the end, so it never relabels a callee's error
+or adds its own context to it.
+
+A code on its own does not say which program raised it, though: a callee's `6001` is the same number
+as Ballista's `InvalidTemplateAccount`. The transaction logs show which program failed. See
+[Errors and events](/guide/errors-and-events) for how codes are laid out.
 
 ## Immutable deployments
 
-Each version of the Ballista program is deployed immutably under its own address; there is no
-upgrade authority that can change what a stored template means. Template addresses are derived
-under the program that finalized them, so a template is bound to one deployment forever. A
-different deployment is a different program, and templates would have to be uploaded again under
-it.
+Each version of the Ballista program is deployed under its own address with no upgrade authority,
+so nobody can change what a stored template means. A template's address is derived from the program
+that finalized it, so each template belongs to that one deployment for good. A new deployment is a
+different program, and templates must be uploaded again to use it.
 
-The SDKs take the program address as a parameter everywhere for this reason. The address in the
-README is an earlier pre-release deployment; templates from this repository need the final one.
+For this reason the TypeScript SDK takes the program address as a parameter. The Rust SDK's
+instruction builders use the constant `ballista_sdk::ID`, and `find_template_pda_for_program`
+derives a template address under any other deployment. The program deployed on devnet today is an
+earlier pre-release build that rejects templates compiled from this repository; see
+[Devnet workflow](/guide/devnet).

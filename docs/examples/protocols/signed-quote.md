@@ -1,0 +1,139 @@
+# Settle at a signed quote
+
+<p class="protocol-line">Ed25519 · Instructions sysvar · SPL Token</p>
+
+**Status:** Run as transactions in Mollusk, a harness that runs Solana programs without a
+validator. The Ed25519 precompile verifies a real signature, and the SPL Token program moves the
+tokens. Not yet run on devnet or mainnet.
+
+## What it does
+
+Settles a trade at a price a maker signed off chain. The taker pays the signed price, the maker
+delivers, and neither can stretch the trade past what the maker signed.
+
+The maker, who quotes, signs a quote off chain and sends it to the taker, who accepts it. Settling
+moves the maker's tokens, so the maker signs the transaction too. Because the template holds the
+trade to the quote, the service that co-signs for the maker only has to check that the transaction
+runs this template and nothing else that could spend the maker's accounts.
+
+Three Solana pieces make this work:
+
+- An **Ed25519 signature** is 64 bytes that prove the holder of a key, here the maker's wallet
+  key, signed exactly these bytes.
+- A **precompile** is a program built into the Solana runtime; the Ed25519 precompile checks the
+  signatures in its instruction, and a bad one fails the whole transaction.
+- The **Instructions sysvar** is a read-only account the runtime fills with the transaction's
+  instructions, so the template can read the Ed25519 instruction before its own.
+
+The quote is 128 bytes: the tag `BLSTQT01`, then `price`, `maxAmount` and `expiry` as eight-byte
+little-endian integers, then the 32-byte addresses of `taker`, `baseMint` and `quoteMint`. The
+maker delivers the base token, and the taker pays in the quote token. Amounts are in base units, a
+token's smallest unit. `price` has six decimals, so 1,000,000 means one quote unit per base unit.
+`expiry` is the last Unix timestamp at which the quote can settle.
+
+The precompile proves only that some key signed some bytes. The template ties them to the maker
+and to this trade, checking in order that:
+
+1. the instruction directly before the run is the Ed25519 precompile;
+2. it holds one self-contained signature over 128 bytes: the signature, the key and the message
+   all sit in its own data, so the bytes the template reads are the bytes the precompile checked;
+3. the signing key is `maker`'s;
+4. the message starts with `BLSTQT01`, the tag that separates quotes from everything else the
+   maker signs (a signature covers bytes, not what they mean);
+5. the clock hasn't passed `expiry`;
+6. the quote's `taker` is the wallet signing as `taker`;
+7. `amount` is at most `maxAmount`;
+8. the taker pays from an account in `quoteMint`, and the maker delivers from one in `baseMint`
+   (a token transfer only moves between accounts of one mint, so this pins both sides);
+9. the account the taker pays into belongs to the maker, not one the taker picked.
+
+It then prices the trade at `amount × price ÷ 1,000,000`, rounded up in the maker's favor, and
+makes two SPL Token transfers: the taker pays that to the maker, and the maker delivers `amount` to
+the taker.
+
+::: warning A quote can settle more than once
+Ballista keeps no state, so it can't count settlements. Until a quote expires, it can settle again
+unless the maker's co-signer refuses a second settlement of the same quote.
+:::
+
+## Template
+
+::: code-group
+
+<<< ../../../clients/js/examples/protocols/signed-quote-settlement.ts [TypeScript · Template]
+
+<<< ../../../clients/rust/examples/protocol_templates.rs#signed-quote [Rust · Template]
+
+<<< ../../../clients/js/examples/protocols/run/signed-quote.ts [TypeScript · Run]
+
+<<< ../../../clients/rust/examples/protocol_templates_run.rs#signed-quote [Rust · Run]
+
+:::
+
+The first steps come from the SDK's `ed25519Signature` helper, which returns them with a `field`
+reader for the signed message. `field` refuses a read past the message, and a template that uses
+`field` without the steps doesn't compile. The Rust template has no helper: it writes the same
+checks out with `ProgramBuilder` and compiles to the same bytes.
+
+The helper's `signer` must be a key the transaction's builder can't choose. With an input, or the
+key of an account nothing constrains, the builder could sign a quote with a key of their own. Here
+it is the key of `maker`, which must also sign the transaction, so a quote settles only if its
+signer signs the settlement too. The helper refuses an input, but it can't see an account's
+constraints: those are the template's to get right.
+
+## Run it
+
+The maker signs the quote's 128 bytes with its wallet key and sends the quote and the 64-byte
+signature to the taker. The taker builds one transaction with two instructions, in this order: the
+Ed25519 instruction, carrying the maker's key, the signature and the quote, then the run. The taker
+and the maker both sign it.
+
+The Run tabs build both. `quoteMessage` (TypeScript) and `Quote::message` (Rust) write the 128
+bytes the maker signs. `buildEd25519Instruction` and `ed25519_instruction` build the Ed25519
+instruction with one signature and each of its three instruction indexes set to `u16::MAX`
+(0xffff), which means "this instruction's own data". `buildSignedQuoteRun` and `run_signed_quote`
+return the two instructions in order.
+
+The Run tabs pass the eight declared accounts, `instructions`, `tokenProgram`, `taker`, `maker`,
+`takerQuoteAccount`, `makerQuoteAccount`, `makerBaseAccount` and `takerBaseAccount`, then the input
+`amount`. `instructions` is the Instructions sysvar. The four token accounts are writable, and the
+SPL Token program must own them, so Token-2022 accounts are rejected.
+
+::: warning The Ed25519 instruction goes directly before the run
+The template reads the signature from the instruction just before its own. With nothing before the
+run, it fails at `quoteInstructionIndex`. With any other instruction in between, even a memo, it
+fails at `quoteIsEd25519`.
+:::
+
+## What has been tested
+
+- **End to end.** `tests/ballista/src/lib.rs` (`signed_quote_settles_only_as_the_maker_signed`)
+  uploads the template as the TypeScript SDK compiles it and runs it in Mollusk after a real
+  Ed25519 instruction. At a price of 2,500,000 (2.5 quote units per base unit), taking 3,000,001
+  base units pays the maker 7,500,003, rounded up from 7,500,002.5, and delivers 3,000,001 to the
+  taker.
+- **Failures in the precompile.** A signature or signed price with one bit flipped fails the
+  Ed25519 instruction with `InvalidSignature`, so Ballista never runs.
+- **Failures in the template**, each at its own step: nothing before the run
+  (`quoteInstructionIndex`); a memo in between (`quoteIsEd25519`); another key's signature
+  (`quoteIsBySigner`); two signatures, a 127-byte message, or any one of the three instruction
+  indexes set to 0 instead of `u16::MAX` (`quoteIsOneSelfContainedSignature`); a message the maker
+  signed under the tag `BLSTQT02` (`quoteIsTagged`); an expiry one second before the clock
+  (`quoteHasNotExpired`); another taker (`quoteIsForThisTaker`); one base unit over `maxAmount`
+  (`withinTheQuotedSize`); a quote for another quote mint (`paysInTheQuotedMint`); a payment
+  account the taker owns (`paymentReachesTheMaker`).
+- **Not tested.** Devnet and mainnet, a failure at `deliversTheQuotedMint`, a settlement at exactly
+  `expiry`, and settling one quote twice. The end-to-end test builds its own Ed25519 instruction
+  and run, in the same layout, so no test runs the Run tabs against the program. The TypeScript run
+  is only type-checked.
+- A test reads the template and checks that the signature must come from the Ed25519 program and
+  be by `maker`, that `maker` must sign, that the tag is `BLSTQT01`, that each check reads the
+  signed field it names, and which accounts each transfer uses and what it moves
+  (`clients/js/src/protocol-semantics.test.ts`).
+- `clients/js/src/compiler.test.ts` checks the `ed25519Signature` helper: its steps and header
+  check, that it refuses an input as `signer`, and that `field` stays inside the message.
+- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
+  and inputs the template declares, right after one Ed25519 instruction
+  (`clients/rust/tests/protocol_templates.rs`).
+
+[All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

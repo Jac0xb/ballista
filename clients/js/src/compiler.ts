@@ -1,7 +1,9 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 
+import { INSTRUCTIONS_SYSVAR_ADDRESS_BYTES } from './helpers.js';
 import {
   TemplateSchema,
+  readWidth,
   type AccountConstraint,
   type AccountReference,
   type DataPart,
@@ -33,6 +35,10 @@ export const MAX_RETURN_DATA_LENGTH = 1_024;
 
 /** Program header flag: emit a `BEV1` data log after every successful run. */
 export const PROGRAM_FLAG_EMIT_EVENT = 1;
+/** The run event's tag family: the first three bytes of `BEV1`, kept by every version. No emit may start with them. */
+export const RUN_EVENT_TAG_FAMILY = Uint8Array.of(0x42, 0x45, 0x56);
+/** The shortest literal tag an emit may start with. */
+export const MIN_EMIT_TAG_LENGTH = 4;
 /** Instruction flag on read opcodes: the offset comes from register `b`. */
 export const INSTRUCTION_FLAG_DYNAMIC_OFFSET = 1;
 
@@ -95,6 +101,30 @@ export const opcode = {
   returnData: 48,
   move: 49,
   createPda: 50,
+  mulDiv: 51,
+  mulDivCeil: 52,
+  remainder: 53,
+  shiftLeft: 54,
+  shiftRight: 55,
+  bitAnd: 56,
+  bitOr: 57,
+  bitXor: 58,
+  powerOfTen: 59,
+  readI32: 60,
+  repeat: 61,
+  emit: 62,
+  setReturnData: 63,
+  instructionCount: 64,
+  instructionIndex: 65,
+  instructionProgram: 66,
+  instructionAccountCount: 67,
+  instructionAccount: 68,
+  instructionAccountFlags: 69,
+  instructionDataLength: 70,
+  readInstructionData: 71,
+  readInstructionBytes: 72,
+  readAccountBytes: 73,
+  bytesLength: 74,
 } as const;
 
 /** The conjuncts of a requirement: `and(and(a, b), c)` is three separate assertions. */
@@ -117,6 +147,17 @@ function literalKey(value: Literal): string {
   return `${value.type}:${String(inner)}`;
 }
 
+/**
+ * The typed value of a literal expression in the plain object tree, or `undefined` for any other
+ * node. `data.literal(bytes)` is a CPI data part, not an expression, and has no typed value.
+ */
+function typedLiteral(record: Record<string, unknown>): Literal | undefined {
+  const inner = record.value as Literal | undefined;
+  return record.kind === 'literal' && inner !== undefined && typeof inner === 'object' && 'type' in inner
+    ? inner
+    : undefined;
+}
+
 /** Every literal expression in the steps, in the order they appear, deduplicated by value. */
 function collectLiterals(value: unknown, into = new Map<string, Literal>()): Map<string, Literal> {
   if (Array.isArray(value)) {
@@ -125,13 +166,35 @@ function collectLiterals(value: unknown, into = new Map<string, Literal>()): Map
   }
   if (value === null || typeof value !== 'object') return into;
   const record = value as Record<string, unknown>;
-  const inner = record.value as Literal | undefined;
-  // `data.literal(bytes)` is a CPI data part, not an expression, and has no typed value.
-  if (record.kind === 'literal' && inner !== undefined && typeof inner === 'object' && 'type' in inner) {
-    const key = literalKey(inner);
-    if (!into.has(key)) into.set(key, inner);
+  const literal = typedLiteral(record);
+  if (literal !== undefined) {
+    const key = literalKey(literal);
+    if (!into.has(key)) into.set(key, literal);
   }
   for (const item of Object.values(record)) collectLiterals(item, into);
+  return into;
+}
+
+/**
+ * How often each literal (keyed like `literalKey`) and each fixed input (as `input:<name>`)
+ * appears in the steps. `sharesRegister` reads it.
+ */
+function countUses(value: unknown, into = new Map<string, number>()): Map<string, number> {
+  if (Array.isArray(value)) {
+    for (const item of value) countUses(item, into);
+    return into;
+  }
+  if (value === null || typeof value !== 'object') return into;
+  const record = value as Record<string, unknown>;
+  const literal = typedLiteral(record);
+  let key: string | undefined;
+  if (literal !== undefined) {
+    key = literalKey(literal);
+  } else if (record.kind === 'input' && typeof record.name === 'string') {
+    key = `input:${record.name}`;
+  }
+  if (key !== undefined) into.set(key, (into.get(key) ?? 0) + 1);
+  for (const item of Object.values(record)) countUses(item, into);
   return into;
 }
 
@@ -152,21 +215,11 @@ const readOpcode: Record<ReadType, number> = {
   u8: opcode.readU8,
   u16: opcode.readU16,
   u32: opcode.readU32,
+  i32: opcode.readI32,
   u64: opcode.readU64,
   i64: opcode.readI64,
   u128: opcode.readU128,
   pubkey: opcode.readPubkey,
-};
-
-const readWidth: Record<ReadType, number> = {
-  bool: 1,
-  u8: 1,
-  u16: 2,
-  u32: 4,
-  u64: 8,
-  i64: 8,
-  u128: 16,
-  pubkey: 32,
 };
 
 const readResultType: Record<ReadType, ValueType> = {
@@ -174,6 +227,7 @@ const readResultType: Record<ReadType, ValueType> = {
   u8: 'u64',
   u16: 'u64',
   u32: 'u64',
+  i32: 'i64',
   u64: 'u64',
   i64: 'i64',
   u128: 'u128',
@@ -234,6 +288,12 @@ interface ExpressionResult {
 }
 
 type Bindings = Map<string, ExpressionResult>;
+
+/**
+ * The loop a step sits in: `rows` for a `forEach` body, which has row accounts, row inputs and a
+ * loop index, and `count` for a `repeat` body, which has only the index. `undefined` at the root.
+ */
+type LoopKind = 'rows' | 'count';
 
 /** Maps one emitted VM instruction back to the authoring step that produced it. */
 export interface SourceMapEntry {
@@ -303,9 +363,13 @@ class Compiler {
   /** Highest byte any fixed-offset read touches per account, used to infer `minDataLength`. */
   readonly requiredDataLength = new Map<string, number>();
   readonly sourceMap: SourceMapEntry[] = [];
+  /** How often each literal and fixed input appears; see `countUses`. */
+  readonly uses: Map<string, number>;
   location: { path: string; label?: string } = { path: 'template' };
   nextRegister = 0;
   maxCpiDataLength = 0;
+  /** Whether a `setReturnData` step has compiled; no invoke may follow it. */
+  returnDataSet = false;
 
   constructor(template: Template) {
     this.template = template;
@@ -318,6 +382,7 @@ class Compiler {
     this.fixedEntries.forEach(([name], index) => this.fixedIndices.set(name, index));
     this.batchEntries.forEach(([name], index) => this.batchIndices.set(name, index));
     template.accountGroups.forEach((name, index) => this.accountGroupIndices.set(name, index));
+    this.uses = countUses(template.steps);
   }
 
   compile(): CompiledTemplate {
@@ -347,7 +412,7 @@ class Compiler {
     }
     this.location = { path: 'template' };
     // Steps compile first so every static read has already raised its account's data floor.
-    this.compileSteps(this.template.steps, false, new Map(), new Set(), 'steps');
+    this.compileSteps(this.template.steps, undefined, new Map(), new Set(), 'steps');
     for (const [name, constraint] of this.fixedEntries) {
       this.accountRecords.push(this.compileAccountConstraint(constraint, this.requiredDataLength.get(fixedKey(name)) ?? 0));
     }
@@ -368,10 +433,7 @@ class Compiler {
       throw new RangeError('Template constants exceed the wire format');
     }
 
-    const rootCpis = countCpis(this.template.steps.filter((item) => item.kind !== 'forEach'));
-    const loop = this.template.steps.find((item) => item.kind === 'forEach');
-    const loopCpis = loop?.kind === 'forEach' ? countCpis(loop.steps) : 0;
-    const maxExpandedCpis = rootCpis + loopCpis * (this.template.batch?.maxIterations ?? 0);
+    const maxExpandedCpis = worstCaseCpis(this.template.steps, this.template.batch?.maxIterations ?? 0);
     if (maxExpandedCpis > MAX_EXPANDED_CPIS) {
       throw new RangeError(`Template can expand to ${maxExpandedCpis} CPIs; maximum is 64`);
     }
@@ -466,41 +528,60 @@ class Compiler {
     return writer.finish();
   }
 
-  compileSteps(steps: Step[], inLoop: boolean, bindings: Bindings, carried: Set<string>, path: string): void {
+  compileSteps(steps: Step[], loop: LoopKind | undefined, bindings: Bindings, carried: Set<string>, path: string): void {
     let previous: Step | undefined;
     for (const [index, current] of steps.entries()) {
       const stepPath = `${path}[${index}]`;
       this.location = { path: stepPath, ...(current.label ? { label: current.label } : {}) };
-      if (current.kind === 'forEach') {
-        if (inLoop) throw new TypeError('Nested forEach is not supported');
+      if (current.kind === 'forEach' || current.kind === 'repeat') {
+        if (loop) throw new TypeError('Nested loops are not supported');
         let carry = 0n;
         const carriedNames = new Set<string>();
         for (const name of current.carry ?? []) {
-          const binding = bindings.get(name);
+          let binding = bindings.get(name);
           if (!binding) throw new TypeError(`Carried variable must be defined before the loop: ${name}`);
+          // `assign` rewrites a carried variable's register on every pass, so nothing else may
+          // read it. A `let` of a constant, an input or another variable shares that value's
+          // register: copy it into one of the variable's own first.
+          if (this.sharesRegister(name, binding.register, bindings)) {
+            binding = this.emit(opcode.move, binding.type, binding.maxLength, binding.register);
+            bindings.set(name, binding);
+          }
           carriedNames.add(name);
           carry |= 1n << BigInt(binding.register);
         }
-        const forEachIndex = this.pushInstruction(instructionRecord(opcode.forEach, NO_INDEX, 0, NO_INDEX, NO_INDEX, carry));
+        // A REPEAT reads its count once, as the loop starts, so the count compiles at the root.
+        // FOREACH leaves both operands unset.
+        let count = NO_INDEX;
+        let max = NO_INDEX;
+        if (current.kind === 'repeat') {
+          const value = this.compileExpression(current.count, undefined, bindings);
+          requireType(value, 'u64', 'repeat count');
+          count = value.register;
+          max = current.max;
+        }
+        const operation = current.kind === 'repeat' ? opcode.repeat : opcode.forEach;
+        const loopPc = this.pushInstruction(instructionRecord(operation, NO_INDEX, 0, count, max, carry));
         const bodyStart = this.instructions.length;
-        this.compileSteps(current.steps, true, new Map(bindings), carriedNames, `${stepPath}.steps`);
+        const kind = current.kind === 'repeat' ? 'count' : 'rows';
+        this.compileSteps(current.steps, kind, new Map(bindings), carriedNames, `${stepPath}.steps`);
         const bodyLength = this.instructions.length - bodyStart;
-        if (bodyLength === 0 || bodyLength > 0xff) throw new RangeError('Invalid forEach body length');
-        this.instructions[forEachIndex] = instructionRecord(opcode.forEach, NO_INDEX, bodyLength, NO_INDEX, NO_INDEX, carry);
+        if (bodyLength === 0 || bodyLength > 0xff) throw new RangeError(`Invalid ${current.kind} body length`);
+        this.instructions[loopPc] = instructionRecord(operation, NO_INDEX, bodyLength, count, max, carry);
       } else if (current.kind === 'let') {
         if (bindings.has(current.name)) throw new TypeError(`Variable already defined: ${current.name}`);
         const value =
           current.value.kind === 'returnData'
             ? this.compileReturnData(current.value, previous)
-            : this.compileExpression(current.value, inLoop, bindings);
+            : this.compileExpression(current.value, loop, bindings);
         bindings.set(current.name, value);
       } else if (current.kind === 'assign') {
-        if (!inLoop) throw new TypeError('assign is only valid inside forEach');
+        if (!loop) throw new TypeError('assign is only valid inside a loop');
         const binding = bindings.get(current.name);
         if (!binding || !carried.has(current.name)) {
           throw new TypeError(`assign target must be listed in the loop's carry: ${current.name}`);
         }
-        const value = this.compileExpression(current.value, inLoop, bindings);
+        const value = this.compileExpression(current.value, loop, bindings);
         if (value.type !== binding.type || (value.type === 'bytes' && value.maxLength !== binding.maxLength)) {
           throw new TypeError(`assign to ${current.name} must keep its ${binding.type} type and size`);
         }
@@ -510,21 +591,43 @@ class Compiler {
         // and the register it wrote. Nested ands flatten the same way. The failure is still one
         // error: whichever conjunct is false stops the run.
         for (const conjunct of flattenConjunction(current.condition)) {
-          const condition = this.compileExpression(conjunct, inLoop, bindings);
+          const condition = this.compileExpression(conjunct, loop, bindings);
           requireType(condition, 'bool', 'require condition');
           this.pushInstruction(instructionRecord(opcode.require, NO_INDEX, condition.register));
         }
+      } else if (current.kind === 'emit' || current.kind === 'setReturnData') {
+        this.compileOutput(current, loop, bindings);
       } else {
-        this.compileInvoke(current, inLoop, bindings);
+        this.compileInvoke(current, loop, bindings);
       }
       this.location = { path: stepPath, ...(current.label ? { label: current.label } : {}) };
       previous = current;
     }
   }
 
-  compileInvoke(current: Extract<Step, { kind: 'invoke' }>, inLoop: boolean, bindings: Bindings): void {
-    const programAccount = this.encodeAccountReference(current.program, inLoop);
-    const programConstraint = this.constraintFor(current.program, inLoop);
+  /**
+   * Whether anything besides variable `name` reads `register`: another variable, or a hoisted
+   * constant or fixed input that appears more than once in the template.
+   */
+  sharesRegister(name: string, register: number, bindings: Bindings): boolean {
+    for (const [other, value] of bindings) {
+      if (other !== name && value.register === register) return true;
+    }
+    for (const [key, value] of this.constants) {
+      if (value.register === register) return (this.uses.get(key) ?? 0) > 1;
+    }
+    for (const [input, value] of this.fixedInputs) {
+      if (value.register === register) return (this.uses.get(`input:${input}`) ?? 0) > 1;
+    }
+    return false;
+  }
+
+  compileInvoke(current: Extract<Step, { kind: 'invoke' }>, loop: LoopKind | undefined, bindings: Bindings): void {
+    if (this.returnDataSet) {
+      throw new TypeError('invoke cannot follow setReturnData: invoking a program clears the return data');
+    }
+    const programAccount = this.encodeAccountReference(current.program, loop);
+    const programConstraint = this.constraintFor(current.program, loop);
     this.requirePinnedProgram(current.program, programConstraint, 'Invoke program');
     if (
       current.programAddress &&
@@ -539,20 +642,14 @@ class Compiler {
 
     const accountStart = this.cpiAccounts.length;
     for (const account of current.accounts) {
-      const reference = this.encodeAccountReference(account.account, inLoop);
-      const constraint = this.constraintFor(account.account, inLoop);
+      const reference = this.encodeAccountReference(account.account, loop);
+      const constraint = this.constraintFor(account.account, loop);
       if (account.signer && !constraint.signer) throw new TypeError('CPI signer is not required by its account schema');
       if (account.writable && !constraint.writable) throw new TypeError('CPI writable account is not writable in its schema');
       this.cpiAccounts.push(Uint8Array.of(reference, (account.signer ? ACCOUNT_SIGNER : 0) | (account.writable ? ACCOUNT_WRITABLE : 0)));
     }
 
-    const segmentStart = this.dataSegments.length;
-    let maxDataLength = 0;
-    for (const part of current.data) {
-      const result = this.compileDataPart(part, inLoop, bindings);
-      this.dataSegments.push(result.record);
-      maxDataLength += result.maxLength;
-    }
+    const { segmentStart, maxLength: maxDataLength } = this.compileDataParts(current.data, loop, bindings);
     if (maxDataLength > MAX_CPI_DATA_LENGTH) throw new RangeError('CPI data can exceed 4096 bytes');
     this.maxCpiDataLength = Math.max(this.maxCpiDataLength, maxDataLength);
 
@@ -576,11 +673,44 @@ class Compiler {
 
     let guard = NO_INDEX;
     if (current.when) {
-      const result = this.compileExpression(current.when, inLoop, bindings);
+      const result = this.compileExpression(current.when, loop, bindings);
       requireType(result, 'bool', 'invoke guard');
       guard = result.register;
     }
     this.pushInstruction(instructionRecord(opcode.invoke, NO_INDEX, cpiIndex, guard));
+  }
+
+  /** EMIT and SET_RETURN_DATA: the parts are encoded as invocation data is, to at most 1,024 bytes. */
+  compileOutput(current: Extract<Step, { kind: 'emit' | 'setReturnData' }>, loop: LoopKind | undefined, bindings: Bindings): void {
+    if (current.kind === 'emit') {
+      // A log line names the program that wrote it, Ballista, but not the template. Without a tag,
+      // a template could log a byte-exact copy of the run event for any template address.
+      const [tag] = current.parts;
+      if (tag?.kind !== 'literal' || tag.bytes.length < MIN_EMIT_TAG_LENGTH) {
+        throw new TypeError(
+          `emit must start with a literal tag of at least ${MIN_EMIT_TAG_LENGTH} bytes, so its log cannot pass for Ballista's run event`,
+        );
+      }
+      if (RUN_EVENT_TAG_FAMILY.every((byte, index) => tag.bytes[index] === byte)) {
+        const family = String.fromCharCode(...RUN_EVENT_TAG_FAMILY);
+        throw new TypeError(`emit tag cannot start with "${family}": that tag family is reserved for Ballista's run event`);
+      }
+    }
+    if (current.kind === 'setReturnData') {
+      // Solana clears return data whenever a program is invoked, so what a run returns is set
+      // once, outside every loop, after its last invoke.
+      if (loop) throw new TypeError('setReturnData is not allowed inside a loop');
+      if (this.returnDataSet) throw new TypeError('setReturnData may appear only once');
+      this.returnDataSet = true;
+    }
+    const { segmentStart, maxLength } = this.compileDataParts(current.parts, loop, bindings);
+    if (maxLength > MAX_RETURN_DATA_LENGTH) {
+      throw new RangeError(`${current.kind} can encode ${maxLength} bytes; maximum is ${MAX_RETURN_DATA_LENGTH}`);
+    }
+    const operation = opcode[current.kind];
+    this.pushInstruction(
+      instructionRecord(operation, NO_INDEX, NO_INDEX, NO_INDEX, NO_INDEX, rangeImmediate(segmentStart, current.parts.length)),
+    );
   }
 
   compileReturnData(node: Extract<Expression, { kind: 'returnData' }>, previous: Step | undefined): ExpressionResult {
@@ -593,7 +723,20 @@ class Compiler {
     return this.emit(opcode.returnData, readResultType[node.type], 0, readOpcode[node.type], NO_INDEX, NO_INDEX, BigInt(node.offset));
   }
 
-  compileDataPart(part: DataPart, inLoop: boolean, bindings: Bindings): { record: Uint8Array; maxLength: number } {
+  /**
+   * Compiles a step's data parts, then appends their segments as one contiguous run and returns
+   * where it starts. A part can push segments of its own while it compiles (a `pda` expression's
+   * seeds), so appending each part's segment as soon as it compiled would leave those seeds inside
+   * the step's range, and the step would encode a seed where it meant the part.
+   */
+  compileDataParts(parts: DataPart[], loop: LoopKind | undefined, bindings: Bindings): { segmentStart: number; maxLength: number } {
+    const compiled = parts.map((part) => this.compileDataPart(part, loop, bindings));
+    const segmentStart = this.dataSegments.length;
+    for (const { record } of compiled) this.dataSegments.push(record);
+    return { segmentStart, maxLength: compiled.reduce((total, { maxLength }) => total + maxLength, 0) };
+  }
+
+  compileDataPart(part: DataPart, loop: LoopKind | undefined, bindings: Bindings): { record: Uint8Array; maxLength: number } {
     const writer = new Writer();
     if (part.kind === 'literal') {
       const offset = this.addBlob(part.bytes);
@@ -605,7 +748,7 @@ class Compiler {
       return { record: writer.finish(), maxLength: part.bytes.length };
     }
 
-    const value = this.compileExpression(part.value, inLoop, bindings);
+    const value = this.compileExpression(part.value, loop, bindings);
     const expected: Record<typeof part.encoding, ValueType | 'unsigned'> = {
       u8: 'unsigned',
       u16: 'unsigned',
@@ -631,7 +774,7 @@ class Compiler {
     return { record: writer.finish(), maxLength };
   }
 
-  compileExpression(current: Expression, inLoop: boolean, bindings: Bindings): ExpressionResult {
+  compileExpression(current: Expression, loop: LoopKind | undefined, bindings: Bindings): ExpressionResult {
     if (current.kind === 'input') {
       const loaded = this.fixedInputs.get(current.name);
       if (loaded !== undefined) return loaded;
@@ -641,7 +784,7 @@ class Compiler {
       return this.emit(opcode.loadInput, definition.type, definition.type === 'bytes' ? definition.maxLength : 0, index);
     }
     if (current.kind === 'rowInput') {
-      if (!inLoop) throw new TypeError('Row inputs are only valid inside forEach');
+      if (loop !== 'rows') throw new TypeError('Row inputs are only valid inside forEach');
       const index = this.rowInputIndices.get(current.name);
       if (index === undefined) throw new TypeError(`Unknown row input: ${current.name}`);
       const definition = this.rowInputEntries[index]![1];
@@ -666,7 +809,7 @@ class Compiler {
       return result;
     }
     if (current.kind === 'accountField') {
-      const accountReference = this.encodeAccountReference(current.account, inLoop);
+      const accountReference = this.encodeAccountReference(current.account, loop);
       const fields = {
         key: [opcode.accountKey, 'pubkey'],
         owner: [opcode.accountOwner, 'pubkey'],
@@ -678,15 +821,15 @@ class Compiler {
       return this.emit(operation, type, 0, accountReference);
     }
     if (current.kind === 'accountData') {
-      const accountReference = this.encodeAccountReference(current.account, inLoop);
-      this.requirePinnedForRead(current.account, this.constraintFor(current.account, inLoop));
+      const accountReference = this.encodeAccountReference(current.account, loop);
+      this.requirePinnedForRead(current.account, this.constraintFor(current.account, loop));
       const operation = readOpcode[current.type];
       const type = readResultType[current.type];
       if (typeof current.offset === 'number') {
         this.raiseDataFloor(current.account, current.offset + readWidth[current.type]);
         return this.emit(operation, type, 0, accountReference, NO_INDEX, NO_INDEX, BigInt(current.offset));
       }
-      const offset = this.compileExpression(current.offset, inLoop, bindings);
+      const offset = this.compileExpression(current.offset, loop, bindings);
       requireType(offset, 'u64', 'accountData offset');
       return this.emit(operation, type, 0, accountReference, offset.register, NO_INDEX, 0n, INSTRUCTION_FLAG_DYNAMIC_OFFSET);
     }
@@ -699,12 +842,12 @@ class Compiler {
         : this.emit(opcode.clockTimestamp, 'i64');
     }
     if (current.kind === 'loopIndex') {
-      if (!inLoop) throw new TypeError('loopIndex is only valid inside forEach');
+      if (!loop) throw new TypeError('loopIndex is only valid inside a loop');
       return this.emit(opcode.loopIndex, 'u64');
     }
     if (current.kind === 'pda') {
-      const programAccount = this.encodeAccountReference(current.program, inLoop);
-      const programConstraint = this.constraintFor(current.program, inLoop);
+      const programAccount = this.encodeAccountReference(current.program, loop);
+      const programConstraint = this.constraintFor(current.program, loop);
       this.requirePinnedProgram(current.program, programConstraint, 'PDA program');
       if (current.seeds.length < 1 || current.seeds.length > MAX_PDA_SEEDS) {
         throw new RangeError(`PDA derivation requires 1 to ${MAX_PDA_SEEDS} seeds`);
@@ -713,19 +856,23 @@ class Compiler {
       // difference between about 4,800 and 1,500 compute units.
       let bumpRegister = NO_INDEX;
       if (current.bump !== undefined) {
-        const bump = this.compileExpression(current.bump, inLoop, bindings);
+        const bump = this.compileExpression(current.bump, loop, bindings);
         requireType(bump, 'u64', 'PDA bump');
         bumpRegister = bump.register;
       }
-      const segmentStart = this.dataSegments.length;
-      for (const seed of current.seeds) {
-        const value = this.compileExpression(seed, inLoop, bindings);
+      // Every seed compiles before any seed segment is appended. A seed that is itself a `pda`
+      // pushes its own seeds while it compiles, and those must not land inside this derivation's
+      // range, as data parts must not (see `compileDataParts`).
+      const seeds = current.seeds.map((seed) => {
+        const value = this.compileExpression(seed, loop, bindings);
         const seedLength = value.type === 'bytes' ? value.maxLength : fixedValueLength(value.type);
         if (seedLength > MAX_PDA_SEED_LENGTH) {
           throw new RangeError(`PDA seed can exceed ${MAX_PDA_SEED_LENGTH} bytes`);
         }
-        this.dataSegments.push(this.compileSeedSegment(value));
-      }
+        return value;
+      });
+      const segmentStart = this.dataSegments.length;
+      for (const value of seeds) this.dataSegments.push(this.compileSeedSegment(value));
       return this.emit(
         current.bump === undefined ? opcode.derivePda : opcode.createPda,
         'pubkey',
@@ -737,29 +884,131 @@ class Compiler {
       );
     }
     if (current.kind === 'not') {
-      const value = this.compileExpression(current.value, inLoop, bindings);
+      const value = this.compileExpression(current.value, loop, bindings);
       requireType(value, 'bool', 'not');
       return this.emit(opcode.not, 'bool', 0, value.register);
     }
+    if (current.kind === 'multiplyDivide') {
+      const left = this.compileExpression(current.left, loop, bindings);
+      const right = this.compileExpression(current.right, loop, bindings);
+      const divisor = this.compileExpression(current.divisor, loop, bindings);
+      if (left.type !== right.type || left.type !== divisor.type || !isUnsigned(left.type)) {
+        throw new TypeError('multiplyDivide requires three u64 or three u128 operands');
+      }
+      const operation = current.rounding === 'up' ? opcode.mulDivCeil : opcode.mulDiv;
+      return this.emit(operation, left.type, 0, left.register, right.register, divisor.register);
+    }
+    if (current.kind === 'powerOfTen') {
+      const exponent = this.compileExpression(current.exponent, loop, bindings);
+      requireType(exponent, 'u64', 'powerOfTen');
+      return this.emit(opcode.powerOfTen, 'u128', 0, exponent.register);
+    }
     if (current.kind === 'cast') {
-      const value = this.compileExpression(current.value, inLoop, bindings);
+      const value = this.compileExpression(current.value, loop, bindings);
       if (!isNumeric(value.type)) throw new TypeError('cast requires a numeric expression');
       const operation = { u64: opcode.castU64, i64: opcode.castI64, u128: opcode.castU128 }[current.to];
       return this.emit(operation, current.to, 0, value.register);
     }
+    if (current.kind === 'instructionCount' || current.kind === 'currentInstructionIndex') {
+      const sysvar = this.encodeSysvar(current.sysvar);
+      const operation = current.kind === 'instructionCount' ? opcode.instructionCount : opcode.instructionIndex;
+      return this.emit(operation, 'u64', 0, sysvar);
+    }
+    if (current.kind === 'instruction') {
+      const sysvar = this.encodeSysvar(current.sysvar);
+      const index = this.compileExpression(current.index, loop, bindings);
+      requireType(index, 'u64', 'instruction index');
+      const fields = {
+        program: [opcode.instructionProgram, 'pubkey'],
+        accountCount: [opcode.instructionAccountCount, 'u64'],
+        dataLength: [opcode.instructionDataLength, 'u64'],
+      } as const;
+      const [operation, type] = fields[current.field];
+      return this.emit(operation, type, 0, sysvar, index.register);
+    }
+    if (current.kind === 'instructionAccount') {
+      const sysvar = this.encodeSysvar(current.sysvar);
+      const index = this.compileExpression(current.index, loop, bindings);
+      const position = this.compileExpression(current.position, loop, bindings);
+      requireType(index, 'u64', 'instruction index');
+      requireType(position, 'u64', 'instruction account position');
+      return current.field === 'key'
+        ? this.emit(opcode.instructionAccount, 'pubkey', 0, sysvar, index.register, position.register)
+        : this.emit(opcode.instructionAccountFlags, 'u64', 0, sysvar, index.register, position.register);
+    }
+    if (current.kind === 'instructionData' || current.kind === 'instructionDataBytes') {
+      const sysvar = this.encodeSysvar(current.sysvar);
+      const index = this.compileExpression(current.index, loop, bindings);
+      const offset = this.compileExpression(current.offset, loop, bindings);
+      requireType(index, 'u64', 'instruction index');
+      requireType(offset, 'u64', `${current.kind} offset`);
+      if (current.kind === 'instructionData') {
+        const type = readResultType[current.type];
+        const selector = BigInt(readOpcode[current.type]);
+        return this.emit(opcode.readInstructionData, type, 0, sysvar, index.register, offset.register, selector);
+      }
+      return this.emit(
+        opcode.readInstructionBytes,
+        'bytes',
+        current.length,
+        sysvar,
+        index.register,
+        offset.register,
+        BigInt(current.length),
+      );
+    }
+    if (current.kind === 'accountDataBytes') {
+      const accountReference = this.encodeAccountReference(current.account, loop);
+      const constraint = this.constraintFor(current.account, loop);
+      this.requirePinnedForRead(current.account, constraint);
+      if (constraint.writable) {
+        throw new TypeError(
+          `accountDataBytes reads only accounts this instruction cannot write; ${current.account.name} is declared writable`,
+        );
+      }
+      const offset = this.compileExpression(current.offset, loop, bindings);
+      requireType(offset, 'u64', 'accountDataBytes offset');
+      return this.emit(
+        opcode.readAccountBytes,
+        'bytes',
+        current.length,
+        accountReference,
+        offset.register,
+        NO_INDEX,
+        BigInt(current.length),
+      );
+    }
+    if (current.kind === 'bytesLength') {
+      const value = this.compileExpression(current.value, loop, bindings);
+      requireType(value, 'bytes', 'bytesLength');
+      return this.emit(opcode.bytesLength, 'u64', 0, value.register);
+    }
     if (current.kind === 'select') {
-      const condition = this.compileExpression(current.condition, inLoop, bindings);
-      const ifTrue = this.compileExpression(current.ifTrue, inLoop, bindings);
-      const ifFalse = this.compileExpression(current.ifFalse, inLoop, bindings);
+      const condition = this.compileExpression(current.condition, loop, bindings);
+      const ifTrue = this.compileExpression(current.ifTrue, loop, bindings);
+      const ifFalse = this.compileExpression(current.ifFalse, loop, bindings);
       requireType(condition, 'bool', 'select condition');
       requireType(ifFalse, ifTrue.type, 'select branches');
       return this.emit(opcode.select, ifTrue.type, Math.max(ifTrue.maxLength, ifFalse.maxLength), condition.register, ifTrue.register, ifFalse.register);
     }
 
-    const left = this.compileExpression(current.left, inLoop, bindings);
-    const right = this.compileExpression(current.right, inLoop, bindings);
+    const left = this.compileExpression(current.left, loop, bindings);
+    const right = this.compileExpression(current.right, loop, bindings);
     const operation = opcode[current.op];
-    if (['add', 'subtract', 'multiply', 'divide', 'min', 'max'].includes(current.op)) {
+    if (current.op === 'shiftLeft' || current.op === 'shiftRight') {
+      if (!isUnsigned(left.type)) {
+        throw new TypeError(`${current.op} requires a u64 or u128 value`);
+      }
+      requireType(right, 'u64', `${current.op} amount`);
+      return this.emit(operation, left.type, 0, left.register, right.register);
+    }
+    if (current.op === 'bitAnd' || current.op === 'bitOr' || current.op === 'bitXor') {
+      if (left.type !== right.type || !isUnsigned(left.type)) {
+        throw new TypeError(`${current.op} requires matching u64 or u128 operands`);
+      }
+      return this.emit(operation, left.type, 0, left.register, right.register);
+    }
+    if (['add', 'subtract', 'multiply', 'divide', 'min', 'max', 'remainder'].includes(current.op)) {
       if (left.type !== right.type || !isNumeric(left.type)) throw new TypeError(`${current.op} requires matching numeric types`);
       return this.emit(operation, left.type, 0, left.register, right.register);
     }
@@ -801,6 +1050,17 @@ class Compiler {
         `${role} account ${reference.name} must pin an address; set unsafeUnpinned: true to accept any program`,
       );
     }
+  }
+
+  /** Introspection reads the Instructions sysvar through a fixed account pinned to its address. */
+  encodeSysvar(reference: AccountReference): number {
+    const constraint = reference.kind === 'account' ? this.constraintFor(reference, undefined) : undefined;
+    if (!constraint?.address || !equalBytes(constraint.address, INSTRUCTIONS_SYSVAR_ADDRESS_BYTES)) {
+      throw new TypeError(
+        `Account ${reference.name} must be a fixed account pinned to the Instructions sysvar (INSTRUCTIONS_SYSVAR_ADDRESS_BYTES)`,
+      );
+    }
+    return this.encodeAccountReference(reference, undefined);
   }
 
   /** Data reads only mean something when the account's layout is known, which needs a pin. */
@@ -862,25 +1122,25 @@ class Compiler {
     }
   }
 
-  encodeAccountReference(reference: AccountReference, inLoop: boolean): number {
+  encodeAccountReference(reference: AccountReference, loop: LoopKind | undefined): number {
     if (reference.kind === 'account') {
       const index = this.fixedIndices.get(reference.name);
       if (index === undefined) throw new TypeError(`Unknown fixed account: ${reference.name}`);
       return index;
     }
-    if (!inLoop) throw new TypeError('Iteration accounts are only valid inside forEach');
+    if (loop !== 'rows') throw new TypeError('Iteration accounts are only valid inside forEach');
     const index = this.batchIndices.get(reference.name);
     if (index === undefined) throw new TypeError(`Unknown batch account: ${reference.name}`);
     return ITERATION_ACCOUNT_BIT | index;
   }
 
-  constraintFor(reference: AccountReference, inLoop: boolean): AccountConstraint {
+  constraintFor(reference: AccountReference, loop: LoopKind | undefined): AccountConstraint {
     if (reference.kind === 'account') {
       const index = this.fixedIndices.get(reference.name);
       if (index === undefined) throw new TypeError(`Unknown fixed account: ${reference.name}`);
       return this.fixedEntries[index]![1];
     }
-    if (!inLoop) throw new TypeError('Iteration accounts are only valid inside forEach');
+    if (loop !== 'rows') throw new TypeError('Iteration accounts are only valid inside forEach');
     const index = this.batchIndices.get(reference.name);
     if (index === undefined) throw new TypeError(`Unknown batch account: ${reference.name}`);
     return this.batchEntries[index]![1];
@@ -947,6 +1207,11 @@ function isNumeric(type: ValueType): boolean {
   return type === 'u64' || type === 'i64' || type === 'u128';
 }
 
+/** The two types the bitwise, shift, and multiply-divide opcodes accept; `i64` is signed and excluded. */
+function isUnsigned(type: ValueType): boolean {
+  return type === 'u64' || type === 'u128';
+}
+
 function fixedValueLength(type: Exclude<ValueType, 'bytes'>): number {
   return { bool: 1, u64: 8, i64: 8, u128: 16, pubkey: 32 }[type];
 }
@@ -966,8 +1231,20 @@ function encodeBigint(value: bigint, byteLength: number): Uint8Array {
 function countCpis(steps: Step[]): number {
   return steps.reduce((total, current) => {
     if (current.kind === 'invoke') return total + 1;
-    if (current.kind === 'forEach') return total + countCpis(current.steps);
+    if (current.kind === 'forEach' || current.kind === 'repeat') return total + countCpis(current.steps);
     return total;
+  }, 0);
+}
+
+/**
+ * The most invocations a run can reach: each loop's body runs its maximum number of times, the
+ * batch's for a `forEach` and its own `max` for a `repeat`, and every other invoke once.
+ */
+function worstCaseCpis(steps: Step[], batchMaxIterations: number): number {
+  return steps.reduce((total, current) => {
+    if (current.kind === 'forEach') return total + countCpis(current.steps) * batchMaxIterations;
+    if (current.kind === 'repeat') return total + countCpis(current.steps) * current.max;
+    return total + countCpis([current]);
   }, 0);
 }
 

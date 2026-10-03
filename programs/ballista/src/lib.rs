@@ -218,20 +218,26 @@ fn run_template(accounts: &mut [AccountView], input_bytes: &[u8]) -> ProgramResu
         return Err(BallistaError::InvalidTemplateAccount.into());
     }
     let data = template.try_borrow()?;
-    let account =
-        TemplateAccount::parse(&data).map_err(|_| BallistaError::InvalidTemplateAccount)?;
-    let program = account
-        .finalized_program()
-        .map_err(|_| BallistaError::TemplateNotFinalized)?;
+    // The account is ours, so a finalized one holds a payload that was verified on upload and
+    // never written since: read it without repeating those checks. Anything else takes the full
+    // parse, which reports exactly why it cannot run.
+    let program = match TemplateAccount::finalized_program_unchecked(&data) {
+        Some(program) => program,
+        None => TemplateAccount::parse(&data)
+            .map_err(|_| BallistaError::InvalidTemplateAccount)?
+            .finalized_program()
+            .map_err(|_| BallistaError::TemplateNotFinalized)?,
+    };
     profile::mark(profile::TAG_TEMPLATE_LOADED);
     let result = processor::run(&program, input_bytes, runtime_accounts, template.address());
+    // A `cu-profile` build sets its record as return data here, over any the run set.
     profile::report();
     result
 }
 
 /// Checks the accounts an upload needs and returns the template PDA's bump, so the caller does
-/// not pay for a second canonical derivation: the search costs 1,500 compute units per bump it
-/// rejects, which is the most expensive thing an upload does.
+/// not pay for a second canonical derivation: the search costs about 300 compute units per bump
+/// it tries (see `utils::pda`).
 fn validate_create_accounts(
     creator: &AccountView,
     template: &AccountView,

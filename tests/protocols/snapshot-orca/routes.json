@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "slot": 451137027,
+  "wallet": {
+    "seed": "ballista-protocol-tests-wallet-1",
+    "address": "ApS3VQAaUaEMsUKzoyt26G2wUM5Xpta57WbQEN17tyq1"
+  },
+  "jupiter": {
+    "api": "https://lite-api.jup.ag/swap/v1",
+    "dexes": {}
+  },
+  "routes": {}
+}

@@ -1,7 +1,12 @@
 //! Generated programs verify by construction. Run with `--features proptest`.
 
-use ballista_common::template::{generate::any_program, ProgramView};
+use ballista_common::template::{
+    generate::any_program, InstructionRecord, ProgramView, TemplateAccount, TemplateAccountHeader,
+    OP_EMIT, OP_FOREACH, OP_REPEAT, OP_SET_RETURN_DATA,
+};
 use proptest::prelude::*;
+use proptest::strategy::ValueTree;
+use proptest::test_runner::TestRunner;
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
@@ -20,5 +25,95 @@ proptest! {
             program.run_inputs(program.max_iterations, &vec![0; program.account_groups]).len(),
             program.account_groups + program.fixed_inputs.len() + program.max_iterations * program.row_input_bytes.len()
         );
+
+        // The run path reads a finalized account without the full parse. It must find the same
+        // program, and must not take an account that is still uploading.
+        let mut header =
+            TemplateAccountHeader::new_uploading([3; 32], 7, 254, program.bytes.len(), [9; 32])
+                .expect("header");
+        let mut account = header.as_bytes().to_vec();
+        account.extend_from_slice(&program.bytes);
+        prop_assert!(TemplateAccount::finalized_program_unchecked(&account).is_none());
+        header.set_written_len(program.bytes.len()).expect("written");
+        header.finalize().expect("finalize");
+        account[..header.as_bytes().len()].copy_from_slice(header.as_bytes());
+        let slow = TemplateAccount::parse(&account)
+            .expect("account parses")
+            .finalized_program()
+            .expect("finalized program parses");
+        let fast = TemplateAccount::finalized_program_unchecked(&account)
+            .expect("the fast path reads a finalized account");
+        prop_assert!(core::ptr::eq(slow.header, fast.header));
+        prop_assert!(core::ptr::eq(slow.accounts, fast.accounts));
+        prop_assert!(core::ptr::eq(slow.inputs, fast.inputs));
+        prop_assert!(core::ptr::eq(slow.instructions, fast.instructions));
+        prop_assert!(core::ptr::eq(slow.cpis, fast.cpis));
+        prop_assert!(core::ptr::eq(slow.cpi_accounts, fast.cpi_accounts));
+        prop_assert!(core::ptr::eq(slow.data_segments, fast.data_segments));
+        prop_assert!(core::ptr::eq(slow.pubkeys, fast.pubkeys));
+        prop_assert!(core::ptr::eq(slow.blob, fast.blob));
     }
+}
+
+/// Each loop of a program, in order: its opcode and its body.
+fn loops(instructions: &[InstructionRecord]) -> Vec<(u8, &[InstructionRecord])> {
+    let mut loops = Vec::new();
+    let mut pc = 0;
+    while pc < instructions.len() {
+        let record = &instructions[pc];
+        if matches!(record.opcode, OP_FOREACH | OP_REPEAT) {
+            let end = pc + 1 + record.a as usize;
+            loops.push((record.opcode, &instructions[pc + 1..end]));
+            pc = end;
+        } else {
+            pc += 1;
+        }
+    }
+    loops
+}
+
+/// The generator reaches what the loop and output rules allow, so the properties cover it: count
+/// loops, more than one loop, a count loop before a FOREACH, logs at the root and in loop bodies,
+/// and return data.
+#[test]
+fn generated_programs_reach_every_loop_and_output_shape() {
+    let shapes: [(&str, usize, fn(&[InstructionRecord]) -> bool); 6] = [
+        ("hold a count loop", 32, |program| {
+            loops(program).iter().any(|(opcode, _)| *opcode == OP_REPEAT)
+        }),
+        ("hold more than one loop", 32, |program| loops(program).len() > 1),
+        ("run a count loop before their first FOREACH", 8, |program| {
+            let loops = loops(program);
+            let first = |kind: u8| loops.iter().position(|(opcode, _)| *opcode == kind);
+            matches!(
+                (first(OP_REPEAT), first(OP_FOREACH)),
+                (Some(repeat), Some(foreach)) if repeat < foreach
+            )
+        }),
+        ("log", 32, |program| program.iter().any(|record| record.opcode == OP_EMIT)),
+        ("log in a loop body", 16, |program| {
+            loops(program)
+                .iter()
+                .any(|(_, body)| body.iter().any(|record| record.opcode == OP_EMIT))
+        }),
+        ("set return data", 96, |program| {
+            program.iter().any(|record| record.opcode == OP_SET_RETURN_DATA)
+        }),
+    ];
+    let mut runner = TestRunner::deterministic();
+    let mut seen = [0usize; 6];
+    for _ in 0..256 {
+        let program = any_program().new_tree(&mut runner).unwrap().current();
+        let parsed = ProgramView::parse(&program.bytes).unwrap();
+        for (count, (_, _, reaches)) in seen.iter_mut().zip(&shapes) {
+            *count += usize::from(reaches(parsed.instructions));
+        }
+    }
+    let short: Vec<String> = seen
+        .iter()
+        .zip(&shapes)
+        .filter(|(count, (_, floor, _))| *count < floor)
+        .map(|(count, (what, floor, _))| format!("{count} of 256 programs {what}, under {floor}"))
+        .collect();
+    assert!(short.is_empty(), "{}", short.join("\n"));
 }

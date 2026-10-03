@@ -19,8 +19,11 @@ import {
   ORCA_WHIRLPOOL,
   PYTH,
   PYTH_RECEIVER,
+  SPL_MINT,
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_LENGTH,
+  TOKEN_ACCOUNT_MINT_OFFSET,
+  addressBytes,
 } from '../examples/protocols/shared.js';
 
 const RPC = process.env.BALLISTA_DEVNET_RPC ?? 'https://api.devnet.solana.com';
@@ -181,7 +184,7 @@ describe.skipIf(!ENABLED)('protocol layouts on devnet', () => {
     // suite, so this is corroboration rather than the only check. Public devnet RPCs refuse
     // both a Token-program scan and `getTokenLargestAccounts` under load; when that happens,
     // say so instead of reporting a layout failure that did not occur.
-    let holder: { address: string; amount: string };
+    let holder: { address: string; amount: string; decimals: number };
     try {
       const largest = await rpc('getTokenLargestAccounts', [DEVNET_USDC]);
       if (!largest?.value?.length) {
@@ -201,5 +204,13 @@ describe.skipIf(!ENABLED)('protocol layouts on devnet', () => {
     expect(view.getUint32(72, true)).toBeLessThanOrEqual(1);
     // The amount the template reads has to match what the RPC decoded independently.
     expect(view.getBigUint64(TOKEN_ACCOUNT_AMOUNT_OFFSET, true).toString()).toBe(holder.amount);
+
+    // The mint-pairing check reads this field to confirm an ATA holds the mint it claims to.
+    const mint = new Uint8Array(view.buffer, view.byteOffset + TOKEN_ACCOUNT_MINT_OFFSET, 32);
+    expect([...mint]).toEqual([...addressBytes(DEVNET_USDC)]);
+
+    // decimals is where the oracle template's scale computation reads it.
+    const mintView = await readAccount(DEVNET_USDC, SPL_MINT.length);
+    expect(mintView.getUint8(SPL_MINT.decimals)).toBe(holder.decimals);
   }, 120_000);
 });

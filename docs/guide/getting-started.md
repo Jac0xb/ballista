@@ -15,19 +15,9 @@ body of `fn main() -> Result<(), Box<dyn std::error::Error>>` in `src/main.rs`, 
 
 ## Install {#install-the-workspace}
 
-```bash
-# TypeScript (Node.js 22 or later). pnpm, yarn, and bun work too.
-npm install @jac0xb/ballista @solana/kit
-
-# Rust. ballista-sdk uses solana-program 4.1.0, so the client crates must match it.
-cargo new sweep && cd sweep
-cargo add ballista-sdk solana-program@=4.1.0 solana-rpc-client@4 solana-keypair@3 \
-  solana-signer@3 solana-transaction@4 solana-transaction-error@3 solana-commitment-config@3 \
-  solana-message@4
-```
-
-Then start a local validator with the Ballista program loaded. This needs the
-[Solana CLI](https://solana.com/docs/intro/installation), and builds the program from source:
+Neither the program nor the SDKs are published yet, so you build them from the repository. Clone
+it, build the program, and start a local validator with the program loaded. This needs the
+[Solana CLI](https://solana.com/docs/intro/installation):
 
 ```bash
 git clone https://github.com/Jac0xb/ballista.git
@@ -36,7 +26,29 @@ solana-test-validator --reset \
   --bpf-program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD ballista/target/deploy/ballista.so
 ```
 
-Leave it running. When the file is complete, run it with `npx tsx sweep.mts` or `cargo run`.
+Leave it running. In another terminal, in the same directory, set up your project:
+
+::: code-group
+
+```bash [TypeScript]
+# Node.js 22 or later, and pnpm to build the SDK. Pack it, then install the package.
+pnpm --dir ballista install && pnpm --dir ballista build:sdk
+(cd ballista/clients/js && npm pack)
+mkdir sweep && cd sweep && npm init -y
+npm install ../ballista/clients/js/jac0xb-ballista-1.0.0.tgz @solana/kit@8
+```
+
+```bash [Rust]
+# ballista-sdk uses solana-program 4.1.0, so the client crates must match it.
+cargo new sweep && cd sweep
+cargo add ballista-sdk --git https://github.com/Jac0xb/ballista
+cargo add solana-program@=4.1.0 solana-rpc-client@4 solana-keypair@3 solana-signer@3 \
+  solana-transaction@4 solana-transaction-error@3 solana-commitment-config@3 solana-message@4
+```
+
+:::
+
+When the file is complete, run it with `npx tsx sweep.mts` or `cargo run`.
 
 ## 1. Connect
 

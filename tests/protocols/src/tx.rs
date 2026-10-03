@@ -4,6 +4,7 @@
 use {
     crate::template::Example,
     ballista_sdk::decode_ballista_error,
+    base64::{engine::general_purpose::STANDARD as BASE64, Engine},
     litesvm::{types::FailedTransactionMetadata, LiteSVM},
     solana_address::Address,
     solana_instruction::Instruction,
@@ -28,6 +29,89 @@ pub struct Outcome {
     pub fee: u64,
     /// The signed transaction's size on the wire, in bytes.
     pub size: usize,
+    /// The return data the transaction ended with.
+    pub return_data: ReturnData,
+}
+
+/// A transaction's return data: what the last program to set it set. The runtime clears it as
+/// each instruction starts, so it is the last instruction's, or empty.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ReturnData {
+    pub program: Address,
+    pub data: Vec<u8>,
+}
+
+/// One `Program data:` line, as `sol_log_data` logs it: which program logged it, how deep in the
+/// call stack that program ran, and the fields, decoded.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProgramData {
+    pub program: Address,
+    /// The invocation's stack height: 1 for a transaction's own instruction, 2 for a program it
+    /// calls, and so on.
+    pub height: usize,
+    /// Each field of the line: Ballista's `EMIT` logs exactly one.
+    pub fields: Vec<Vec<u8>>,
+}
+
+/// Every `Program data:` line in `logs`, attributed by following the `invoke` and `success` or
+/// `failed` lines around it.
+///
+/// # Panics
+///
+/// If the logs do not nest: a line outside any invocation, a height that skips a level, or an
+/// invalid base64 field.
+pub fn program_data(logs: &[String]) -> Vec<ProgramData> {
+    let mut stack: Vec<Address> = Vec::new();
+    let mut logged = Vec::new();
+    for line in logs {
+        let Some(rest) = line.strip_prefix("Program ") else {
+            continue;
+        };
+        if let Some(fields) = rest.strip_prefix("data: ") {
+            let program = *stack
+                .last()
+                .unwrap_or_else(|| panic!("{line:?} is outside every invocation"));
+            let fields = fields
+                .split(' ')
+                .map(|field| {
+                    BASE64
+                        .decode(field)
+                        .unwrap_or_else(|error| panic!("{line:?} is not base64: {error}"))
+                })
+                .collect();
+            logged.push(ProgramData {
+                program,
+                height: stack.len(),
+                fields,
+            });
+        } else if let Some((program, height)) = invocation(rest) {
+            assert_eq!(height, stack.len() + 1, "{line:?} skips a level");
+            stack.push(program);
+        } else if let Some((program, outcome)) = rest.split_once(' ') {
+            let ended = outcome == "success" || outcome.starts_with("failed: ");
+            if ended && Address::from_str(program).is_ok() {
+                stack.pop();
+            }
+        }
+    }
+    logged
+}
+
+/// `<program> invoke [<height>]`, the rest of an invocation's first line.
+fn invocation(rest: &str) -> Option<(Address, usize)> {
+    let (program, height) = rest.split_once(" invoke [")?;
+    let height = height.strip_suffix(']')?.parse().ok()?;
+    Some((Address::from_str(program).ok()?, height))
+}
+
+/// The deepest stack height any program was invoked at in `logs`: 1 when no instruction calls
+/// another program.
+pub fn deepest_invocation(logs: &[String]) -> usize {
+    logs.iter()
+        .filter_map(|line| invocation(line.strip_prefix("Program ")?))
+        .map(|(_, height)| height)
+        .max()
+        .unwrap_or(0)
 }
 
 impl Outcome {
@@ -143,6 +227,10 @@ pub fn send(
             compute_units: meta.compute_units_consumed,
             fee: meta.fee,
             size,
+            return_data: ReturnData {
+                program: meta.return_data.program_id,
+                data: meta.return_data.data,
+            },
         }),
         Err(failed) => Err(Failure::new(failed, instructions)),
     }
@@ -164,7 +252,7 @@ pub fn ballista_error(failure: &Failure) -> Option<(&'static str, u16)> {
 /// The others carry an account or input index or a count (`InvalidRunInputs`,
 /// `InvalidAccountRange`, `AccountConstraintFailed`, `CpiAccountLimitExceeded`), one or the other
 /// (`InvalidTemplateProgram`), or nothing, being raised outside a run.
-const FAILURES_AT_A_PC: [&str; 10] = [
+const FAILURES_AT_A_PC: [&str; 11] = [
     "InvalidRuntimeAccount",
     "InvalidRegister",
     "TypeMismatch",
@@ -175,6 +263,7 @@ const FAILURES_AT_A_PC: [&str; 10] = [
     "InvalidPdaDerivation",
     "MissingReturnData",
     "ReturnDataMismatch",
+    "LoopCountExceeded",
 ];
 
 /// Asserts that Ballista itself failed with `kind` in the step `example` labels `label`.
@@ -231,7 +320,9 @@ impl Failure {
         let (program, code) = match innermost_failure(&meta.logs) {
             Some(failure) => failure,
             None => {
-                // No `failed` line: the runtime rejected the instruction before its program ran.
+                // No `failed` line: either the runtime rejected the instruction before its program
+                // ran, or the program logs nothing, as a precompile such as Ed25519 does. The
+                // instruction index then names the program.
                 let TransactionError::InstructionError(index, error) = &err else {
                     panic!(
                         "the transaction failed outside any program: {err:?}\n{}",
@@ -457,16 +548,38 @@ mod tests {
         }
     }
 
-    /// pc 18 is in `worthSelling`. Program counters move when the template changes; the message
-    /// then names the step pc 18 moved into.
+    /// A failure at a `worthSelling` pc does not satisfy an assertion that expects
+    /// `saleMetTheQuote`: the message names the step the pc actually belongs to. The pc itself
+    /// comes from the fixture's own labels, since program counters move when the template
+    /// changes.
     #[test]
-    #[should_panic(
-        expected = "expected Ballista's RequirementFailed in \"saleMetTheQuote\", but it failed with RequirementFailed at pc 18, in \"worthSelling\""
-    )]
     fn another_step_s_failure_does_not_match() {
         let examples = examples();
-        let failed = failure(ballista_sdk::ID, encode_error(REQUIREMENT_FAILED, 18));
-        assert_requirement_failed(&failed, &examples["tokenSweepIntoSwap"], "saleMetTheQuote");
+        let sweep = &examples["tokenSweepIntoSwap"];
+        let pc = sweep
+            .labels
+            .iter()
+            .find_map(|(&pc, label)| (label == "worthSelling").then_some(pc))
+            .expect("tokenSweepIntoSwap has a worthSelling step");
+        let label = sweep.label_at(pc).expect("pc is labelled");
+        let failed = failure(ballista_sdk::ID, encode_error(REQUIREMENT_FAILED, pc));
+        let expected = format!(
+            "expected Ballista's RequirementFailed in \"saleMetTheQuote\", but it failed with \
+             RequirementFailed at pc {pc}, in {label:?}"
+        );
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert_requirement_failed(&failed, sweep, "saleMetTheQuote");
+        }))
+        .expect_err("assert_requirement_failed should have panicked");
+        let message = panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| panic.downcast_ref::<&str>().map(|text| text.to_string()))
+            .unwrap_or_else(|| panic!("the panic payload is not a string"));
+        assert!(
+            message.contains(&expected),
+            "the panic message {message:?} does not contain {expected:?}"
+        );
     }
 
     #[test]
@@ -546,10 +659,43 @@ mod tests {
             compute_units: 52_150,
             fee: 5_000,
             size: 700,
+            return_data: ReturnData::default(),
         };
         assert_eq!(outcome.compute_units_of(&JUPITER), Some(41_000));
         assert_eq!(outcome.compute_units_of(&ballista_sdk::ID), Some(52_000));
         assert_eq!(outcome.compute_units_of(&SYSTEM_PROGRAM_ID), None);
+    }
+
+    /// A `Program data:` line belongs to the innermost invocation open around it: here a nested
+    /// Ballista run's line, then Jupiter's, then the outer run's own after both returned.
+    #[test]
+    fn program_data_belongs_to_the_invocation_around_it() {
+        let logs = lines(&[
+            "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD invoke [1]",
+            "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD invoke [2]",
+            "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 invoke [3]",
+            "Program data: AQI=",
+            "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 success",
+            "Program data: U0xDRQ==",
+            "Program log: data: not a data line",
+            "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD success",
+            "Program data: UEFJRA== AA==",
+            "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD success",
+        ]);
+        let logged = |program, height, fields: &[&[u8]]| ProgramData {
+            program,
+            height,
+            fields: fields.iter().map(|field| field.to_vec()).collect(),
+        };
+        assert_eq!(
+            program_data(&logs),
+            [
+                logged(JUPITER, 3, &[&[1, 2]]),
+                logged(ballista_sdk::ID, 2, &[b"SLCE"]),
+                logged(ballista_sdk::ID, 1, &[b"PAID", &[0]]),
+            ]
+        );
+        assert_eq!(deepest_invocation(&logs), 3);
     }
 
     /// Ballista built from source in a bare SVM, with `fixtures/system-transfer.hex` uploaded.

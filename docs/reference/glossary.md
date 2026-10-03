@@ -12,9 +12,10 @@ template makes is a CPI from the Ballista program.
 
 ### PDA
 
-Program-derived address: an address computed from a program ID and a list of seeds. It has no
-private key, so only that program can sign for it. Ballista never signs as a PDA; templates only
-compare addresses with derived ones (`assertPda`).
+Program-derived address: an address computed from a program ID and a list of seeds, the byte
+strings it is derived from. It has no private key, so only that program can sign for it. Ballista
+signs as its own PDAs only to create its accounts, a template's and a [registry entry](#entry)'s,
+and never in a template's calls. Templates only compare addresses with derived ones (`assertPda`).
 
 ### ATA
 
@@ -24,6 +25,11 @@ Associated Token Account program. `assertAta` checks that an account is the righ
 ### Lamports
 
 The smallest unit of SOL. One SOL is 1,000,000,000 lamports.
+
+### Rent
+
+The lamports an account must hold for its size to stay on chain, the rent-exempt minimum. Closing
+the account returns them. A [registry entry](#entry) is never closed, so its rent stays locked.
 
 ### Compute units
 
@@ -38,8 +44,8 @@ then anyone can run it. See [How it works](/guide/mental-model).
 
 ### Step
 
-One entry in a template's step list: `let`, `require`, `invoke`, `assign`, a loop (`forEach` or
-`repeat`), or an output (`emit` or `setReturnData`). Steps run in order. See
+One item in a template's step list: `let`, `require`, `invoke`, `assign`, `setRegistry`, a loop
+(`forEach` or `repeat`), or an output (`emit` or `setReturnData`). Steps run in order. See
 [Steps and control flow](/reference/language#steps-and-control-flow).
 
 ### Run input
@@ -82,7 +88,26 @@ account group members. At most 120.
 ### Register
 
 A numbered slot that holds one value during a run. A `let` binding names one. A template uses at
-most 64, and nothing in them survives the run.
+most 64, and nothing in them survives the run. State that must outlive a run goes in a
+[registry](#registry).
+
+### Registry
+
+State a template keeps between runs: named fields declared in `registries`, 1 to 512 bytes in all.
+The values live in entries, one for each key. A template declares up to 8 registries. See
+[Registries](/reference/language#registries).
+
+### Entry
+
+A registry entry: an account Ballista owns that holds one registry's fields for one key of one
+template, after a 72-byte header. The first run that opens it creates it, and only that template's
+runs can write it. Anyone can read it, and it is never closed. See
+[Registry entries](/reference/wire-format#registry-entries).
+
+### Payer
+
+The account that pays a registry entry's [rent](#rent) when a run creates the entry. The template
+names it in `account.registry`, and it must sign and be writable.
 
 ### Verifier
 

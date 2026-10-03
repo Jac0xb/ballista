@@ -25,6 +25,7 @@ import {
 import * as protocols from '../examples/protocols/index.js';
 import {
   jitoProfitGuardedTip,
+  jupiterDailyCapSwap,
   jupiterDepositExactOutput,
   jupiterOracleCheckedSwap,
   kaminoLiquidateWithProof,
@@ -39,6 +40,7 @@ import {
 } from '../examples/protocols/index.js';
 import { QUOTE, QUOTE_TAG, signedQuote } from '../examples/protocols/signed-quote-settlement.js';
 import { buildJupiterDepositRun } from '../examples/protocols/run-jupiter-deposit.js';
+import { buildDailyCapRun } from '../examples/protocols/run/jupiter-daily-cap.js';
 import {
   buildOrcaHarvestRun,
   describeFailure,
@@ -66,6 +68,7 @@ import {
   addressBytes,
   anchorDiscriminator,
 } from '../examples/protocols/shared.js';
+import { findRegistryEntryAddress } from './kit.js';
 
 type Invoke = Extract<Step, { kind: 'invoke' }>;
 type Require = Extract<Step, { kind: 'require' }>;
@@ -174,9 +177,8 @@ const nameOf = (reference: AccountReference) => reference.name;
 
 /**
  * Jupiter v6 `route` starts its account list with `tokenProgram`, `userTransferAuthority` (the
- * one signer), `userSourceTokenAccount` and `userDestinationTokenAccount`. A template that
- * measures the swap's token accounts passes all four itself; one that does not passes the first
- * two and lets the token accounts travel in the group.
+ * one signer), `userSourceTokenAccount` and `userDestinationTokenAccount`. A template passes
+ * itself the ones it reads, up to all four, and lets the rest travel in the group.
  */
 const jupiterCalls: [string, Template, { program: string; accounts: string[] }][] = [
   [
@@ -200,6 +202,12 @@ const jupiterCalls: [string, Template, { program: string; accounts: string[] }][
     { program: 'jupiter', accounts: ['tokenProgram', 'seller', 'sourceAta', 'destinationAta'] },
   ],
   ['pythFreshPriceGate', pythFreshPriceGate, { program: 'actionProgram', accounts: ['tokenProgram', 'actor'] }],
+  [
+    // It passes the source it checks, and lets the destination travel in the group.
+    'jupiterDailyCapSwap',
+    jupiterDailyCapSwap,
+    { program: 'actionProgram', accounts: ['tokenProgram', 'actor', 'sourceAta'] },
+  ],
   [
     // A round trip: it starts and ends in the one account the template measures.
     'jitoProfitGuardedTip',
@@ -392,6 +400,82 @@ describe('the Pyth gate', () => {
     expect(pythFreshPriceGate.inputs?.exponent).toEqual({ type: 'i64' });
     const labels = pythFreshPriceGate.steps.map((step) => step.label);
     expect(labels.indexOf('priceExponentIsExpected')).toBe(labels.indexOf('priceIsTheExpectedFeed') + 1);
+  });
+});
+
+describe('the daily cap', () => {
+  const bindings = bindingsOf(jupiterDailyCapSwap);
+  const within = requireLabeled(jupiterDailyCapSwap, 'withinRateLimit');
+  const input = (name: string) => (candidate: Expression) => candidate.kind === 'input' && candidate.name === name;
+
+  test('charges the inAmount it forwards to Jupiter, before the swap', () => {
+    const [swap] = invokesOf(jupiterDailyCapSwap, 'actionProgram') as [Invoke];
+    expect(swap.data[2]).toEqual(data.encode('u64', expression.input('inAmount')));
+    expect(dependsOn(within.condition, bindings, input('inAmount'))).toBe(true);
+    // The cap and the rate are literals: no other input reaches the limit.
+    for (const other of ['routePlan', 'quotedOutAmount', 'slippageBps', 'platformFeeBps']) {
+      expect(dependsOn(within.condition, bindings, input(other))).toBe(false);
+    }
+    const all = steps(jupiterDailyCapSwap);
+    expect(all.indexOf(within)).toBeLessThan(all.indexOf(swap));
+  });
+
+  test("sells only the caller's own wrapped SOL, checked before the charge and the swap", () => {
+    expect(requireLabeled(jupiterDailyCapSwap, 'spendsWrappedSol').condition).toEqual(
+      expression.equal(
+        expression.accountData(account.fixed('sourceAta'), TOKEN_ACCOUNT_MINT_OFFSET, 'pubkey'),
+        expression.pubkey(addressBytes(WRAPPED_SOL_MINT)),
+      ),
+    );
+    expect(requireLabeled(jupiterDailyCapSwap, 'sourceBelongsToTheCaller').condition).toEqual(
+      expression.equal(
+        expression.accountData(account.fixed('sourceAta'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+        expression.accountKey('actor'),
+      ),
+    );
+    const all = steps(jupiterDailyCapSwap);
+    const firstWrite = all.findIndex((step) => step.kind === 'setRegistry');
+    const swap = all.findIndex((step) => step.kind === 'invoke');
+    for (const label of ['spendsWrappedSol', 'sourceBelongsToTheCaller']) {
+      const check = all.indexOf(requireLabeled(jupiterDailyCapSwap, label));
+      expect(check).toBeLessThan(all.indexOf(within));
+      expect(check).toBeLessThan(firstWrite);
+      expect(check).toBeLessThan(swap);
+    }
+  });
+
+  test('requires exactly the charge to have left the source, after the swap', () => {
+    const sold = requireLabeled(jupiterDailyCapSwap, 'soldWhatTheCapCharged');
+    expect(dependsOn(sold.condition, bindings, input('inAmount'))).toBe(true);
+    expect(dependsOn(sold.condition, bindings, reads('sourceAta', TOKEN_ACCOUNT_AMOUNT_OFFSET))).toBe(true);
+    const all = steps(jupiterDailyCapSwap);
+    expect(all.indexOf(sold)).toBeGreaterThan(all.findIndex((step) => step.kind === 'invoke'));
+  });
+
+  test("keys each caller's entry by the caller's own signing address, and has the caller pay for it", () => {
+    expect(jupiterDailyCapSwap.accounts.spend?.registry).toEqual({
+      name: 'dailySpend',
+      key: expression.accountKey('actor'),
+      payer: 'actor',
+    });
+    expect(jupiterDailyCapSwap.accounts.actor).toMatchObject({ signer: true, writable: true });
+  });
+
+  test("the runner passes the actor's own entry, writable, where the template opens it", async () => {
+    const decoder = getAddressDecoder();
+    const key = (byte: number): Address => decoder.decode(new Uint8Array(32).fill(byte));
+    const [templateAddress, actor] = [key(1), key(2)];
+    // A `route` with an empty plan: the discriminator, a u32 zero, then the 19-byte tail.
+    const routeData = Uint8Array.from([...JUPITER_ROUTE, 0, 0, 0, 0, ...new Uint8Array(19)]);
+    const sourceAta = key(3);
+    const instruction = await buildDailyCapRun({ templateAddress, actor, sourceAta, routeData, actionAccounts: [] });
+    const [entry] = await findRegistryEntryAddress(templateAddress, 0, actor);
+    expect(instruction.accounts?.slice(3, 7)).toEqual([
+      { address: actor, role: AccountRole.WRITABLE_SIGNER },
+      { address: sourceAta, role: AccountRole.WRITABLE },
+      { address: entry, role: AccountRole.WRITABLE },
+      { address: address('11111111111111111111111111111111'), role: AccountRole.READONLY },
+    ]);
   });
 });
 

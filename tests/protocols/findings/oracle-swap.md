@@ -174,15 +174,16 @@ remains open is the rest of what the trader's signature authorizes:
 `route`'s `platform_fee_account` (position 6) is chosen by whoever builds the run, as are
 `platformFeeBps`, `slippageBps` and `quotedOutAmount`. Nothing checks who owns it. Jupiter's own
 6001 refusal below is no defense, since the builder also writes the quote it checks against (with
-`quotedOutAmount` set to 1, the same fee landed at 50 bps). The fill check bounds what it can take,
-but only to `toleranceBps`.
+`quotedOutAmount` set to 1, the same fee landed at 50 bps, in a one-off probe at the snapshot's
+slot). The fill check bounds what it can take, but only to `toleranceBps`.
 
-A one-off probe at the snapshot's slot, not a committed test, ran the fixed template at the market
-with `toleranceBps` 100 and an attacker's USDC account as the platform fee account:
-- **A fee of 100 bps, `slippageBps` 50:** Jupiter's own slippage check refused it (6001).
-- **100 bps with `slippageBps` 200:** the run **landed**. The attacker took 1,231,062 units, and
-  the trader's 121,875,221 cleared the floor of 121,857,149.
-- **150 bps with `slippageBps` 200:** it failed at `fillBeatTheOracle`.
+`a_hostile_platform_fee_inside_the_tolerance_lands` and
+`a_larger_hostile_platform_fee_fails_at_fill_beat_the_oracle` run the fixed template at the market
+with `toleranceBps` 100, `slippageBps` 200 (loose enough that Jupiter's own check never refuses),
+and an attacker's USDC account as the platform fee account:
+- **100 bps:** the run **lands**. The attacker takes 1,231,062 units, and the trader's 121,875,221
+  clears the floor of 121,857,149.
+- **150 bps:** it fails at `fillBeatTheOracle`.
 
 So a trader should set `toleranceBps` to what it will accept losing to the builder, not only to
 the market. Venues' own fee accounts, such as Meteora's `host_fee_in`, sit in the same place: in

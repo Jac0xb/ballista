@@ -159,11 +159,14 @@ fn run_paying(
 
 /// The run in a new slot, behind the refreshes klend needs in it, signed by the liquidator.
 fn send_run(svm: &mut LiteSVM, scene: &Scene, run: Instruction) -> Result<Outcome, Failure> {
-    lending::next_slot(svm);
-    let mut instructions = vec![lending::compute_limit()];
-    instructions.extend(kamino::refreshes(svm, &scene.unhealthy.obligation, &[]));
-    instructions.push(run);
-    tx::send(svm, &scene.liquidator, &[], &instructions, &[])
+    lending::send_run(
+        svm,
+        &scene.unhealthy.obligation,
+        &[],
+        &scene.liquidator,
+        run,
+        &[],
+    )
 }
 
 /// What the liquidator holds: USDC to repay with, the SOL paid out, and cTokens.

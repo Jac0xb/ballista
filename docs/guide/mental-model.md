@@ -82,13 +82,16 @@ the caller, passed along to one call without being read.
 | `step.assign(name, value)` | Updates a value a loop carries from one pass to the next, inside `forEach` or `repeat` only |
 | `step.emit(parts)` | Logs event data for indexers. It must start with a tag of at least four bytes. [Logs and return data](/guide/errors-and-events#logs-and-return-data) |
 | `step.setReturnData(parts)` | Sets the run's return data: once, outside every loop, with no call after it. [Logs and return data](/guide/errors-and-events#logs-and-return-data) |
+| `step.setRegistry(entry, field, value)` | Writes a field of a [registry entry](/guide/registries), state that outlives the run. Only this template's runs can write it |
 
 ## Expressions
 
 Steps compute with expressions. An expression can read:
 
 - an input (`expression.input`, `expression.rowInput`);
-- an account's address, owner, lamports or data length (`expression.accountField`);
+- an account's address (`expression.accountKey`), owner, lamports or data length
+  (`expression.accountField`);
+- a field of a [registry entry](/guide/registries) (`expression.registry`);
 - a number or address at a byte offset in an account's data (`expression.accountData`);
 - the clock, a derived PDA, or data returned by the last call;
 - the other instructions in the transaction, through the Instructions sysvar
@@ -120,6 +123,7 @@ steps in order. If any check or call fails, the whole Solana transaction is undo
 that had already succeeded.
 
 A template has no authority of its own. It passes on only the signatures the transaction already
-carries, holds no funds, and keeps nothing between runs. See [Trust model](/guide/trust-model).
+carries, and keeps nothing between runs except in the [registry entries](/guide/registries) it
+declares. See [Trust model](/guide/trust-model).
 
 For how a template is stored as bytes, see [Wire format](/reference/wire-format).

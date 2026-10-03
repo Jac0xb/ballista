@@ -30,3 +30,4 @@ TooManyAccountGroups
 InvalidLoop
 InvalidOutput
 InvalidIntrospection
+InvalidRegistry

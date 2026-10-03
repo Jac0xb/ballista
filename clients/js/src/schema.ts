@@ -36,6 +36,33 @@ export const readWidth: Readonly<Record<ReadType, number>> = Object.freeze({
   pubkey: 32,
 });
 
+/** The types a registry field can hold: the five whose width holds every value of the type. */
+export const RegistryFieldTypeSchema = z.enum(['bool', 'u64', 'i64', 'u128', 'pubkey']);
+export type RegistryFieldType = z.infer<typeof RegistryFieldTypeSchema>;
+
+/**
+ * The most field bytes one registry holds, after its header. Mirrors `MAX_REGISTRY_SIZE` in
+ * `common/src/template/wire.rs`; `opcodes.test.ts` checks the two agree.
+ */
+export const MAX_REGISTRY_SIZE = 512;
+/**
+ * Registries a template can declare: an entry's registry index is below this. Mirrors
+ * `MAX_REGISTRIES` in `common/src/template/wire.rs`; `opcodes.test.ts` checks the two agree.
+ */
+export const MAX_REGISTRIES = 8;
+
+/** The bytes a registry's fields take, packed in declaration order with no padding. */
+export function registrySize(fields: Record<string, RegistryFieldType>): number {
+  return Object.values(fields).reduce((size, type) => size + readWidth[type], 0);
+}
+
+/** A registry's fields, in declaration order: 1 to `MAX_REGISTRY_SIZE` bytes. */
+const RegistryLayoutSchema = z
+  .record(identifier, RegistryFieldTypeSchema)
+  .refine((fields) => registrySize(fields) >= 1 && registrySize(fields) <= MAX_REGISTRY_SIZE, {
+    error: `A registry holds 1 to ${MAX_REGISTRY_SIZE} bytes of fields`,
+  });
+
 export const InputSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('bool') }).strict(),
   z.object({ type: z.literal('u64') }).strict(),
@@ -89,9 +116,24 @@ export const AccountConstraintSchema = z
      * `address`. With this flag the template trusts whatever the caller supplies for the account.
      */
     unsafeUnpinned: z.boolean().default(false),
+    /**
+     * Makes this account a registry entry; build it with `account.registry`. Every run opens the
+     * entry of registry `name` for `key` before its first step, creating it if it does not exist
+     * with `payer`'s lamports. `key` is a `pubkey` expression evaluated before the first step, or
+     * absent for the one template-wide entry.
+     */
+    registry: z
+      .object({
+        name: identifier,
+        key: z.lazy(() => ExpressionSchema).optional(),
+        payer: identifier,
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type AccountConstraint = z.infer<typeof AccountConstraintSchema>;
+export type AccountConstraintInput = z.input<typeof AccountConstraintSchema>;
 
 export type Expression =
   | { kind: 'input'; name: string }
@@ -200,7 +242,12 @@ export type Expression =
       offset: Expression;
       length: number;
     }
-  | { kind: 'bytesLength'; value: Expression };
+  | { kind: 'bytesLength'; value: Expression }
+  /**
+   * A field of the registry entry in fixed account `account`, which must be declared with
+   * `account.registry`. Typed as the field.
+   */
+  | { kind: 'registry'; account: string; field: string };
 
 export const ExpressionSchema: z.ZodType<Expression> = z.lazy(() =>
   z.discriminatedUnion('kind', [
@@ -341,6 +388,7 @@ export const ExpressionSchema: z.ZodType<Expression> = z.lazy(() =>
       })
       .strict(),
     z.object({ kind: z.literal('bytesLength'), value: ExpressionSchema }).strict(),
+    z.object({ kind: z.literal('registry'), account: identifier, field: identifier }).strict(),
   ]),
 );
 
@@ -413,6 +461,17 @@ export type Step =
       label?: string;
     }
   | {
+      /**
+       * Writes `value` into a field of the registry entry in fixed account `account`. The write
+       * lands at once; a run that fails later rolls it back with the transaction.
+       */
+      kind: 'setRegistry';
+      account: string;
+      field: string;
+      value: Expression;
+      label?: string;
+    }
+  | {
       kind: 'forEach';
       steps: Step[];
       /** Variables defined before the loop whose values flow across iterations and out of it. */
@@ -454,6 +513,9 @@ export const StepSchema: z.ZodType<Step> = z.lazy(() =>
     z.object({ kind: z.literal('emit'), parts: z.array(DataPartSchema).min(1).max(64), label }).strict(),
     z.object({ kind: z.literal('setReturnData'), parts: z.array(DataPartSchema).min(1).max(64), label }).strict(),
     z
+      .object({ kind: z.literal('setRegistry'), account: identifier, field: identifier, value: ExpressionSchema, label })
+      .strict(),
+    z
       .object({
         kind: z.literal('forEach'),
         steps: z.array(StepSchema).min(1).max(64),
@@ -481,6 +543,16 @@ export const TemplateSchema = z
   .object({
     version: z.literal(1).default(1),
     inputs: namedInputs.default({}),
+    /**
+     * State that outlives a run, one entry per registry and key; the registry index is the
+     * declaration order. `account.registry` names the entry a run opens.
+     */
+    registries: z
+      .record(identifier, RegistryLayoutSchema)
+      .default({})
+      .refine((registries) => Object.keys(registries).length <= MAX_REGISTRIES, {
+        error: `A template declares at most ${MAX_REGISTRIES} registries`,
+      }),
     accounts: namedAccounts,
     batch: z
       .object({
@@ -544,6 +616,15 @@ export const TemplateSchema = z
         path: ['accounts'],
       });
     }
+    for (const [name, constraint] of Object.entries(template.batch?.row ?? {})) {
+      if (constraint.registry !== undefined) {
+        context.addIssue({
+          code: 'custom',
+          message: `${name}: registry accounts are fixed accounts`,
+          path: ['batch', 'row', name],
+        });
+      }
+    }
     const loops = template.steps.filter(isLoop);
     // Every forEach iterates the batch rows, so a batch needs at least one and a forEach needs a batch.
     if ((template.batch === undefined) !== loops.every((loop) => loop.kind !== 'forEach')) {
@@ -585,6 +666,17 @@ export const account = {
   fixed: (name: string): AccountReference => AccountReferenceSchema.parse({ kind: 'account', name }),
   iteration: (name: string): AccountReference =>
     AccountReferenceSchema.parse({ kind: 'iterationAccount', name }),
+  /**
+   * An account holding the entry of `registry` for `options.key`, a `pubkey` (the template-wide
+   * zero key when absent). `options.payer`, a fixed account declared signer and writable, pays
+   * the entry's rent the first time. A declaration for `accounts`, not a reference.
+   */
+  registry: (registry: string, options: { key?: Expression; payer: string }): AccountConstraintInput => ({
+    writable: true,
+    registry: { name: registry, ...(options.key ? { key: options.key } : {}), payer: options.payer },
+  }),
+  /** The System program, pinned: a template with registry accounts declares it. */
+  systemProgram: (): AccountConstraintInput => ({ executable: true, address: new Uint8Array(32) }),
 };
 
 const literal = (value: Literal): Expression => ({ kind: 'literal', value: LiteralSchema.parse(value) });
@@ -736,6 +828,10 @@ export const expression = {
     length,
   }),
   bytesLength: (value: Expression): Expression => ({ kind: 'bytesLength', value }),
+  /** A field of the registry entry in fixed account `account`, typed as the field. */
+  registry: (accountName: string, field: string): Expression => ({ kind: 'registry', account: accountName, field }),
+  /** Shorthand for `accountField(account.fixed(name), 'key')`. */
+  accountKey: (name: string): Expression => ({ kind: 'accountField', account: { kind: 'account', name }, field: 'key' }),
 };
 
 export const data = {
@@ -781,6 +877,14 @@ export const step = {
   setReturnData: (parts: DataPart[], label?: string): Step => ({
     kind: 'setReturnData',
     parts,
+    ...(label ? { label } : {}),
+  }),
+  /** Writes `value` into a field of the registry entry in fixed account `account`. */
+  setRegistry: (accountName: string, field: string, value: Expression, label?: string): Step => ({
+    kind: 'setRegistry',
+    account: accountName,
+    field,
+    value,
     ...(label ? { label } : {}),
   }),
   forEach: (steps: Step[], options: { carry?: string[]; label?: string } = {}): Step => ({

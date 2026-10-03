@@ -23,3 +23,5 @@ CpiAccountLimitExceeded
 LoopCountExceeded
 InstructionOutOfRange
 WritableAccountBytesRead
+InvalidRegistryEntry
+RegistryReentry

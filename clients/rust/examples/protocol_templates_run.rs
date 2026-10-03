@@ -13,7 +13,8 @@
 //! ```
 
 use ballista_sdk::{
-    run_instruction, RunInputs, ED25519_PROGRAM_ID, SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID,
+    find_registry_entry_address, run_instruction, RunInputs, ED25519_PROGRAM_ID, SYSTEM_PROGRAM_ID,
+    TOKEN_PROGRAM_ID,
 };
 use solana_program::{
     instruction::{AccountMeta, Instruction},
@@ -45,7 +46,8 @@ fn anchor(handler: &str) -> Vec<u8> {
 
 // #region jupiter-route
 /// Jupiter `route` data as the Swap API returns it with `useSharedAccounts: false`, split into
-/// the plan and the four numbers after it. The oracle swap and the sweep take them as inputs.
+/// the plan and the four numbers after it. The oracle swap, the sweep and the daily cap take them
+/// as inputs.
 pub struct RouteQuote<'a> {
     /// `route_plan`, Borsh length prefix included: the bytes between the discriminator and
     /// `in_amount`.
@@ -395,6 +397,49 @@ pub fn run_pyth_gate(
     run_instruction(template, accounts, &inputs)
 }
 // #endregion pyth-gate
+
+// #region jupiter-daily-cap
+/// `jupiterDailyCapSwap`'s one registry, `dailySpend`: the first it declares.
+const DAILY_SPEND: u8 = 0;
+
+pub struct DailyCapAccounts {
+    /// Signs, keys the entry, and pays its rent on the first run.
+    pub actor: Pubkey,
+    /// The actor's wrapped-SOL token account, which the route sells from.
+    pub source_ata: Pubkey,
+}
+
+/// `route` is the Swap API's `route` data split by [`RouteQuote::split`], and `action_accounts`
+/// its account list from the fourth account on: the template passes the token program, the actor
+/// and the source itself. The actor's entry is at its registry address for the actor's own key;
+/// the actor's first run creates it, and pays its rent.
+pub fn run_jupiter_daily_cap(
+    template: Pubkey,
+    a: &DailyCapAccounts,
+    route: &RouteQuote,
+    action_accounts: Vec<AccountMeta>,
+) -> Instruction {
+    let inputs = RunInputs::new()
+        .groups(&[action_accounts.len() as u8]) // actionAccounts
+        .bytes(route.route_plan)
+        .u64(route.in_amount)
+        .u64(route.quoted_out_amount)
+        .u64(route.slippage_bps.into())
+        .u64(route.platform_fee_bps.into())
+        .finish();
+    let (spend, _) = find_registry_entry_address(&template, DAILY_SPEND, &a.actor.to_bytes());
+    let mut accounts = vec![
+        pinned(JUPITER_V6),
+        pinned(TOKEN_PROGRAM_ID),
+        AccountMeta::new(a.actor, true),
+        AccountMeta::new(a.source_ata, false),
+        AccountMeta::new(spend, false),
+        pinned(SYSTEM_PROGRAM_ID),
+    ];
+    accounts.extend(action_accounts);
+    run_instruction(template, accounts, &inputs)
+}
+// #endregion jupiter-daily-cap
 
 // #region orca-compound
 pub struct OrcaCompoundAccounts {
@@ -756,7 +801,8 @@ pub fn run_marginfi_to_kamino(
 pub struct Quote {
     /// Quote-token base units per 1,000,000 base-token base units.
     pub price: u64,
-    /// The most base-token base units the maker delivers.
+    /// The most base-token base units the maker delivers in one settlement. The quote can settle
+    /// again until it expires, so this bounds each settlement, not the total.
     pub max_amount: u64,
     /// The last Unix timestamp at which the quote can settle.
     pub expiry: i64,
@@ -886,10 +932,16 @@ fn route_data() -> Vec<u8> {
 
 /// A sample transaction for every template, under the name `fixtures/protocol-examples.json`
 /// records it by: its instructions, the run last.
-pub const RUNS: [(&str, fn() -> Vec<Instruction>); 12] = [
+pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
     ("jitoProfitGuardedTip", || {
         let a = JitoTipAccounts { searcher: key(1), wsol_account: key(2), jito_tip: key(3) };
         vec![run_jito_tip(TEMPLATE, &a, &[7; 80], 10_000, 100_000, group(40))]
+    }),
+    ("jupiterDailyCapSwap", || {
+        let data = route_data();
+        let route = RouteQuote::split(&data);
+        let a = DailyCapAccounts { actor: key(1), source_ata: key(2) };
+        vec![run_jupiter_daily_cap(TEMPLATE, &a, &route, group(20))]
     }),
     ("jupiterDepositExactOutput", || {
         let a = JupiterDepositAccounts {

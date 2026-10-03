@@ -15,6 +15,7 @@ import {
   decodeTemplateAccount,
   defineTemplate,
   ed25519Signature,
+  rateLimit,
   encodeRun,
   ensureAssociatedTokenAccount,
   expression,
@@ -1703,5 +1704,434 @@ describe('ed25519Signature', () => {
     expect(() => compileQuote([step.require(expression.greaterThan(quote.field(0, 'u64'), expression.u64(0)))])).toThrow(
       /Unknown variable: quote/,
     );
+  });
+});
+
+describe('registries: schema', () => {
+  const limits = () =>
+    defineTemplate({
+      registries: { limits: { spent: 'u64', lastSpend: 'i64' } },
+      accounts: {
+        caller: { signer: true, writable: true },
+        limits: account.registry('limits', { key: expression.accountKey('caller'), payer: 'caller' }),
+        systemProgram: account.systemProgram(),
+      },
+      steps: [step.setRegistry('limits', 'spent', expression.u64(1))],
+    });
+
+  test('declares registries, registry accounts and the System program', () => {
+    const template = limits();
+    expect(template.registries).toEqual({ limits: { spent: 'u64', lastSpend: 'i64' } });
+    expect(template.accounts.limits).toMatchObject({
+      writable: true,
+      signer: false,
+      registry: { name: 'limits', payer: 'caller', key: expression.accountKey('caller') },
+    });
+    expect(template.accounts.systemProgram).toMatchObject({ executable: true, address: new Uint8Array(32) });
+    expect(expression.accountKey('caller')).toEqual(expression.accountField(account.fixed('caller'), 'key'));
+    expect(expression.registry('limits', 'spent')).toEqual({ kind: 'registry', account: 'limits', field: 'spent' });
+    expect(step.setRegistry('limits', 'spent', expression.u64(2), 'charge')).toEqual({
+      kind: 'setRegistry',
+      account: 'limits',
+      field: 'spent',
+      value: expression.u64(2),
+      label: 'charge',
+    });
+    expect(account.registry('limits', { payer: 'caller' })).toEqual({
+      writable: true,
+      registry: { name: 'limits', payer: 'caller' },
+    });
+  });
+
+  test('a registry holds 1 to 512 bytes of the five writable types, and a template at most 8', () => {
+    const withRegistries = (registries: Record<string, Record<string, string>>) => () =>
+      defineTemplate({
+        registries: registries as never,
+        accounts: {},
+        steps: [step.require(expression.bool(true))],
+      });
+    expect(withRegistries({ empty: {} })).toThrow(/1 to 512 bytes/);
+    expect(withRegistries({ narrow: { count: 'u8' } })).toThrow(/"count"[\s\S]*Invalid option: expected one of/);
+    expect(withRegistries({ bytes: { blob: 'bytes' } })).toThrow(/"blob"[\s\S]*Invalid option: expected one of/);
+    const sixteenKeys = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`k${i}`, 'pubkey']));
+    expect(withRegistries({ full: sixteenKeys })).not.toThrow();
+    expect(withRegistries({ over: { ...sixteenKeys, flag: 'bool' } })).toThrow(/1 to 512 bytes/);
+    const nine = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`r${i}`, { flag: 'bool' }]));
+    expect(withRegistries(nine)).toThrow(/at most 8 registries/);
+  });
+
+  test('registry accounts are fixed accounts', () => {
+    expect(() =>
+      defineTemplate({
+        registries: { limits: { spent: 'u64' } },
+        accounts: { caller: { signer: true, writable: true } },
+        batch: { maxIterations: 2, row: { entry: account.registry('limits', { payer: 'caller' }) } },
+        steps: [step.forEach([step.require(expression.bool(true))])],
+      }),
+    ).toThrow(/registry accounts are fixed accounts/);
+  });
+});
+
+describe('registries: compiler', () => {
+  const SYSTEM = new Uint8Array(32);
+  const base = (steps: Step[], extra: Partial<TemplateInput> = {}): TemplateInput => ({
+    inputs: { owner: { type: 'pubkey' } },
+    registries: { flags: { on: 'bool' }, limits: { spent: 'u64', lastSpend: 'i64', holder: 'pubkey' } },
+    accounts: {
+      caller: { signer: true, writable: true },
+      mine: account.registry('limits', { key: expression.accountKey('caller'), payer: 'caller' }),
+      theirs: account.registry('limits', { key: expression.input('owner'), payer: 'caller' }),
+      global: account.registry('flags', { payer: 'caller' }),
+      systemProgram: account.systemProgram(),
+    },
+    steps,
+    ...extra,
+  });
+
+  test('opens every entry before the first step, in declaration order', () => {
+    const compiled = compileTemplate(
+      base([step.require(expression.equal(expression.registry('global', 'on'), expression.bool(false)))]),
+    );
+    const opens = records(compiled).filter((record) => record[0] === opcode.openRegistry);
+    // mine: accounts 1, key register, payer 0; registry 1 (limits), 48 bytes, System program 4.
+    expect(Array.from(opens[0]!.slice(0, 6))).toEqual([opcode.openRegistry, 0xff, 1, opens[0]![3], 0, 0]);
+    expect(readU64(opens[0]!, 6)).toBe(1n | (48n << 8n) | (4n << 24n));
+    expect(opens[1]![2]).toBe(2);
+    expect(readU64(opens[1]!, 6)).toBe(1n | (48n << 8n) | (4n << 24n));
+    // global: no key, registry 0, one byte.
+    expect(opens[2]![2]).toBe(3);
+    expect(opens[2]![3]).toBe(0xff);
+    expect(readU64(opens[2]!, 6)).toBe(0n | (1n << 8n) | (4n << 24n));
+    const pcs = records(compiled).map((record) => record[0]);
+    expect(pcs.lastIndexOf(opcode.openRegistry)).toBeLessThan(pcs.indexOf(opcode.readRegistry));
+    expect(compiled.stats.maxExpandedCpis).toBe(9);
+    // Read back out of the bytes, each open counts three CPIs as well.
+    expect(inspectTemplate(compiled.bytes)).toEqual(compiled.stats);
+  });
+
+  test('reads and writes fields at their packed offsets and types', () => {
+    const compiled = compileTemplate(
+      base([
+        step.let('holder', expression.registry('theirs', 'holder')),
+        step.setRegistry('mine', 'lastSpend', expression.clockUnixTimestamp()),
+        step.setRegistry('mine', 'holder', expression.variable('holder')),
+      ]),
+    );
+    const read = records(compiled).find((record) => record[0] === opcode.readRegistry)!;
+    expect(read[2]).toBe(2);
+    expect(readU64(read, 6)).toBe(16n | (BigInt(opcode.readPubkey) << 16n));
+    const writes = records(compiled).filter((record) => record[0] === opcode.writeRegistry);
+    expect(writes.map((record) => [record[1], record[3], readU64(record, 6)])).toEqual([
+      [0xff, 1, 8n | (BigInt(opcode.readI64) << 16n)],
+      [0xff, 1, 16n | (BigInt(opcode.readPubkey) << 16n)],
+    ]);
+  });
+
+  test('refuses what the verifier or the run would refuse', () => {
+    const fails = (input: TemplateInput, message: RegExp) =>
+      expect(() => compileTemplate(input), String(message)).toThrow(message);
+    const read = (accountName: string, field: string) => [
+      step.require(expression.equal(expression.registry(accountName, field), expression.u64(0))),
+    ];
+    fails(base(read('caller', 'spent')), /caller is not a registry account/);
+    fails(base(read('mine', 'missing')), /limits has no field missing/);
+    fails(base([step.setRegistry('mine', 'spent', expression.i64(1))]), /spent is a u64/);
+    const { systemProgram: _, ...withoutSystem } = base([]).accounts!;
+    fails({ ...base(read('mine', 'spent')), accounts: withoutSystem }, /pinned to the System program/);
+    fails(
+      { ...base(read('mine', 'spent')), accounts: { ...base([]).accounts!, caller: { signer: true } } },
+      /payer caller must be a fixed account declared signer and writable/,
+    );
+    fails(
+      {
+        ...base(read('mine', 'spent')),
+        accounts: { ...base([]).accounts!, stray: account.registry('nothing', { payer: 'caller' }) },
+      },
+      /Unknown registry: nothing/,
+    );
+    fails(
+      {
+        ...base(read('mine', 'spent')),
+        accounts: { ...base([]).accounts!, mine: { ...account.registry('limits', { payer: 'caller' }), signer: true } },
+      },
+      /mine must be declared only writable/,
+    );
+    fails(
+      {
+        ...base(read('mine', 'spent')),
+        accounts: {
+          ...base([]).accounts!,
+          mine: { ...account.registry('limits', { payer: 'caller' }), executable: true },
+        },
+      },
+      /mine must be declared only writable/,
+    );
+    fails(
+      {
+        ...base(read('mine', 'spent')),
+        accounts: {
+          ...base([]).accounts!,
+          mine: { ...account.registry('limits', { payer: 'caller' }), address: SYSTEM },
+        },
+      },
+      /mine must be declared only writable/,
+    );
+    fails(
+      {
+        ...base(read('mine', 'spent')),
+        accounts: {
+          ...base([]).accounts!,
+          mine: { ...account.registry('limits', { payer: 'caller' }), owner: SYSTEM },
+        },
+      },
+      /mine must be declared only writable/,
+    );
+    fails(
+      {
+        ...base(read('mine', 'spent')),
+        accounts: {
+          ...base([]).accounts!,
+          mine: { ...account.registry('limits', { payer: 'caller' }), minDataLength: 1 },
+        },
+      },
+      /mine must be declared only writable/,
+    );
+    fails(
+      {
+        ...base(read('mine', 'spent')),
+        accounts: { ...base([]).accounts!, mine: { registry: { name: 'limits', payer: 'caller' } } },
+      },
+      /mine must be declared only writable/,
+    );
+    fails(
+      base([
+        step.invoke({
+          program: account.fixed('systemProgram'),
+          programAddress: SYSTEM,
+          accounts: [{ account: account.fixed('mine'), signer: false, writable: true }],
+          data: [data.literal(Uint8Array.of(2, 0, 0, 0))],
+        }),
+      ]),
+      /mine is a registry entry: a CPI that passes it writable fails with RegistryReentry/,
+    );
+  });
+
+  test('a key reads only the fields of entries declared before it', () => {
+    const keyedBy = (entry: 'mine' | 'theirs', key: Expression): TemplateInput => {
+      const input = base([step.require(expression.registry('global', 'on'))]);
+      return {
+        ...input,
+        accounts: { ...input.accounts, [entry]: account.registry('limits', { key, payer: 'caller' }) },
+      };
+    };
+    // `mine` opens first, so `theirs` can be keyed by the holder `mine` records.
+    const chained = compileTemplate(keyedBy('theirs', expression.registry('mine', 'holder')));
+    const kinds = records(chained).map((record) => record[0]);
+    expect(kinds.indexOf(opcode.readRegistry)).toBeGreaterThan(kinds.indexOf(opcode.openRegistry));
+    expect(kinds.indexOf(opcode.readRegistry)).toBeLessThan(kinds.lastIndexOf(opcode.openRegistry));
+    // The other way round, the read would come before `theirs` opens, and finalize would refuse it.
+    expect(() => compileTemplate(keyedBy('mine', expression.registry('theirs', 'holder')))).toThrow(
+      "mine's key reads theirs, whose entry opens after mine's: declare theirs before mine",
+    );
+    expect(() => compileTemplate(keyedBy('mine', expression.registry('mine', 'holder')))).toThrow(
+      "mine's key reads its own entry, which opens only once its key is known",
+    );
+    // Nested inside the key, too.
+    const nested = expression.select(
+      expression.registry('global', 'on'),
+      expression.accountKey('caller'),
+      expression.input('owner'),
+    );
+    expect(() => compileTemplate(keyedBy('theirs', nested))).toThrow(/^theirs's key reads global,/);
+  });
+
+  test("reads an entry's data only through its fields", () => {
+    const message = /mine is a registry entry: read its fields with expression\.registry\('mine', field\)/;
+    const mine = account.fixed('mine');
+    const u64Read = expression.accountData(mine, 72, 'u64');
+    expect(() => compileTemplate(base([step.require(expression.equal(u64Read, expression.u64(0)))]))).toThrow(message);
+    const byteRead = expression.accountDataBytes(mine, 72, 8);
+    expect(() => compileTemplate(base([step.let('raw', byteRead)]))).toThrow(message);
+    // Its lamports are not a field.
+    const lamports = expression.accountField(mine, 'lamports');
+    expect(() => compileTemplate(base([step.require(expression.greaterThan(lamports, expression.u64(0)))]))).not.toThrow();
+  });
+});
+
+describe('rateLimit', () => {
+  // The spec's example, verbatim: 1 SOL a caller, refilling over a day. The cap and the rate are
+  // literals; a caller who could pass them would set their own limit.
+  const limited = () =>
+    defineTemplate({
+      inputs: { amount: { type: 'u64' } },
+      registries: { limits: { spent: 'u64', lastSpend: 'i64' } },
+      accounts: {
+        caller: { signer: true, writable: true },
+        limits: account.registry('limits', { key: expression.accountKey('caller'), payer: 'caller' }),
+        systemProgram: account.systemProgram(),
+      },
+      steps: [
+        ...rateLimit({
+          registry: 'limits',
+          cap: expression.u64(1_000_000_000),
+          refillPerSecond: expression.u64(11_574),
+          amount: expression.input('amount'),
+        }),
+      ],
+    });
+
+  test('refills in u128, requires withinRateLimit, and writes both fields back', () => {
+    const steps = limited().steps;
+    expect(steps.map((item) => (item.kind === 'let' ? `let ${item.name}` : item.kind))).toEqual([
+      'let rateLimitLast',
+      'let rateLimitNow',
+      'let rateLimitSpent',
+      'let rateLimitRefill',
+      'let rateLimitTotal',
+      'require',
+      'setRegistry',
+      'setRegistry',
+    ]);
+    // The run's time is the clock, but never earlier than the last spend, and it is what the run
+    // writes back: after a clock that steps back, `lastSpend` stays put, so no later run refills
+    // the same seconds twice, and the elapsed time is never below zero.
+    const last = expression.variable('rateLimitLast');
+    const now = expression.variable('rateLimitNow');
+    expect(steps[0]).toMatchObject({ value: expression.registry('limits', 'lastSpend') });
+    expect(steps[1]).toMatchObject({ value: expression.max(expression.clockUnixTimestamp(), last) });
+    expect(steps[3]).toMatchObject({
+      value: expression.multiply(
+        expression.cast('u128', expression.subtract(now, last)),
+        expression.cast('u128', expression.u64(11_574)),
+      ),
+    });
+    expect(steps.at(-1)).toMatchObject({ kind: 'setRegistry', field: 'lastSpend', value: now });
+    const compiled = compileTemplate(limited());
+    // The caller supplies the amount alone.
+    expect(compiled.inputOrder).toEqual(['amount']);
+    expect(compiled.sourceMap.some((entry) => entry.label === 'withinRateLimit')).toBe(true);
+    const kinds = records(compiled).map((record) => record[0]);
+    expect(kinds.filter((kind) => kind === opcode.readRegistry)).toHaveLength(2);
+    expect(kinds.filter((kind) => kind === opcode.writeRegistry)).toHaveLength(2);
+    // Five u128 casts: the spent amount, the elapsed time, the rate, the new amount and the cap.
+    expect(kinds.filter((kind) => kind === opcode.castU128)).toHaveLength(5);
+    expect(compiled.stats.maxExpandedCpis).toBe(3);
+  });
+
+  test('names its variables and requirement after `name`, and takes other field names', () => {
+    const steps = rateLimit({
+      registry: 'limits',
+      cap: expression.u64(10),
+      refillPerSecond: expression.u64(1),
+      amount: expression.u64(1),
+      spent: 'used',
+      lastSpend: 'at',
+      name: 'daily',
+    });
+    expect(steps[0]).toMatchObject({ kind: 'let', name: 'dailyLast', value: expression.registry('limits', 'at') });
+    expect(steps[1]).toMatchObject({ kind: 'let', name: 'dailyNow' });
+    expect(steps.find((item) => item.kind === 'require')).toMatchObject({ label: 'withinDaily' });
+    expect(steps.filter((item) => item.kind === 'setRegistry').map((item) => (item as { field: string }).field)).toEqual([
+      'used',
+      'at',
+    ]);
+  });
+
+  test('refuses a cap built from an input, even nested inside an expression', () => {
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.multiply(expression.u64(2), expression.input('cap')),
+        refillPerSecond: expression.u64(11_574),
+        amount: expression.input('amount'),
+      }),
+    ).toThrow('cap must be written inline, from literals and arithmetic');
+  });
+
+  test('refuses a refillPerSecond built from a row input', () => {
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.u64(1_000_000_000),
+        refillPerSecond: expression.rowInput('rate'),
+        amount: expression.input('amount'),
+      }),
+    ).toThrow('refillPerSecond must be written inline, from literals and arithmetic');
+  });
+
+  test('refuses a cap that grows with the clock or a rate that follows a loop index', () => {
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.add(expression.u64(1_000), expression.clockSlot()),
+        refillPerSecond: expression.u64(11_574),
+        amount: expression.input('amount'),
+      }),
+    ).toThrow('cap must be written inline, from literals and arithmetic');
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.u64(1_000_000_000),
+        refillPerSecond: expression.loopIndex(),
+        amount: expression.input('amount'),
+      }),
+    ).toThrow('refillPerSecond must be written inline, from literals and arithmetic');
+  });
+
+  test('refuses a cap laundered through a variable, since its origin cannot be traced', () => {
+    // `step.let('cap', expression.input('cap'))` would bind the same input to `cap` outside
+    // rateLimit's view; the helper must refuse the `variable` read regardless of what it holds.
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.variable('cap'),
+        refillPerSecond: expression.u64(11_574),
+        amount: expression.input('amount'),
+      }),
+    ).toThrow('cap must be written inline, from literals and arithmetic');
+  });
+
+  test('refuses a cap read from the Instructions sysvar', () => {
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.instructionData(account.fixed('instructions'), expression.u64(0), expression.u64(0), 'u64'),
+        refillPerSecond: expression.u64(11_574),
+        amount: expression.input('amount'),
+      }),
+    ).toThrow('cap must be written inline, from literals and arithmetic');
+  });
+
+  test('refuses a cap read from an account field, such as the caller\'s own lamports', () => {
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.accountField(account.fixed('caller'), 'lamports'),
+        refillPerSecond: expression.u64(11_574),
+        amount: expression.input('amount'),
+      }),
+    ).toThrow('cap must be written inline, from literals and arithmetic');
+  });
+
+  test('accepts a cap built from arithmetic over literals', () => {
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.multiply(expression.u64(1_000), expression.u64(1_000_000)),
+        refillPerSecond: expression.u64(11_574),
+        amount: expression.input('amount'),
+      }),
+    ).not.toThrow();
+  });
+
+  test('accepts a cap read from a registry field', () => {
+    expect(() =>
+      rateLimit({
+        registry: 'limits',
+        cap: expression.registry('limits', 'spent'),
+        refillPerSecond: expression.u64(11_574),
+        amount: expression.input('amount'),
+      }),
+    ).not.toThrow();
   });
 });

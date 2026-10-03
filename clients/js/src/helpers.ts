@@ -304,3 +304,131 @@ export function ed25519Signature(input: {
     },
   };
 }
+
+/**
+ * Whether `value`'s tree is built only from literals, arithmetic or logic over them, and registry
+ * reads — the expressions `rateLimit` trusts for `cap` and `refillPerSecond`. This is an allow
+ * list, not a search for the caller-chosen kinds: a kind this does not yet know about is refused,
+ * not silently let through, which is how the previous, deny-list version of this check missed a
+ * `variable` bound to an input, a read of the Instructions sysvar, and a read of an account's own
+ * field.
+ */
+function isTemplateConstant(value: unknown): boolean {
+  if (Array.isArray(value)) return value.every(isTemplateConstant);
+  if (value === null || typeof value !== 'object') return true;
+  const record = value as Record<string, unknown>;
+  if (typeof record.kind !== 'string') return true;
+  switch (record.kind) {
+    // Self-contained: `registry` names its account and field as plain strings, with no nested
+    // expression to walk. The entry it reads is a fixed account the runtime verifies against its
+    // derived PDA, so, unlike a generic account read, the caller cannot substitute another one;
+    // who may write that field is the template's to decide (see `rateLimit`). The clock and a
+    // loop's index are refused: neither is caller-chosen, but neither is a constant either, and a
+    // cap that grows with time or with a caller-sized loop is not the limit an author means.
+    case 'literal':
+    case 'registry':
+      return true;
+    // Pure operators over other expressions: safe exactly when every operand is.
+    case 'binary':
+    case 'multiplyDivide':
+    case 'powerOfTen':
+    case 'not':
+    case 'select':
+    case 'cast':
+    case 'bytesLength':
+      return Object.values(record).every(isTemplateConstant);
+    // Everything else — input, rowInput, variable (this cannot trace what it was bound to),
+    // accountField, accountData, accountDataBytes, returnData, pda, and every instruction* kind
+    // that reads the caller-built transaction — is refused, including any kind added later.
+    default:
+      return false;
+  }
+}
+
+/**
+ * Steps that spend `amount` from a limit that refills over time, kept in the registry entry in
+ * fixed account `registry` (declared with `account.registry`).
+ *
+ * The entry's `spent` field (a `u64`) is what has been spent and not yet refilled, and its
+ * `lastSpend` field (an `i64`) the Unix time of the last spend. Each run takes `now` as the clock,
+ * or `lastSpend` if the clock reads earlier, refills `spent` by `(now − lastSpend) ×
+ * refillPerSecond`, never below zero, adds `amount`, requires the total to be at most `cap`, and
+ * writes `spent` and `now` back.
+ *
+ * - The refill is computed in `u128`: the elapsed seconds are below 2^63 and the rate below 2^64,
+ *   so no gap between runs can overflow it. A fresh entry's `lastSpend` of 0 refills fully.
+ * - The clock can step back between slots. A run then refills nothing, rather than failing, and
+ *   leaves `lastSpend` where it was: it never moves back, so no later run refills the same seconds
+ *   twice.
+ * - `cap`, `refillPerSecond` and `amount` are `u64` expressions. `cap` and `refillPerSecond` must
+ *   be a template constant, written inline: a literal, such as `expression.u64(1_000_000)`, or
+ *   arithmetic or logic over literals, such as `expression.multiply(expression.u64(1_000),
+ *   expression.u64(1_000_000))`. A registry field is the one exception, so that an author can set a
+ *   cap or rate later: the helper accepts it but cannot tell who wrote it. The entry's address is
+ *   verified at run time, but its fields hold whatever this template's runs wrote, so the template
+ *   must write that field only in an author-only branch (one that requires a pinned author
+ *   signer). A field any caller's run can write gives the caller the cap. Everything else is
+ *   refused: an input or row input, a variable (its origin cannot be traced), a read of the
+ *   caller-built transaction, or of an account's data or fields (a caller can substitute any
+ *   account not pinned by address). `cap` and `refillPerSecond` each appear once in the generated
+ *   steps, so writing them inline costs nothing.
+ * - The registry account's `key` (passed to `account.registry`) must not come from the caller
+ *   either: a key taken from an input lets a caller open a fresh entry on every run and spend past
+ *   the cap forever. Key the entry by a signer's address, such as
+ *   `expression.accountKey('caller')`, for a per-signer limit, or leave `key` absent for the one
+ *   zero-keyed, template-wide entry. This helper only ever sees `registry` as an account name and
+ *   cannot see the account's declared key, so it cannot check this for you: it is the caller's to
+ *   get right.
+ *
+ * `name` prefixes the variables the steps bind, `<name>Last`, `<name>Now`, `<name>Spent`,
+ * `<name>Refill` and `<name>Total`, and names the requirement `within<Name>`: `withinRateLimit` by
+ * default.
+ */
+export function rateLimit(input: {
+  registry: string;
+  cap: Expression;
+  refillPerSecond: Expression;
+  amount: Expression;
+  /** The entry's `u64` field of what has been spent. Default `spent`. */
+  spent?: string;
+  /** The entry's `i64` field of when it was last spent. Default `lastSpend`. */
+  lastSpend?: string;
+  name?: string;
+}): Step[] {
+  for (const field of ['cap', 'refillPerSecond'] as const) {
+    if (!isTemplateConstant(input[field])) {
+      throw new TypeError(
+        `${field} must be written inline, from literals and arithmetic: a template constant, not ` +
+          `an input, a variable, a read of the caller-built transaction, or of an account's data ` +
+          `or fields. It appears once in the generated steps, so inlining it costs nothing.`,
+      );
+    }
+  }
+  const name = input.name ?? 'rateLimit';
+  const spentField = input.spent ?? 'spent';
+  const lastSpendField = input.lastSpend ?? 'lastSpend';
+  const u128 = (value: Expression) => expression.cast('u128', value);
+  const last = expression.variable(`${name}Last`);
+  const now = expression.variable(`${name}Now`);
+  const spent = expression.variable(`${name}Spent`);
+  const refill = expression.variable(`${name}Refill`);
+  const total = expression.variable(`${name}Total`);
+  return [
+    step.let(`${name}Last`, expression.registry(input.registry, lastSpendField)),
+    // `now` never reads earlier than `lastSpend`, so `now − lastSpend` is never negative, and the
+    // `lastSpend` written back never moves back.
+    step.let(`${name}Now`, expression.max(expression.clockUnixTimestamp(), last)),
+    step.let(`${name}Spent`, u128(expression.registry(input.registry, spentField))),
+    step.let(`${name}Refill`, expression.multiply(u128(expression.subtract(now, last)), u128(input.refillPerSecond))),
+    step.let(
+      `${name}Total`,
+      expression.add(expression.subtract(spent, expression.min(spent, refill)), u128(input.amount)),
+    ),
+    step.require(
+      expression.lessThanOrEqual(total, u128(input.cap)),
+      `within${name.charAt(0).toUpperCase()}${name.slice(1)}`,
+    ),
+    step.setRegistry(input.registry, spentField, expression.cast('u64', total)),
+    step.setRegistry(input.registry, lastSpendField, now),
+  ];
+}

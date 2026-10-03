@@ -61,7 +61,7 @@ pub const VERIFIER_ERROR_BASE: u32 = 6_100;
 
 /// Runtime error names in code order, starting at [`RUNTIME_ERROR_BASE`]. The program's error
 /// enum and the SDKs are checked against this table.
-pub const RUNTIME_ERROR_NAMES: [&str; 25] = [
+pub const RUNTIME_ERROR_NAMES: [&str; 27] = [
     "InvalidInstructionData",
     "InvalidTemplateAccount",
     "InvalidTemplateProgram",
@@ -87,6 +87,8 @@ pub const RUNTIME_ERROR_NAMES: [&str; 25] = [
     "LoopCountExceeded",
     "InstructionOutOfRange",
     "WritableAccountBytesRead",
+    "InvalidRegistryEntry",
+    "RegistryReentry",
 ];
 
 pub const ACCOUNT_SIGNER: u8 = 1 << 0;
@@ -219,6 +221,93 @@ pub const OP_READ_INSTRUCTION_BYTES: u8 = 72;
 pub const OP_READ_ACCOUNT_BYTES: u8 = 73;
 /// The length of the `bytes` value in register `a`, as a `u64`.
 pub const OP_BYTES_LEN: u8 = 74;
+/// Checks the registry entry in fixed account `a`, or creates it, and keeps it open for the rest
+/// of the run. `b` is the `pubkey` register holding its key, or [`NO_INDEX`] for the zero key; `c`
+/// is the account that pays for an entry this creates. The immediate is a [`RegistryOpen`].
+/// Writes no register. Once per entry account, at the root, never after `SET_RETURN_DATA`.
+pub const OP_OPEN_REGISTRY: u8 = 75;
+/// Reads a field of the entry open in account `a` into `dst`, typed as the read opcode the
+/// immediate's [`RegistryField`] names.
+pub const OP_READ_REGISTRY: u8 = 76;
+/// Writes register `a` into a field of the entry open in account `b`. The immediate is a
+/// [`RegistryField`]; the value has the type of its read opcode, one of the five whose width holds
+/// every value of that type.
+pub const OP_WRITE_REGISTRY: u8 = 77;
+
+/// The first seed of a registry entry's address: `["registry", template, [index], key]`.
+pub const REGISTRY_SEED: &[u8] = b"registry";
+/// The first four bytes of every registry entry.
+pub const REGISTRY_ENTRY_MAGIC: [u8; 4] = *b"BREG";
+pub const REGISTRY_ENTRY_VERSION: u8 = 1;
+/// Magic, version, registry index, two zero bytes, the template's address and the key. The
+/// registry's fields follow.
+pub const REGISTRY_ENTRY_HEADER_LEN: usize = 72;
+/// Registries a template can declare: an entry's registry index is below this.
+pub const MAX_REGISTRIES: usize = 8;
+/// Entries one template can open.
+pub const MAX_REGISTRY_OPENS: usize = 8;
+/// The most field bytes one registry holds, after the header.
+pub const MAX_REGISTRY_SIZE: usize = 512;
+/// The CPIs an open makes at most, creating a pre-funded entry: a transfer, an allocate and an
+/// assign. The verifier counts each open as this many toward [`MAX_EXPANDED_CPIS`].
+pub const REGISTRY_OPEN_CPIS: usize = 3;
+/// The System program's address. Not `SYSTEM_PROGRAM_ID`: the Rust SDK exports a `Pubkey` of
+/// that name, and files that glob-import this module beside it would see two.
+pub const SYSTEM_PROGRAM_ADDRESS: [u8; 32] = [0; 32];
+
+/// What `OP_OPEN_REGISTRY`'s immediate packs: the registry index in byte 0, the registry's field
+/// size in bytes 1 and 2, and in byte 3 the fixed account pinned to the System program, which a
+/// creation calls. The other bytes are zero.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RegistryOpen {
+    pub index: u8,
+    pub size: u16,
+    pub system_program: u8,
+}
+
+impl RegistryOpen {
+    pub const fn encode(self) -> u64 {
+        self.index as u64 | (self.size as u64) << 8 | (self.system_program as u64) << 24
+    }
+
+    /// `None` when any byte past the three fields is set.
+    pub const fn decode(immediate: u64) -> Option<Self> {
+        if immediate >> 32 != 0 {
+            return None;
+        }
+        Some(Self {
+            index: immediate as u8,
+            size: (immediate >> 8) as u16,
+            system_program: (immediate >> 24) as u8,
+        })
+    }
+}
+
+/// What `OP_READ_REGISTRY`'s and `OP_WRITE_REGISTRY`'s immediates pack: the field's offset past
+/// the entry header in bytes 0 and 1, and in byte 2 the `OP_READ_*` opcode whose width and type
+/// the field has. The other bytes are zero.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RegistryField {
+    pub offset: u16,
+    pub selector: u8,
+}
+
+impl RegistryField {
+    pub const fn encode(self) -> u64 {
+        self.offset as u64 | (self.selector as u64) << 16
+    }
+
+    /// `None` when any byte past the two fields is set.
+    pub const fn decode(immediate: u64) -> Option<Self> {
+        if immediate >> 24 != 0 {
+            return None;
+        }
+        Some(Self {
+            offset: immediate as u16,
+            selector: (immediate >> 16) as u8,
+        })
+    }
+}
 
 pub const DATA_LITERAL: u8 = 0;
 pub const DATA_REG_U8: u8 = 1;
@@ -721,6 +810,10 @@ pub enum TemplateError {
     InvalidOutput(usize),
     /// An introspection opcode's account is not a fixed account pinned to the Instructions sysvar.
     InvalidIntrospection(usize),
+    /// A registry opcode breaks a registry rule: an open outside the root, repeated, past the
+    /// eighth, after `SET_RETURN_DATA`, with a bad index, size, key or account; or a field read or
+    /// write with no open of its account before it, outside the registry, or of the wrong type.
+    InvalidRegistry(usize),
 }
 
 impl TemplateError {
@@ -763,6 +856,7 @@ impl TemplateError {
             TemplateError::InvalidLoop(index) => (29, clamp(index)),
             TemplateError::InvalidOutput(index) => (30, clamp(index)),
             TemplateError::InvalidIntrospection(index) => (31, clamp(index)),
+            TemplateError::InvalidRegistry(index) => (32, clamp(index)),
         };
         (VERIFIER_ERROR_BASE + index, context)
     }
@@ -770,7 +864,7 @@ impl TemplateError {
 
 /// Verifier error names in code order, shared with the SDK through
 /// `fixtures/verifier-error-names.txt`.
-pub const VERIFIER_ERROR_NAMES: [&str; 32] = [
+pub const VERIFIER_ERROR_NAMES: [&str; 33] = [
     "Truncated",
     "PayloadTooLarge",
     "InvalidMagic",
@@ -803,6 +897,7 @@ pub const VERIFIER_ERROR_NAMES: [&str; 32] = [
     "InvalidLoop",
     "InvalidOutput",
     "InvalidIntrospection",
+    "InvalidRegistry",
 ];
 
 /// Packs an error kind and a 16-bit context into one custom program error code.
@@ -913,13 +1008,14 @@ mod tests {
             TemplateError::InvalidLoop(15),
             TemplateError::InvalidOutput(15),
             TemplateError::InvalidIntrospection(15),
+            TemplateError::InvalidRegistry(15),
         ];
         let mut codes: Vec<u32> = variants.iter().map(|error| error.code().0).collect();
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(codes.len(), variants.len());
         assert_eq!(codes[0], VERIFIER_ERROR_BASE);
-        assert_eq!(*codes.last().unwrap(), VERIFIER_ERROR_BASE + 31);
+        assert_eq!(*codes.last().unwrap(), VERIFIER_ERROR_BASE + 32);
         for variant in &variants {
             let (code, _) = variant.code();
             let name = format!("{variant:?}");
@@ -939,6 +1035,23 @@ mod tests {
         assert_eq!(TemplateError::InvalidOutput(9).code(), (VERIFIER_ERROR_BASE + 30, 9));
         let decoded = decode_ballista_error(encode_error(VERIFIER_ERROR_BASE + 30, 9));
         assert_eq!(decoded.map(|error| error.name), Some("InvalidOutput"));
-        assert_eq!(decode_ballista_error(VERIFIER_ERROR_BASE + 32), None);
+        assert_eq!(decode_ballista_error(VERIFIER_ERROR_BASE + 33), None);
+    }
+
+    #[test]
+    fn registry_immediates_round_trip_and_refuse_spare_bytes() {
+        let open = RegistryOpen { index: 7, size: 512, system_program: 3 };
+        assert_eq!(open.encode(), 0x0302_0007);
+        assert_eq!(RegistryOpen::decode(open.encode()), Some(open));
+        assert_eq!(RegistryOpen::decode(open.encode() | 1 << 32), None);
+        assert_eq!(RegistryOpen::decode(open.encode() | 1 << 63), None);
+
+        let field = RegistryField { offset: 0x01ff, selector: OP_READ_U128 };
+        assert_eq!(field.encode(), 0x0f_01ff);
+        assert_eq!(RegistryField::decode(field.encode()), Some(field));
+        assert_eq!(RegistryField::decode(field.encode() | 1 << 24), None);
+
+        assert_eq!(REGISTRY_ENTRY_HEADER_LEN, 4 + 1 + 1 + 2 + 32 + 32);
+        assert_eq!(REGISTRY_ENTRY_HEADER_LEN + MAX_REGISTRY_SIZE, 584);
     }
 }

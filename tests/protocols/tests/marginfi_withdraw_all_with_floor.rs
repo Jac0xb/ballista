@@ -7,7 +7,7 @@ use {
         marginfi,
         template::{self, Run},
         tx::{self, Failure, Outcome},
-        wallet::{self, SOL, WSOL_MINT},
+        wallet,
     },
     ballista_sdk::TOKEN_PROGRAM_ID,
     litesvm::LiteSVM,
@@ -38,18 +38,8 @@ struct Scene {
 /// authority's token accounts (rule 1); an empty treasury, created as a second USDC account of the
 /// authority's; the template, uploaded.
 fn scene(with_sol: bool) -> (LiteSVM, Scene) {
-    let mut svm = lending::svm();
-    let authority = wallet::keypair(b"ballista-protocol-tests-mfi-auth");
-    let account = wallet::keypair(b"ballista-protocol-tests-mfi-acct");
+    let (mut svm, authority, account, usdc) = lending::marginfi_scene(with_sol, DEPOSIT);
     let a = authority.pubkey();
-    wallet::fund(&mut svm, &a, 10 * SOL);
-    let usdc = wallet::token_account(&mut svm, &a, &USDC_MINT, DEPOSIT);
-    let mut deposits = vec![(USDC_BANK, usdc, DEPOSIT)];
-    if with_sol {
-        let wsol = wallet::token_account(&mut svm, &a, &WSOL_MINT, SOL);
-        deposits.push((SOL_BANK, wsol, SOL));
-    }
-    let account = lending::marginfi_account(&mut svm, &authority, &account, &deposits);
     let treasury = wallet::keypair(b"ballista-protocol-tests-treasury");
     let create = wallet::create_token_account(&svm, &a, &treasury.pubkey(), &USDC_MINT, &a);
     lending::setup(&mut svm, &authority, &[&treasury], create);

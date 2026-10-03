@@ -41,7 +41,8 @@ export const QUOTE = {
   tag: 0,
   /** Quote-token base units per `PRICE_SCALE` base-token base units. */
   price: 8,
-  /** The most base-token base units the maker delivers. */
+  /** The most base-token base units the maker delivers in one settlement. The quote can settle
+   * again until it expires, so this bounds each settlement, not the total. */
   maxAmount: 16,
   /** The last Unix timestamp at which the quote can settle. */
   expiry: 24,

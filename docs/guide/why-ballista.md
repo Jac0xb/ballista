@@ -8,7 +8,7 @@ plain transaction cannot, and when to write your own program instead.
 Most Solana automation starts as client code that builds transactions. As it grows, the same
 account ordering, checks, instruction encoding, and sequence of program calls get copied into bots,
 frontends, scripts, and backends. The usual next step is a custom program, even when the logic is
-short and keeps no state of its own. With Ballista, the sequence is stored on chain once, and every
+short and keeps little or no state of its own. With Ballista, the sequence is stored on chain once, and every
 client runs the same checked version.
 
 ## What a transaction cannot say
@@ -53,6 +53,7 @@ or permission rules, prevent replays, or loop in ways that cannot be bounded in 
 | Reusable, fixed sequence of CPIs | Excellent fit | Works, but more code |
 | Checks on accounts and the clock during execution | Built in | Custom implementation |
 | Bounded loops, over a list of rows or a counted number of passes | Built in | Custom implementation |
+| Small state between runs: counters, spending limits, allowlists | Built in, as [registry entries](/guide/registries) | Custom implementation |
 | Protocol-owned state machine | No | Yes |
 | Sign as a program PDA | No | Yes |
 | Unbounded loops | No | Possible, within compute limits |

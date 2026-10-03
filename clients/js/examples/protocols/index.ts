@@ -7,6 +7,7 @@
  * which move when they upgrade. Re-derive those from the current IDL before uploading.
  */
 export { jitoProfitGuardedTip } from './jito-profit-guarded-tip.js';
+export { jupiterDailyCapSwap } from './jupiter-daily-cap-swap.js';
 export { jupiterDepositExactOutput } from './jupiter-deposit-exact-output.js';
 export { jupiterOracleCheckedSwap } from './jupiter-oracle-checked-swap.js';
 export { kaminoLiquidateWithProof } from './kamino-liquidate-with-proof.js';

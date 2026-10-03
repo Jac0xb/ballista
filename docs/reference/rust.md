@@ -1,10 +1,10 @@
 # Rust SDK
 
-The `ballista-sdk` crate, in `clients/rust`, lets Rust code author templates, derive template
-addresses, build the instructions that upload and run a template, encode run inputs, and decode
-Ballista error codes. Its `ProgramBuilder` writes the same bytecode as the TypeScript compiler:
-declaring the same records in the same order produces identical bytes, and a test checks this
-against the TypeScript-compiled `fixtures/system-transfer.hex`.
+The `ballista-sdk` crate, in `clients/rust`, lets Rust code author templates, derive template and
+registry entry addresses, build the instructions that upload and run a template, encode run
+inputs, and decode Ballista error codes. Its `ProgramBuilder` writes the same bytecode as the
+TypeScript compiler: declaring the same records in the same order produces identical bytes, and a
+test checks this against the TypeScript-compiled `fixtures/system-transfer.hex`.
 
 ```toml
 [dependencies]
@@ -22,7 +22,7 @@ cargo run -p ballista-sdk --example run_template
 ```
 
 Three more cover the protocol templates in the [examples](/examples/protocols/):
-`protocol_templates` builds all twelve with `ProgramBuilder`, byte-identical to the TypeScript
+`protocol_templates` builds all thirteen with `ProgramBuilder`, byte-identical to the TypeScript
 fixtures, and `protocol_templates_run` and `protocol_runs` build run instructions for them.
 
 ## Authoring with the builder
@@ -91,7 +91,7 @@ ProgramView::parse(&payload)?.verify()?;
 
 Other methods cover the rest of the instruction set, such as `read` and `read_dynamic` for account
 data, `derive_pda` and `create_pda`, `row_input`, and `account_groups` with `cpi_with_group`. The
-sections below cover math, loops, output, and introspection, and
+sections below cover math, loops, output, introspection, and registries, and
 [Wire format](/reference/wire-format) lists every opcode.
 
 Declaration order matters. Callers pass fixed accounts in the order you declare them, then each
@@ -222,14 +222,100 @@ address or the key of an account that must sign; otherwise the builder can sign 
 their own. `protocol_templates_run` builds the Ed25519 instruction, and
 [Settle at a signed quote](/examples/protocols/signed-quote) walks through both.
 
+### Registries
+
+[Remember state between runs](/guide/registries) walks through examples, and the
+[language reference](/reference/language#registries) has the full rules.
+
+A registry gives a template state that outlives a run, such as a running total or a spending
+limit. An entry holds one copy of a registry's fields in its own account, picked by a 32-byte key
+the template computes, such as the caller's address. Ballista owns every entry. Only the template's
+own runs can write it, and anyone can read it.
+
+| Call | Effect |
+| --- | --- |
+| `open_registry(entry, key, payer, index, size, system_program)` | Emits `OP_OPEN_REGISTRY` (opcode 75) and returns the instruction's index. The run checks the entry in account `entry`, or creates it. `key` is `Some` of a register holding a `pubkey`, or `None` for 32 zero bytes. `index` is the registry's index, below 8 (`MAX_REGISTRIES`), and `size` its field bytes, 1 to 512 (`MAX_REGISTRY_SIZE`) |
+| `read_registry(entry, offset, read_opcode)` | Emits `OP_READ_REGISTRY` (opcode 76): reads the field at `offset` past the entry's header into a new register, with the width and type of an `OP_READ_*` opcode |
+| `write_registry(entry, offset, read_opcode, value)` | Emits `OP_WRITE_REGISTRY` (opcode 77) and returns the instruction's index: writes register `value` into the field. `read_opcode` is `OP_READ_BOOL`, `OP_READ_U64`, `OP_READ_I64`, `OP_READ_U128`, or `OP_READ_PUBKEY`, matching `value`'s type |
+
+An entry lives at a program-derived address (PDA): an address computed from a program's ID and a
+list of byte strings called seeds. An entry's seeds are `"registry"` (`REGISTRY_SEED`), the
+template's address, the registry index, and the key. The first run to open an entry creates it
+through the System Program, and `payer` pays the rent: the lamports Solana requires an account to
+hold for its size, here a 72-byte header (`REGISTRY_ENTRY_HEADER_LEN`) plus `size`. Entries are
+never closed, so the rent stays in them. A write lands at once, and a run that fails later undoes
+it with the rest of the transaction.
+
+```rust
+use ballista_sdk::{
+    ballista_common::template::{
+        ProgramView, ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, OP_ADD, OP_LTE,
+        OP_READ_U64, VALUE_U64,
+    },
+    ProgramBuilder, SYSTEM_PROGRAM_ID,
+};
+
+let mut builder = ProgramBuilder::new();
+let system = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ID.to_bytes()), None, 0);
+let caller = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+// The entry: declared writable and nothing else.
+let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+let amount_input = builder.input(VALUE_U64, 0);
+let amount = builder.load_input(amount_input);
+let cap = builder.const_u64(1_000_000_000);
+
+// Registry 0 holds one u64, 8 bytes, keyed by the caller, who pays for the entry once.
+let key = builder.account_key(caller);
+builder.open_registry(entry, Some(key), caller, 0, 8, system);
+// Add `amount` to the caller's running total, which must stay within `cap`.
+let sent = builder.read_registry(entry, 0, OP_READ_U64);
+let total = builder.binary(OP_ADD, sent, amount);
+let within = builder.binary(OP_LTE, total, cap);
+builder.require(within);
+builder.write_registry(entry, 0, OP_READ_U64, total);
+
+let payload = builder.build()?;
+ProgramView::parse(&payload)?.verify()?;
+```
+
+The builder checks none of the rules. `verify` rejects a break with `InvalidRegistry` (6132):
+
+- An open sits at the root, never inside a loop or after `set_return_data`. Each entry account is
+  opened once, at most 8 opens in all (`MAX_REGISTRY_OPENS`), and every open of one registry index
+  gives the same `size`.
+- The entry is a fixed account declared `ACCOUNT_WRITABLE` and nothing else: no other flag, no
+  address or owner pin, no minimum data length. The payer is a fixed account declared signer and
+  writable, and `system_program` a fixed account pinned to the System Program.
+- `read_registry` and `write_registry` name an entry opened earlier in the program, and a field
+  inside its `size`.
+- No CPI lists an entry writable, and no `read`, `read_dynamic`, or `read_account_bytes` names one.
+  Its key, owner, lamports, and data length stay readable.
+
+Each open also counts as 3 CPIs toward the limit of 64 (`REGISTRY_OPEN_CPIS`), because an address
+that already holds lamports takes three calls to create. A template over the limit fails `verify`
+with `ExcessiveCpiExpansion` (6121), not `InvalidRegistry`.
+
+At run time, pass the entry writable, at the address
+[`find_registry_entry_address`](#addresses-and-hashing) derives. A run fails with:
+
+- `InvalidRegistryEntry` (6025) if the account is not this template's entry for that registry and
+  key, or has another size;
+- `RegistryReentry` (6026) if a CPI passes an open entry writable, as a row account or an account
+  group member, where `verify` cannot see it;
+- `AccountConstraintFailed` (6020) if the entry is passed read-only.
+
 ## Addresses and hashing
 
 ```rust
-use ballista_sdk::{find_template_pda, find_template_pda_for_program, template_hash};
+use ballista_sdk::{
+    find_registry_entry_address, find_template_pda, find_template_pda_for_program, template_hash,
+};
 
 let (template, bump) = find_template_pda(&creator, template_id);
 let (other_template, _) = find_template_pda_for_program(&creator, template_id, &other_program_id);
 let hash = template_hash(&payload);
+// The caller's entry of registry 0, as in the Registries example above.
+let (entry, _) = find_registry_entry_address(&template, 0, &caller.to_bytes());
 ```
 
 A template lives at a program-derived address (PDA) of the Ballista program, computed from the
@@ -237,6 +323,12 @@ seed `"template"`, the creator's address, and a 16-bit template ID. `find_templa
 program ID built into the crate, `ballista_sdk::ID`. Each program version is deployed at its own
 address, so `find_template_pda_for_program` takes the program ID of another deployment.
 `template_hash` returns the payload's SHA-256 hash, which the upload instructions carry.
+
+`find_registry_entry_address(template, registry_index, key)` returns a
+[registry](#registries) entry's address and bump, from the seeds `"registry"`, the template's
+address, the registry index, and the 32-byte key: an address's bytes, or `[0; 32]` for an entry
+without a key. It panics if `registry_index` is not below `MAX_REGISTRIES` (8).
+`find_registry_entry_address_for_program` takes the program ID of another deployment.
 
 ## Lifecycle instructions
 

@@ -2,10 +2,10 @@
 
 use {
     ballista_protocol_tests::{
-        lending::{self, MARGINFI_GROUP, SOL_BANK, USDC_BANK, USDC_MINT},
+        lending::{self, MARGINFI_GROUP, SOL_BANK, USDC_BANK},
         marginfi,
         tx::{self, Failure, Outcome},
-        wallet::{self, SOL, WSOL_MINT},
+        wallet,
     },
     litesvm::LiteSVM,
     solana_address::Address,
@@ -25,18 +25,7 @@ struct Scene {
 /// An account (seed `ballista-protocol-tests-mfi-acct`) of `ballista-protocol-tests-mfi-auth`
 /// holding 100 USDC and, with `with_sol`, 1 SOL, one slot after setup.
 fn scene(with_sol: bool) -> (LiteSVM, Scene) {
-    let mut svm = lending::svm();
-    let authority = wallet::keypair(b"ballista-protocol-tests-mfi-auth");
-    let account = wallet::keypair(b"ballista-protocol-tests-mfi-acct");
-    let a = authority.pubkey();
-    wallet::fund(&mut svm, &a, 10 * SOL);
-    let usdc = wallet::token_account(&mut svm, &a, &USDC_MINT, DEPOSIT);
-    let mut deposits = vec![(USDC_BANK, usdc, DEPOSIT)];
-    if with_sol {
-        let wsol = wallet::token_account(&mut svm, &a, &WSOL_MINT, SOL);
-        deposits.push((SOL_BANK, wsol, SOL));
-    }
-    let account = lending::marginfi_account(&mut svm, &authority, &account, &deposits);
+    let (mut svm, authority, account, usdc) = lending::marginfi_scene(with_sol, DEPOSIT);
     lending::next_slot(&mut svm);
     (
         svm,

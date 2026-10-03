@@ -15,7 +15,8 @@ use solana_program::{
 
 pub use ballista_common;
 pub use ballista_common::template::{
-    decode_ballista_error, DecodedError, ErrorSource, ProgramBuilder, Segment,
+    decode_ballista_error, DecodedError, ErrorSource, ProgramBuilder, Segment, MAX_REGISTRIES,
+    REGISTRY_SEED,
 };
 
 pub const ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
@@ -45,6 +46,43 @@ pub fn find_template_pda_for_program(
 ) -> (Pubkey, u8) {
     Pubkey::find_program_address(
         &[TEMPLATE_SEED, creator.as_ref(), &template_id.to_le_bytes()],
+        program_id,
+    )
+}
+
+/// A registry entry's address and bump: `["registry", template, [registry index], key]` under
+/// Ballista, where the entry's open creates it. `registry_index` is the registry's position among
+/// those the template declares, below [`MAX_REGISTRIES`]. `key` is the 32 bytes the template
+/// computes for the entry: an address for a per-caller or per-account entry, all zeros for one
+/// template-wide entry.
+///
+/// Panics if `registry_index` is not below [`MAX_REGISTRIES`]: no template can declare that many
+/// registries, so there is no entry to derive. The TypeScript SDK's `findRegistryEntryAddress`
+/// throws for the same input.
+pub fn find_registry_entry_address(
+    template: &Pubkey,
+    registry_index: u8,
+    key: &[u8; 32],
+) -> (Pubkey, u8) {
+    find_registry_entry_address_for_program(template, registry_index, key, &ID)
+}
+
+/// [`find_registry_entry_address`] under a specific deployment of the program, which owns the
+/// entries of the templates it finalized.
+///
+/// Panics if `registry_index` is not below [`MAX_REGISTRIES`].
+pub fn find_registry_entry_address_for_program(
+    template: &Pubkey,
+    registry_index: u8,
+    key: &[u8; 32],
+    program_id: &Pubkey,
+) -> (Pubkey, u8) {
+    assert!(
+        (registry_index as usize) < MAX_REGISTRIES,
+        "registry_index must be below MAX_REGISTRIES ({MAX_REGISTRIES}), got {registry_index}",
+    );
+    Pubkey::find_program_address(
+        &[REGISTRY_SEED, template.as_ref(), &[registry_index], key],
         program_id,
     )
 }
@@ -305,6 +343,41 @@ mod tests {
         );
     }
 
+    /// The vectors in `fixtures/registry-entry-addresses.txt` are the program's own derivation,
+    /// checked by its `registry_addresses_match_the_shared_vectors` test.
+    #[test]
+    fn registry_entry_addresses_match_the_programs_vectors() {
+        let bytes = |hex: &str| -> [u8; 32] {
+            let bytes: Vec<u8> = (0..hex.len())
+                .step_by(2)
+                .map(|at| u8::from_str_radix(&hex[at..at + 2], 16).unwrap())
+                .collect();
+            bytes.try_into().unwrap()
+        };
+        let vectors: Vec<&str> = include_str!("../../../fixtures/registry-entry-addresses.txt")
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect();
+        assert_eq!(vectors.len(), 64);
+        for line in vectors {
+            let fields: Vec<&str> = line.split(' ').collect();
+            let template = Pubkey::new_from_array(bytes(fields[0]));
+            let index: u8 = fields[1].parse().unwrap();
+            let key = bytes(fields[2]);
+            let expected = (Pubkey::new_from_array(bytes(fields[3])), fields[4].parse().unwrap());
+            assert_eq!(find_registry_entry_address(&template, index, &key), expected, "{line}");
+        }
+    }
+
+    /// The TypeScript SDK's `findRegistryEntryAddress` throws a `RangeError` for the same input:
+    /// no template can declare `MAX_REGISTRIES` registries, so there is no entry to derive.
+    #[test]
+    #[should_panic(expected = "registry_index must be below MAX_REGISTRIES")]
+    fn find_registry_entry_address_panics_at_max_registries() {
+        let template = Pubkey::new_unique();
+        find_registry_entry_address(&template, MAX_REGISTRIES as u8, &[0; 32]);
+    }
+
     #[test]
     fn well_known_addresses_match_the_shared_constants() {
         assert_eq!(
@@ -336,7 +409,13 @@ mod tests {
             "WritableAccountBytesRead"
         );
         assert_eq!(decode_ballista_error(6131).unwrap().name, "InvalidIntrospection");
-        assert!(decode_ballista_error(6025).is_none());
-        assert!(decode_ballista_error(6132).is_none());
+        assert_eq!(
+            decode_ballista_error((3 << 16) | 6025).unwrap().name,
+            "InvalidRegistryEntry"
+        );
+        assert_eq!(decode_ballista_error(6026).unwrap().name, "RegistryReentry");
+        assert_eq!(decode_ballista_error(6132).unwrap().name, "InvalidRegistry");
+        assert!(decode_ballista_error(6027).is_none());
+        assert!(decode_ballista_error(6133).is_none());
     }
 }

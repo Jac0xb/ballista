@@ -12,9 +12,9 @@ the error kind; the high 16 bits hold a context number that locates the failure.
 code = kind | (context << 16)
 ```
 
-- **6000 to 6024** (`0x1770` to `0x1788`) are runtime errors, raised while uploading or running.
+- **6000 to 6026** (`0x1770` to `0x178A`) are runtime errors, raised while uploading or running.
   The context is usually the program counter: the index of the failing compiled instruction.
-- **6100 to 6131** (`0x17D4` to `0x17F3`) are verifier errors, raised when a template is created
+- **6100 to 6132** (`0x17D4` to `0x17F4`) are verifier errors, raised when a template is created
   or finalized. The context is the index of the offending instruction, account, input, register or
   CPI, where there is one.
 - In hex, the last four digits are the kind. `0x7177F` is `0x177F` (6015, `RequirementFailed`)
@@ -31,6 +31,10 @@ Four runtime kinds carry a different context:
 
 A declared signer that did not sign fails with Solana's standard `MissingRequiredSignature` error,
 not a Ballista code.
+
+A [registry entry](/guide/registries) passed read-only fails before the first step with
+`AccountConstraintFailed` (6020) and the entry's account index, not with `InvalidRegistryEntry`
+(6025).
 
 ## Error codes
 
@@ -63,6 +67,8 @@ not a Ballista code.
 | 6022 | `0x1786` | `LoopCountExceeded` | A `repeat` count was above the loop's `max` |
 | 6023 | `0x1787` | `InstructionOutOfRange` | A read asked for an instruction, account position or byte range that does not exist |
 | 6024 | `0x1788` | `WritableAccountBytesRead` | `accountDataBytes` read an account the transaction passed as writable |
+| 6025 | `0x1789` | `InvalidRegistryEntry` | An account passed as a registry entry is not that entry: wrong address, owner, size or header |
+| 6026 | `0x178A` | `RegistryReentry` | A CPI passed an open registry entry as writable |
 
 ### Verifier codes
 
@@ -102,6 +108,7 @@ Raised by `CreateTemplate` or `FinalizeTemplate` when the template fails its che
 | 6129 | `0x17F1` | `InvalidLoop` | More than 8 loops, a `repeat` inside another loop or naming a row, or a malformed `repeat` |
 | 6130 | `0x17F2` | `InvalidOutput` | An `emit` or `setReturnData` breaks a rule in [Logs and return data](#logs-and-return-data) |
 | 6131 | `0x17F3` | `InvalidIntrospection` | A read of the transaction's instructions names an account not pinned to the Instructions sysvar |
+| 6132 | `0x17F4` | `InvalidRegistry` | A registry entry is opened in a loop, passed writable to a CPI, read as raw data, or otherwise breaks a rule in [Registries](/reference/language#registries) |
 
 The same names are in `fixtures/runtime-error-names.txt` and `fixtures/verifier-error-names.txt`.
 The program, the Rust SDK and the TypeScript SDK are all tested against them.
@@ -205,3 +212,15 @@ const outputSteps = [
 
 The TypeScript compiler refuses a template that breaks these rules. One built another way fails
 when it is created or finalized, with `InvalidOutput` (6130).
+
+When you read outputs:
+
+- **Events are logged before the transaction is final.** A transaction that fails later still logs
+  the events of the steps before the failure. Check that the transaction succeeded before you trust
+  its events.
+- **A transaction's return data is its last instruction's.** Solana clears return data as each
+  instruction starts, so any instruction after the run, such as a swap's cleanup, replaces it. Put
+  the run last, simulate the transaction, or read the run's `Program return:` log line.
+- **Return data names the program, not the template.** It proves only that Ballista set it. A
+  template that reads a nested run's return data must pin the inner template's address. Otherwise
+  a run of any template could supply it.

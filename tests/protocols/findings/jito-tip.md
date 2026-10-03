@@ -61,8 +61,10 @@ all three required runs behave as specified against the real programs.
      positions, the route runs and moves the searcher's own accounts, the ones in its steps.
 
    So positions 2 and 3 prove nothing about what moved. Pinned by
-   `jupiter_does_not_tie_the_route_s_source_and_destination_to_its_steps`. The template relies
-   only on the balance it reads itself.
+   `a_decoy_at_the_source_and_destination_is_left_untouched`, `the_source_s_mint_is_not_checked`,
+   `a_source_one_unit_short_of_in_amount_fails`, `a_destination_not_holding_the_destination_mint_fails`
+   and `a_destination_mint_that_does_not_match_the_destination_fails`. The template relies only on
+   the balance it reads itself.
 
 5. **Tip accounts.** The snapshot's tip account is owned by the Tip Payment program (`T1pyy…`) and
    has 8 bytes of data. A plain System transfer to it lands. The template now pins

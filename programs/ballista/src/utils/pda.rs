@@ -15,6 +15,7 @@
 //! more than their bytes do. Only the bump byte changes between attempts.
 use core::mem::MaybeUninit;
 
+use ballista_common::template::REGISTRY_SEED;
 use solana_address::Address;
 
 pub const TEMPLATE_SEED: &[u8] = b"template";
@@ -246,6 +247,22 @@ pub fn get_template_address(creator: &Address, id: u16) -> (Address, u8) {
         .unwrap_or_else(|| panic!("Unable to find a viable program address bump seed"))
 }
 
+/// Seed bytes of a registry entry: the tag, the template, the registry index and the key.
+const REGISTRY_PREIMAGE_LEN: usize = preimage_capacity(REGISTRY_SEED.len() + 32 + 1 + 32);
+
+/// A registry entry's address and canonical bump, exactly what `Address::find_program_address`
+/// returns for `["registry", template, [index], key]`. Only an open that creates an entry derives
+/// it; an existing entry is proven by its header. `None` only if no bump from 255 down works.
+#[inline(never)]
+pub fn get_registry_address(template: &Address, index: u8, key: &[u8; 32]) -> Option<(Address, u8)> {
+    let mut preimage = Preimage::<REGISTRY_PREIMAGE_LEN>::new();
+    preimage.push_seed(REGISTRY_SEED)?;
+    preimage.push_seed(template.as_ref())?;
+    preimage.push_seed(&[index])?;
+    preimage.push_seed(key)?;
+    preimage.find(&crate::ID)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,6 +356,67 @@ mod tests {
                 )
             );
         }
+    }
+
+    #[test]
+    fn registry_addresses_match_find_program_address() {
+        let mut rng = SplitMix(11);
+        for _ in 0..500 {
+            let template = rng.address();
+            let index = (rng.next() % 8) as u8;
+            let key = rng.address().to_bytes();
+            assert_eq!(
+                get_registry_address(&template, index, &key),
+                Some(Address::find_program_address(
+                    &[REGISTRY_SEED, template.as_ref(), &[index], &key],
+                    &crate::ID
+                ))
+            );
+        }
+    }
+
+    /// The first 64 cases of `registry_addresses_match_find_program_address`, each with the
+    /// address and bump this program derives for it, are the vectors both SDKs derive entry
+    /// addresses against: `fixtures/registry-entry-addresses.txt`, one line per case,
+    /// `template index key address bump`, the 32-byte values in hex. `UPDATE_FIXTURES=1` rewrites
+    /// the file.
+    #[test]
+    fn registry_addresses_match_the_shared_vectors() {
+        use std::fmt::Write;
+
+        let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let mut rng = SplitMix(11);
+        let mut vectors = String::from(
+            "# template index key address bump: get_registry_address over SplitMix(11), as in \
+             programs/ballista/src/utils/pda.rs\n",
+        );
+        for _ in 0..64 {
+            let template = rng.address();
+            let index = (rng.next() % 8) as u8;
+            let key = rng.address().to_bytes();
+            let (address, bump) = get_registry_address(&template, index, &key).expect("a bump");
+            writeln!(
+                vectors,
+                "{} {index} {} {} {bump}",
+                hex(template.as_ref()),
+                hex(&key),
+                hex(address.as_ref())
+            )
+            .unwrap();
+        }
+        if std::env::var("UPDATE_FIXTURES").as_deref() == Ok("1") {
+            let path = concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../fixtures/registry-entry-addresses.txt"
+            );
+            std::fs::write(path, &vectors).expect("write the vectors");
+            return;
+        }
+        assert_eq!(
+            include_str!("../../../../fixtures/registry-entry-addresses.txt"),
+            vectors,
+            "run with UPDATE_FIXTURES=1 to rewrite the vectors"
+        );
     }
 
     #[test]

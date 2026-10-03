@@ -21,6 +21,29 @@ use {
 
 const NAME: &str = "jupiterDepositExactOutput";
 
+/// The units `program` consumed in its invocations at stack `height`, CPIs they made included: 1
+/// for a transaction's own instruction, 2 for a program one of those calls.
+fn units_at_height(logs: &[String], program: &Address, height: usize) -> u64 {
+    let mut stack: Vec<&str> = Vec::new();
+    let mut units = 0;
+    for line in logs {
+        let Some(rest) = line.strip_prefix("Program ") else {
+            continue;
+        };
+        if let Some((caller, _)) = rest.split_once(" invoke [") {
+            stack.push(caller);
+        } else if let Some((callee, consumed)) = rest.split_once(" consumed ") {
+            let consumed: u64 = consumed.split(' ').next().unwrap().parse().unwrap();
+            if stack.len() == height && callee == program.to_string() {
+                units += consumed;
+            }
+        } else if rest.ends_with(" success") || rest.contains(" failed: ") {
+            stack.pop();
+        }
+    }
+    units
+}
+
 struct Scene {
     owner: Keypair,
     leg: Leg,
@@ -137,8 +160,16 @@ fn deposits_exactly_what_the_swap_produced() {
 
     let run = run(&svm, &scene, produced);
     let outcome = send_run(&mut svm, &scene, run).unwrap_or_else(|failure| panic!("{failure:?}"));
+    // Ballista's run is the transaction's only instruction that calls Jupiter, and the only one
+    // that calls Kamino at height 2; Kamino's refreshes run at height 1.
+    let run_units = units_at_height(&outcome.logs, &ballista_sdk::ID, 1);
+    let (route_units, deposit_units) = (
+        units_at_height(&outcome.logs, &JUPITER, 2),
+        units_at_height(&outcome.logs, &kamino::KLEND, 2),
+    );
     eprintln!(
-        "{NAME}: {} CU, {} bytes",
+        "{NAME}: {} CU, {} bytes; {run_units} in Ballista's run, {route_units} of them Jupiter's \
+         and {deposit_units} Kamino's deposit's",
         outcome.compute_units, outcome.size
     );
 

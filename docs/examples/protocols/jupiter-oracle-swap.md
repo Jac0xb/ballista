@@ -2,8 +2,12 @@
 
 <p class="protocol-line">Jupiter · Pyth</p>
 
-**Status:** Run as real transactions against Jupiter, a Meteora pool and Pyth's SOL/USD price,
-copied from mainnet at one slot into LiteSVM, a local Solana runtime. Not yet run on mainnet itself.
+**Status:** Tested locally in LiteSVM against Jupiter, Meteora and Pyth programs and accounts
+copied from mainnet; not yet run on devnet or mainnet.
+
+**Cost:** Ballista's own work in the measured run took 9,770
+[compute units](/reference/glossary#compute-units), beyond what Jupiter's route used. Ballista
+charges no fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -32,7 +36,7 @@ The template requires, in order:
 - after the swap, exactly `inAmount` to have left the source (`soldTheRouteInput`), since Jupiter
   doesn't require its steps to move the source account it is given;
 - the destination to have received at least that amount's value at the Pyth price, less
-  `TOLERANCE_BPS`, 100 basis points (hundredths of a percent) (`fillBeatTheOracle`).
+  `TOLERANCE_BPS`, 100 basis points or 1% (`fillBeatTheOracle`).
 
 The feed, the pair and the tolerance are constants, so whoever builds the run can't change them.
 For another pair or tolerance, change them and upload your own template.
@@ -63,10 +67,10 @@ It does not guard against:
 
 :::
 
-The feed must price the token you sell in the token you buy, for example SOL/USD when selling SOL
-for USDC. Pyth publishes a price as `price × 10^exponent` per whole token. The template reads the
-exponent and both mints' decimals on chain, and values what was sold, in the destination token's
-smallest units, as `sold × price × 10^(destinationDecimals + exponent − sourceDecimals)`.
+SOL/USD prices the SOL sold in the USDC bought, counting a USDC as a dollar. Pyth publishes a price
+as `price × 10^exponent` per whole token. The template reads the exponent and both mints' decimals
+on chain, and values what was sold, in the destination token's smallest units, as
+`sold × price × 10^(destinationDecimals + exponent − sourceDecimals)`.
 
 ## Run it
 
@@ -77,10 +81,13 @@ route's accounts arrive as the `routeAccounts` [account group](/guide/account-gr
 The Run tabs pass the eight declared accounts, `jupiter`, `tokenProgram`, `priceUpdate`, `trader`,
 `sourceAta`, `destinationAta`, `sourceMint` (wrapped SOL's mint) and `destinationMint` (USDC's),
 then the inputs `routePlan`, `inAmount`, `quotedOutAmount`, `slippageBps` and `platformFeeBps`,
-then the group. `priceUpdate` must carry `FEED_ID`, SOL/USD's feed id,
-`ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d`.
-`splitJupiterRoute` (TypeScript) and `RouteQuote::split` (Rust) split the Swap API's `route` data
-into `routePlan` and the four numbers after it.
+then the group. `splitJupiterRoute` (TypeScript) and `RouteQuote::split` (Rust) split the Swap
+API's `route` data into `routePlan` and the four numbers after it.
+
+`priceUpdate` is a fully verified `PriceUpdateV2` carrying `FEED_ID`, SOL/USD's feed id
+`ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d`: the account Pyth's push oracle
+keeps for it, `7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE`, or an update you post with Pyth's
+receiver earlier in the transaction.
 
 [Getting a Jupiter route](/examples/protocols/#jupiter-routes) says how to request the route from
 Jupiter's Swap API and what to keep from its response.
@@ -89,10 +96,10 @@ Jupiter's Swap API and what to keep from its response.
 
 - **Against the real programs.** `tests/protocols/tests/oracle_checked_swap.rs` sells 1 SOL for
   USDC through Jupiter and a Meteora pool, valued at Pyth's SOL/USD price, in place of `route` in
-  the transaction Jupiter's API built. It fills exactly as that transaction does alone, for 9,770
-  more compute units (Solana's measure of execution cost) and 110 more bytes. Its floor matches the
-  formula above to the last unit. Jupiter's `route` on its own takes
-  exactly `in_amount` through a split route and with a platform fee, as `soldTheRouteInput` needs.
+  the transaction Jupiter's API built. It fills exactly as that transaction does alone, for 110
+  more bytes. Its floor matches the formula above to the last unit. Jupiter's `route` on its own
+  takes exactly `in_amount` through a split route and with a platform fee, as `soldTheRouteInput`
+  needs.
 - **Failures.** Each of these fails, and the whole transaction reverts: an oracle 5% above the
   market (`fillBeatTheOracle`, after the swap); spare token accounts of the trader's at `sourceAta`
   and `destinationAta` while the route moves others (`soldTheRouteInput`); another wallet's source
@@ -100,11 +107,6 @@ Jupiter's Swap API and what to keep from its response.
   is called); USDC/USD's price account passed as SOL/USD's (`priceIsTheExpectedFeed`); USDC's mint
   as `sourceMint` (its pinned address); a route that charges a platform fee (`platformFeeWithinCap`,
   before Jupiter is called).
-- A test reads the template and checks that it calls `route` in `route`'s account order, values
-  what left the source at the Pyth price with both mints' decimals, and orders the feed pin, owner
-  checks and `soldTheRouteInput` as above (`clients/js/src/protocol-semantics.test.ts`).
 - An opt-in test checks the Pyth offsets against devnet accounts.
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

@@ -683,9 +683,12 @@ fn a_backrun_pays_the_tip_out_of_its_profit() {
         .result
         .unwrap_or_else(|failure| panic!("the backrun failed: {failure:?}"));
     println!(
-        "paid a {tip}-lamport tip: {} CU in all, {} in the run; {} bytes",
+        "paid a {tip}-lamport tip: {} CU in all, {} in the run, {} of them Jupiter's; {} bytes",
         outcome.compute_units,
         run_units(&outcome.logs),
+        outcome
+            .compute_units_of(&snapshot.named("jupiter"))
+            .expect("Jupiter ran"),
         outcome.size
     );
 

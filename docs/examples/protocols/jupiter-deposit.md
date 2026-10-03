@@ -1,9 +1,13 @@
-# Deposit exactly what a swap produced
+# Deposit what a swap produced
 
 <p class="protocol-line">Jupiter · Kamino</p>
 
-**Status:** Run as real transactions against Jupiter, a Meteora pool and Kamino, copied from
-mainnet at one slot into LiteSVM, a local Solana runtime. Not yet run on mainnet itself.
+**Status:** Tested locally in LiteSVM against Jupiter, Meteora and Kamino programs and accounts
+copied from mainnet; not yet run on devnet or mainnet.
+
+**Cost:** Ballista's own work in the measured run took 8,503
+[compute units](/reference/glossary#compute-units), beyond what Jupiter's route and Kamino's deposit
+used. Ballista charges no fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -21,15 +25,16 @@ deposit fails; guess too low and the rest stays in your token account.
 
 The template requires the route's `platformFeeBps` to be at most `MAX_PLATFORM_FEE_BPS`, a
 constant that is 0 (`platformFeeWithinCap`), before the swap. It reads the destination balance
-before and after the swap, requires the difference to
-be at least `minimumOut` (`swapMetItsFloor`), and asks Kamino to deposit exactly that difference.
-Kamino mints whole cTokens, its receipts for a deposit, and takes only what they are worth, so less
-than one cToken's worth (a base unit or so) can stay behind.
+before and after the swap, requires the difference to be at least `minimumOut`
+(`swapMetItsFloor`), and asks Kamino to deposit exactly that difference. Kamino mints whole
+cTokens, its receipts for a deposit, and takes only what they are worth, so less than one cToken's
+worth (a base unit or so) can stay behind.
 
 It does not guard against:
 
-- **A bad route.** The route arrives as `routePlan`, `inAmount`, `quotedOutAmount` and `slippageBps`, so what
-  it sells and its quote are up to whoever builds the run. Set `minimumOut` from your own quote.
+- **A bad route.** The route arrives as `routePlan`, `inAmount`, `quotedOutAmount` and
+  `slippageBps`, so what it sells and its quote are up to whoever builds the run. Set `minimumOut`
+  from your own quote.
 - **Spending the owner's other token accounts.** The owner signs `route`, and Jupiter passes that
   authority to every step.
 
@@ -63,8 +68,9 @@ Kamino program, read-only.
 
 The Run tabs pass the 15 declared accounts in order (`jupiter`, `kamino`, `tokenProgram`,
 `instructionsSysvar`, `owner`, `sourceAta`, `destinationAta`, then Kamino's eight from `obligation`
-to `reserveDestinationDepositCollateral`), then the inputs `routePlan`, `inAmount`, `quotedOutAmount`, `slippageBps`, `platformFeeBps` and
-`minimumOut`, then `routeAccounts` and `farmAccounts`.
+to `reserveDestinationDepositCollateral`), then the inputs `routePlan`, `inAmount`,
+`quotedOutAmount`, `slippageBps`, `platformFeeBps` and `minimumOut`, then `routeAccounts` and
+`farmAccounts`.
 
 Before the run:
 
@@ -87,17 +93,12 @@ Jupiter's Swap API and what to keep from its response.
 - **Against the real programs.** `tests/protocols/tests/jupiter_deposit_exact_output.rs` sells 1 SOL
   for USDC through Jupiter and a Meteora pool, then deposits into Kamino's USDC reserve, which has
   a collateral farm. Of the 121,391,105 USDC units the swap produced, Kamino took all but 1, its
-  cToken rounding. The whole transaction, refreshes included, took 151,372 compute units (Solana's
-  measure of execution cost) and 1,085 bytes.
+  cToken rounding. The whole transaction, refreshes included, took 151,372 compute units and 1,085
+  bytes.
 - **Failures.** A `minimumOut` one unit above the fill fails at `swapMetItsFloor`, and nothing is
   deposited. Kamino refuses a deposit with no refresh in its slot (`ObligationStale`), and one into
   a farmed reserve without the farm accounts (`FarmAccountsMissing`, in
   `tests/protocols/tests/kamino_contract.rs`). A route that charges a platform fee fails at
   `platformFeeWithinCap`, before Jupiter is called.
-- A test reads the template and checks that it calls `route` with its accounts in `route`'s order,
-  that the deposit is v2 with `farmAccounts` as its group, and that the runner above forwards only
-  what follows those four accounts (`clients/js/src/protocol-semantics.test.ts`).
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

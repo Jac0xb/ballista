@@ -2,8 +2,12 @@
 
 <p class="protocol-line">Pyth · Jupiter</p>
 
-**Status:** Run as real transactions against Jupiter, a Meteora pool and Pyth's SOL/USD price,
-copied from mainnet at one slot into LiteSVM, a local Solana runtime. Not yet run on mainnet itself.
+**Status:** Tested locally in LiteSVM against Jupiter, Meteora and Pyth programs and accounts
+copied from mainnet; not yet run on devnet or mainnet.
+
+**Cost:** Ballista's own work in the measured run took 6,978
+[compute units](/reference/glossary#compute-units), beyond what Jupiter's route used. Ballista
+charges no fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -88,19 +92,14 @@ Jupiter's Swap API and what to keep from its response.
 - **Against the real programs.** `tests/protocols/tests/pyth_fresh_price_gate.rs` sells 1 SOL for
   USDC through Jupiter and a Meteora pool, gated on Pyth's SOL/USD price, with the run in place of
   `route` in the transaction Jupiter's API built. With a fresh price in band, it fills exactly as
-  that transaction does alone. A price exactly `maximumAge` old passes, and so does a band of
-  exactly the price.
+  that transaction does alone, for 180 more bytes. A price exactly `maximumAge` old passes, and so
+  does a band of exactly the price.
 - **Failures.** A price one second past `maximumAge` fails at `priceIsFresh`, and one raw unit past
   either end of the band at `priceAboveFloor` or `priceBelowCeiling`. An in-band price with another
   feed's id fails at `priceIsTheExpectedFeed`, and the SOL/USD account with its exponent moved from
   −8 to −7 at `priceExponentIsExpected`. No test fails the verification-level or confidence
   check. A route that charges a platform fee fails at `platformFeeWithinCap`, before Jupiter is
   called.
-- A test reads the template and checks that it calls `route` with its accounts in `route`'s order,
-  and checks the feed and then the exponent right after the verification level
-  (`clients/js/src/protocol-semantics.test.ts`).
 - An opt-in test checks the Pyth offsets against devnet accounts.
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

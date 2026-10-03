@@ -1,10 +1,13 @@
-# Pay a Jito tip only from profit
+# Tip only from profit
 
 <p class="protocol-line">Jito · Jupiter</p>
 
-**Status:** Run as real transactions against Jupiter, a Meteora pool, a Raydium pool and a Jito tip
-account, copied from mainnet at one slot into LiteSVM, a local Solana runtime. Not yet run on
-mainnet itself, or through Jito's tip auction.
+**Status:** Tested locally in LiteSVM against Jupiter, Meteora and Raydium programs and a Jito tip
+account copied from mainnet; not yet run on devnet or mainnet, or through Jito's tip auction.
+
+**Cost:** Ballista's own work in the measured run took 9,012
+[compute units](/reference/glossary#compute-units), the tip's transfer included, beyond what
+Jupiter's route used. Ballista charges no fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -89,10 +92,5 @@ Jupiter's Swap API and what to keep from its response.
   and leaves its lamports alone, apart from the fee.
 - **Not tested.** Jito's block engine isn't part of LiteSVM, so the tests show the tip is paid, not
   how the auction ranks it.
-- A test reads the template and checks that it calls `route` with the token program, the searcher
-  and `wsolAccount` twice, and that the profit check reads the wSOL balance, not lamports
-  (`clients/js/src/protocol-semantics.test.ts`).
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

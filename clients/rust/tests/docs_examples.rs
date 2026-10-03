@@ -2,14 +2,24 @@
 //! two to the same bytes, and the Rust runs to the same accounts and run data as the TypeScript
 //! runs.
 //!
+//! Most of the Rust is in `examples/docs_templates.rs` and `examples/docs_runs.rs`. A few pages keep
+//! theirs with the rest of the page's Rust: the registries page in `docs_language.rs`, the ATA
+//! assertion in `docs_security.rs`, and the input encoding in `docs_limits.rs`.
+//!
 //! Expected values come from the TypeScript side: `fixtures/benchmarks.json` (written by
 //! `clients/js/src/benchmarks.test.ts`) for the examples the benchmarks measure, and
 //! `tests/fixtures/docs-examples.json` (written by `clients/js/examples/docs/docs-examples.test.ts`)
 //! for the examples only the guide pages use. Both record, per example, the compiled template, the
 //! encoded run data, the signer and writable flags of every runtime account, and the row count.
 
+#[path = "../examples/docs_language.rs"]
+mod language;
+#[path = "../examples/docs_limits.rs"]
+mod limits;
 #[path = "../examples/docs_runs.rs"]
 mod runs;
+#[path = "../examples/docs_security.rs"]
+mod security;
 #[path = "../examples/docs_templates.rs"]
 mod templates;
 
@@ -142,10 +152,23 @@ fn first_difference(expected: &[u8], actual: &[u8]) -> String {
     "no table differs".into()
 }
 
+/// Every Rust template a page shows beside a TypeScript one.
+fn all_templates() -> impl Iterator<Item = &'static templates::Example> {
+    templates::ALL
+        .iter()
+        .chain(language::TEMPLATES)
+        .chain(security::TEMPLATES)
+}
+
+/// Every Rust run a page shows beside a TypeScript one.
+fn all_runs() -> impl Iterator<Item = &'static runs::ExampleRun> {
+    runs::ALL.iter().chain(language::RUNS).chain(security::RUNS)
+}
+
 #[test]
 fn every_rust_template_matches_the_typescript_compiler_byte_for_byte() {
     let mut failures = Vec::new();
-    for (name, build) in templates::ALL {
+    for (name, build) in all_templates() {
         let expected = expected(name).template;
         let actual = build();
         if actual != expected {
@@ -165,9 +188,9 @@ fn every_rust_run_matches_the_typescript_run() {
         "one run per template"
     );
     let mut failures = Vec::new();
-    for (name, run) in runs::ALL {
+    for (name, run) in all_runs() {
         assert!(
-            templates::ALL.iter().any(|(template, _)| template == name),
+            all_templates().any(|(template, _)| template == name),
             "{name} has no Rust template"
         );
         let expected = expected(name);
@@ -199,4 +222,16 @@ fn every_rust_run_matches_the_typescript_run() {
         }
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
+}
+
+/// The expressions page shows only how a run encodes its inputs, with the same 40-byte route as the
+/// TypeScript encoding.
+#[test]
+fn the_rust_input_encoding_matches_the_typescript_encoding() {
+    let expected = expected("named-inputs").run_data;
+    let actual = limits::encode_run_inputs(&[1; 40]);
+    assert!(
+        actual == expected,
+        "run data\n  expected {expected:02x?}\n  actual   {actual:02x?}"
+    );
 }

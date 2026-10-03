@@ -17,8 +17,10 @@ import { fileURLToPath } from 'node:url';
 import { getAddressDecoder, type Address, type Instruction } from '@solana/kit';
 import { describe, expect, test } from 'vitest';
 
-import { compileTemplate, type Template } from '../../src/index.js';
+import { INSTRUCTION_RUN, compileTemplate, type Template } from '../../src/index.js';
+import { BALLISTA_ADDRESS, SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '../../src/kit.js';
 import { assertCreateThenTransfer, runAssertCreateThenTransfer } from './assert-create-then-transfer.js';
+import { assertRecipientAta, runAssertRecipientAta } from './assert-recipient-ata.js';
 import { basisPointRevenueSplit, runBasisPointRevenueSplit } from './basis-point-revenue-split.js';
 import { boundedKeeperCrank, runBoundedKeeperCrank } from './bounded-keeper-crank.js';
 import { boundedSolPayroll, runBoundedSolPayroll } from './bounded-sol-payroll.js';
@@ -32,8 +34,10 @@ import {
   consolidateOnlyTheFundedAccounts,
   runConsolidateOnlyTheFundedAccounts,
 } from './consolidate-only-the-funded-accounts.js';
+import { countRuns } from './count-runs.js';
 import { crankOncePerWaitingEntry, runCrankOncePerWaitingEntry } from './crank-once-per-waiting-entry.js';
 import { crankOnlyTheRipeEntries, runCrankOnlyTheRipeEntries } from './crank-only-the-ripe-entries.js';
+import { dailyLimitPerCaller, runDailyLimitPerCaller } from './daily-limit-per-caller.js';
 import { deadlineAndMinimumOutput, runDeadlineAndMinimumOutput } from './deadline-and-minimum-output.js';
 import { deadlineRefund, runDeadlineRefund } from './deadline-refund.js';
 import { distributeARuntimePotProRata, runDistributeARuntimePotProRata } from './distribute-a-runtime-pot-pro-rata.js';
@@ -45,7 +49,9 @@ import { genericCpi, runGenericCpi } from './generic-cpi.js';
 import { indexWeightedRewards, runIndexWeightedRewards } from './index-weighted-rewards.js';
 import { initializeOnlyIfMissing, runInitializeOnlyIfMissing } from './initialize-only-if-missing.js';
 import { liquidateOnlyWhenUnhealthy, runLiquidateOnlyWhenUnhealthy } from './liquidate-only-when-unhealthy.js';
+import { listedCallersOnly, runListedCallersOnly } from './listed-callers-only.js';
 import { maximumLamportSpend, runMaximumLamportSpend } from './maximum-lamport-spend.js';
+import { encodeNamedInputs, namedInputs } from './named-inputs.js';
 import { nestedSwapThenDeposit, runNestedSwapThenDeposit } from './nested-swap-then-deposit.js';
 import { oraclePriceBand, runOraclePriceBand } from './oracle-price-band.js';
 import { pinnedProgramAndOwner, runPinnedProgramAndOwner } from './pinned-program-and-owner.js';
@@ -527,6 +533,60 @@ const cases: Case[] = [
         swapData: standInData,
       }),
   },
+  // Examples whose Rust sits with the rest of their page's Rust: the registries page's in
+  // docs_language.rs, the ATA assertion's in docs_security.rs, the input encoding's in docs_limits.rs.
+  {
+    name: 'count-runs',
+    template: countRuns,
+    docsOnlyRows: 0,
+    // The page shows no run for this one, so the Rust test compares only the template.
+    run: () =>
+      buildKitRunInstruction({
+        compiled: compileTemplate(countRuns),
+        templateAddress: TEMPLATE,
+        accounts: {
+          caller: { address: key(1) },
+          callerRuns: { address: key(2) },
+          systemProgram: { address: SYSTEM_PROGRAM_ADDRESS },
+        },
+      }),
+  },
+  {
+    name: 'daily-limit-per-caller',
+    template: dailyLimitPerCaller,
+    docsOnlyRows: 0,
+    run: () => runDailyLimitPerCaller({ templateAddress: TEMPLATE, caller: key(1), recipient: key(2), amount: 1_000n }),
+  },
+  {
+    name: 'listed-callers-only',
+    template: listedCallersOnly,
+    docsOnlyRows: 0,
+    // The author's run, the one that reads both inputs: key(6) is the AUTHOR stand-in, 32 sevens.
+    run: () =>
+      runListedCallersOnly({
+        templateAddress: TEMPLATE,
+        caller: key(6),
+        pool: key(2),
+        set: { member: key(3), allow: true },
+      }),
+  },
+  {
+    name: 'assert-recipient-ata',
+    template: assertRecipientAta,
+    docsOnlyRows: 0,
+    run: () =>
+      runAssertRecipientAta({ templateAddress: TEMPLATE, recipient: key(1), mint: key(2), tokenProgram: key(3) }),
+  },
+  {
+    name: 'named-inputs',
+    template: namedInputs,
+    docsOnlyRows: 0,
+    // The page shows only the encoding. A run's data is the Run discriminator, then these bytes.
+    run: () => ({
+      programAddress: BALLISTA_ADDRESS,
+      data: Uint8Array.of(INSTRUCTION_RUN, ...encodeNamedInputs(new Uint8Array(40).fill(1))),
+    }),
+  },
 ];
 
 async function record(item: Case, rows: number): Promise<Recorded> {
@@ -565,7 +625,7 @@ describe('docs examples', () => {
       output[item.name] = await record(item, item.docsOnlyRows!);
     }
     writeFileSync(DOCS_ONLY_PATH, `${JSON.stringify(output, null, 2)}\n`);
-    expect(Object.keys(output)).toHaveLength(9);
+    expect(Object.keys(output)).toHaveLength(14);
   });
 
   test('the budget example explains its labelled failure', () => {

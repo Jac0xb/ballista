@@ -19,20 +19,24 @@ comes next, then Jupiter's cleanup, which closes the wrapped SOL account.
 | --- | --- |
 | `toleranceBps` 100 | Lands. The fill is 123,106,283, and the on-chain floor is 121,857,149 |
 | The oracle at the highest price the fill clears, 12,434,978,199 | Lands. The floor equals the fill exactly |
-| One unit higher, 12,434,978,200 | Fails at `fillBeatTheOracle` (pc 74). The floor is one unit over the fill |
-| The oracle 5% above the market (write rule 2) | Fails at `fillBeatTheOracle` (pc 74) |
-| The same oracle, with the trader's own second token accounts where the template measures | Fails at `soldTheRouteInput` (pc 55) after 49,984 CU, once the route has run. Another wallet's decoys landed before `soldTheRouteInput` existed |
+| One unit higher, 12,434,978,200 | Fails at `fillBeatTheOracle` (pc 75). The floor is one unit over the fill |
+| The oracle 5% above the market (write rule 2) | Fails at `fillBeatTheOracle` (pc 75) |
+| The same oracle, with the trader's own second token accounts where the template measures | Fails at `soldTheRouteInput` (pc 56) after 49,984 CU, once the route has run. Another wallet's decoys landed before `soldTheRouteInput` existed |
 | Another wallet's wrapped SOL at `sourceAta` (write rule 1) | Fails at `sellsTheTradersOwnTokens` (pc 34) after 4,210 CU, before the route |
-| An attacker's USDC account at `destinationAta` and as the step's output (write rule 1), the oracle at the market | Fails at `proceedsGoToTheTrader` (pc 38) after 4,482 CU, before the route. It landed before the fix |
-| The attacker's account as the step's output only, the trader's at `destinationAta` | Fails at `fillBeatTheOracle` (pc 74): nothing arrived where the template measures |
+| An attacker's USDC account at `destinationAta` and as the step's output (write rule 1), the oracle at the market | Fails at `proceedsGoToTheTrader` (pc 37) after 4,482 CU, before the route. It landed before the fix |
+| The attacker's account as the step's output only, the trader's at `destinationAta` | Fails at `fillBeatTheOracle` (pc 75): nothing arrived where the template measures |
 | USDC/USD's price account passed as the oracle, with `feedId` SOL/USD | Fails at `priceIsTheExpectedFeed` (pc 17) after 2,959 CU, before anything else reads the account |
 | The same account, with `feedId` USDC/USD | Lands (a control). No other check tells the two feeds apart |
+| A 1, 100, 150 or 255 bps platform fee paid to an attacker's USDC account, at `slippageBps` 200 | Fails at `platformFeeWithinCap` after 5,013 CU, before the route. 1 and 100 bps landed before the cap |
+| `jupiterOracleCheckedSwapFeeCap100`: 100 bps, then 101 bps | Lands, paying the fee account 1,231,062 units; then fails at `platformFeeWithinCap` |
 
 In the 5%-above run, Jupiter's `route` returned and the requirement failed after it. The runtime
 then unwound the swap and the setup's wrap and account creation, so the trader paid only the fee.
 
 The program counters and the compute units at each failure are one-off readings of the failures'
-logs, not printed by the tests.
+logs, not printed by the tests, except the platform-fee rows. The program counters are the current
+template's; the compute units, but for the platform-fee rows, predate the platform-fee cap, and a
+failure after it costs up to 45 CU more.
 
 ## Compute units and size
 
@@ -53,7 +57,12 @@ logs, not printed by the tests.
   packs them into 19.
 - **The feed pin's cost.** It cost 318 CU (the run took 49,977 CU before the pin) and 32 bytes, the
   `feedId` input (803 bytes before).
-- **The template's size.** It is 1,504 bytes: 1,376 before the owner checks, 1,232 before the
+- **The fee cap's cost.** It costs 45 CU: Ballista's run took 50,880 CU before it and 50,925 after,
+  and the transaction 82,979 and 83,024. It adds 16 bytes to the template (1,504 to 1,520) and none
+  to the transaction (848). The template was at the runtime's 64 registers, and the cap needs two.
+  Reading the trader's key once, and computing `10,000 − toleranceBps` in u128 so that one 10,000
+  serves as both the whole and the divisor, freed them. It is still at 64.
+- **The template's size.** It was 1,504 bytes before the fee cap: 1,376 before the owner checks, 1,232 before the
   route-input check, and 1,164 before the feed pin. Each is too large for one `create_template`
   transaction, so the harness uploads it in four: `begin_template`, two chunk writes, and
   `finalize_template`.
@@ -103,7 +112,7 @@ decoys fail at `sellsTheTradersOwnTokens` before the route runs.
 `decoys_where_the_template_measures_fail_at_sold_the_route_input` now makes the decoys the trader's
 own second wrapped SOL and USDC accounts, created through the System and Token programs' own
 instructions rather than written. They pass the owner checks, and `soldTheRouteInput` still stops
-them after the route (pc 55, 49,984 CU; pc 47 and 49,406 CU before the owner checks).
+them after the route (pc 56, 49,984 CU; pc 47 and 49,406 CU before the owner checks).
 
 **`==` held.** On the real route exactly `in_amount`, 1,000,000,000, left the trader's wrapped SOL,
 and every other run lands or fails as before. Split routes and platform fees take exactly
@@ -169,26 +178,36 @@ remains open is the rest of what the trader's signature authorizes:
   its intermediate amounts through token accounts that its authority must control. This is a design
   question, left open here.
 
-### Open: the tolerance is a budget a hostile route can spend
+### Fixed: a hostile platform fee could spend the tolerance
 
-`route`'s `platform_fee_account` (position 6) is chosen by whoever builds the run, as are
-`platformFeeBps`, `slippageBps` and `quotedOutAmount`. Nothing checks who owns it. Jupiter's own
-6001 refusal below is no defense, since the builder also writes the quote it checks against (with
+**The problem.** `route`'s `platform_fee_account` (position 6) is chosen by whoever builds the run,
+as are `platformFeeBps`, `slippageBps` and `quotedOutAmount`. Nothing checked who owns it. Jupiter's
+own 6001 refusal is no defense, since the builder also writes the quote it checks against (with
 `quotedOutAmount` set to 1, the same fee landed at 50 bps, in a one-off probe at the snapshot's
-slot). The fill check bounds what it can take, but only to `toleranceBps`.
+slot). The fill check bounded what it could take, but only to `toleranceBps`.
 
-`a_hostile_platform_fee_inside_the_tolerance_lands` and
-`a_larger_hostile_platform_fee_fails_at_fill_beat_the_oracle` run the fixed template at the market
-with `toleranceBps` 100, `slippageBps` 200 (loose enough that Jupiter's own check never refuses),
-and an attacker's USDC account as the platform fee account:
-- **100 bps:** the run **lands**. The attacker takes 1,231,062 units, and the trader's 121,875,221
-  clears the floor of 121,857,149.
-- **150 bps:** it fails at `fillBeatTheOracle`.
+**Before the fix.** At the market, with `toleranceBps` 100, `slippageBps` 200 and an attacker's
+USDC account as the platform fee account:
+- **100 bps** **landed**. The attacker took 1,231,062 units, and the trader's 121,875,221 cleared
+  the floor of 121,857,149 (`a_hostile_platform_fee_inside_the_tolerance_lands`).
+- **150 bps** failed at `fillBeatTheOracle`, after the route had run.
+- **1 bps** landed too, in the red run of the new test.
 
-So a trader should set `toleranceBps` to what it will accept losing to the builder, not only to
-the market. Venues' own fee accounts, such as Meteora's `host_fee_in`, sit in the same place: in
-the route's accounts, without an owner check. Nothing here tested them; the fill check would bound
-them the same way.
+**The fix.** The template declares `MAX_PLATFORM_FEE_BPS`, 0, and requires `platformFeeBps` to be
+at most it (`platformFeeWithinCap`) right before the swap.
+`a_hostile_platform_fee_fails_at_platform_fee_within_cap` runs 1, 100, 150 and 255 bps: each fails
+there after 5,013 CU in Ballista's run, before Jupiter runs, and the attacker gets nothing.
+
+**Raising the cap.** An author running their own frontend can raise the constant. The test-only
+`jupiterOracleCheckedSwapFeeCap100` is this template with it at 100.
+`a_raised_cap_takes_a_fee_within_it_and_refuses_one_above` lands a 100 bps fee, paying the fee
+account exactly 1,231,062 units (86,132 CU, 880 bytes), and refuses 101 bps at
+`platformFeeWithinCap`. With the cap raised, `toleranceBps` is again what the trader accepts losing
+to the fee as well as to the market.
+
+Venues' own fee accounts, such as Meteora's `host_fee_in`, sit in the same place: in the route's
+accounts, without an owner check. The cap does not reach them; the fill check bounds them to
+`toleranceBps`. Nothing here tested them.
 
 ### P1, fixed: the price account's feed was never checked
 
@@ -267,8 +286,8 @@ assert both the revert and the fee.
 `docs/examples/protocols/jupiter-oracle-swap.md`:
 - **6–9.** It says an independent price catches "a route built by someone other than the signer".
   The price alone did not: it cleared a fill paid to an attacker. The owner checks and
-  `soldTheRouteInput` now do that part. A hostile route can still take up to `toleranceBps` through
-  its own fee account, and can spend the signer's other token accounts.
+  `soldTheRouteInput` now do that part, and `platformFeeWithinCap` keeps the route's platform fee
+  at `MAX_PLATFORM_FEE_BPS`. A hostile route can still spend the signer's other token accounts.
 - **11–21.** The step list lacks the feed pin (`priceIsTheExpectedFeed`), the two mint checks, the
   two owner checks (`sellsTheTradersOwnTokens`, `proceedsGoToTheTrader`) and `soldTheRouteInput`.
 - **16, 23–27.** The template does not require the feed's exponent to equal `priceExponent`, and the

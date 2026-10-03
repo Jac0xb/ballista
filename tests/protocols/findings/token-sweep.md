@@ -17,8 +17,10 @@ Three statements come from elsewhere:
 - **`SlippageToleranceExceeded`.** The name of Jupiter's 6001 comes from Jupiter's IDL: Jupiter
   logs only the code. Raydium logs its errors' names, and the tests print them.
 - **Failure points and the platform-fee runs.** The program counter and compute units at each
-  failure, and the runs in [the quote and the fee are the builder's](#open-the-quote-and-the-fee-are-the-builders),
-  are one-off readings from a scratch probe at the same slot.
+  failure, and the runs in [the platform fee was the builder's](#fixed-the-platform-fee-was-the-builders),
+  are one-off readings from a scratch probe at the same slot. The program counters are the current
+  template's; the compute units predate the platform-fee cap, which adds about 30 CU before the
+  sale and 108 CU after it.
 
 After refreshing the snapshot, rerun the tests and update this file:
 
@@ -69,16 +71,16 @@ proceeds against the rescaled quote itself:
 The failure paths fail as expected:
 
 - **A balance at the dust floor (10,000 units)** fails with Ballista's `RequirementFailed` at
-  `worthSelling` (pc 18, after 2,767 CU), before Jupiter is called. The whole transaction reverts,
+  `worthSelling` (pc 19, after 2,767 CU), before Jupiter is called. The whole transaction reverts,
   including the setup's wrapped SOL account, and the seller pays only the fee.
 - **A balance 10,000 times the quote (1.5 million USDC)** fails inside Raydium CLMM with
   `NotEnoughTickArrayAccount` (6023). It reverts the same way, and the seller keeps the balance.
-- **Another wallet's USDC account at `sourceAta`** fails at `sweepsTheSellersOwnBalance` (pc 11,
+- **Another wallet's USDC account at `sourceAta`** fails at `sweepsTheSellersOwnBalance` (pc 12,
   after 2,311 CU), before Jupiter is called.
 - **An attacker's wrapped SOL account at `destinationAta` and as the step's output** fails at
-  `proceedsGoToTheSeller` (pc 15, after 2,583 CU), before Jupiter is called.
+  `proceedsGoToTheSeller` (pc 16, after 2,583 CU), before Jupiter is called.
 - **The attacker's account as the step's output only**, with the seller's own at `destinationAta`,
-  fails at `saleMetTheQuote` (pc 36), after the route ran.
+  fails at `saleMetTheQuote` (pc 39), after the route ran.
 
 ## Compute units and size
 
@@ -209,26 +211,37 @@ token account the seller owns and pay any account, and neither measured balance 
 oracle-checked swap's findings (`findings/oracle-swap.md`) give an example, and a delegate approved
 only on the source would close it. It is a design question, left open.
 
-### Open: the quote and the fee are the builder's
+### Fixed: the platform fee was the builder's
+
+**The problem.** `route`'s `platform_fee_account` (position 6) is in the group, and the run's
+builder chose it and `platformFeeBps`. Nothing checked either. Jupiter refuses a 100 bps fee at the
+quote's own 50 bps of slippage, with 6001 (a one-off probe); loosening `slippageBps` lets one
+through.
+
+**Before the fix.** `a_hostile_platform_fee_fits_inside_the_slippage_it_also_sets` sold the quoted
+150 USDC with an attacker's wrapped SOL account as the platform fee account:
+- **100 bps at `slippageBps` 200:** landed. The attacker took 12,181,533 lamports, 1% of the fill,
+  and the seller 1,205,971,852.
+- **250 bps at `slippageBps` 300:** landed. The attacker took 30,453,834 lamports.
+
+**The fix.** The template declares `MAX_PLATFORM_FEE_BPS`, 0, and requires `platformFeeBps` to be
+at most it (`platformFeeWithinCap`) right before the sale. The same two runs, now
+`a_hostile_platform_fee_fails_at_platform_fee_within_cap`, fail there after 3,451 CU in Ballista's
+run, before Jupiter runs; the attacker gets nothing and the seller keeps the balance. It costs 108
+CU on a sale (71,745 to 71,853 CU at ten times the quote) and 48 bytes of template (884 to 932); the
+transaction stays at 700 bytes. See [`platform-fee.md`](platform-fee.md).
+
+### Open: the quote is the builder's
 
 The sweep has no price of its own: `saleMetTheQuote` holds the proceeds to `quotedOutAmount` and
-`slippageBps`, which the run's builder supplies with the route. `route`'s `platform_fee_account`
-(position 6) is in the group, and nothing checks who owns it. Jupiter refuses a 100 bps fee at the
-quote's own 50 bps of slippage, with 6001 (a one-off probe); loosening `slippageBps` lets one
-through. `a_hostile_platform_fee_fits_inside_the_slippage_it_also_sets` sells the quoted 150 USDC
-with an attacker's wrapped SOL account as the platform fee account:
-- **100 bps at `slippageBps` 200:** lands. The attacker takes 12,181,533 lamports, 1% of the fill,
-  and the seller 1,205,971,852.
-- **250 bps at `slippageBps` 300:** lands. The attacker takes 30,453,834 lamports.
-
-So `slippageBps` is also what a hostile builder may take, up to the 2.55% a `u8` fee allows. And a
-builder who writes the quote can lower it. The floor is a rate: `quotedOutAmount` per
-`quotedInAmount`, less `slippageBps`. A seller has to check all three in what it signs; checking
-`quotedOutAmount` and `slippageBps` alone is not enough, since an inflated `quotedInAmount` shrinks
-the rate (at ten times the true input and 50 bps, a 255 bps fee to an attacker landed, in a
-reviewer's one-off probe). The template guards against the market moving after the quote, not
-against a builder who writes the quote. The owner checks ensure only that the proceeds the floor is
-measured against reach the seller.
+`slippageBps`, which the run's builder supplies with the route. The floor is a rate:
+`quotedOutAmount` per `quotedInAmount`, less `slippageBps`. A seller has to check all three in what
+it signs; checking `quotedOutAmount` and `slippageBps` alone is not enough, since an inflated
+`quotedInAmount` shrinks the rate (at ten times the true input and 50 bps, a 255 bps fee to an
+attacker landed, in a reviewer's one-off probe before the fee cap). The template guards against the
+market moving after the quote, not against a builder who writes the quote. Venues' own fee
+accounts, in the route's accounts, are not capped either. The owner checks ensure only that the
+proceeds the floor is measured against reach the seller.
 
 ## Notes for the docs session
 
@@ -273,4 +286,4 @@ What the pages could add:
   the limit to 1,400,000 CU. A client that sets a tighter limit from a simulation of Jupiter's own
   transaction needs to add the run's cost.
 - **The builder's share.** `quotedInAmount`, `quotedOutAmount` and `slippageBps` together set the
-  least the seller accepts, as a rate, whoever builds the run: see [the quote and the fee are the builder's](#open-the-quote-and-the-fee-are-the-builders).
+  least the seller accepts, as a rate, whoever builds the run: see [the quote is the builder's](#open-the-quote-is-the-builders).

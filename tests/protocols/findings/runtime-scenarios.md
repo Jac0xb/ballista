@@ -102,17 +102,19 @@ transaction fits the 1,232-byte packet.
 
 | Run | Transaction | Ballista's outermost run | Wire size | Deepest frame |
 | --- | --- | --- | --- | --- |
-| A, 1 slice, 2 rows | 88,856 CU | 56,875 CU | 929 bytes | 4 |
-| A, 2 slices | 133,231 CU | 101,250 CU | 929 bytes | 4 |
-| A, 4 slices | 221,993 CU | 190,012 CU | 929 bytes | 4 |
-| A, 6 slices | 310,760 CU | 278,779 CU | 929 bytes | 4 |
-| A, 8 slices, no setup | 367,800 CU | 367,500 CU | 792 bytes | 4 |
-| B, 4 slices, 2 rows | 227,225 CU | 195,244 CU | 966 bytes | 5 (asserted) |
+| A, 1 slice, 2 rows | 88,950 CU | 56,969 CU | 929 bytes | 4 |
+| A, 2 slices | 133,325 CU | 101,344 CU | 929 bytes | 4 |
+| A, 4 slices | 222,087 CU | 190,106 CU | 929 bytes | 4 |
+| A, 6 slices | 310,854 CU | 278,873 CU | 929 bytes | 4 |
+| A, 8 slices, no setup | 367,894 CU | 367,594 CU | 792 bytes | 4 |
+| B, 4 slices, 2 rows | 227,313 CU | 195,332 CU | 966 bytes | 5 (asserted) |
 | Four relays over `returnClaim` | 12,562 CU | — | 265 bytes | 5 (asserted) |
 
 - **Per slice:** about 44,400 CU, of which Jupiter's `route` is 40,990. Ballista's own share of a
   pass is about 3,400 CU: the reads, the checks, the event and the CPI itself.
-- **Nesting:** 5,232 CU and 37 bytes more than scenario A: the second Ballista frame, its
+- **Platform-fee cap:** `platformFeeWithinCap`, once before the loop, adds 94 CU to every
+  scenario A run (88 to scenario B's) and none to the wire size. The table is after it.
+- **Nesting:** 5,226 CU and 37 bytes more than scenario A: the second Ballista frame, its
   32-account CPI, and the return-data read.
 - **Compute budget:** the tests reuse the route's compute-budget instruction (a 1.4M limit).
   Without one, the default limit grows with the instruction count:
@@ -120,12 +122,12 @@ transaction fits the 1,232-byte packet.
     which the logs then blame;
   - Jupiter's transaction, with its four setup instructions, still fits six slices (308,488 CU).
 
-  These are one-off readings.
+  These are one-off readings, from before the platform-fee cap's 94 CU.
 
 | Template | Payload | Registers (of 64) | Instructions (of 128) |
 | --- | --- | --- | --- |
-| `splitSellPayout` | 1,743 bytes | 61 | 82 |
-| `splitSellInner` | 1,552 bytes | 56 | 73 |
+| `splitSellPayout` | 1,775 bytes (1,743 before the fee cap) | 62 | 84 |
+| `splitSellInner` | 1,584 bytes (1,552) | 57 | 75 |
 | `nestedSplitSellPayout` | 578 bytes | 7 | 13 |
 | `ballistaRelay` | 179 bytes | 2 | 4 |
 | `returnClaim` | 68 bytes | 1 | 2 |
@@ -137,7 +139,9 @@ test is `#[ignore]`d. What these scenarios did turn up:
 
 - **SDK: registers run out.** The compiler gives every expression node a fresh register and never
   reuses one, and `jupiterOracleCheckedSwap` already uses all 64. Its floor reads both mints'
-  decimals and the exponent, and has two power-of-ten branches: 28 registers. With a
+  decimals and the exponent, and has two power-of-ten branches: 28 registers. (The platform-fee
+  cap needed two more there; reading the trader's key once and doing the tolerance in u128 made
+  room.) With a
   count loop, an event and a payout loop added, compilation failed with "Template uses more than 64
   registers". So the split sell is SOL-for-USDC only: the mints are pinned, the exponent must be
   −8, and the floor is two `multiplyDivide`s on `u64`s (they keep the product exact, so no casts are
@@ -157,6 +161,13 @@ test is `#[ignore]`d. What these scenarios did turn up:
   Jupiter's cleanup after the run, the transaction ends with the Token program's empty return data
   (`a_later_instruction_clears_the_runs_return_data`), and the total survives only in the run's
   `Program return:` log line. Put the run last, simulate it, or read that line.
+- **The route's platform fee was the builder's.** Each slice forwards `platformFeeBps` and the
+  route's platform fee account. With a 100 bps fee paid to an attacker's USDC account at
+  `slippageBps` 200, a two-slice run **landed** (137,471 CU, 920 bytes) before the split sell
+  capped it. It now requires `platformFeeBps` ≤ `MAX_PLATFORM_FEE_BPS`, 0, once before the loop
+  (`platformFeeWithinCap`), and the same run fails there before the first slice
+  (`a_hostile_platform_fee_fails_at_platform_fee_within_cap`). See
+  [`platform-fee.md`](platform-fee.md).
 - **Return data names the program, not the template.** See scenario B: pin the inner template.
 - **Harness:** `LoopCountExceeded` carries the `REPEAT`'s program counter but was missing from
   `tx.rs`'s labelled failures; it is added. `Outcome` now keeps the transaction's return data.

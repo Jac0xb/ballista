@@ -23,14 +23,15 @@ Each figure is marked:
 | --- | --- | --- |
 | The wallet's first swap | Lands and creates its entry, owned by Ballista: 88 bytes (a 72-byte header, then `spent` and `lastSpend`), holding the rent-exempt minimum of 1,503,360 lamports. `spent` is 1,000,000,000 and `lastSpend` the clock | Asserted; the rent's value measured |
 | The same swap, alongside | It buys 123,106,283 USDC units, as Jupiter's own transaction does, and costs the wallet that transaction's lamports plus the entry's rent | Asserted; the USDC measured |
-| A second swap in the same second | Fails at `withinRateLimit` (pc 32) after 4,061 CU of Ballista's run. Jupiter never runs | Asserted; pc and CU measured |
+| A second swap in the same second | Fails at `withinRateLimit` (pc 33) after 4,091 CU of Ballista's run. Jupiter never runs | Asserted; pc and CU measured |
 | Clock moved on 13,599 s (write rule 3) | Still fails at `withinRateLimit`, and the entry is unchanged | Asserted |
 | One second more: 13,600 s | Lands. `spent` is 1,728,000,000, exactly the cap, and `lastSpend` the new clock | Asserted |
 | A second caller, with the wallet's limit spent | Lands on an entry of its own, created in its run, with `spent` 1,000,000,000. The wallet's entry is unchanged | Asserted |
-| The second caller passes the wallet's entry, which does not exist yet | `InvalidRegistryEntry` (6025) from Ballista at pc 9, the open before the first step, which no label covers. It costs 2,676 CU, and Jupiter never runs | Asserted; pc and CU measured |
-| The same, after the wallet's first swap created it | `InvalidRegistryEntry` at pc 9, after 2,316 CU. The wallet's entry is unchanged, and the second caller's is never created | Asserted; pc and CU measured |
-| The wallet sells 150 USDC (write rule 1) on route `usdcToSol` | Fails at `spendsWrappedSol` (pc 12) after 4,186 CU. Jupiter never runs, and no entry is left | Asserted; pc and CU measured |
-| The same sale, with the wallet's second wrapped-SOL account at `sourceAta` | Fails at `soldWhatTheCapCharged` (pc 41), once the route has run, after 58,377 CU of Ballista's run. The USDC and the decoy are untouched, and no entry is left | Asserted; pc and CU measured |
+| The second caller passes the wallet's entry, which does not exist yet | `InvalidRegistryEntry` (6025) from Ballista at pc 10, the open before the first step, which no label covers. It costs 2,676 CU, and Jupiter never runs | Asserted; pc and CU measured |
+| The same, after the wallet's first swap created it | `InvalidRegistryEntry` at pc 10, after 2,346 CU. The wallet's entry is unchanged, and the second caller's is never created | Asserted; pc and CU measured |
+| The wallet sells 150 USDC (write rule 1) on route `usdcToSol` | Fails at `spendsWrappedSol` (pc 13) after 4,216 CU. Jupiter never runs, and no entry is left | Asserted; pc and CU measured |
+| The same sale, with the wallet's second wrapped-SOL account at `sourceAta` | Fails at `soldWhatTheCapCharged` (pc 44), once the route has run, after 58,485 CU of Ballista's run. The USDC and the decoy are untouched, and no entry is left | Asserted; pc and CU measured |
+| The wallet's swap with a 100 bps platform fee paid to an attacker's USDC account, at `slippageBps` 200 | Fails at `platformFeeWithinCap` (pc 39) after 6,228 CU of Ballista's run. Jupiter never runs, no entry is left, and the attacker gets nothing. It landed before the fix (85,728 CU, 839 bytes) | Asserted; pc and CU measured |
 
 - **The wait.** The test computes it from the constants: ⌈(2 × 1,000,000,000 − 1,728,000,000) ÷
   20,000⌉ = 13,600 s.
@@ -51,15 +52,17 @@ All measured.
 
 |  | Creating the entry | On an existing entry | Jupiter's own transaction |
 | --- | --- | --- | --- |
-| Transaction | 82,620 CU | 71,834 CU | 73,084 CU |
-| Ballista's run | 50,521 CU | 48,814 CU | none |
+| Transaction | 82,728 CU | 71,942 CU | 73,084 CU |
+| Ballista's run | 50,629 CU | 48,922 CU | none |
 | Jupiter's `route`, within it | 40,985 CU | 41,013 CU | 40,985 CU |
-| Ballista's own work (its run less `route`) | 9,536 CU | 7,801 CU | none |
+| Ballista's own work (its run less `route`) | 9,644 CU | 7,909 CU | none |
 | Wire size | 807 bytes | 807 bytes | 698 bytes |
 
 - **Creating the entry costs 1,735 CU** of Ballista's own work: the address derivation and the
-  System program's CPI. The second caller's creating run cost the same: 50,491 CU in its run, 40,955
-  of them Jupiter's, so 9,536 its own.
+  System program's CPI. The second caller's creating run cost the same: 50,599 CU in its run, 40,955
+  of them Jupiter's, so 9,644 its own.
+- **The platform-fee cap costs 108 CU a run** of Ballista's own work: before it, 9,536 and 7,801.
+  It adds 48 bytes to the template and none to the transaction.
 - **The source checks cost 869 CU a run** of Ballista's own work: before them it was 8,667 and 6,932.
   They add 250 bytes to the template and none to the transaction. The source moved from the group
   to a fixed slot, and the inputs did not change.
@@ -69,7 +72,8 @@ All measured.
 - **Size.** The run's transaction is 109 bytes larger than Jupiter's own, the same with or without
   the entry's creation. Most of it is three keys that Jupiter's transaction does not carry:
   Ballista, the template and the entry.
-- **The template.** It is 966 bytes, 716 before the source checks.
+- **The template.** It is 1,014 bytes: 966 before the platform-fee cap, 716 before the source
+  checks.
 
 ## Findings
 
@@ -117,6 +121,21 @@ step. A route can sell exactly `inAmount` from the source and pass every check, 
 step debits another of the caller's token accounts, uncounted. This is the oracle swap's
 [open question](oracle-swap.md#open-the-signers-authority-over-its-other-token-accounts). It is
 inferred, not tested here.
+
+### P1, fixed: the route's platform fee was the builder's
+
+**The problem.** `route` pays `platform_fee_bps` of its output to the platform fee account at
+position 6 of its list, in `actionAccounts`. The run's builder chose both, and nothing checked
+either, so a caller's swaps within the cap could each pay up to 2.55% to whoever built the run.
+
+**What it allowed.** The wallet's swap with a 100 bps fee paid to an attacker's USDC account, at
+`slippageBps` 200, **landed** against the unfixed template (85,728 CU, 839 bytes): the red run of
+`a_hostile_platform_fee_fails_at_platform_fee_within_cap`.
+
+**The fix.** The template declares `MAX_PLATFORM_FEE_BPS`, 0, and requires `platformFeeBps` to be
+at most it (`platformFeeWithinCap`) right before the swap. The same run fails there (pc 39) after
+6,228 CU of Ballista's run; the whole transaction reverts, so the rate limit's charge and the
+entry's creation go with it. See [`platform-fee.md`](platform-fee.md).
 
 ### Open: the cap limits this template's runs, not the caller
 

@@ -19,8 +19,8 @@ the whole transaction: compute budget, Kamino's refreshes when it needs them, an
 
 | Template | Failed as written | Fix (commits) | Test in `tests/` | CU | Bytes |
 | --- | --- | --- | --- | --- | --- |
-| `jupiterDepositExactOutput` | klend `InvalidAccountData`: 10 accounts under v2's discriminator | v2's 14 accounts and `farmAccounts`; refreshes before the run (`67535b3`) | `jupiter_deposit_exact_output.rs` | 150,842 | 1,072 |
-| `kaminoRepaySwapOutput` | Its own `refresh_reserve` CPI: 3005, three accounts of six | No refresh step; v2's 9 and `farmAccounts` (`5d7ac45`); owner check (`471877c`) | `kamino_repay_swap_output.rs` | 141,280 | 993 |
+| `jupiterDepositExactOutput` | klend `InvalidAccountData`: 10 accounts under v2's discriminator | v2's 14 accounts and `farmAccounts`; refreshes before the run (`67535b3`); platform-fee cap | `jupiter_deposit_exact_output.rs` | 151,372 | 1,085 |
+| `kaminoRepaySwapOutput` | Its own `refresh_reserve` CPI: 3005, three accounts of six | No refresh step; v2's 9 and `farmAccounts` (`5d7ac45`); owner check (`471877c`); platform-fee cap | `kamino_repay_swap_output.rs` | 141,830 | 1,006 |
 | `kaminoLiquidateWithProof` | The same 3005; it also measured the cToken account, which klend leaves at 0 | No refresh steps; v2's 20 and `farmAccounts`; bounty on `userDestinationLiquidity` (`a4b6428`); owner checks (`471877c`) | `kamino_liquidate_with_proof.rs` | 185,402 | 1,045 |
 | `marginfiWithdrawAllWithFloor` | marginfi 6008 when another balance remains | `healthAccounts` after withdraw's 8; vault authority read-only (`7664007`); owner checks (`471877c`) | `marginfi_withdraw_all_with_floor.rs` | 60,162; 78,056 with a second balance | 550; 616 |
 | `marginfiToKaminoRebalance` | New, replacing `driftRebalanceExact` (`d32dfe4`) | | `marginfi_to_kamino_rebalance.rs` | 162,738 | 1,009 |
@@ -114,16 +114,42 @@ Each rule has a test in `tests/kamino_contract.rs` or `tests/marginfi_contract.r
 - **Name the signer's own token accounts** wherever a template pays out; see above.
 - **Choose `minimumBounty`** in the seized collateral's own units (lamports for SOL collateral),
   for example the repaid amount valued at the oracle price plus the margin worth liquidating for.
-- **Keep the transaction under 1,232 bytes.** The deposit run with its refreshes took 1,072 bytes
+- **Keep the transaction under 1,232 bytes.** The deposit run with its refreshes took 1,085 bytes
   with the route's one lookup table. A route with more accounts may need a lower `maxAccounts` or a
   lookup table of the runner's own.
+
+## The route's platform fee
+
+`jupiterDepositExactOutput` and `kaminoRepaySwapOutput` forward a Jupiter `route`, which pays
+`platform_fee_bps` of its output to the platform fee account at position 6 of its list, in
+`routeAccounts`. The run's builder chose both, and the templates deposited or repaid whatever was
+left. With a 100 bps fee paid to an attacker's USDC account at `slippageBps` 200, both **landed**
+against the unfixed templates: the deposit at 154,000 CU and 1,104 bytes, the repayment at 144,166
+CU and 1,025 bytes (the red runs of `a_hostile_platform_fee_fails_at_platform_fee_within_cap`).
+
+Each now declares `MAX_PLATFORM_FEE_BPS`, 0, and requires `platformFeeBps` to be at most it
+(`platformFeeWithinCap`) right before the swap. No expression reads a byte out of a `bytes` input,
+so both now take the route in parts (`routePlan`, `inAmount`, `quotedOutAmount`, `slippageBps`,
+`platformFeeBps`) in place of `routeArgs`. The same runs now fail at `platformFeeWithinCap`, before
+Jupiter runs: the deposit's after 2,679 CU of Ballista's run, the repayment's after 2,789; nothing
+is deposited and the debt stands.
+
+| | CU before → after | Bytes before → after | Template before → after |
+| --- | --- | --- | --- |
+| `jupiterDepositExactOutput` | 150,771 → 151,372 (+601) | 1,072 → 1,085 | 532 → 692 |
+| `kaminoRepaySwapOutput` | 141,179 → 141,830 (+651) | 993 → 1,006 | 562 → 722 |
+
+Most of the cost is taking the route in parts: four more inputs to load, and the route's four
+numbers sent as 32 bytes of inputs where `routeArgs` packed them in 19. See
+[`platform-fee.md`](platform-fee.md).
 
 ## Limits
 
 - SPL Token only. Every template pins the SPL Token program and its token accounts' owner, so
   Token-2022 reserves and banks cannot run.
 - Only the token accounts the templates pay are bound to the signer. The route's own accounts and
-  every input are still the builder's to choose.
+  every input are still the builder's to choose, except the route's platform fee, which the two
+  Jupiter templates cap; see below.
 - The liquidation bounty is not netted against the repayment, which is in another mint.
 - marginfi banks priced by multi-account oracles (staked, Kamino, Drift, JupLend) take more
   accounts per bank than `marginfi::health_accounts` builds; it panics on them.

@@ -819,8 +819,8 @@ impl<S: Source> Gen<'_, S> {
 
     /// A new descriptor: a program account declared executable and up to four account records,
     /// each passed with at most its slot's declared privileges, often exactly them, and sometimes
-    /// naming one slot twice. Data comes from the pool. One descriptor in six gets a data segment
-    /// whose unused fields are not the canonical ones.
+    /// naming one slot twice. Data comes from the pool. A sloppy pick gives one of its data
+    /// segments a non-canonical value in a field its kind leaves unused, which `verify` refuses.
     fn descriptor(&mut self, scope: Scope, pool: &Pool) -> Option<u8> {
         let program = self.account(scope, |d| d.flags & ACCOUNT_EXECUTABLE != 0)?;
         let entries = self.accounts.entries.clone();
@@ -853,7 +853,7 @@ impl<S: Source> Gen<'_, S> {
         let cpi = self.b.cpi_with_group(program.reference, &records, &parts, group);
         let declared = if self.sloppy() { width as u16 ^ 1 } else { width as u16 };
         self.b.set_cpi_max_data_len(cpi, declared);
-        if !parts.is_empty() && self.s.chance(1, 6) {
+        if !parts.is_empty() && self.sloppy() {
             // The wire format fixes a literal's source register at 0xff and a register
             // segment's offset and length at zero.
             let segment = &mut self.b.segments_mut()[first_segment + self.s.below(parts.len())];

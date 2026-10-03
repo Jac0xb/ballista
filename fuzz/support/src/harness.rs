@@ -20,18 +20,13 @@ use ballista_common::{
 
 use crate::{ceiling, checker, model::Program, negative};
 
-/// Rules whose violation is a known, reported finding (see `fuzz/README.md` and the ignored tests
-/// in `common/tests/fuzz_findings.rs`). The differential target reports them once each and keeps
-/// going, so nightly fuzzing still stops on anything new. Set `BALLISTA_FUZZ_STRICT=1` to make
-/// them fatal again, for example to check a fix.
-pub const KNOWN_FINDINGS: &[&str] = &[
-    // `verify_cpi` checks neither field a data segment's kind leaves unused.
-    "cpi.segment-literal-register",
-    "cpi.segment-register-fields",
-    // A data segment, or a CPI descriptor, that nothing reaches is never checked.
-    "unreferenced.segment",
-    "unreferenced.cpi",
-];
+/// Rules whose violation is a known, reported finding not fixed yet (see `fuzz/README.md`). The
+/// differential target reports them once each and keeps going, so nightly fuzzing still stops on
+/// anything new. Set `BALLISTA_FUZZ_STRICT=1` to make them fatal again, for example to check a
+/// fix. Empty: the verifier now refuses the four this list held (`cpi.segment-literal-register`,
+/// `cpi.segment-register-fields`, `unreferenced.segment` and `unreferenced.cpi`), and
+/// `common/tests/fuzz_findings.rs` pins each refusal.
+pub const KNOWN_FINDINGS: &[&str] = &[];
 
 /// `BALLISTA_FUZZ_STRICT`: unset or `0` keeps every known finding non-fatal; `1` makes them all
 /// fatal; a comma-separated list of rule names makes just those fatal, so a short run crashes on

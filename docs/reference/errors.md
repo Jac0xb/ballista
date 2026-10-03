@@ -28,7 +28,7 @@ instruction. Four carry something else:
 | 6021 | `CpiAccountLimitExceeded` | The CPI's total account count, which exceeded 64 |
 
 For a verifier kind, the context is the index of the offending instruction, account, input,
-register or CPI, where there is one.
+register, CPI or data segment, where there is one.
 
 ## Runtime codes
 
@@ -88,13 +88,13 @@ Raised by `CreateTemplate` or `FinalizeTemplate` when the template fails its che
 | 6111 | `0x17DF` | `InvalidBatch` | The batch or a `forEach` is malformed, or a batch has no `forEach` |
 | 6112 | `0x17E0` | `InvalidAccountConstraint` | An account declaration is invalid |
 | 6113 | `0x17E1` | `InvalidInput` | An input declaration is invalid |
-| 6114 | `0x17E2` | `InvalidInstruction` | An instruction is invalid |
-| 6115 | `0x17E3` | `InvalidCpi` | A CPI is invalid, or asks for more privilege than the account allows |
-| 6116 | `0x17E4` | `InvalidDataSegment` | A data part or PDA seed is invalid |
+| 6114 | `0x17E2` | `InvalidInstruction` | An instruction is invalid, or sets a field its opcode doesn't use |
+| 6115 | `0x17E3` | `InvalidCpi` | A CPI is invalid, is never invoked, or asks for more privilege than the account allows |
+| 6116 | `0x17E4` | `InvalidDataSegment` | A data part or PDA seed is invalid, or nothing uses it |
 | 6117 | `0x17E5` | `InvalidRegister` | A register index is out of range |
 | 6118 | `0x17E6` | `RegisterNotInitialized` | A register is read before it is set |
 | 6119 | `0x17E7` | `TypeMismatch` | An instruction receives the wrong type |
-| 6120 | `0x17E8` | `InvalidBlobRange` | A literal points outside the stored bytes |
+| 6120 | `0x17E8` | `InvalidBlobRange` | A `u128` or `bytes` constant points outside the stored bytes, or has the wrong length |
 | 6121 | `0x17E9` | `ExcessiveCpiExpansion` | More than 64 CPIs in the worst case, with every loop run to its maximum |
 | 6122 | `0x17EA` | `InvalidFlags` | An instruction sets flags its opcode does not accept |
 | 6123 | `0x17EB` | `InvalidCarry` | A carried value is unset before the loop or changes type in it |

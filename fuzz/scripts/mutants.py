@@ -105,6 +105,36 @@ MUTANTS = {
         "                OP_SET_RETURN_DATA | OP_INVOKE => return Err(invalid),",
         "                OP_SET_RETURN_DATA => return Err(invalid),",
     ),
+    # A field an opcode leaves unused holds 0xff, or zero for the immediate.
+    "verify-unused-fields": (
+        "        if operands & unused != unused\n",
+        "        if false && operands & unused != unused\n",
+    ),
+    # A literal data segment names no register, whatever uses it.
+    "verify-segment-literal-register": (
+        "            if segment.register != NO_INDEX\n                || !valid_range",
+        "            if !valid_range",
+    ),
+    # A register data segment has no blob offset or length, whatever uses it.
+    "verify-segment-register-fields": (
+        "        if segment.offset() != 0 || segment.len() != 0 {",
+        "        if false && (segment.offset() != 0 || segment.len() != 0) {",
+    ),
+    # A bad invocation data segment is named by its index in the table.
+    "verify-cpi-segment-index": (
+        "self.verify_segment(descriptor.segment_start() + offset, segment, registers)",
+        "self.verify_segment(offset, segment, registers)",
+    ),
+    # Every CPI descriptor is invoked.
+    "verify-uninvoked-descriptor": (
+        "first_unmarked(&invoked, self.cpis.len())",
+        "first_unmarked(&invoked, 0)",
+    ),
+    # Every data segment is named by an invoked CPI, an output or a PDA's seeds.
+    "verify-unreferenced-segment": (
+        "first_unmarked(&named, self.data_segments.len())",
+        "first_unmarked(&named, 0)",
+    ),
 }
 
 

@@ -62,11 +62,15 @@ fuzz/scripts/coverage.sh differential
   follows the executor's operand types and the docs, never `verify.rs`. Register types are
   tracked over every path, and loops run to a fixpoint bounded by their maximum. Each rule has a
   dotted name.
-- **Negative mutation** (`support/src/negative.rs`) breaks one rule of an accepted program: a
-  record above its declaration, an undeclared account or program, a loop maximum past 64 CPIs, a
-  read before a write, a type mismatch, an `EMIT` tag, a writable registry entry, a guarded
-  invoke before `RETURN_DATA`, a read past the minimum length, or the sysvar pin. `verify` must
-  return that rule's exact error.
+- **Negative mutation** (`support/src/negative.rs`) breaks one rule of an accepted program, and
+  `verify` must return that rule's exact error. The breaks:
+  - CPIs: a record above its declaration, a record with the executable bit, an undeclared account,
+    program or group, and a loop maximum past 64 CPIs;
+  - registers: a read before a write, and a type mismatch;
+  - outputs: an `EMIT` tag, and `SET_RETURN_DATA` before an invoke, in a loop, or before an open;
+  - registries: a writable entry, and a ninth open;
+  - other limits and pins: a ninth loop, a read past the minimum length, a guarded invoke before
+    `RETURN_DATA`, and the sysvar pin.
 
 **Per address**, the ceiling is wider, and finalization cannot see it. The caller picks the
 address in each slot and the members of each account group.

@@ -5,6 +5,12 @@ repository has a `CERTORAKEY` secret, and no prover job has run on this code: th
 2026-09-20, on a branch rewritten since. Every status below is an expectation until a prover job at
 a named commit confirms it.
 
+CI (`.github/workflows/certora.yml`) always runs `cargo test --features rt`, `./build-sbf.sh` and the
+typing enumeration. With the secret it runs each conf in its own job, with the commit in `--msg`, and
+`check-results.py` reads every rule's verdict from the log: `run.conf` and the candidate confs must
+verify every rule and its sanity check, every twin must be violated with a counterexample, and
+`run-blocked.conf` only reports.
+
 This directory is its own Cargo workspace, so nothing here touches the release build, its lock
 file, or its dependency policy.
 

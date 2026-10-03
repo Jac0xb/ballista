@@ -29,6 +29,8 @@ const ORCA_WHIRLPOOL: Pubkey = pubkey!("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uct
 const MARGINFI_V2: Pubkey = pubkey!("MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA");
 const SYSVAR_INSTRUCTIONS: Pubkey = pubkey!("Sysvar1nstructions1111111111111111111111111");
 const MEMO_PROGRAM: Pubkey = pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+const WRAPPED_SOL_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
+const USDC_MINT: Pubkey = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
 
 /// `in_amount`, `quoted_out_amount`, `slippage_bps` and `platform_fee_bps`: `route`'s data after
 /// its plan.
@@ -227,36 +229,30 @@ pub fn run_jupiter_deposit(
 
 // #region jupiter-oracle-swap
 pub struct OracleSwapAccounts {
-    /// The Pyth `PriceUpdateV2` account that prices the token sold in the token bought.
+    /// A `PriceUpdateV2` for SOL/USD, the feed the template pins.
     pub price_update: Pubkey,
     pub trader: Pubkey,
-    /// The trader's own token accounts, holding the two mints below.
+    /// The trader's own wrapped SOL and USDC accounts.
     pub source_ata: Pubkey,
     pub destination_ata: Pubkey,
-    pub source_mint: Pubkey,
-    pub destination_mint: Pubkey,
 }
 
-/// `feed_id` is the price's Pyth feed id, as 32 bytes. The template reads the price's exponent
-/// and both mints' decimals itself. `route` is the Swap API's `route` data split by
-/// [`RouteQuote::split`], and `route_accounts` its account list from the fifth account on.
+/// `route` is the Swap API's `route` data split by [`RouteQuote::split`], and `route_accounts` its
+/// account list from the fifth account on. The feed, the two mints and the tolerance are the
+/// template's own constants, not run inputs.
 pub fn run_jupiter_oracle_swap(
     template: Pubkey,
     a: &OracleSwapAccounts,
-    feed_id: [u8; 32],
     route: &RouteQuote,
-    tolerance_bps: u64,
     route_accounts: Vec<AccountMeta>,
 ) -> Instruction {
     let inputs = RunInputs::new()
         .groups(&[route_accounts.len() as u8]) // routeAccounts
-        .pubkey(&Pubkey::new_from_array(feed_id))
         .bytes(route.route_plan)
         .u64(route.in_amount)
         .u64(route.quoted_out_amount)
         .u64(route.slippage_bps.into())
         .u64(route.platform_fee_bps.into())
-        .u64(tolerance_bps)
         .finish();
     let mut accounts = vec![
         pinned(JUPITER_V6),
@@ -265,8 +261,8 @@ pub fn run_jupiter_oracle_swap(
         AccountMeta::new(a.trader, true),
         AccountMeta::new(a.source_ata, false),
         AccountMeta::new(a.destination_ata, false),
-        AccountMeta::new_readonly(a.source_mint, false),
-        AccountMeta::new_readonly(a.destination_mint, false),
+        pinned(WRAPPED_SOL_MINT),
+        pinned(USDC_MINT),
     ];
     accounts.extend(route_accounts);
     run_instruction(template, accounts, &inputs)
@@ -989,12 +985,10 @@ pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
             trader: key(2),
             source_ata: key(3),
             destination_ata: key(4),
-            source_mint: key(5),
-            destination_mint: key(6),
         };
         let data = route_data();
         let route = RouteQuote::split(&data);
-        vec![run_jupiter_oracle_swap(TEMPLATE, &a, SOL_USD_FEED_ID, &route, 50, group(20))]
+        vec![run_jupiter_oracle_swap(TEMPLATE, &a, &route, group(20))]
     }),
     ("kaminoLiquidateWithProof", || {
         let a = KaminoLiquidateAccounts {

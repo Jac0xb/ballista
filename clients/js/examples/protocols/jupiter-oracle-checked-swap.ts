@@ -12,14 +12,15 @@
  *
  * The feed must price the token being sold in the token being bought: SOL/USD when selling SOL
  * for USDC. The Pyth receiver owns every feed's price account alike, so the template requires the
- * account to carry the feed id the caller names. Without that, any feed's price would do, and
- * USDC/USD's would value each SOL sold at a dollar.
+ * account to carry `FEED_ID`. Without that, any feed's price would do, and USDC/USD's would value
+ * each SOL sold at a dollar. The feed, the two mints it prices and the tolerance are constants, so
+ * whoever builds the run cannot name another feed, another pair or a wider tolerance.
  *
  * Pyth's price is `price × 10^exponent` per whole token, so a fill in base units is worth
  * `sold × price × 10^(destinationDecimals + exponent − sourceDecimals)`. The template reads the
  * feed's exponent and both mints' decimals on chain and computes that scale itself, and checks
  * each token account against the mint it is supposed to hold so a caller cannot point the decimals
- * read at the wrong mint. The caller supplies only the feed id, the route and the tolerance.
+ * read at the wrong mint. The caller supplies only the route.
  *
  * Jupiter does not tie `route`'s source and destination accounts to the accounts its steps move.
  * It asks only that the source hold at least `in_amount` and the destination hold the destination
@@ -56,7 +57,10 @@ import {
   TOKEN_ACCOUNT_LENGTH,
   TOKEN_ACCOUNT_MINT_OFFSET,
   TOKEN_ACCOUNT_OWNER_OFFSET,
+  USDC_MINT,
+  WRAPPED_SOL_MINT,
   addressBytes,
+  pythFeedId,
 } from './shared.js';
 
 const balanceOf = (name: string) =>
@@ -65,13 +69,14 @@ const balanceOf = (name: string) =>
 /** The route's platform fee account and rate are chosen by whoever builds the run: cap the rate. */
 export const MAX_PLATFORM_FEE_BPS = 0n;
 
+/** The Pyth feed the price must come from: SOL/USD, which prices the SOL sold in the USDC bought. */
+export const FEED_ID = pythFeedId('ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d');
+
+/** 1%, in basis points: how far below the oracle's valuation the fill may land. */
+export const TOLERANCE_BPS = 100n;
+
 export const jupiterOracleCheckedSwap = defineTemplate({
   inputs: {
-    /**
-     * The Pyth feed the price must come from, as its 32-byte id: SOL/USD's is
-     * `ef0d8b6f…c280b56d`. It must price the token sold in the token bought.
-     */
-    feedId: { type: 'pubkey' },
     /** `route_plan` as the Swap API encoded it: the bytes between the discriminator and `in_amount`. */
     routePlan: { type: 'bytes', maxLength: 512 },
     /** The route's `in_amount`: what the route sells, and exactly what must leave `sourceAta`. */
@@ -82,8 +87,6 @@ export const jupiterOracleCheckedSwap = defineTemplate({
     slippageBps: { type: 'u64' },
     /** The quote's `platform_fee_bps`. */
     platformFeeBps: { type: 'u64' },
-    /** How far below the oracle the fill may land, in basis points. */
-    toleranceBps: { type: 'u64' },
   },
   accounts: {
     jupiter: { executable: true, address: addressBytes(JUPITER_V6) },
@@ -100,8 +103,17 @@ export const jupiterOracleCheckedSwap = defineTemplate({
       owner: TOKEN_PROGRAM_ADDRESS_BYTES,
       minDataLength: TOKEN_ACCOUNT_LENGTH,
     },
-    sourceMint: { owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: SPL_MINT.length },
-    destinationMint: { owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: SPL_MINT.length },
+    // The pair `FEED_ID` prices: what the route sells, and what it buys.
+    sourceMint: {
+      address: addressBytes(WRAPPED_SOL_MINT),
+      owner: TOKEN_PROGRAM_ADDRESS_BYTES,
+      minDataLength: SPL_MINT.length,
+    },
+    destinationMint: {
+      address: addressBytes(USDC_MINT),
+      owner: TOKEN_PROGRAM_ADDRESS_BYTES,
+      minDataLength: SPL_MINT.length,
+    },
   },
   accountGroups: ['routeAccounts'],
   steps: [
@@ -118,7 +130,7 @@ export const jupiterOracleCheckedSwap = defineTemplate({
     step.require(
       expression.equal(
         expression.accountData(account.fixed('priceUpdate'), PYTH.feedId, 'pubkey'),
-        expression.input('feedId'),
+        expression.pubkey(FEED_ID),
       ),
       'priceIsTheExpectedFeed',
     ),
@@ -243,10 +255,10 @@ export const jupiterOracleCheckedSwap = defineTemplate({
     ),
 
     // sold × price, scaled by 10^scale, is the fill at the oracle price in destination base
-    // units; multiplyDivide computes the exact product and applies it. sold × price fits u128
-    // because both factors are below 2^64. Using max with zero means at least one of the two
-    // powers of ten below is 1, so no select is needed: a select evaluates both branches, and
-    // the unused one would fail its cast.
+    // units; multiplyDivide computes the exact product and applies it, then the floor keeps all but
+    // `TOLERANCE_BPS` of it. sold × price fits u128 because both factors are below 2^64. Using max
+    // with zero means at least one of the two powers of ten below is 1, so no select is needed: a
+    // select evaluates both branches, and the unused one would fail its cast.
     step.let(
       'fairOut',
       expression.cast(
@@ -262,8 +274,7 @@ export const jupiterOracleCheckedSwap = defineTemplate({
               expression.cast('u64', expression.max(expression.subtract(expression.i64(0), expression.variable('scale')), expression.i64(0))),
             ),
           ),
-          // In u128 throughout, so that one 10,000 serves as both the whole and the divisor.
-          expression.subtract(expression.u128(10_000), expression.cast('u128', expression.input('toleranceBps'))),
+          expression.u128(10_000n - TOLERANCE_BPS),
           expression.u128(10_000),
         ),
       ),

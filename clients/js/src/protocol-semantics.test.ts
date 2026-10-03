@@ -78,6 +78,7 @@ import {
   TOKEN_ACCOUNT_AMOUNT_OFFSET,
   TOKEN_ACCOUNT_MINT_OFFSET,
   TOKEN_ACCOUNT_OWNER_OFFSET,
+  USDC_MINT,
   WRAPPED_SOL_MINT,
   addressBytes,
   anchorDiscriminator,
@@ -318,6 +319,30 @@ describe('the oracle-checked swap', () => {
   const bindings = bindingsOf(jupiterOracleCheckedSwap);
   const check = requireLabeled(jupiterOracleCheckedSwap, 'fillBeatTheOracle');
 
+  // A run input could name another feed, another pair or a wider tolerance: whoever builds the run
+  // would choose what the fill is checked against.
+  test('fixes the feed, the pair it prices and the tolerance in the template, not the run', () => {
+    expect(Object.keys(jupiterOracleCheckedSwap.inputs ?? {})).toEqual([
+      'routePlan',
+      'inAmount',
+      'quotedOutAmount',
+      'slippageBps',
+      'platformFeeBps',
+    ]);
+    expect([...oracleSwapModule.FEED_ID]).toEqual([
+      ...Buffer.from('ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d', 'hex'),
+    ]);
+    expect(jupiterOracleCheckedSwap.accounts.sourceMint?.address).toEqual(addressBytes(WRAPPED_SOL_MINT));
+    expect(jupiterOracleCheckedSwap.accounts.destinationMint?.address).toEqual(addressBytes(USDC_MINT));
+    expect(oracleSwapModule.TOLERANCE_BPS).toBe(100n);
+    const fairOut = bindings.get('fairOut')?.[0];
+    expect(fairOut?.kind === 'cast' ? fairOut.value : undefined).toMatchObject({
+      kind: 'multiplyDivide',
+      right: expression.u128(10_000n - oracleSwapModule.TOLERANCE_BPS),
+      divisor: expression.u128(10_000),
+    });
+  });
+
   test('bounds the fill by the Pyth price', () => {
     expect(dependsOn(check.condition, bindings, reads('priceUpdate', PYTH.price))).toBe(true);
   });
@@ -423,14 +448,14 @@ describe('the Pyth templates', () => {
     expect(reading).toEqual(pythTemplates.map(([name]) => name).sort());
   });
 
-  test.each(pythTemplates)('%s requires the price account to carry the feed id it is given', (_, template) => {
+  // The gate's caller names the feed; the swap pins it, so whoever builds its run cannot.
+  test.each([
+    ['jupiterOracleCheckedSwap', jupiterOracleCheckedSwap, expression.pubkey(oracleSwapModule.FEED_ID)],
+    ['pythFreshPriceGate', pythFreshPriceGate, expression.input('feedId')],
+  ] as const)('%s requires the price account to carry its feed id', (_, template, feedId) => {
     expect(requireLabeled(template, 'priceIsTheExpectedFeed').condition).toEqual(
-      expression.equal(
-        expression.accountData(account.fixed('priceUpdate'), PYTH.feedId, 'pubkey'),
-        expression.input('feedId'),
-      ),
+      expression.equal(expression.accountData(account.fixed('priceUpdate'), PYTH.feedId, 'pubkey'), feedId),
     );
-    expect(template.inputs?.feedId).toEqual({ type: 'pubkey' });
   });
 
   // The feed id's offset holds only once the verification level has fixed the layout, and a

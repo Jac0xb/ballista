@@ -78,6 +78,15 @@ export const TOKEN_ACCOUNT_OWNER_OFFSET = 32;
 /** The wrapped SOL mint. Its token accounts count their balance in lamports. */
 export const WRAPPED_SOL_MINT = 'So11111111111111111111111111111111111111112' as const;
 
+/** Circle's USDC mint. */
+export const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' as const;
+
+/** A Pyth feed id, which Pyth publishes as 64 hex digits, as the 32 bytes a price account stores. */
+export function pythFeedId(hex: string): Uint8Array<ArrayBuffer> {
+  if (!/^[0-9a-f]{64}$/.test(hex)) throw new Error('A Pyth feed id is 64 lowercase hex digits');
+  return Uint8Array.from({ length: 32 }, (_, index) => Number.parseInt(hex.slice(2 * index, 2 * index + 2), 16));
+}
+
 /** SPL Token `Mint`: `decimals` is the u8 at offset 44 of the 82-byte layout. */
 export const SPL_MINT = { length: 82, decimals: 44 } as const;
 
@@ -103,9 +112,9 @@ export const PYTH = {
   /**
    * Offsets for a `Full` account. A `Partial` one shifts each by one.
    *
-   * `feedId` is `price_message.feed_id`, the 32 bytes that say which feed the price belongs to:
-   * SOL/USD's is `ef0d8b6f…c280b56d`. The receiver owns every feed's account alike, so nothing
-   * else about the account says which one it is.
+   * `feedId` is `price_message.feed_id`, the 32 bytes that say which feed the price belongs to.
+   * The receiver owns every feed's account alike, so nothing else about the account says which
+   * one it is.
    */
   feedId: 41,
   price: 73,

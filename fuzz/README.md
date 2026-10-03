@@ -148,3 +148,20 @@ The 14 mutants cover the CPI ceiling, declared accounts and groups, the CPI coun
 read-before-write, read bounds, return data, `EMIT` tags, registry entries and the sysvar pin.
 The stable tests catch every one, and so does `structured`, within 10 seconds of an empty corpus.
 That includes the critic's `verify-cpi-privilege`, which the proptests in `common/tests` miss.
+
+## First local run
+
+On 2026-10-03, on a loaded 16-core Mac, without a sanitizer. No target crashed.
+
+| Target | Time | Executions | Edges at the end |
+| --- | ---: | ---: | ---: |
+| `parse` | 20 min | 167M | 385 |
+| `verify` | 40 min | 211M | 910 |
+| `structured` | 70 min | 70M | 4,653 |
+| `differential` | 70 min | 205M | 2,116 |
+
+- Edge coverage had stopped growing in each target before its run ended.
+- Together, the corpora cover every line of `verify.rs` except `verify_single_instruction`, which
+  no target calls.
+- In the last two rounds, the CPI ceiling pass checked at least 6.3M accepted programs, 3.8M invoke
+  sites and 8.4M account records. 37,000 of those programs sit at exactly 64 worst-case CPIs.

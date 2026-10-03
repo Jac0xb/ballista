@@ -49,9 +49,9 @@ with the Rust builder, or by hand, can skip them, so check them when you
 
 ## Formal verification
 
-14 rules are set up for the Certora Solana Prover: `u64` and `i64` arithmetic, comparisons, casts,
-error codes and the template parser. 13 more, covering account checks, the template lifecycle and
-type safety, are written but blocked by prover limitations, so they are not proved.
+15 rules are set up for the Certora Solana Prover: `u64` and `i64` arithmetic, comparisons, casts,
+error codes and the template parser. 14 more, covering `u128` arithmetic, `multiplyDivide`, account
+checks, the template lifecycle and type safety, are written but blocked, so they are not proved.
 [Formal verification](/guide/formal-verification) has the details.
 
 ## Strengths

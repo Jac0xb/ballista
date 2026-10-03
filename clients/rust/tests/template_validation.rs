@@ -1508,6 +1508,80 @@ mod carried_variables {
         assert_eq!(all[1][0], wire::OP_FOREACH);
         assert_eq!(immediate(&all[1]), 1);
     }
+
+    /// The payload the TypeScript compiler writes for `name` in
+    /// `fixtures/compiler-fuzz-findings.json`. Machine-written JSON, so a string search is enough.
+    fn finding_payload(name: &str) -> Vec<u8> {
+        const FINDINGS: &str = include_str!("../../../fixtures/compiler-fuzz-findings.json");
+        let entry = &FINDINGS[FINDINGS.find(&format!("\"{name}\": {{")).unwrap()..];
+        let start = entry.find("\"payload\": \"").unwrap() + "\"payload\": \"".len();
+        let hex = &entry[start..start + entry[start..].find('"').unwrap()];
+        (0..hex.len())
+            .step_by(2)
+            .map(|at| u8::from_str_radix(&hex[at..at + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// Finding `carried-alias` from the TypeScript compiler fuzzer, fixed in both compilers: a
+    /// `let` or `snapshot` in a loop body of a carried variable bound the variable's own register,
+    /// and the `assign` after it rewrote that register in place, so the snapshot took the new
+    /// value. Each pass here snapshots the total, adds one, and requires the total to have grown
+    /// by one from the snapshot, which the aliased snapshot failed on the first pass. The binding
+    /// now takes a copy, and the bytes match `carriedAliasDocument` compiled by TypeScript.
+    #[test]
+    fn a_snapshot_of_a_carried_variable_keeps_its_value_after_an_assign() {
+        let compiled = compile(
+            Template::new()
+                .input("passes", Type::U64)
+                .step(step::let_("total", u64(0)))
+                .step(
+                    step::repeat(input("passes"), 4)
+                        .step(step::snapshot("before", var("total")))
+                        .step(step::assign("total", var("total") + u64(1)))
+                        .step(
+                            step::require((snapshot("before") + u64(1)).eq(var("total")))
+                                .label("grewByOne"),
+                        )
+                        .carry("total"),
+                )
+                .step(step::set_return_data([data::u64(var("total"))])),
+        );
+        let all = records(&compiled);
+        let repeat = all.iter().position(|record| record[0] == wire::OP_REPEAT).unwrap();
+        let carried = immediate(&all[repeat]).trailing_zeros() as u8;
+        // The body's first record copies the carried total into a register of its own.
+        assert_eq!(all[repeat + 1][..3], [wire::OP_MOVE, all[repeat + 1][1], carried]);
+        assert_ne!(all[repeat + 1][1], carried);
+        assert_eq!(compiled.bytes, finding_payload("carried-alias"));
+        verifies(&compiled);
+    }
+
+    /// The check `carried-alias` bypassed: a per-pass cap measured from a snapshot, with two
+    /// assignments in the pass. Matches `perPassCapDocument` compiled by TypeScript.
+    #[test]
+    fn a_per_pass_cap_measured_from_a_snapshot_compiles_as_typescript_does() {
+        let compiled = compile(
+            Template::new()
+                .input("passes", Type::U64)
+                .input("amount", Type::U64)
+                .input("fee", Type::U64)
+                .step(step::let_("spent", u64(0)))
+                .step(
+                    step::repeat(input("passes"), 4)
+                        .step(step::snapshot("before", var("spent")))
+                        .step(step::assign("spent", var("spent") + input("amount")))
+                        .step(step::assign("spent", var("spent") + input("fee")))
+                        .step(
+                            step::require((var("spent") - snapshot("before")).lte(u64(10)))
+                                .label("perPassCap"),
+                        )
+                        .carry("spent"),
+                )
+                .step(step::set_return_data([data::u64(var("spent"))])),
+        );
+        assert_eq!(compiled.bytes, finding_payload("per-pass-cap"));
+        verifies(&compiled);
+    }
 }
 
 // --------------------------------------------------------------------- introspection expressions

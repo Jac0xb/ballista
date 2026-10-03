@@ -1039,12 +1039,33 @@ impl<'t> Compiler<'t> {
                     if binding(bindings, name).is_some() {
                         return Err(error(format!("Variable already defined: {name}")));
                     }
-                    let result = match &value.0 {
+                    let mut result = match &value.0 {
                         Node::ReturnData { offset, ty } => {
                             self.compile_return_data(*offset, *ty, previous)?
                         }
                         _ => self.compile_expression(value, loop_kind, bindings)?,
                     };
+                    // A binding keeps the value it was made with, but `assign` rewrites a carried
+                    // variable's register in place. A binding in the body that would share that
+                    // register (a `let` or `snapshot` of the variable) takes a copy in one of its
+                    // own instead, as the TypeScript compiler does.
+                    if loop_kind.is_some()
+                        && carried.iter().any(|carried_name| {
+                            binding(bindings, carried_name)
+                                .is_some_and(|bound| bound.register == result.register)
+                        })
+                    {
+                        result = self.emit(
+                            OP_MOVE,
+                            result.ty,
+                            result.max_length,
+                            result.register as u8,
+                            NO_INDEX,
+                            NO_INDEX,
+                            0,
+                            0,
+                        )?;
+                    }
                     bindings.push((name.clone(), result));
                 }
                 StepNode::Assign { name, value, .. } => {

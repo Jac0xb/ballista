@@ -215,14 +215,6 @@ impl<'data> Scratch<'data> {
     pub fn set_groups(&mut self, layout: &RunLayout) {
         self.groups = layout.groups;
     }
-
-    /// Records `program` as the program the most recent CPI invoked, as a successful `INVOKE`
-    /// does, so a formal specification can check `RETURN_DATA` without modelling a CPI. Only the
-    /// `spec-api` feature compiles it; the program never does.
-    #[cfg(feature = "spec-api")]
-    pub fn set_last_invoked_for_spec(&mut self, program: &'data Address) {
-        self.last_invoked = Some(program);
-    }
 }
 
 /// Where one run's runtime accounts fall: the fixed accounts, `iterations` batch rows, then the
@@ -3143,5 +3135,16 @@ mod tests {
         assert_eq!(read_value(OP_READ_I32, &data, 0), Ok(RuntimeValue::I64(-8)));
         assert_eq!(read_value(OP_READ_I32, &data, 4), Ok(RuntimeValue::I64(42)));
         assert!(read_value(OP_READ_I32, &data, 5).is_err());
+    }
+}
+
+/// Formal specifications only: the `spec-api` feature compiles this, and the program never does.
+/// It sits at the end of the file so it moves no line the release binary's panic locations record.
+#[cfg(feature = "spec-api")]
+impl<'data> Scratch<'data> {
+    /// Records `program` as the program the most recent CPI invoked, as a successful `INVOKE`
+    /// does, so a specification can check `RETURN_DATA` without modelling a CPI.
+    pub fn set_last_invoked_for_spec(&mut self, program: &'data Address) {
+        self.last_invoked = Some(program);
     }
 }

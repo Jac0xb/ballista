@@ -122,8 +122,8 @@ Three examples in `support/examples` help with triage:
 
 - `explain FILE` prints a payload's sections and every verdict.
 - `checker_audit TARGET DIR` lists where the checker and `verify` disagree, in both directions. A
-  verifier error the checker lacks is a rule neither side can catch. On the corpora of the first
-  long run, the four known findings were the only disagreements.
+  verifier error the checker lacks is a rule neither side can catch. Over the corpora of the first
+  long run, about 14,700 inputs, the four known findings were the only disagreements.
 - `corpus_stats TARGET DIR` counts invoke sites by scope, records checked, and worst-case CPI
   counts.
 

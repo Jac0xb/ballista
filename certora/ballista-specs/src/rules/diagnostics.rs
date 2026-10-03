@@ -1,5 +1,15 @@
 //! Small rules that pin down how the prover models the memory the other rules depend on. They
-//! carry no property of the program; a failure here means the specs, not Ballista, need work.
+//! carry no property of the program. Each states its expected result: the ones expected to fail
+//! show a limit the blocked rules run into, and the ones expected to prove are their controls, so a
+//! prover run confirms or refutes the diagnosis in `certora/README.md`.
+//!
+//! - Expected to fail: byte stores read back as a word (heap); the constant program parsed from
+//!   byte stores, or from a `memcpy` of the binary's data (a global copied by `memcpy` is never
+//!   initialized in the prover's encoding: only globals loaded directly and branched on, or compared
+//!   by a 32-byte `memcmp`, are); a stack temporary built from a one-byte tag and a four-byte code,
+//!   copied with one eight-byte move, as `RunResult` and `RuntimeValue` values are.
+//! - Expected to prove: a word stored and read back as a word; the same copy when the temporary's
+//!   word is two four-byte halves, the one merge the prover rebuilds on the stack.
 
 use ballista_common::template::*;
 use cvlr::nondet::havoc::alloc_mut_ref_havoced;
@@ -60,4 +70,55 @@ pub fn rule_constant_program_parses_from_memcpy() {
     if let Ok(program) = parsed {
         cvlr_assert!(program.header.register_count() == 4);
     }
+}
+
+/// Expected to prove, the control for the first rule: a word stored and loaded at one width.
+#[rule]
+pub fn rule_heap_word_stores_read_back_as_words() {
+    let heap = alloc_mut_ref_havoced::<u64>();
+    // SAFETY: one aligned store and one aligned load of the allocation's only word.
+    let word = unsafe {
+        core::ptr::write_volatile(heap as *mut u64, 0x0807_0605_0403_0201);
+        core::ptr::read_volatile(heap as *const u64)
+    };
+    cvlr_assert!(word == 0x0807_0605_0403_0201);
+}
+
+/// The shape of an error the executor returns: a one-byte tag at offset 0, two bytes never written,
+/// a four-byte code at offset 4, built in a stack temporary and copied to the heap with one
+/// eight-byte move, as `validate_account`, `registry::open` and `mul_div` do with theirs. Returns
+/// the tag read back from the copy.
+#[inline(always)]
+fn copied_tag(halves: bool) -> u8 {
+    let mut temporary = core::mem::MaybeUninit::<u64>::uninit();
+    let base = temporary.as_mut_ptr().cast::<u8>();
+    let heap = alloc_mut_ref_havoced::<u64>();
+    // SAFETY: every access stays inside the eight-byte temporary or the eight-byte allocation; the
+    // four-byte stores sit at offsets 0 and 4 of an eight-byte-aligned word.
+    unsafe {
+        if halves {
+            core::ptr::write_volatile(base.cast::<u32>(), 7);
+        } else {
+            core::ptr::write_volatile(base, 7u8);
+        }
+        core::ptr::write_volatile(base.add(4).cast::<u32>(), 6012);
+        let word = core::ptr::read_volatile(base.cast::<u64>());
+        core::ptr::write_volatile(heap as *mut u64, word);
+        // Read back at the width it was stored, so the stack copy is the only width change.
+        core::ptr::read_volatile(heap as *const u64) as u8
+    }
+}
+
+/// Expected to fail: the copy's tag is unknown to the prover, which rebuilds a stack word only from
+/// two four-byte halves. This is the shape that blocks the account, registry-refusal, `mul_div`
+/// and typing rules.
+#[rule]
+pub fn rule_stack_byte_tag_survives_a_word_copy() {
+    cvlr_assert!(copied_tag(false) == 7);
+}
+
+/// Expected to prove, the control: the same copy when the temporary's word is two four-byte halves.
+#[rule]
+pub fn rule_stack_half_word_tag_survives_a_word_copy() {
+    cvlr_assert!(copied_tag(true) == 7);
 }

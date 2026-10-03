@@ -519,8 +519,9 @@ counts as 3 of the run's CPIs, since creating an entry can take three calls to t
   another template's.
 - **A missing entry** is created. The account must hold no data, be owned by the System program,
   and sit at the entry's address, or the run fails with `InvalidRegistryEntry`. The payer pays the
-  rent, or only the part still missing if the address already holds lamports. Ballista signs for
-  the entry's address to create the account, then writes its header. The fields start at zero.
+  rent, or only the part still missing if the address already holds lamports. Ballista creates the
+  account ([when Ballista signs](/guide/trust-model#signing)) and writes its header. The fields
+  start at zero.
 - **An entry already open in this run** fails with `InvalidRegistryEntry`. Two entries of one
   registry are one account when their keys come out equal, such as a sender who names themselves
   as the receiver. Entries open before the first step, so no `require` can catch this first; a

@@ -15,9 +15,8 @@ template makes is a CPI from the Ballista program.
 Program-derived address: an address computed from a program ID and a list of seeds, the byte
 strings it is derived from. It has no private key, so only that program can sign for it. Deriving
 one takes a bump, one extra seed byte that makes the result a valid program address; the canonical
-bump is the highest that does. Templates only compare addresses with derived ones (`assertPda`).
-Ballista signs as its own PDAs only to create its accounts; see
-[When Ballista signs](/guide/trust-model#signing).
+bump is the highest that does. Templates only compare addresses with derived ones (`assertPda`);
+see [When Ballista signs](/guide/trust-model#signing).
 
 ### ATA
 
@@ -36,8 +35,7 @@ the account returns them. A [registry entry](#entry) is never closed, so its ren
 ### Compute units
 
 Solana's measure of how much work a transaction does. Each transaction has a compute-unit limit,
-and fails if it uses more. [Size and compute](/reference/limits#size-and-compute) says how to set
-it.
+and fails if it uses more. [Compute](/reference/limits#compute) says how to set it.
 
 ### Discriminator
 
@@ -98,7 +96,8 @@ template reading them. See [Account groups](/guide/account-groups).
 ### Runtime accounts
 
 The accounts passed to a run after the template account: fixed accounts, then batch rows, then
-account group members. At most 120.
+account group members. At most 120, but about 61 fit in one transaction; see
+[accounts per transaction](/reference/limits#accounts-per-transaction).
 
 ### Register
 

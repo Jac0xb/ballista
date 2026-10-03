@@ -88,8 +88,8 @@ for more, add a compute-budget instruction that raises the limit. Rows that shar
 about ten to a transaction; more need an address lookup table.
 
 Whirlpools numbers its errors from 6000, as Ballista does, so a failed run's code alone can't say
-which program refused ([error attribution](/guide/trust-model#error-attribution)). The TypeScript
-run's `describeFailure` reads the logs to tell.
+which program refused; see [which program failed](/guide/errors-and-events#which-program-failed).
+The TypeScript run's `describeFailure` reads the logs to tell.
 
 ## What has been tested
 

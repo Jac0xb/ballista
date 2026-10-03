@@ -288,7 +288,7 @@ the same bytes.
 verifier), and its `context`. The low 16 bits of a code name the error, and the high 16 bits say
 where it happened: for most runtime errors the program counter, and
 `ProgramView::parse(&payload)?.instructions[pc]` is that instruction. The kinds matched above give
-an account index, an input index, or a count instead. [Errors and events](/guide/errors-and-events)
+an account index, an input index, or a count instead. [Error codes](/reference/errors#context)
 lists the context of every kind.
 
 Anchor programs number their errors from 6000 too, so a code in Ballista's ranges may come from a

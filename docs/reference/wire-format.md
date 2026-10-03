@@ -459,8 +459,7 @@ locked.
 ## Error codes
 
 A custom error code is `kind | (context << 16)`. Runtime kinds start at 6000 (`0x1770`) and verifier
-kinds at 6100 (`0x17D4`). The full table, with hex forms, is in
-[Errors and events](/guide/errors-and-events#error-codes).
+kinds at 6100 (`0x17D4`). The full table, with hex forms, is in [Error codes](/reference/errors).
 
 ## Run event
 

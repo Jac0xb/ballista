@@ -43,20 +43,15 @@ points, and check them against the protocols' current programs before you use th
   copied from mainnet at a single slot. The tests never touch the network (`tests/protocols/`). The
   signed quote runs the same way against a copy of mainnet's Token program, with the Ed25519
   precompile, and also in Mollusk, a harness that runs Solana programs without a validator
-  (`tests/ballista/`). None has run on devnet or mainnet. Each page's "What has been tested" says
-  what its runs showed, and its Cost line how much of the measured transaction was Ballista's own
-  work.
+  (`tests/ballista/`). None has run on devnet or mainnet. Each page says what its runs showed.
 - **Account offsets.** The Orca, Pyth and SPL Token offsets are also checked against real devnet
   accounts by an opt-in test; see [reading offsets](#reading-offsets-from-an-account). The Kamino
   and marginfi templates don't read those protocols' accounts. They read SPL token accounts: their
   balances before and after each call and, where it matters, who owns them.
-- **Jupiter calls.** The seven templates in the table that call Jupiter use its `route` instruction.
-  Each sends the `route` discriminator and passes the first accounts of `route` itself, in the order
-  Jupiter's published interface lists them: the token program, the signer and, where the template
-  measures them, the source and destination token accounts. The rest of the route's accounts arrive
-  as an account group. A test that reads the templates checks this
-  (`clients/js/src/protocol-semantics.test.ts`), and the protocol tests send real routes, recorded
-  from Jupiter's API, through Jupiter's own program. Each also caps the route's platform fee at
+- **Jupiter calls.** The seven templates that call Jupiter send its `route` instruction, with
+  `route`'s first accounts in the order Jupiter's published interface lists them and the rest as an
+  account group. The semantics test checks this, and the protocol tests send real routes, recorded
+  from Jupiter's API, through Jupiter's own program. Each template caps the route's platform fee at
   `MAX_PLATFORM_FEE_BPS`, 0 unless its author raises it. [Getting a Jupiter route](#jupiter-routes)
   says how to request one.
 
@@ -102,10 +97,12 @@ account.
 
 ::: warning Check before you upload
 The tests use a copy of mainnet from one slot. They can't tell you whether a protocol has changed
-since. Before you upload one of these templates, check each call's accounts, arguments and offsets
-against the protocol's current IDL (its published interface description), and prefer fields the
-protocol documents as public. The [trust model](/guide/trust-model#pins) says what an account
-declaration can pin and what it can't.
+since. Before you upload one of these templates:
+
+- check each call's accounts, arguments and offsets against the protocol's current IDL (its
+  published interface description), and prefer fields the protocol documents as public;
+- check each account's type, not just its owner, by its Anchor discriminator or its exact data
+  length. An owner pin is not a type pin: see [pins](/guide/trust-model#pins).
 :::
 
 ## Refreshing Kamino {#kamino-refreshes}

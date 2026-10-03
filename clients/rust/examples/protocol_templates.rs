@@ -308,7 +308,7 @@ pub fn jupiter_oracle_checked_swap() -> Vec<u8> {
     // The decimals below are read from these mints, and both accounts are the trader's.
     require_mint(&mut b, source_ata, source_mint);
     require_mint(&mut b, destination_ata, destination_mint);
-    // The trader's key is read once: the template is at the runtime's 64 registers.
+    // The trader's key is read once: the template uses 62 of the runtime's 64 registers.
     let trader_key = b.account_key(trader);
     for token_account in [source_ata, destination_ata] {
         let owner = b.read(OP_READ_PUBKEY, token_account, TOKEN_OWNER);

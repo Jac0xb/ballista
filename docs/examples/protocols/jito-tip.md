@@ -24,8 +24,8 @@ The searcher is the wallet that signs, trades and pays the tip. The template:
 
 1. requires `wsolAccount` to hold wSOL and to belong to the searcher;
 2. records its balance, requires the route's `platformFeeBps` to be at most
-   `MAX_PLATFORM_FEE_BPS`, a constant that is 0 (`platformFeeWithinCap`), then runs the round trip as one Jupiter `route` from that account back to
-   it;
+   `MAX_PLATFORM_FEE_BPS`, a constant that is 0 (`platformFeeWithinCap`), then runs the round trip
+   as one Jupiter `route` from that account back to it;
 3. requires the balance to have grown by at least `tipLamports` plus `minimumEdge`, so a loss or a
    thin profit reverts before any tip is paid;
 4. pays `tipLamports` from the searcher to `jitoTip`, which must be owned by Jito's Tip Payment

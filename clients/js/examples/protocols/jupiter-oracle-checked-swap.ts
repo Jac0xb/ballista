@@ -129,7 +129,7 @@ export const jupiterOracleCheckedSwap = defineTemplate({
 
     // Both ends of the swap are the trader's: the step that pays the fill can name any account of
     // the destination mint, so the one measured must be the trader's. The key is read once: the
-    // template is at the runtime's 64 registers.
+    // template uses 62 of the runtime's 64 registers.
     step.let('traderKey', expression.accountKey('trader')),
     step.require(
       expression.equal(

@@ -863,6 +863,21 @@ pub fn execute_instruction<'data>(
     step(&mut machine, instruction, loop_context)
 }
 
+/// Runs a whole program, loops included, against a register file the caller owns, for the formal
+/// specifications (see `kani/`): `run` without its account checks, input decoding and run event,
+/// so a proof can read every register afterwards. The dispatch loop is the one `run` uses.
+#[cfg(feature = "spec-api")]
+pub fn execute_program<'data>(
+    program: &ProgramView<'data>,
+    inputs: &[RuntimeValue<'data>],
+    accounts: &'data [AccountView],
+    iterations: usize,
+    registers: &mut [RuntimeValue<'data>],
+    scratch: &mut Scratch<'data>,
+) -> ProgramResult {
+    execute_root(program, inputs, accounts, iterations, registers, scratch, None)
+}
+
 /// Executes one instruction; `dispatch` inlines it. It takes the whole `Machine` so that its call
 /// to `extended_instruction` can pass one pointer: the machine's fields, the instruction and the
 /// loop context came to nine words, too many for registers, and five went on the stack.

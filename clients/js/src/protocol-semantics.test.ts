@@ -5,6 +5,8 @@
  * directly: which accounts reach Jupiter in which position, and which on-chain reads a guarantee
  * actually depends on. Each one pins a mistake an example once made.
  */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
 import { AccountRole, address, getAddressDecoder, isWritableRole, type Address } from '@solana/kit';
@@ -55,6 +57,7 @@ import {
 } from '../examples/scenarios/split-sell.js';
 import { buildJupiterDepositRun } from '../examples/protocols/run-jupiter-deposit.js';
 import { buildDailyCapRun } from '../examples/protocols/run/jupiter-daily-cap.js';
+import { buildJitoTipRun } from '../examples/protocols/run/jito-tip.js';
 import {
   buildOrcaHarvestRun,
   describeFailure,
@@ -82,6 +85,9 @@ import {
   WRAPPED_SOL_MINT,
   addressBytes,
   anchorDiscriminator,
+  joinRoundTrip,
+  type JupiterLeg,
+  type JupiterSwapInstruction,
 } from '../examples/protocols/shared.js';
 import { findRegistryEntryAddress } from './kit.js';
 
@@ -675,6 +681,96 @@ describe('the Jito tip', () => {
 
   test("pays only an account of Jito's Tip Payment program", () => {
     expect(jitoProfitGuardedTip.accounts.jitoTip?.owner).toEqual(addressBytes(JITO_TIP_PAYMENT));
+  });
+});
+
+/**
+ * The Swap API won't quote a token back to itself, so the Jito tip's round trip is quoted as two
+ * legs and joined into one `route`. `tests/protocols/tests/jito_tip.rs` joins the snapshot's two
+ * legs with its own `round_trip`, runs the result through Jupiter, and records what it joined in
+ * `fixtures/jupiter-round-trip.json`.
+ */
+describe('joining a round trip', () => {
+  const read = (path: string): unknown => JSON.parse(readFileSync(fileURLToPath(new URL(path, import.meta.url)), 'utf8'));
+  const fixture = read('../../../fixtures/jupiter-round-trip.json') as {
+    route: string;
+    routeData: string;
+    strategyAccounts: { pubkey: string; isWritable: boolean }[];
+  };
+  const snapshot = read('../../../tests/protocols/snapshot/routes.json') as {
+    routes: Record<string, { legs: { inputMint: string; outputMint: string; instructions: { swap: JupiterSwapInstruction } }[] }>;
+  };
+  const [first, second] = snapshot.routes[fixture.route]!.legs.map(
+    (leg): JupiterLeg => ({ inputMint: leg.inputMint, outputMint: leg.outputMint, swapInstruction: leg.instructions.swap }),
+  ) as [JupiterLeg, JupiterLeg];
+  const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString('hex');
+  const withSwap = (leg: JupiterLeg, swap: Partial<JupiterSwapInstruction>): JupiterLeg => ({
+    ...leg,
+    swapInstruction: { ...leg.swapInstruction, ...swap },
+  });
+
+  test("joins the snapshot's two legs into the bytes the Rust round trip ran", () => {
+    const joined = joinRoundTrip(first, second);
+    expect(hex(joined.routeData)).toBe(fixture.routeData);
+    expect(joined.strategyAccounts).toEqual(
+      fixture.strategyAccounts.map(({ pubkey, isWritable }) => ({ address: pubkey, writable: isWritable })),
+    );
+  });
+
+  test('refuses legs that do not start and end in one wrapped SOL account', () => {
+    expect(() => joinRoundTrip(second, first)).toThrow(/wrapped SOL/);
+    const elsewhere = second.swapInstruction.accounts.map((meta, index) =>
+      index === 3 ? { ...meta, pubkey: JUPITER_V6 } : meta,
+    );
+    expect(() => joinRoundTrip(first, withSwap(second, { accounts: elsewhere }))).toThrow(/same token account/);
+  });
+
+  test('refuses a leg that is not one step of Jupiter `route`', () => {
+    const data = Buffer.from(first.swapInstruction.data, 'base64');
+    const shared = Buffer.from([...anchorDiscriminator('shared_accounts_route'), ...data.subarray(8)]);
+    expect(() => joinRoundTrip(withSwap(first, { data: shared.toString('base64') }), second)).toThrow(/useSharedAccounts/);
+    // The plan's u32 step count, right after the discriminator.
+    const twoSteps = Buffer.from(data);
+    twoSteps.writeUInt32LE(2, 8);
+    expect(() => joinRoundTrip(withSwap(first, { data: twoSteps.toString('base64') }), second)).toThrow(/single step/);
+  });
+
+  test('the Jito tip runner splits the joined route into its inputs and forwards its accounts as the group', () => {
+    const decoder = getAddressDecoder();
+    const key = (byte: number): Address => decoder.decode(new Uint8Array(32).fill(byte));
+    const instruction = buildJitoTipRun({
+      templateAddress: key(1),
+      searcher: key(2),
+      wsolAccount: key(3),
+      jitoTip: key(4),
+      legs: [first, second],
+      tipLamports: 10_000n,
+      minimumEdge: 100_000n,
+    });
+    // The template account, then the six declared accounts, then the group.
+    const group = (instruction.accounts ?? []).slice(7);
+    expect(group.map((meta) => meta.address)).toEqual(fixture.strategyAccounts.map(({ pubkey }) => pubkey));
+    expect(group.map((meta) => isWritableRole(meta.role))).toEqual(fixture.strategyAccounts.map(({ isWritable }) => isWritable));
+    // After the run tag: the group's length, then the joined plan, its four numbers as u64s, the
+    // tip and the edge.
+    const joined = Buffer.from(fixture.routeData, 'hex');
+    const [plan, tail] = [joined.subarray(8, -19), joined.subarray(-19)];
+    const u64 = (value: number | bigint) => {
+      const bytes = Buffer.alloc(8);
+      bytes.writeBigUInt64LE(BigInt(value));
+      return bytes;
+    };
+    expect(Buffer.from(instruction.data ?? []).subarray(1)).toEqual(
+      Buffer.concat([
+        Buffer.of(group.length, plan.length & 0xff, plan.length >> 8),
+        plan,
+        tail.subarray(0, 16),
+        u64(tail.readUInt16LE(16)),
+        u64(tail[18]!),
+        u64(10_000n),
+        u64(100_000n),
+      ]),
+    );
   });
 });
 

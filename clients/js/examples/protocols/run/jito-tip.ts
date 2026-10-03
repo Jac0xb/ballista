@@ -1,35 +1,28 @@
 import type { Address, Instruction } from '@solana/kit';
 
-import { buildKitRunInstruction, type KitAccountBinding } from '../../../src/kit.js';
+import { buildKitRunInstruction } from '../../../src/kit.js';
 import { compiled } from '../jito-profit-guarded-tip.js';
-import { JUPITER_V6, splitJupiterRoute } from '../shared.js';
+import { JUPITER_V6, joinRoundTrip, splitJupiterRoute, type JupiterLeg } from '../shared.js';
 import { SYSTEM_PROGRAM, TOKEN_PROGRAM, at, pinned } from './programs.js';
 
 /**
  * The strategy is one Jupiter `route` from the searcher's wrapped SOL back to it. The Swap API
- * quotes the two legs separately, so they are joined: the second leg's step goes after the first's
- * with its token indices moved up by one, and the joined list is the second leg's fixed accounts
- * with the first leg's source, then both legs' step accounts. `round_trip` in
- * `tests/protocols/tests/jito_tip.rs` joins single-step legs.
+ * quotes it as two legs, SOL to another token and back, and `joinRoundTrip` joins them.
  */
 export function buildJitoTipRun(input: {
   templateAddress: Address;
   searcher: Address;
-  /** The searcher's wrapped-SOL token account: the round trip's source and its destination. */
+  /** The searcher's wrapped-SOL token account: where the first leg starts and the second ends. */
   wsolAccount: Address;
   /** One of the eight `JITO_TIP_ACCOUNTS`. */
   jitoTip: Address;
-  /** The joined `route` data, discriminator included. */
-  routeData: Uint8Array;
+  /** Each leg's quote mints and the Swap API's `swapInstruction`: one step each. */
+  legs: readonly [JupiterLeg, JupiterLeg];
   tipLamports: bigint;
   minimumEdge: bigint;
-  /**
-   * The joined route's account list from the fifth account on: the template passes the token
-   * program, the searcher, and the wrapped-SOL account twice.
-   */
-  strategyAccounts: readonly KitAccountBinding[];
 }): Instruction {
-  const route = splitJupiterRoute(input.routeData);
+  const { routeData, strategyAccounts } = joinRoundTrip(...input.legs);
+  const route = splitJupiterRoute(routeData);
   return buildKitRunInstruction({
     compiled,
     templateAddress: input.templateAddress,
@@ -50,6 +43,6 @@ export function buildJitoTipRun(input: {
       wsolAccount: at(input.wsolAccount),
       jitoTip: at(input.jitoTip),
     },
-    accountGroups: { strategyAccounts: input.strategyAccounts },
+    accountGroups: { strategyAccounts },
   });
 }

@@ -27,16 +27,10 @@ import {
   KAMINO_LEND,
   SYSVAR_INSTRUCTIONS,
   splitJupiterRoute,
+  type JupiterSwapInstruction,
 } from './shared.js';
 
 const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
-
-/** The shape the Jupiter Swap API returns for `swapInstruction`. */
-export interface JupiterSwapInstruction {
-  programId: string;
-  accounts: { pubkey: string; isSigner: boolean; isWritable: boolean }[];
-  data: string;
-}
 
 const decoder = getAddressDecoder();
 const placeholder = (byte: number): Address => decoder.decode(new Uint8Array(32).fill(byte));

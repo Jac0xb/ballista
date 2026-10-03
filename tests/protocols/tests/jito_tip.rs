@@ -138,6 +138,35 @@ fn round_trip(route: &Route) -> Instruction {
     }
 }
 
+/// Where [`round_trip`]'s join of the snapshot's legs is recorded for the TypeScript SDK's
+/// `joinRoundTrip`, which must produce the same bytes (`clients/js/src/protocol-semantics.test.ts`).
+const ROUND_TRIP_FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../fixtures/jupiter-round-trip.json"
+);
+
+/// The joined `route` data, and its accounts from the fifth on, which a run passes as its group:
+/// what [`ROUND_TRIP_FIXTURE`] records.
+fn round_trip_fixture(joined: &Instruction) -> String {
+    let hex: String = joined
+        .data
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let accounts: Vec<_> = joined.accounts[TEMPLATE_ROUTE_ACCOUNTS..]
+        .iter()
+        .map(|meta| {
+            serde_json::json!({ "pubkey": meta.pubkey.to_string(), "isWritable": meta.is_writable })
+        })
+        .collect();
+    let fixture = serde_json::json!({
+        "route": ROUTE,
+        "routeData": hex,
+        "strategyAccounts": accounts,
+    });
+    format!("{}\n", serde_json::to_string_pretty(&fixture).unwrap())
+}
+
 /// The little-endian u64 at `offset` in `data`.
 fn u64_at(data: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap())
@@ -451,6 +480,27 @@ fn run_tip(
         searcher_before,
         result,
     }
+}
+
+/// The TypeScript `joinRoundTrip` is a port of [`round_trip`], held to it by the join of the
+/// snapshot's two legs recorded in [`ROUND_TRIP_FIXTURE`]. After a snapshot refresh, rewrite the
+/// fixture with `UPDATE_FIXTURES=1 cargo test --manifest-path tests/protocols/Cargo.toml --test
+/// jito_tip the_round_trip_matches_its_fixture`.
+#[test]
+fn the_round_trip_matches_its_fixture() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let fixture = round_trip_fixture(&round_trip(snapshot.route(ROUTE)));
+    if std::env::var("UPDATE_FIXTURES").as_deref() == Ok("1") {
+        std::fs::write(ROUND_TRIP_FIXTURE, &fixture)
+            .unwrap_or_else(|error| panic!("writing {ROUND_TRIP_FIXTURE} failed: {error}"));
+        return;
+    }
+    let recorded = std::fs::read_to_string(ROUND_TRIP_FIXTURE)
+        .unwrap_or_else(|error| panic!("reading {ROUND_TRIP_FIXTURE} failed: {error}"));
+    assert_eq!(
+        recorded, fixture,
+        "the joined round trip changed; rewrite the fixture with UPDATE_FIXTURES=1"
+    );
 }
 
 /// Why the template measures wrapped SOL: `route` moves token accounts only. Sent to Jupiter on

@@ -11,7 +11,7 @@
  *
  * Jupiter's API refuses a quote whose input and output mints are the same, so a round trip is
  * quoted as two legs, which the caller joins into one `route` before calling this template
- * (`round_trip` in the test suite is the only implementation). Jupiter does not tie a route's
+ * (`joinRoundTrip` in `shared.ts`). Jupiter does not tie a route's
  * source and destination to the accounts its steps move, so the route must be built to start and
  * end in them regardless; only single-step legs can be joined this way, since a step's two indices
  * come after its percent, which comes after a `Swap` enum whose variants differ in length.

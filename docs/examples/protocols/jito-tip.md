@@ -55,9 +55,15 @@ destination; the rest of the route's accounts arrive as the `strategyAccounts`
 [account group](/guide/account-groups).
 
 Jupiter's Swap API won't quote a route from a token back to itself, so quote two legs, SOL to USDC
-and back, and join them into one `route` as the Run tabs' comments describe. Only single-step legs
-can be joined, and the SDK has no helper for it: `round_trip` in `tests/protocols/tests/jito_tip.rs`
-is the only implementation.
+and back, each a single step. `joinRoundTrip(first, second)`, in
+`clients/js/examples/protocols/shared.ts`, joins them into one `route` and returns
+`{ routeData, strategyAccounts }`. Each leg is its quote's `inputMint` and `outputMint` and the
+Swap API's `swapInstruction`. It refuses legs that don't start and end in the same wrapped SOL
+account, or that take more than one step. In Rust, `round_trip` in
+`tests/protocols/tests/jito_tip.rs` does the same join, and a test holds the two to the same bytes.
+
+Send the run in place of `route` in the first leg's transaction, whose setup wraps the SOL and whose
+cleanup unwraps it, with both legs' lookup tables.
 
 The Run tabs pass the six declared accounts, `systemProgram`, `strategyProgram`, `tokenProgram`,
 `searcher`, `wsolAccount` and `jitoTip`, then the inputs `routePlan`, `inAmount`, `quotedOutAmount`,

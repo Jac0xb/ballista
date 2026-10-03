@@ -320,8 +320,8 @@ pub struct JitoTipAccounts {
 /// The strategy is one Jupiter `route` from the searcher's wrapped SOL back to it. The Swap API
 /// quotes the two legs separately, so they are joined: the second leg's step goes after the
 /// first's with its token indices moved up by one, and the joined list is the second leg's fixed
-/// accounts with the first leg's source, then both legs' step accounts. `round_trip` in
-/// `tests/protocols/tests/jito_tip.rs` joins single-step legs.
+/// accounts, then both legs' step accounts. `round_trip` in `tests/protocols/tests/jito_tip.rs`
+/// joins single-step legs, as `joinRoundTrip` does in TypeScript.
 ///
 /// `route` is the joined data split by [`RouteQuote::split`], and `strategy_accounts` its account
 /// list from the fifth account on: the template passes the token program, the searcher, and the

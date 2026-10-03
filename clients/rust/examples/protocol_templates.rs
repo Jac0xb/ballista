@@ -87,11 +87,6 @@ fn token_account(builder: &mut ProgramBuilder) -> u8 {
     builder.account(WRITE, None, Some(TOKEN_PROGRAM_ID.to_bytes()), TOKEN_ACCOUNT_LEN)
 }
 
-/// Declares a read-only account that SPL Token owns, long enough to be a mint.
-fn mint(builder: &mut ProgramBuilder) -> u8 {
-    builder.account(READ, None, Some(TOKEN_PROGRAM_ID.to_bytes()), MINT_LEN)
-}
-
 /// Requires the pubkey at `offset` in `account`'s data to be the address of account `expected`.
 fn require_key_at(builder: &mut ProgramBuilder, account: u8, offset: u64, expected: u8) {
     let stored = builder.read(OP_READ_PUBKEY, account, offset);

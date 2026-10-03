@@ -911,8 +911,9 @@ impl ProgramView<'_> {
     }
 
     /// An `EMIT` starts with a literal tag of at least `MIN_EMIT_TAG_LEN` bytes outside the run
-    /// event's family, `RUN_EVENT_TAG_FAMILY`. A log line names the program that wrote it but not
-    /// the template, so an untagged line could be a byte-exact run event for any template address.
+    /// event's family, `RUN_EVENT_TAG_FAMILY`. The `invoke` lines around a `Program data:` line show
+    /// which program logged it, but nothing shows the template, so an untagged line could be a
+    /// byte-exact run event for any template address.
     /// Checked after `verify_output`, so a bad segment reports its own error first.
     fn verify_emit_tag(
         &self,
@@ -3566,9 +3567,10 @@ mod tests {
         }
     }
 
-    /// A log line names the program that wrote it, not the template, so an `EMIT` starts with a
-    /// literal tag of four bytes or more, and never with the run event's family: otherwise any
-    /// template could log a byte-exact run event for any template address.
+    /// The `invoke` lines around a `Program data:` line show which program logged it, not which
+    /// template, so an `EMIT` starts with a literal tag of four bytes or more, and never with the
+    /// run event's family: otherwise any template could log a byte-exact run event for any
+    /// template address.
     #[test]
     fn an_emit_starts_with_a_tag_outside_the_run_event_family() {
         let emit = |parts: &dyn Fn(&mut ProgramBuilder, u8) -> Vec<Segment>| {

@@ -185,9 +185,10 @@ pub const OP_REPEAT: u8 = 61;
 /// `sol_log_data` as one field. Writes no register.
 ///
 /// The first segment must be a literal tag of at least [`MIN_EMIT_TAG_LEN`] bytes that does not
-/// start with [`RUN_EVENT_TAG_FAMILY`]. A log line names the program that wrote it, Ballista, but
-/// not the template, so without a tag a template could log a byte-exact copy of the run event for
-/// any template address, and indexers could not tell the copy from the real one.
+/// start with [`RUN_EVENT_TAG_FAMILY`]. A `Program data:` line names nothing: the `invoke` lines
+/// around it show that Ballista logged it, but no line names the template, so without a tag a
+/// template could log a byte-exact copy of the run event for any template address, and indexers
+/// could not tell the copy from the real one.
 pub const OP_EMIT: u8 = 62;
 /// Encodes the data segments the immediate names and sets the bytes as the run's return data.
 /// Allowed once, outside every loop, after the last invoke. Writes no register.

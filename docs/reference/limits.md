@@ -88,22 +88,26 @@ in all. See [what it costs](/guide/why-ballista#cost). The rules are under
 ### Registers {#registers}
 
 A template has 64 [registers](/reference/glossary#register), each holding one value during a run.
-Each of these takes one:
+The TypeScript compiler gives each value its own register:
 
 - each fixed input the steps read, and each distinct constant, loaded once before the first step;
 - each value an expression reads or computes: an account read, the clock, a row input, a sum, a
   comparison, a cast.
 
-A `let` takes none of its own: it names its value's register, and every later read of the name
-reuses it. Writing the same read or sum twice computes it twice, so give a value used more than
-once a `let`. A loop body compiles once, so its registers count once, however many passes it
-makes.
+A `let` takes none of its own: it names its value's register. Writing the same read or sum twice
+computes it twice, so give a value used more than once a `let`. A loop body compiles once, so its
+registers count once, however many passes it makes.
 
-`compileTemplate(template).stats.registers` gives the count. `stats.instructions` counts VM
-instructions, at most 128: each value above takes one, and so do most other steps, such as a
-`require` or a call. Compilation fails when a template needs more than either limit. In Rust, each
-builder call that returns a register takes a new one, and `ProgramView::parse(&bytes)?.verify()?`
-reports both counts.
+Past 64, the compiler reuses a register once its value has been read for the last time. Inputs
+and constants hold theirs from the start of the run, and a value read inside a loop holds its
+register for the whole loop. Compilation fails only when more than 64 values are in use at once:
+`Template uses more than 64 registers: N values are in use at once at steps[k] (label)`.
+
+`compileTemplate(template).stats.registers` gives the count after reuse, and `stats.instructions`
+the VM instructions, at most 128: each value above takes one, and so do most other steps, such as
+a `require` or a call. The Rust `ProgramBuilder` doesn't reuse registers: each call that returns
+one takes a new one, so reuse one by hand, with `mov` or a raw `record`.
+`ProgramView::parse(&bytes)?.verify()?` reports both counts.
 
 ## TypeScript SDK limits
 
@@ -125,6 +129,23 @@ loop at its maximum, must fit in 64.
 ## Transaction limits {#transaction-ceilings}
 
 Solana's own limits often bind before Ballista's.
+
+### Transaction size {#transaction-size}
+
+A legacy or version 0 transaction holds at most **1,232 bytes**, and each upload instruction goes
+in a transaction of its own. With the creator as fee payer, these are the largest that fit:
+
+| Transaction | Largest upload chunk | Largest template uploaded in one shot |
+| --- | ---: | ---: |
+| Legacy | 1,023 bytes | 960 bytes |
+| Version 0 | 1,021 bytes | 958 bytes |
+
+One byte more makes 1,233. Larger templates upload in chunks. In one shot, the version 0
+transaction would be 1,288 bytes for the [daily cap](/examples/protocols/daily-cap), 1,636 for the
+[signed quote](/examples/protocols/signed-quote) and 1,866 for the
+[oracle swap](/examples/protocols/jupiter-oracle-swap). In TypeScript, give
+`buildKitTemplateUploadPlan` the `transactionMessage` you send, and it fits each instruction to it
+([Lifecycle](/reference/typescript#lifecycle)).
 
 ### Accounts per transaction
 

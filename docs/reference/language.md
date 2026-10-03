@@ -288,9 +288,9 @@ value is non-zero still fails when it is zero, because the division runs either 
 ## Bindings
 
 A binding evaluates an expression once, at its place in the step list, and keeps the result in a
-register for the rest of the run. Write one with `step.let(name, value)` or
-`step.snapshot(name, value)`. The two compile identically; `snapshot` reads better in
-before-and-after checks. Read the value back with `expression.variable(name)` or
+[register](/reference/limits#registers) for every later read. Write one with
+`step.let(name, value)` or `step.snapshot(name, value)`. The two compile identically; `snapshot`
+reads better in before-and-after checks. Read the value back with `expression.variable(name)` or
 `expression.snapshot(name)`.
 
 Bindings are what make before-and-after comparisons possible. An expression written inline is
@@ -354,7 +354,7 @@ A template's steps run in order. Each one is one of these:
 | `step.setReturnData(parts, label?)` | Set the encoded parts as the run's return data; see [Output](#output) |
 | `step.setRegistry(entry, field, value, label?)` | Write a value of the field's type into a field of a registry entry; see [Registries](#registries) |
 | `step.forEach(steps, { carry?, label? })` | Run the steps once per batch row; top level only; see [Loops](#loops) |
-| `step.repeat(count, steps, { max, carry?, label? })` | Run the steps `count` times, at most `max` (1 to 255); top level only |
+| `step.repeat(count, steps, { max, carry?, label? })` | Run the steps `count` times; a `count` above `max` (1 to 255) fails the run with `LoopCountExceeded`; top level only; see [Count loops](#count-loops) |
 
 - **Only an invocation can be skipped,** by its guard. Every other step runs each time the run
   reaches it.
@@ -407,9 +407,10 @@ and clients to read.
 - **A tag first.** Its first part must be a literal tag of at least 4 bytes that does not start
   with `BEV`, so the line cannot pass for Ballista's own
   [run event](/guide/errors-and-events#run-events), which starts with `BEV1`.
-- **The tag doesn't identify the template.** A log line names the program that wrote it, Ballista,
-  and any template can log the same tag. Before trusting a line, check which template ran: the
-  run instruction's template account, or the run event's template address.
+- **The tag doesn't identify the template.** The line names no program; the `invoke` lines around
+  it do, and `parseProgramData` (TypeScript) and `program_data` (Rust) follow them. Any template can
+  log the same tag, so before trusting a line, check which template ran: the run instruction's
+  template account, or the run event's template address.
 - **Logs can be cut short.** Solana keeps 10,000 bytes of a transaction's logs by default, counting
   every program's lines, then writes `Log truncated` and drops the rest. Base64 makes an `emit`'s
   line a third longer than its bytes, so many emits, or a transaction whose other programs log a
@@ -428,8 +429,9 @@ invoked it.
   reads a nested run's return data must pin the inner template's address, or a run of any template
   could supply it.
 - **A transaction's return data is its last instruction's.** Each instruction starts with none, so
-  any instruction after the run replaces it. Put the run last, simulate the transaction, or read
-  the run's `Program return:` log line.
+  any instruction after the run replaces it. Put the run last, or read the run's `Program return:`
+  log line. That line names the program whose call ended, not the one that set the bytes, so after
+  a run that sets none, it can show a called program's bytes under Ballista's name.
 
 ## Loops
 
@@ -517,8 +519,9 @@ counts as 3 of the run's CPIs, since creating an entry can take three calls to t
   another template's.
 - **A missing entry** is created. The account must hold no data, be owned by the System program,
   and sit at the entry's address, or the run fails with `InvalidRegistryEntry`. The payer pays the
-  rent, or only the part still missing if the address already holds lamports. Ballista signs for
-  the entry's address to create the account, then writes its header. The fields start at zero.
+  rent, or only the part still missing if the address already holds lamports. Ballista creates the
+  account ([when Ballista signs](/guide/trust-model#signing)) and writes its header. The fields
+  start at zero.
 - **An entry already open in this run** fails with `InvalidRegistryEntry`. Two entries of one
   registry are one account when their keys come out equal, such as a sender who names themselves
   as the receiver. Entries open before the first step, so no `require` can catch this first; a

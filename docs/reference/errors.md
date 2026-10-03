@@ -61,7 +61,7 @@ Raised while uploading or running a template.
 | 6022 | `0x1786` | `LoopCountExceeded` | A `repeat` count was above the loop's `max` |
 | 6023 | `0x1787` | `InstructionOutOfRange` | A read asked for an instruction, account position or byte range that does not exist |
 | 6024 | `0x1788` | `WritableAccountBytesRead` | `accountDataBytes` read an account the transaction passed as writable |
-| 6025 | `0x1789` | `InvalidRegistryEntry` | An account passed as a registry entry is not that entry (wrong address, owner, size or header), or is an entry already open in this run |
+| 6025 | `0x1789` | `InvalidRegistryEntry` | An account passed as a registry entry is not that entry (wrong address, owner, size or header), or is an entry this run already has open (two entries of one registry with equal keys) |
 | 6026 | `0x178A` | `RegistryReentry` | A CPI passed an open registry entry as writable |
 
 A declared signer that did not sign fails with Solana's `MissingRequiredSignature`, not a Ballista

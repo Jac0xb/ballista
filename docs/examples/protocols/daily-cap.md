@@ -95,15 +95,16 @@ are in a different order.
   second sale fails at `withinRateLimit` before Jupiter is called, and still fails 13,599 seconds
   later. At 13,600 seconds it lands, and `spent` ends exactly at the cap. Another caller, with the
   first's limit spent, still sells, on an entry of their own.
-- **Cost.** The transaction took 82,620 compute units (Solana's measure of execution cost) when it
-  created the entry, and 71,834 when the entry already existed. Ballista's own share, its run less
-  Jupiter's `route`, was 9,536 and 7,801. The transaction is 807 bytes, 109 more than Jupiter's
-  own, and the template 966 bytes.
+- **Cost.** The transaction took 82,728 compute units (Solana's measure of execution cost) when it
+  created the entry, and 71,942 when the entry already existed. Ballista's own share, its run less
+  Jupiter's `route`, was 9,644 and 7,909. The transaction is 807 bytes, 109 more than Jupiter's
+  own, and the template 1,014 bytes.
 - **Failures.** Each of these fails, and the whole transaction reverts, so no entry is created or
   changed: a route selling 150 USDC through a Raydium pool (`spendsWrappedSol`, before Jupiter is
   called); the same route with a second wSOL account of the caller's at `sourceAta`
   (`soldWhatTheCapCharged`, after the route); a caller passing another caller's entry, before or
-  after it exists (`InvalidRegistryEntry`, before the first step).
+  after it exists (`InvalidRegistryEntry`, before the first step); a route that charges a platform
+  fee (`platformFeeWithinCap`, before Jupiter is called).
 - A test reads the template and checks `route`'s accounts, that no input but `inAmount` reaches
   the limit, the order of the checks, and that the signing actor keys and pays for the entry
   (`clients/js/src/protocol-semantics.test.ts`).

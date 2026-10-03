@@ -65,7 +65,7 @@ account.
   empties a 100 USDC marginfi balance and sweeps it to the treasury: all of it, less at most the
   one base unit marginfi's rounding can keep. With 1 SOL also deposited, `healthAccounts` carried
   the SOL bank and its oracle, and the USDC came out, leaving the SOL. The whole transaction took
-  60,162 compute units (Solana's measure of execution cost) and 550 bytes, or 78,056 and 616 with
+  60,030 compute units (Solana's measure of execution cost) and 550 bytes, or 77,924 and 616 with
   the SOL balance.
 - **Failures.** A `minimumWithdrawn` one unit above the deposit fails at `withdrawalMetItsFloor`.
   An attacker's account as `treasuryAta` fails at `sweepGoesToTheAuthority`, and as both

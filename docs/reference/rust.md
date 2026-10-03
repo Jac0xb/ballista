@@ -89,7 +89,7 @@ ProgramView::parse(&payload)?.verify()?;
 | `mov(dst, source)` | Copies one register into another; used to update a carried register |
 | `require(condition)` | Fails the run unless the `bool` register `condition` is true |
 
-Other methods cover the rest of the instruction set:
+The other methods:
 
 - `const_bool`, `const_i64`, `const_u128`, `const_pubkey`, and `const_bytes` load constants.
 - `account_key`, `account_owner`, `account_lamports`, `account_data_len`, and `account_is_empty`
@@ -100,9 +100,9 @@ Other methods cover the rest of the instruction set:
 - `derive_pda` and `create_pda` compute PDAs; `row_input` declares a row input; `account_groups`
   with `cpi_with_group` forwards account groups; `set_cpi_max_data_len` overrides a CPI's maximum
   data length; `flags` sets the program header flags.
-- `op`, `emit`, `register`, and `register_count`, with the free functions `record`,
-  `range_immediate`, and `segment_width`, work with raw instruction records. The `*_mut` accessors
-  exist for negative tests.
+- `op`, `emit`, `register`, `register_count`, and `pubkey`, which adds an address to the pubkey
+  table, work with raw records, as do the free functions `record`, `range_immediate`, and
+  `segment_width`. The `*_mut` accessors exist for negative tests.
 
 The sections below cover math, loops, output, introspection, and registries, and
 [Wire format](/reference/wire-format) lists every opcode.

@@ -79,13 +79,14 @@ are in a different order.
 - **Against the real programs.** `tests/protocols/tests/token_sweep.rs` sells USDC for SOL through
   Jupiter and Raydium's SOL/USDC pool, in place of `route` in the transaction Jupiter's API built.
   With the route quoted for 150 USDC, balances 3% over, 3% under and ten times that each sold in
-  full and met the scaled quote. The run added about 7,600 compute units (Solana's measure of
+  full and met the scaled quote. The run added about 7,400 compute units (Solana's measure of
   execution cost) and 52 bytes to Jupiter's transaction.
 - **Failures.** Each of these fails, and the whole transaction reverts: a balance at `dustFloor`
   (`worthSelling`); another wallet's source or an attacker's destination
   (`sweepsTheSellersOwnBalance`, `proceedsGoToTheSeller`, before Jupiter is called); a route that
   pays the attacker while the seller's account is measured (`saleMetTheQuote`); a balance 10,000
-  times the quote (inside Raydium).
+  times the quote (inside Raydium); a route that charges a platform fee (`platformFeeWithinCap`,
+  before Jupiter is called).
 - A test reads the template and checks that it calls `route` with its accounts in `route`'s order,
   sells the balance it read, scales the quote to it, and makes the two owner checks first
   (`clients/js/src/protocol-semantics.test.ts`).

@@ -85,14 +85,15 @@ are in a different order.
 - **Against the real programs.** `tests/protocols/tests/oracle_checked_swap.rs` sells 1 SOL for
   USDC through Jupiter and a Meteora pool, valued at Pyth's SOL/USD price, in place of `route` in
   the transaction Jupiter's API built. With `toleranceBps` 100 it fills exactly as that transaction
-  does alone, for about 10,500 more compute units (Solana's measure of execution cost) and 150 more
+  does alone, for about 9,900 more compute units (Solana's measure of execution cost) and 150 more
   bytes. Its floor matches the formula above to the last unit. Jupiter's `route` on its own takes
   exactly `in_amount` through a split route and with a platform fee, as `soldTheRouteInput` needs.
 - **Failures.** Each of these fails, and the whole transaction reverts: an oracle 5% above the
   market (`fillBeatTheOracle`, after the swap); spare token accounts of the trader's at `sourceAta`
   and `destinationAta` while the route moves others (`soldTheRouteInput`); another wallet's source
   or an attacker's destination (`sellsTheTradersOwnTokens`, `proceedsGoToTheTrader`, before Jupiter
-  is called); USDC/USD's price account passed as SOL/USD's (`priceIsTheExpectedFeed`).
+  is called); USDC/USD's price account passed as SOL/USD's (`priceIsTheExpectedFeed`); a route that
+  charges a platform fee (`platformFeeWithinCap`, before Jupiter is called).
 - A test reads the template and checks that it calls `route` in `route`'s account order, values
   what left the source at the Pyth price with both mints' decimals, and orders the feed pin, owner
   checks and `soldTheRouteInput` as above (`clients/js/src/protocol-semantics.test.ts`).

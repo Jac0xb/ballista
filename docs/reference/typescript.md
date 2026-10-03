@@ -424,7 +424,8 @@ The core package also exports:
 - `BALLISTA_PROGRAM_ADDRESS`, the program's address as a base58 string.
 - The limits as `MAX_*` constants, such as `MAX_RUNTIME_ACCOUNTS` and `MAX_EXPANDED_CPIS`; see
   [Limits](/reference/limits).
-- `opcode`, the bytecode opcode numbers, and the `INSTRUCTION_*` instruction tags.
+- `opcode`, the bytecode opcode numbers, and `INSTRUCTION_CREATE_TEMPLATE` through
+  `INSTRUCTION_RUN`, the first byte of each Ballista instruction.
 - `RUNTIME_ERROR_NAMES` and `VERIFIER_ERROR_NAMES`, the error names in code order from
   `RUNTIME_ERROR_BASE` (6000) and `VERIFIER_ERROR_BASE` (6100).
 - The Zod schemas behind `defineTemplate`, such as `TemplateSchema` and `StepSchema`.

@@ -65,8 +65,8 @@ or permission rules, prevent replays, or loop in ways that cannot be bounded in 
 - A finalized template (one that has been checked and locked on chain) is public, and anyone can
   run it. Authority comes from the transaction's signers and from the checks inside the programs the
   template calls.
-- A template never runs on its own, holds assets, or signs as a PDA. Automation that runs without a
-  user signing needs a delegate or authority model from another program.
+- A template never runs on its own, signs as a PDA, or spends assets of its own. Automation that
+  runs without a user signing needs a delegate or authority model from another program.
 - A template has at most eight loops, never nested, each with a fixed maximum number of passes, so
   the work a run can do is always bounded.
 

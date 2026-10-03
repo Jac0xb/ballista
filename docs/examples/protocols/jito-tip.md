@@ -80,7 +80,8 @@ are in a different order.
 - **Failures.** One lamport more fails at `profitCoversTheTip` and pays nothing, and so does a
   1,000-lamport tip on the losing round trip. A USDC account as `wsolAccount` fails at
   `wsolAccountHoldsWrappedSol`, another wallet's wSOL at `searcherOwnsTheWsolAccount`, and a plain
-  wallet as `jitoTip` at its owner constraint.
+  wallet as `jitoTip` at its owner constraint. A route that charges a platform fee fails at
+  `platformFeeWithinCap`, before Jupiter is called.
 - **Jupiter's side.** Sent to Jupiter directly, a profitable round trip grows the searcher's wSOL
   and leaves its lamports alone, apart from the fee.
 - **Not tested.** Jito's block engine isn't part of LiteSVM, so the tests show the tip is paid, not

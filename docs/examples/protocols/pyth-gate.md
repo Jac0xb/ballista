@@ -77,7 +77,8 @@ are in a different order.
   either end of the band at `priceAboveFloor` or `priceBelowCeiling`. An in-band price with another
   feed's id fails at `priceIsTheExpectedFeed`, and the SOL/USD account with its exponent moved from
   −8 to −7 at `priceExponentIsExpected`. No test fails the verification-level or confidence
-  check.
+  check. A route that charges a platform fee fails at `platformFeeWithinCap`, before Jupiter is
+  called.
 - A test reads the template and checks that it calls `route` with its accounts in `route`'s order,
   and checks the feed and then the exponent right after the verification level
   (`clients/js/src/protocol-semantics.test.ts`).

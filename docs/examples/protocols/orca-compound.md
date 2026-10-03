@@ -86,7 +86,7 @@ spend those accounts outside this template too.
 - **Against the real program.** `tests/protocols/tests/orca_compound_fees.rs` earns fees with real
   swaps through the pool, then runs the template:
   - Fees in both tokens are updated, collected and reinvested. The liquidity added is exactly what
-    Orca's own math says the fees buy, and one fee is used whole. The run took 43,958 compute units
+    Orca's own math says the fees buy, and one fee is used whole. The run took 43,784 compute units
     (Solana's measure of execution cost) and 706 bytes.
   - Fees in one token are collected whole, not reinvested. With no fees, only the update runs. A
     position without liquidity gets no Whirlpools call, and an emptied one is collected, not

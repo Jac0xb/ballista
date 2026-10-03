@@ -85,7 +85,7 @@ which program refused. The TypeScript run's `describeFailure` reads the logs to 
   - Four rows: fees in both tokens; fees in token B only, with the NFT held in a Token-2022
     account; out of range, with no fees; and no liquidity. The first two update and collect, the
     third only updates, and the fourth makes no call. The holder receives exactly the first two
-    rows' fees. The run took 61,200 compute units and 747 bytes.
+    rows' fees. The run took 60,880 compute units and 747 bytes.
   - A row whose only fee equals `dustFloor` updates and leaves the fee owed, while a row above the
     floor collects.
 - **Failures.** A stranger signing fails in Whirlpools with `MissingOrInvalidDelegate`, which the
@@ -96,7 +96,7 @@ which program refused. The TypeScript run's `describeFailure` reads the logs to 
 - **A delegate.** A keeper approved on the NFT signs the run, and the holder's own accounts receive
   the fees.
 - **Limits.** Eight earning rows land within the default 200,000 compute units, with no
-  compute-budget instruction, using 193,145; nine run out. Ten rows sharing tick arrays fit one
+  compute-budget instruction, using 192,418; nine run out. Ten rows sharing tick arrays fit one
   transaction with a compute-budget instruction; eleven don't.
 - **Whirlpools alone.** `collect_fees` with nothing owed succeeds and moves nothing
   (`tests/protocols/tests/orca_setup.rs`).

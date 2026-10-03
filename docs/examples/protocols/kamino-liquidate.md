@@ -79,7 +79,7 @@ and `kamino_refreshes` (Rust), next to the runs, build them.
   an obligation that deposited 1 SOL and borrowed 70% of its value in USDC, after the test cut
   SOL's price 12%, behind Kamino's refreshes. The run repaid 10% of the debt, the market's limit
   per liquidation, and received more SOL than that USDC was worth at the oracle price, with no
-  cTokens left over. The whole transaction took 185,402 compute units (Solana's measure of
+  cTokens left over. The whole transaction took 185,271 compute units (Solana's measure of
   execution cost) and 1,045 bytes.
 - **Failures.** A `minimumBounty` one lamport above the payout fails at `liquidationPaidTheBounty`,
   with nothing moved. An attacker's account, approved for the liquidator, as

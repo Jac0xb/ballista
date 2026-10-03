@@ -79,14 +79,15 @@ are in a different order.
 - **Against the real programs.** `tests/protocols/tests/kamino_repay_swap_output.rs` sells 1 SOL
   through Jupiter and a Meteora pool, behind Kamino's refreshes, for a borrower owing three times
   the route's quote. The debt falls by exactly what the swap produced. The whole transaction took
-  141,280 compute units (Solana's measure of execution cost) and 993 bytes, using the route's
+  141,830 compute units (Solana's measure of execution cost) and 1,006 bytes, using the route's
   lookup table.
 - **Failures.** A `minimumRepayment` one unit above the output fails at `swapWorthRepaying`, swap
   included. An attacker's account, approved for the borrower, as `borrowedAssetAta` fails at
-  `swapPaysTheBorrower`, before Jupiter is called.
+  `swapPaysTheBorrower`, before Jupiter is called. A route that charges a platform fee fails at
+  `platformFeeWithinCap`, before Jupiter is called.
 - **Not tested.** Mainnet itself, a reserve with a debt farm, and Token-2022 tokens: the template
   accepts SPL Token accounts only. Only `borrowedAssetAta` is tied to the borrower; the route's
-  accounts and the inputs are the run builder's choice.
+  accounts and the inputs are the run builder's choice, apart from the capped platform fee.
 - A test reads the template and checks that it calls `route` with its accounts in `route`'s order,
   and repays through Kamino's v2 handler exactly what the swap produced, with `farmAccounts` as its
   group (`clients/js/src/protocol-semantics.test.ts`).

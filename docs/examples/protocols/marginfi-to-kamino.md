@@ -77,7 +77,7 @@ Before the run:
   100 USDC marginfi balance, the account's only one, into Kamino's USDC reserve, which has a
   collateral farm, behind Kamino's refreshes. Kamino was asked for exactly what marginfi released
   and kept back no more than its cToken rounding, and the marginfi balance closed. The whole
-  transaction took 162,738 compute units (Solana's measure of execution cost) and 1,009 bytes.
+  transaction took 162,666 compute units (Solana's measure of execution cost) and 1,009 bytes.
 - **Failures.** A `minimumMoved` one unit above the deposit fails at `worthRebalancing`, with
   nothing moved.
 - **Not tested.** Mainnet itself, a marginfi account with other balances, a reserve without a

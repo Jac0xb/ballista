@@ -90,12 +90,13 @@ are in a different order.
 - **Against the real programs.** `tests/protocols/tests/jupiter_deposit_exact_output.rs` sells 1 SOL
   for USDC through Jupiter and a Meteora pool, then deposits into Kamino's USDC reserve, which has
   a collateral farm. Of the 121,391,105 USDC units the swap produced, Kamino took all but 1, its
-  cToken rounding. The whole transaction, refreshes included, took 150,842 compute units (Solana's
-  measure of execution cost) and 1,072 bytes.
+  cToken rounding. The whole transaction, refreshes included, took 151,372 compute units (Solana's
+  measure of execution cost) and 1,085 bytes.
 - **Failures.** A `minimumOut` one unit above the fill fails at `swapMetItsFloor`, and nothing is
   deposited. Kamino refuses a deposit with no refresh in its slot (`ObligationStale`), and one into
   a farmed reserve without the farm accounts (`FarmAccountsMissing`, in
-  `tests/protocols/tests/kamino_contract.rs`).
+  `tests/protocols/tests/kamino_contract.rs`). A route that charges a platform fee fails at
+  `platformFeeWithinCap`, before Jupiter is called.
 - A test reads the template and checks that it calls `route` with its accounts in `route`'s order,
   that the deposit is v2 with `farmAccounts` as its group, and that the runner above forwards only
   what follows those four accounts (`clients/js/src/protocol-semantics.test.ts`).

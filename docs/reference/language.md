@@ -354,7 +354,7 @@ A template's steps run in order. Each one is one of these:
 | `step.setReturnData(parts, label?)` | Set the encoded parts as the run's return data; see [Output](#output) |
 | `step.setRegistry(entry, field, value, label?)` | Write a value of the field's type into a field of a registry entry; see [Registries](#registries) |
 | `step.forEach(steps, { carry?, label? })` | Run the steps once per batch row; top level only; see [Loops](#loops) |
-| `step.repeat(count, steps, { max, carry?, label? })` | Run the steps `count` times, at most `max` (1 to 255); top level only |
+| `step.repeat(count, steps, { max, carry?, label? })` | Run the steps `count` times; a `count` above `max` (1 to 255) fails the run with `LoopCountExceeded`; top level only; see [Count loops](#count-loops) |
 
 - **Only an invocation can be skipped,** by its guard. Every other step runs each time the run
   reaches it.

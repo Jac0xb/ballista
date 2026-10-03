@@ -361,11 +361,20 @@ mod abi_sizes {
 
     #[test]
     fn summarized_functions_return_the_sizes_the_summaries_assume() {
-        // bounded_invoke and create_template_account: one word in r0. create_entry, like the
-        // push_bytes implementations, returns RunResult<()> through r1.
+        // bounded_invoke and create_template_account: one word in r0. invoke_cpi and create_entry,
+        // like the push_bytes implementations, return RunResult<()> through r1.
         assert_eq!(size_of::<pinocchio::ProgramResult>(), 8);
         // The three ByteSink::push_bytes implementations: three 32-bit words through r1.
         assert_eq!(size_of::<ballista::processor::execute::RunResult<()>>(), 12);
+        // derive_pda: the tag byte, then the address from offset 1, through r1.
+        let derived: ballista::processor::execute::RunResult<[u8; 32]> = Ok([7; 32]);
+        let base = (&derived as *const ballista::processor::execute::RunResult<[u8; 32]>).cast::<u8>();
+        // SAFETY: both reads stay inside the result, which is at least 33 bytes.
+        unsafe {
+            assert_eq!(*base, 0, "Ok's tag is byte 0");
+            assert_eq!(*base.add(1), 7, "the address starts at byte 1");
+            assert_eq!(*base.add(32), 7, "and ends at byte 32");
+        }
         // get_template_address: the address's four words, then the bump, through r1.
         let derived: (pinocchio::Address, u8) = (pinocchio::Address::new_from_array([7; 32]), 9);
         assert_eq!(size_of::<(pinocchio::Address, u8)>(), 33);

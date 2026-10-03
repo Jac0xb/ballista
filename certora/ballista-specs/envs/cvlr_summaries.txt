@@ -161,3 +161,19 @@
 #[type((*i64)(r1+24):num)]
 #[type((*i8)(r1+32):num)]
 ^ballista::utils::pda::get_template_address$
+
+
+;; RunResult<[u8; 32]> through the slot in r1: the tag byte, then the address as four unaligned
+;; words from offset 1, the cells `step` reads back.
+#[type((*i8)(r1+0):num)]
+#[type((*i64)(r1+1):num)]
+#[type((*i64)(r1+9):num)]
+#[type((*i64)(r1+17):num)]
+#[type((*i64)(r1+25):num)]
+^ballista::processor::execute::derive_pda$
+
+;; RunResult<()> through the slot in r1, as for push_bytes.
+#[type((*i32)(r1+0):num)]
+#[type((*i32)(r1+4):num)]
+#[type((*i32)(r1+8):num)]
+^ballista::processor::execute::invoke_cpi$

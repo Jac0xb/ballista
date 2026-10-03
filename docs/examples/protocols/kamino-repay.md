@@ -86,8 +86,8 @@ it.
   included. An attacker's account, approved for the borrower, as `borrowedAssetAta` fails at
   `swapPaysTheBorrower`, before Jupiter is called. A route that charges a platform fee fails at
   `platformFeeWithinCap`, before Jupiter is called.
-- **Not tested.** Mainnet itself, a reserve with a debt farm, and Token-2022 tokens: the template
-  accepts SPL Token accounts only. Only `borrowedAssetAta` is tied to the borrower; the route's
-  accounts and the inputs are the run builder's choice, apart from the capped platform fee.
+- **Not tested.** Devnet and mainnet, a reserve with a debt farm, and Token-2022 tokens: the
+  template accepts SPL Token accounts only. Only `borrowedAssetAta` is tied to the borrower; the
+  route's accounts and the inputs are the run builder's choice, apart from the capped platform fee.
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

@@ -99,8 +99,8 @@ it.
   with nothing moved. An attacker's account, approved for the liquidator, as
   `userDestinationLiquidity` or `userDestinationCollateral` fails at the matching owner check,
   before Kamino is called.
-- **Not tested.** Mainnet itself, a repaid reserve with a debt farm, the health gate above, and
-  Token-2022 tokens: the template accepts SPL Token accounts only. The inputs are the run
-  builder's choice.
+- **Not tested.** Devnet and mainnet, a repaid reserve with a debt farm, the health gate above, and
+  Token-2022 tokens: the template accepts SPL Token accounts only. The inputs are the run builder's
+  choice.
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

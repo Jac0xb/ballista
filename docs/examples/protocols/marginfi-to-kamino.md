@@ -50,8 +50,8 @@ The Rust tabs' `program`, `anchor` and account flags are
 
 marginfi's withdrawal takes its eight accounts, then the `healthAccounts`
 [account group](/guide/account-groups), filled as for
-[Withdraw everything, with a minimum](/examples/protocols/marginfi-withdraw#run-it). It is empty when
-the withdrawn balance was the account's only one.
+[Withdraw everything, with a minimum](/examples/protocols/marginfi-withdraw#run-it). It is empty
+when the withdrawn balance was the account's only one.
 
 Kamino's v2 deposit takes 17 accounts: 14 the template passes, then a second group,
 `farmAccounts`, of three. They are the obligation's user state in the reserve's collateral farm,
@@ -83,7 +83,7 @@ Before the run:
   units and 1,009 bytes.
 - **Failures.** A `minimumMoved` one unit above the deposit fails at `worthRebalancing`, with
   nothing moved.
-- **Not tested.** Mainnet itself, a marginfi account with other balances, a reserve without a
+- **Not tested.** Devnet and mainnet, a marginfi account with other balances, a reserve without a
   collateral farm, a `walletAta` that isn't `owner`'s, and Token-2022 tokens: the template accepts
   SPL Token accounts only. The input is the run builder's choice.
 

@@ -81,7 +81,7 @@ zero and refuses a debt with one. Update those oracles earlier in the transactio
   `destinationAta` and `treasuryAta` at `withdrawalGoesToTheAuthority`, before marginfi is called.
   Called directly without the SOL bank and oracle, marginfi refuses the same withdrawal
   (`InvalidBankAccount`, in `tests/protocols/tests/marginfi_contract.rs`).
-- **Not tested.** Mainnet itself, more than one remaining balance, banks priced by more than one
+- **Not tested.** Devnet and mainnet, more than one remaining balance, banks priced by more than one
   account (staked, Kamino), and Token-2022 tokens: the template accepts SPL Token accounts only. No
   test holds a marginfi debt or updates marginfi's oracles.
 

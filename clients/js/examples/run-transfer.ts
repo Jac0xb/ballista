@@ -7,8 +7,8 @@
  */
 import { address, getAddressDecoder } from '@solana/kit';
 
-import { explainRunError } from '../src/index.js';
-import { BALLISTA_ADDRESS, SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction, getTemplateAddress } from '../src/kit.js';
+import { explainRunError } from '@jac0xb/ballista';
+import { BALLISTA_ADDRESS, SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction, getTemplateAddress } from '@jac0xb/ballista/kit';
 import { compiledTransfer } from './transfer.js';
 
 const creator = address('11111111111111111111111111111111');

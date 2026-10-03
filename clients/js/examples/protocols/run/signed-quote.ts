@@ -1,8 +1,8 @@
 // #region run
 import { getAddressDecoder, getAddressEncoder, type Address, type Instruction } from '@solana/kit';
 
-import { ED25519_PROGRAM_ADDRESS_BYTES, INSTRUCTIONS_SYSVAR_ADDRESS_BYTES } from '../../../src/index.js';
-import { buildKitRunInstruction } from '../../../src/kit.js';
+import { ED25519_PROGRAM_ADDRESS_BYTES, INSTRUCTIONS_SYSVAR_ADDRESS_BYTES } from '@jac0xb/ballista';
+import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
 import { QUOTE, QUOTE_TAG, compiled } from '../signed-quote-settlement.js';
 import { TOKEN_PROGRAM, at, pinned } from './programs.js';
 

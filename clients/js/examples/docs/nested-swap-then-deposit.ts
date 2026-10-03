@@ -9,8 +9,8 @@ import {
   defineTemplate,
   expression,
   step,
-} from '../../src/index.js';
-import { BALLISTA_ADDRESS } from '../../src/kit.js';
+} from '@jac0xb/ballista';
+import { BALLISTA_ADDRESS } from '@jac0xb/ballista/kit';
 
 // Stand-ins so the example runs as written: replace them with the swap and vault programs, the
 // vault's deposit discriminator, and the inner template's address (`getTemplateAddress` gives it).
@@ -66,8 +66,8 @@ export const nestedSwapThenDeposit = defineTemplate({
 // #region run
 import { getAddressDecoder, type Address } from '@solana/kit';
 
-import { compileTemplate, encodeRunInputs } from '../../src/index.js';
-import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate, encodeRunInputs } from '@jac0xb/ballista';
+import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '@jac0xb/ballista/kit';
 import { swapAndReturnWhatArrived } from './swap-and-return-what-arrived.js';
 
 // The same stand-ins as the template.

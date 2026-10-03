@@ -7,7 +7,7 @@
  */
 import { address, type Address } from '@solana/kit';
 
-import { addressBytes, anchorDiscriminator } from '../../src/index.js';
+import { addressBytes, anchorDiscriminator } from '@jac0xb/ballista';
 
 /** The SDK's address and Anchor discriminator helpers, which the examples import from here. */
 export { addressBytes, anchorDiscriminator };

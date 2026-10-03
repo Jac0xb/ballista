@@ -1,5 +1,5 @@
 // #region template
-import { account, defineTemplate, expression, rateLimit, systemTransfer } from '../../src/index.js';
+import { account, defineTemplate, expression, rateLimit, systemTransfer } from '@jac0xb/ballista';
 
 /** Send SOL, at most 1 SOL at once per caller, refilling over about a day. */
 export const dailyLimitPerCaller = defineTemplate({
@@ -31,8 +31,8 @@ export const dailyLimitPerCaller = defineTemplate({
 // #region run
 import { type Address } from '@solana/kit';
 
-import { compileTemplate, registryIndex } from '../../src/index.js';
-import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction, findRegistryEntryAddress } from '../../src/kit.js';
+import { compileTemplate, registryIndex } from '@jac0xb/ballista';
+import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction, findRegistryEntryAddress } from '@jac0xb/ballista/kit';
 
 export async function runDailyLimitPerCaller(run: {
   templateAddress: Address;

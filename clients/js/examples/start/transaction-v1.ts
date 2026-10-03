@@ -31,7 +31,7 @@ declare const runInstruction: Instruction;
 
 // #region v1
 import { appendTransactionMessageInstruction } from '@solana/kit';
-import { createComputeUnitProvider } from '../../src/kit.js';
+import { createComputeUnitProvider } from '@jac0xb/ballista/kit';
 
 const { value: blockhash } = await rpc.getLatestBlockhash().send();
 const message = pipe(

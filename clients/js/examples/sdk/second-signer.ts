@@ -18,8 +18,8 @@ import {
   type TransactionSigner,
 } from '@solana/kit';
 
-import type { CompiledTemplate } from '../../src/index.js';
-import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '../../src/kit.js';
+import type { CompiledTemplate } from '@jac0xb/ballista';
+import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 /**
  * `compiled` is the sweep from Getting started, whose `vault` must sign. The vault's binding

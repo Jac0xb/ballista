@@ -7,7 +7,7 @@ import {
   defineTemplate,
   expression,
   step,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 
 // Stand-ins so the example runs as written: replace them with your protocol's address and the
 // instruction to call on the position.
@@ -48,8 +48,8 @@ export const canonicalPositionAccount = defineTemplate({
 // #region run
 import { address, getAddressEncoder, getProgramDerivedAddress, type Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 const PROTOCOL_PROGRAM_ADDRESS = address('11111111111111111111111111111111'); // the same stand-in
 

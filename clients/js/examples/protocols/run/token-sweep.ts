@@ -1,6 +1,6 @@
 import type { Address, Instruction } from '@solana/kit';
 
-import { buildKitRunInstruction, type KitAccountBinding } from '../../../src/kit.js';
+import { buildKitRunInstruction, type KitAccountBinding } from '@jac0xb/ballista/kit';
 import { compiled } from '../token-sweep-into-swap.js';
 import { JUPITER_V6, splitJupiterRoute } from '../shared.js';
 import { TOKEN_PROGRAM, at, pinned } from './programs.js';

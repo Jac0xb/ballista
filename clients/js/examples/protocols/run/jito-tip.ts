@@ -1,6 +1,6 @@
 import type { Address, Instruction } from '@solana/kit';
 
-import { buildKitRunInstruction } from '../../../src/kit.js';
+import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
 import { compiled } from '../jito-profit-guarded-tip.js';
 import { JUPITER_V6, joinRoundTrip, splitJupiterRoute, type JupiterLeg } from '../shared.js';
 import { SYSTEM_PROGRAM, TOKEN_PROGRAM, at, pinned } from './programs.js';

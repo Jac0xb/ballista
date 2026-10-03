@@ -1,5 +1,5 @@
 // #region template
-import { SYSTEM_PROGRAM_ADDRESS_BYTES, account, data, defineTemplate, expression, step } from '../../src/index.js';
+import { SYSTEM_PROGRAM_ADDRESS_BYTES, account, data, defineTemplate, expression, step } from '@jac0xb/ballista';
 
 // Stand-ins so the example runs as written: replace them with the queue program's address, its
 // settle instruction data, and the offset of the deadline in its entry account.
@@ -41,8 +41,8 @@ export const crankOnlyTheRipeEntries = defineTemplate({
 // #region run
 import { address, type Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 const QUEUE_PROGRAM_ADDRESS = address('11111111111111111111111111111111'); // the same stand-in
 

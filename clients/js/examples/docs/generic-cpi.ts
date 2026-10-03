@@ -1,5 +1,5 @@
 // #region template
-import { account, data, defineTemplate, expression, step } from '../../src/index.js';
+import { account, data, defineTemplate, expression, step } from '@jac0xb/ballista';
 
 // Placeholders: replace them with your program's address and its instruction discriminator.
 const MY_PROGRAM = new Uint8Array(32).fill(7);
@@ -38,8 +38,8 @@ export const genericCpi = defineTemplate({
 // #region run
 import { getAddressDecoder, type Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 const MY_PROGRAM_ADDRESS = getAddressDecoder().decode(new Uint8Array(32).fill(7)); // the placeholder
 

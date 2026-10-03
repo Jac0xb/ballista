@@ -13,7 +13,7 @@ import {
   step,
   systemTransfer,
   SYSTEM_PROGRAM_ADDRESS_BYTES,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 
 const sweep = defineTemplate({
   inputs: { reserve: { type: 'u64' } },

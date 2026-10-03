@@ -10,7 +10,7 @@ import {
   expression,
   step,
   tokenTransfer,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 
 /** For each row: prove the destination is the recipient's ATA, create it if missing, then pay. */
 export const assertCreateThenTransfer = defineTemplate({
@@ -63,8 +63,8 @@ export const assertCreateThenTransfer = defineTemplate({
 // #region run
 import { address, type Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 const TOKEN_PROGRAM = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 const ASSOCIATED_TOKEN_PROGRAM = address('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');

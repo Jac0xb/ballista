@@ -8,7 +8,7 @@ import {
   expression,
   step,
   tokenTransfer,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 
 // Stand-ins so the example runs as written: replace them with the rewards program's address and
 // its claim instruction data.
@@ -57,8 +57,8 @@ export const claimThenDistribute = defineTemplate({
 // #region run
 import { address, type Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 const REWARDS_PROGRAM_ADDRESS = address('11111111111111111111111111111111'); // the same stand-in
 const TOKEN_PROGRAM = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');

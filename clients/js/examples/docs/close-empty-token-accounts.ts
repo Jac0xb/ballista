@@ -6,7 +6,7 @@ import {
   defineTemplate,
   expression,
   step,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 
 /** SPL Token `CloseAccount`: a single discriminator byte, no arguments. */
 const CLOSE_ACCOUNT = Uint8Array.of(9);
@@ -44,8 +44,8 @@ export const closeEmptyTokenAccounts = defineTemplate({
 // #region run
 import { address, type Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 const TOKEN_PROGRAM = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 

@@ -7,7 +7,7 @@ import {
   expression,
   step,
   type Step,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 import { JUPITER_V6, addressBytes } from '../protocols/shared.js';
 
 // SPL Token account layout: the owner is the pubkey at byte 32, the amount the u64 at byte 64.
@@ -91,8 +91,8 @@ export const rebalanceThreeSwaps = defineTemplate({
 // #region run
 import { address, type Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { buildKitRunInstruction, type KitAccountBinding } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { buildKitRunInstruction, type KitAccountBinding } from '@jac0xb/ballista/kit';
 
 const TOKEN_PROGRAM = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 

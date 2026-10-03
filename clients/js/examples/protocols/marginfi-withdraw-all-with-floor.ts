@@ -9,7 +9,7 @@ import {
   expression,
   step,
   tokenTransfer,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 import {
   MARGINFI_V2,
   MARGINFI_WITHDRAW,

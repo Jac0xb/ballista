@@ -10,7 +10,7 @@ import {
   expression,
   step,
   systemTransfer,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 import {
   JITO_TIP_PAYMENT,
   JUPITER_ROUTE,

@@ -1,7 +1,7 @@
 /** What marginfi's health check reads after a withdrawal. */
 import { getAddressEncoder, type Address } from '@solana/kit';
 
-import type { KitAccountBinding } from '../../../src/kit.js';
+import type { KitAccountBinding } from '@jac0xb/ballista/kit';
 
 /** A balance the marginfi account still holds: its bank, and the bank's oracle. */
 export interface MarginfiBalance {

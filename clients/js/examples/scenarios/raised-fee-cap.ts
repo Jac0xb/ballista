@@ -3,7 +3,7 @@
  * running their own frontend might raise it. `tests/protocols/tests/oracle_checked_swap.rs` runs
  * it to show that a fee within the cap lands and one above it fails at `platformFeeWithinCap`.
  */
-import { expression, step, type Template } from '../../src/index.js';
+import { expression, step, type Template } from '@jac0xb/ballista';
 import { jupiterOracleCheckedSwap } from '../protocols/jupiter-oracle-checked-swap.js';
 
 /** 1%: the raised cap. */

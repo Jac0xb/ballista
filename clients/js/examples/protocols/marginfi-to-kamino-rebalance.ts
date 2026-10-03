@@ -8,7 +8,7 @@ import {
   defineTemplate,
   expression,
   step,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 import {
   KAMINO_DEPOSIT,
   KAMINO_LEND,

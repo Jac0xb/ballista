@@ -11,9 +11,7 @@ runs and works out the amount.
 
 Steps 1 to 5 build one file, in order: in TypeScript a file such as `sweep.mts`, and in Rust the
 body of `fn main() -> Result<(), Box<dyn std::error::Error>>` in `src/main.rs`, ending with
-`Ok(())`. Pick a language on any code block and the others follow. The TypeScript imports the SDK
-from this repository's source; in your file, change `../../src/index.js` to `@jac0xb/ballista` and
-`../../src/kit.js` to `@jac0xb/ballista/kit`.
+`Ok(())`. Pick a language on any code block and the others follow.
 
 ## Install {#install-the-workspace}
 

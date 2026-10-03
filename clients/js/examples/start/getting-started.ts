@@ -10,7 +10,7 @@ import { emptyMessage, fundedSigner, rpc, send } from './connect.js';
 import { compiled } from './sweep.js';
 
 // #region upload
-import { buildKitTemplateUploadPlan } from '../../src/kit.js';
+import { buildKitTemplateUploadPlan } from '@jac0xb/ballista/kit';
 
 // The creator uploads the template and pays the rent for its account.
 const creator = await fundedSigner();
@@ -28,7 +28,7 @@ console.log('uploaded to', upload.templateAddress);
 // #endregion upload
 
 // #region run
-import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '../../src/kit.js';
+import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 // The vault is the account the template sweeps. It signs the run and pays the fee.
 const vault = await fundedSigner();
@@ -56,7 +56,7 @@ console.log('vault keeps', left); // 2000000n
 
 // #region failure
 import { isSolanaError, SOLANA_ERROR__INSTRUCTION_ERROR__CUSTOM } from '@solana/kit';
-import { explainRunError } from '../../src/index.js';
+import { explainRunError } from '@jac0xb/ballista';
 
 // The vault now holds less than 5,000,000 lamports, so the check fails.
 try {

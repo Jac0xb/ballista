@@ -1,7 +1,7 @@
 // #region run
 import type { Address, Instruction } from '@solana/kit';
 
-import { buildKitRunInstruction } from '../../../src/kit.js';
+import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
 import { compiled } from '../marginfi-withdraw-all-with-floor.js';
 import { MARGINFI_V2 } from '../shared.js';
 import { marginfiHealthAccounts, type MarginfiBalance } from './marginfi.js';

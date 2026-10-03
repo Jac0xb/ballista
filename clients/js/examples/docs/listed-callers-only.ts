@@ -1,5 +1,5 @@
 // #region template
-import { SYSTEM_PROGRAM_ADDRESS_BYTES, account, data, defineTemplate, expression, step } from '../../src/index.js';
+import { SYSTEM_PROGRAM_ADDRESS_BYTES, account, data, defineTemplate, expression, step } from '@jac0xb/ballista';
 
 // Stand-ins so the example runs as written: replace AUTHOR with the author's address, and the
 // program and data with the call the list guards.
@@ -54,8 +54,8 @@ export const listedCallersOnly = defineTemplate({
 // #region run
 import { getAddressEncoder, type Address } from '@solana/kit';
 
-import { compileTemplate, registryIndex } from '../../src/index.js';
-import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction, findRegistryEntryAddress } from '../../src/kit.js';
+import { compileTemplate, registryIndex } from '@jac0xb/ballista';
+import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction, findRegistryEntryAddress } from '@jac0xb/ballista/kit';
 
 const PROTOCOL_PROGRAM_ADDRESS = SYSTEM_PROGRAM_ADDRESS; // the same stand-in
 

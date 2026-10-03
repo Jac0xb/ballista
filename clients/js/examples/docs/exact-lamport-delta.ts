@@ -6,7 +6,7 @@ import {
   expression,
   step,
   systemTransfer,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 
 /** Transfer `amount` lamports, then require the sender's balance fell by exactly that much. */
 export const exactLamportDelta = defineTemplate({
@@ -42,8 +42,8 @@ export const exactLamportDelta = defineTemplate({
 // #region run
 import type { Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 /** If the balance does not fall by exactly `amount`, the run fails and the transfer is undone. */
 export function runExactLamportDelta(run: {

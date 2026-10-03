@@ -24,8 +24,8 @@ import {
 } from '@solana/kit';
 import { describe, expect, test } from 'vitest';
 
-import { compileTemplate, TEMPLATE_STATE_UPLOADING, type CompiledTemplate } from '../../src/index.js';
-import { buildKitResumeTemplateUploadPlan, buildKitTemplateUploadPlan } from '../../src/kit.js';
+import { compileTemplate, TEMPLATE_STATE_UPLOADING, type CompiledTemplate } from '@jac0xb/ballista';
+import { buildKitResumeTemplateUploadPlan, buildKitTemplateUploadPlan } from '@jac0xb/ballista/kit';
 import * as protocols from '../protocols/index.js';
 import { compiled as ownProgram } from './own-program.js';
 import { compiled as sweep } from './sweep.js';

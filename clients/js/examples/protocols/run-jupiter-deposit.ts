@@ -16,8 +16,8 @@
  */
 import { address, getAddressDecoder, type Address, type Instruction } from '@solana/kit';
 
-import { explainRunError, failedProgram } from '../../src/index.js';
-import { BALLISTA_ADDRESS, buildKitRunInstruction, getTemplateAddress } from '../../src/kit.js';
+import { explainRunError, failedProgram } from '@jac0xb/ballista';
+import { BALLISTA_ADDRESS, buildKitRunInstruction, getTemplateAddress } from '@jac0xb/ballista/kit';
 import { compiled } from './jupiter-deposit-exact-output.js';
 import {
   JUPITER_ROUTE,

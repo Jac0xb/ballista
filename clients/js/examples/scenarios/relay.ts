@@ -10,7 +10,7 @@
  * stacked on a `returnClaim` add one call frame each, which finds the call-depth limit without
  * any other program in the way.
  */
-import { BALLISTA_PROGRAM_ADDRESS, INSTRUCTION_RUN, account, data, defineTemplate, expression, step } from '../../src/index.js';
+import { BALLISTA_PROGRAM_ADDRESS, INSTRUCTION_RUN, account, data, defineTemplate, expression, step } from '@jac0xb/ballista';
 import { addressBytes } from '../protocols/shared.js';
 
 const ballista = addressBytes(BALLISTA_PROGRAM_ADDRESS);

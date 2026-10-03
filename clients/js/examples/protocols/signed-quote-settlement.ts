@@ -15,7 +15,7 @@ import {
   expression,
   step,
   tokenTransfer,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 import { TOKEN_ACCOUNT_LENGTH, TOKEN_ACCOUNT_MINT_OFFSET, TOKEN_ACCOUNT_OWNER_OFFSET } from './shared.js';
 
 /** The signed quote. Integers are little-endian; keys are their 32 raw bytes. */

@@ -6,7 +6,7 @@ import {
   expression,
   step,
   systemTransfer,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 
 /** Pay each holder `weightBps` of the vault's balance above `reserve`. */
 export const distributeARuntimePotProRata = defineTemplate({
@@ -44,8 +44,8 @@ export const distributeARuntimePotProRata = defineTemplate({
 // #region run
 import type { Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 /** `holders` with each one's weight in basis points. */
 export function runDistributeARuntimePotProRata(run: {

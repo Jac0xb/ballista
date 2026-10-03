@@ -1,4 +1,4 @@
-import { defineTemplate, expression, step } from '../../src/index.js';
+import { defineTemplate, expression, step } from '@jac0xb/ballista';
 
 /**
  * The inputs from "Named inputs" on the expressions page, which shows them alone. The step is
@@ -16,7 +16,7 @@ export const namedInputs = defineTemplate({
 });
 
 // #region encode
-import { compileTemplate, encodeRunInputs } from '../../src/index.js';
+import { compileTemplate, encodeRunInputs } from '@jac0xb/ballista';
 
 /** The run data for inputs `amount: u64`, `deadline: i64`, `enabled: bool` and `routeData: bytes`. */
 export function encodeNamedInputs(routeData: Uint8Array) {

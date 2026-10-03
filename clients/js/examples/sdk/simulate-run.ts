@@ -17,7 +17,7 @@ import {
   type TransactionMessageWithFeePayer,
 } from '@solana/kit';
 
-import { explainRunError, failedProgram, type CompiledTemplate } from '../../src/index.js';
+import { explainRunError, failedProgram, type CompiledTemplate } from '@jac0xb/ballista';
 
 /** Simulates a message as it stands, unsigned, against the cluster's latest blockhash. */
 export async function simulate(
@@ -52,7 +52,7 @@ function customCode(error: TransactionError): number | bigint | undefined {
 // #endregion simulate
 
 // #region events
-import { BALLISTA_PROGRAM_ADDRESS, decodeRunEvent, parseProgramData, type RunEvent } from '../../src/index.js';
+import { BALLISTA_PROGRAM_ADDRESS, decodeRunEvent, parseProgramData, type RunEvent } from '@jac0xb/ballista';
 
 /** The run events and `emit` outputs Ballista logged. */
 export function runOutputs(simulation: Simulation): { events: RunEvent[]; emits: Uint8Array[] } {
@@ -77,7 +77,7 @@ export function runOutputs(simulation: Simulation): { events: RunEvent[]; emits:
 // #region return-data
 import { getBase64Encoder, getU64Decoder } from '@solana/kit';
 
-import { BALLISTA_ADDRESS } from '../../src/kit.js';
+import { BALLISTA_ADDRESS } from '@jac0xb/ballista/kit';
 
 /**
  * The `u64` a run returned. A transaction's return data is its last instruction's, so the run must

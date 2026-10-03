@@ -4,14 +4,14 @@
  * The Errors and events page includes the region below; `sdk-examples.test.ts` checks the values
  * its comments show.
  */
-import { compileTemplate } from '../../src/index.js';
+import { compileTemplate } from '@jac0xb/ballista';
 import { budgetedPayroll } from '../docs/budgeted-payroll.js';
 
 /** The budgeted payroll from Batch execution, whose last step is the `withinBudget` require. */
 const compiled = compileTemplate(budgetedPayroll);
 
 // #region decode
-import { decodeBallistaError, explainRunError } from '../../src/index.js';
+import { decodeBallistaError, explainRunError } from '@jac0xb/ballista';
 
 // A failed `require` at program counter 7: the kind in the low 16 bits, the context in the high 16.
 export const decoded = decodeBallistaError((7 << 16) | 6015);

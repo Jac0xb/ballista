@@ -6,8 +6,8 @@
  *
  *   pnpm --dir clients/js exec tsx examples/start/template-lifecycle.ts
  */
-import { compileTemplate } from '../../src/index.js';
-import { buildKitTemplateUploadPlan } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { buildKitTemplateUploadPlan } from '@jac0xb/ballista/kit';
 import { signedQuoteSettlement } from '../protocols/signed-quote-settlement.js';
 import { emptyMessage, fundedSigner, rpc, send } from './connect.js';
 
@@ -42,7 +42,7 @@ for (const { instruction } of interrupted.instructions.slice(0, 2)) {
 
 // #region resume
 import { fetchEncodedAccount } from '@solana/kit';
-import { buildKitResumeTemplateUploadPlan, getTemplateAddress } from '../../src/kit.js';
+import { buildKitResumeTemplateUploadPlan, getTemplateAddress } from '@jac0xb/ballista/kit';
 
 // Plan only the writes the account is missing, then the finalize.
 const [templateAddress] = await getTemplateAddress(creator.address, 43);

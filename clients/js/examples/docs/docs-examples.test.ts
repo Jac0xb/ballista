@@ -17,8 +17,8 @@ import { fileURLToPath } from 'node:url';
 import { getAddressDecoder, type Address, type Instruction } from '@solana/kit';
 import { describe, expect, test } from 'vitest';
 
-import { INSTRUCTION_RUN, compileTemplate, type Template } from '../../src/index.js';
-import { BALLISTA_ADDRESS, SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '../../src/kit.js';
+import { INSTRUCTION_RUN, compileTemplate, type Template } from '@jac0xb/ballista';
+import { BALLISTA_ADDRESS, SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '@jac0xb/ballista/kit';
 import { assertCreateThenTransfer, runAssertCreateThenTransfer } from './assert-create-then-transfer.js';
 import { assertRecipientAta, runAssertRecipientAta } from './assert-recipient-ata.js';
 import { basisPointRevenueSplit, runBasisPointRevenueSplit } from './basis-point-revenue-split.js';

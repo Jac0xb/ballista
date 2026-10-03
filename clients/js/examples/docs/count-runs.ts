@@ -1,5 +1,5 @@
 // #region template
-import { account, defineTemplate, expression, step } from '../../src/index.js';
+import { account, defineTemplate, expression, step } from '@jac0xb/ballista';
 
 /** Count each caller's runs, in an entry of their own. */
 export const countRuns = defineTemplate({

@@ -1,5 +1,5 @@
 // #region template
-import { ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES, account, assertAta, defineTemplate } from '../../src/index.js';
+import { ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES, account, assertAta, defineTemplate } from '@jac0xb/ballista';
 
 /** Require `destinationAta` to be the associated token account of the recipient and mint. */
 export const assertRecipientAta = defineTemplate({
@@ -25,8 +25,8 @@ export const assertRecipientAta = defineTemplate({
 // #region run
 import { address, getAddressEncoder, getProgramDerivedAddress, type Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 const ASSOCIATED_TOKEN_PROGRAM = address('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
 

@@ -1,5 +1,5 @@
 // #region template
-import { TOKEN_PROGRAM_ADDRESS_BYTES, account, defineTemplate, expression, tokenTransfer } from '../../src/index.js';
+import { TOKEN_PROGRAM_ADDRESS_BYTES, account, defineTemplate, expression, tokenTransfer } from '@jac0xb/ballista';
 
 /** One SPL Token transfer: the Token Program pinned, both token accounts pinned by owner and size. */
 export const tokenTransferTemplate = defineTemplate({
@@ -25,8 +25,8 @@ export const tokenTransferTemplate = defineTemplate({
 // #region run
 import { address, type Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 const TOKEN_PROGRAM = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 

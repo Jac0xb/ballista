@@ -6,7 +6,7 @@ import {
   expression,
   step,
   tokenTransfer,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 
 /** SPL Token account layout: the balance is the u64 at byte 64 of a 165-byte account. */
 const TOKEN_ACCOUNT_AMOUNT_OFFSET = 64;
@@ -38,8 +38,8 @@ export const forwardTheWholeTokenBalance = defineTemplate({
 // #region run
 import { address, type Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 const TOKEN_PROGRAM = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 

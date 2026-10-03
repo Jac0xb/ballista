@@ -1,5 +1,5 @@
 // #region template
-import { SYSTEM_PROGRAM_ADDRESS_BYTES, account, defineTemplate, expression, systemTransfer } from '../../src/index.js';
+import { SYSTEM_PROGRAM_ADDRESS_BYTES, account, defineTemplate, expression, systemTransfer } from '@jac0xb/ballista';
 
 /** Send `topUp` lamports to the bot only while its balance is below `floor`. */
 export const topUpOnlyWhenLow = defineTemplate({
@@ -24,8 +24,8 @@ export const topUpOnlyWhenLow = defineTemplate({
 // #region run
 import type { Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 export function runTopUpOnlyWhenLow(run: {
   templateAddress: Address;

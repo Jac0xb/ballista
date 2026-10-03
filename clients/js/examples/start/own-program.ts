@@ -16,7 +16,7 @@ import {
   defineTemplate,
   expression,
   step,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 
 // Your program's address. This one is a placeholder.
 const MY_PROGRAM = address('MyProgram1111111111111111111111111111111111');

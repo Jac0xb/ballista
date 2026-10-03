@@ -1,5 +1,5 @@
 // #region template
-import { SYSTEM_PROGRAM_ADDRESS_BYTES, account, data, defineTemplate, expression, step } from '../../src/index.js';
+import { SYSTEM_PROGRAM_ADDRESS_BYTES, account, data, defineTemplate, expression, step } from '@jac0xb/ballista';
 
 // Stand-ins so the example runs as written: replace them with the two routes' programs.
 const PRIMARY_PROGRAM = SYSTEM_PROGRAM_ADDRESS_BYTES;
@@ -46,8 +46,8 @@ export const primaryOrFallbackRoute = defineTemplate({
 // #region run
 import { address, type Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 const PRIMARY_PROGRAM_ADDRESS = address('11111111111111111111111111111111'); // the same stand-ins
 const FALLBACK_PROGRAM_ADDRESS = address('11111111111111111111111111111111');

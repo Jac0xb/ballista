@@ -24,8 +24,8 @@ import {
 } from '@solana/kit';
 import { describe, expect, test } from 'vitest';
 
-import { BALLISTA_PROGRAM_ADDRESS, compileTemplate } from '../../src/index.js';
-import { BALLISTA_ADDRESS, SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction, measureTransactionMessage } from '../../src/kit.js';
+import { BALLISTA_PROGRAM_ADDRESS, compileTemplate } from '@jac0xb/ballista';
+import { BALLISTA_ADDRESS, SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction, measureTransactionMessage } from '@jac0xb/ballista/kit';
 import { budgetedPayroll, runBudgetedPayroll } from '../docs/budgeted-payroll.js';
 import { sweepAboveAReserve } from '../docs/sweep-above-a-reserve.js';
 import { compiled as jupiterDeposit } from '../protocols/jupiter-deposit-exact-output.js';

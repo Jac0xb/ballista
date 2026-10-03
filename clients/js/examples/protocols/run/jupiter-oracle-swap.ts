@@ -1,6 +1,6 @@
 import type { Address, Instruction } from '@solana/kit';
 
-import { buildKitRunInstruction, type KitAccountBinding } from '../../../src/kit.js';
+import { buildKitRunInstruction, type KitAccountBinding } from '@jac0xb/ballista/kit';
 import { compiled } from '../jupiter-oracle-checked-swap.js';
 import { JUPITER_V6, USDC_MINT, WRAPPED_SOL_MINT, splitJupiterRoute } from '../shared.js';
 import { TOKEN_PROGRAM, at, pinned } from './programs.js';

@@ -1,7 +1,7 @@
 // #region run
 import type { Address, Instruction } from '@solana/kit';
 
-import { buildKitRunInstruction } from '../../../src/kit.js';
+import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
 import { compiled } from '../marginfi-to-kamino-rebalance.js';
 import { KAMINO_LEND, MARGINFI_V2, SYSVAR_INSTRUCTIONS } from '../shared.js';
 import { KAMINO_FARMS_PROGRAM, kaminoFarmPair, type KaminoFarm } from './kamino.js';

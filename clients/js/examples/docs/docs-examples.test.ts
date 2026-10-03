@@ -32,6 +32,7 @@ import {
   consolidateOnlyTheFundedAccounts,
   runConsolidateOnlyTheFundedAccounts,
 } from './consolidate-only-the-funded-accounts.js';
+import { crankOncePerWaitingEntry, runCrankOncePerWaitingEntry } from './crank-once-per-waiting-entry.js';
 import { crankOnlyTheRipeEntries, runCrankOnlyTheRipeEntries } from './crank-only-the-ripe-entries.js';
 import { deadlineAndMinimumOutput, runDeadlineAndMinimumOutput } from './deadline-and-minimum-output.js';
 import { deadlineRefund, runDeadlineRefund } from './deadline-refund.js';
@@ -45,6 +46,7 @@ import { indexWeightedRewards, runIndexWeightedRewards } from './index-weighted-
 import { initializeOnlyIfMissing, runInitializeOnlyIfMissing } from './initialize-only-if-missing.js';
 import { liquidateOnlyWhenUnhealthy, runLiquidateOnlyWhenUnhealthy } from './liquidate-only-when-unhealthy.js';
 import { maximumLamportSpend, runMaximumLamportSpend } from './maximum-lamport-spend.js';
+import { nestedSwapThenDeposit, runNestedSwapThenDeposit } from './nested-swap-then-deposit.js';
 import { oraclePriceBand, runOraclePriceBand } from './oracle-price-band.js';
 import { pinnedProgramAndOwner, runPinnedProgramAndOwner } from './pinned-program-and-owner.js';
 import { primaryOrFallbackRoute, runPrimaryOrFallbackRoute } from './primary-or-fallback-route.js';
@@ -53,6 +55,7 @@ import { repayExactlyWhatIsOwed, runRepayExactlyWhatIsOwed } from './repay-exact
 import { reservePreservingSweep, runReservePreservingSweep } from './reserve-preserving-sweep.js';
 import { rowAmounts, runRowAmounts } from './row-amounts.js';
 import { runSplitWhatArrived, splitWhatArrived } from './split-what-arrived.js';
+import { runSwapAndReturnWhatArrived, swapAndReturnWhatArrived } from './swap-and-return-what-arrived.js';
 import { runSweepAboveAReserve, sweepAboveAReserve } from './sweep-above-a-reserve.js';
 import { runSwapThenDeposit, swapThenDeposit } from './swap-then-deposit.js';
 import { runTimeGatedGovernanceExecution, timeGatedGovernanceExecution } from './time-gated-governance-execution.js';
@@ -490,6 +493,40 @@ const cases: Case[] = [
         ],
       }),
   },
+  {
+    name: 'crank-once-per-waiting-entry',
+    template: crankOncePerWaitingEntry,
+    docsOnlyRows: 0,
+    run: () => runCrankOncePerWaitingEntry({ templateAddress: TEMPLATE, keeper: key(1), queue: key(2) }),
+  },
+  {
+    name: 'swap-and-return-what-arrived',
+    template: swapAndReturnWhatArrived,
+    docsOnlyRows: 0,
+    run: () =>
+      runSwapAndReturnWhatArrived({
+        templateAddress: TEMPLATE,
+        payer: key(1),
+        pool: key(2),
+        receivedTokens: key(3),
+        minimumOut: 900n,
+        swapData: standInData,
+      }),
+  },
+  {
+    name: 'nested-swap-then-deposit',
+    template: nestedSwapThenDeposit,
+    docsOnlyRows: 0,
+    run: () =>
+      runNestedSwapThenDeposit({
+        templateAddress: TEMPLATE,
+        payer: key(1),
+        pool: key(2),
+        receivedTokens: key(3),
+        minimumOut: 900n,
+        swapData: standInData,
+      }),
+  },
 ];
 
 async function record(item: Case, rows: number): Promise<Recorded> {
@@ -528,7 +565,7 @@ describe('docs examples', () => {
       output[item.name] = await record(item, item.docsOnlyRows!);
     }
     writeFileSync(DOCS_ONLY_PATH, `${JSON.stringify(output, null, 2)}\n`);
-    expect(Object.keys(output)).toHaveLength(6);
+    expect(Object.keys(output)).toHaveLength(9);
   });
 
   test('the budget example explains its labelled failure', () => {

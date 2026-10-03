@@ -11,8 +11,10 @@ place when they read a balance or a flag while the transaction runs, as in
 
 Some recipes read a token account's balance straight from its data. In the SPL Token account
 layout, the balance is a `u64` at byte offset 64. When a template reads raw bytes like this, have it
-also require the Token Program's address, the account's owner and its minimum data length (165
-bytes for a token account), so it can't be handed a different kind of account.
+also pin the Token Program's address and require the account's owner and a minimum data length of
+165 bytes. Those pins still admit a 355-byte Token multisig. A transfer from or to one fails, but
+where no transfer would, require the length to be exactly 165. See
+[what a pin proves](/guide/trust-model#pins).
 
 ## Assert, create, then transfer
 
@@ -42,8 +44,8 @@ guarded by `isEmpty`.
 ## Existing-account token payroll
 
 Send the same token amount to up to 32 token accounts that already exist. Each destination must be
-owned by the Token Program and be at least 165 bytes long, the size of a token account, so the
-template can't be pointed at a different kind of account.
+owned by the Token Program and be at least 165 bytes long, the size of a token account. A Token
+multisig passes both checks, but the transfer to it fails.
 
 ::: code-group
 

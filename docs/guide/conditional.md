@@ -100,3 +100,19 @@ Create an account only if it does not exist yet.
 offer an idempotent `Create`, one that succeeds even when the account already exists. For the
 others, the caller must know whether the account exists, and still be right when the transaction
 executes.
+
+## Only calls take `when`
+
+`when` belongs to `step.invoke` and the helpers that build one. Every other step runs whenever the
+run reaches it:
+
+- **A registry write** has no condition. To change a field only sometimes, write
+  `expression.select(condition, newValue, currentValue)`, which writes the current value back
+  otherwise, as the [allowlist](/guide/registries#an-allowlist) does.
+- **An `emit`** has no condition. Every `emit` the run reaches is logged.
+- **A return-data read** must come straight after a call without `when`. After a guarded call, the
+  compiler refuses it, and so does the verifier.
+- **A value** that depends on a condition is a `select`, not a skipped step.
+
+The full rules are under [Registries](/reference/language#registries) and
+[Output](/reference/language#output).

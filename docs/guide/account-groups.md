@@ -75,10 +75,10 @@ fail the transaction unless the result passes the checks its author wrote.
 
 ## Budget
 
-Nine fixed accounts plus three groups of about 25 accounts each come to roughly 85 accounts, within
-Ballista's limit of 120 accounts per run (not counting the template account). Transaction size is
-the tighter limit. A [version 1 transaction](/guide/transaction-v1) allows 4,096 bytes but at most
-64 account addresses and no address lookup tables, so it cannot carry this many accounts. A version
-0 transaction supports lookup tables but is limited to 1,232 bytes, so three swaps in one run need
-an address lookup table and single-hop or short routes. The run data has its own limit of 1,024
-bytes, which is why this template caps each route at 256 bytes.
+A transaction uses at most 64 accounts, lookup tables included. The Ballista program and the
+template account take two, and `user` can pay the fee, so the run has 62. Nine are fixed, which
+leaves the three groups 53 between them, about 17 each: enough for short routes, so cap each
+quote's accounts (Jupiter's `maxAccounts`). A [version 1 transaction](/guide/transaction-v1) lists
+all 64 addresses in its 4,096 bytes; a version 0 transaction needs an address lookup table to fit
+them in 1,232. The run data has its own limit of 1,024 bytes, which is why this template caps each
+route at 256 bytes. See [accounts per transaction](/reference/limits#accounts-per-transaction).

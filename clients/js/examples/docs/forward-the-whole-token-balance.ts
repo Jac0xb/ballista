@@ -16,7 +16,7 @@ const TOKEN_ACCOUNT_LENGTH = 165;
 export const forwardTheWholeTokenBalance = defineTemplate({
   accounts: {
     tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
-    // Owner and size pins make the read at offset 64 mean "token balance".
+    // Token-owned and 165 bytes or more: a token account, or a multisig the transfer refuses.
     source: { writable: true, owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: TOKEN_ACCOUNT_LENGTH },
     destination: { writable: true, owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: TOKEN_ACCOUNT_LENGTH },
     authority: { signer: true },

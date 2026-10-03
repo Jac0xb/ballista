@@ -226,9 +226,15 @@ fn mul_div_dispatches_on_operand_types() {
     };
     kani::assume(small(a) && small(b) && small(c));
     let outcome = mul_div(round_up, a, b, c);
+    // Compared without `==` on the values, whose byte arrays would need a larger unwind bound.
+    let same = |expected: Result<RuntimeValue<'_>, RunError>| match (&outcome, &expected) {
+        (Ok(x), Ok(y)) => crate::util::same_value(x, y),
+        (Err(x), Err(y)) => x == y,
+        _ => false,
+    };
     match (a, b, c) {
         (RuntimeValue::U64(a), RuntimeValue::U64(b), RuntimeValue::U64(c)) => {
-            assert_eq!(outcome, mul_div_u64(a, b, c, round_up).map(RuntimeValue::U64));
+            assert!(same(mul_div_u64(a, b, c, round_up).map(RuntimeValue::U64)));
             kani::cover!(outcome.is_ok(), "a u64 multiply-divide");
         }
         (RuntimeValue::U128(a), RuntimeValue::U128(b), RuntimeValue::U128(c)) => {
@@ -238,12 +244,15 @@ fn mul_div_dispatches_on_operand_types() {
                 u128::from_le_bytes(c),
                 round_up,
             );
-            assert_eq!(outcome, expected.map(|q| RuntimeValue::U128(q.to_le_bytes())));
+            assert!(same(expected.map(|q| RuntimeValue::U128(q.to_le_bytes()))));
             kani::cover!(outcome.is_ok(), "a u128 multiply-divide");
         }
         _ => {
-            assert_eq!(outcome, Err(err(BallistaError::TypeMismatch)));
-            kani::cover!(matches!((a, b, c), (RuntimeValue::U64(_), RuntimeValue::U64(_), RuntimeValue::U128(_))), "mixed widths");
+            assert!(same(Err(err(BallistaError::TypeMismatch))));
+            kani::cover!(
+                matches!((a, b, c), (RuntimeValue::U64(_), RuntimeValue::U64(_), RuntimeValue::U128(_))),
+                "mixed widths"
+            );
         }
     }
 }

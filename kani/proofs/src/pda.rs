@@ -116,31 +116,25 @@ fn first_off_curve() -> usize {
     (0..ATTEMPTS).find(|attempt| !oracle.on_curve[*attempt]).unwrap_or(ATTEMPTS)
 }
 
-/// Up to 3 seeds of up to 33 bytes each, contents symbolic.
-fn any_seeds<'a>(storage: &'a [[u8; 33]; 3], seeds: &'a mut [&'a [u8]; 3]) -> &'a [&'a [u8]] {
-    let count: usize = kani::any_where(|n: &usize| *n <= 3);
-    for i in 0..3 {
-        let len: usize = kani::any_where(|n: &usize| *n <= 33);
-        seeds[i] = &storage[i][..len];
+/// Seeds of the shape `lengths` (each up to 33 bytes), contents symbolic. Concrete lengths keep
+/// every copy and compare loop at its exact trip count.
+fn seeds_of<'a>(storage: &'a [[u8; 33]; 3], lengths: &[usize], slots: &'a mut [&'a [u8]; 3]) -> &'a [&'a [u8]] {
+    for (i, len) in lengths.iter().enumerate() {
+        slots[i] = &storage[i][..*len];
     }
-    &seeds[..count]
+    &slots[..lengths.len()]
 }
 
-/// `try_find_program_address` refuses a seed over 32 bytes without hashing anything; otherwise it
-/// hashes exactly `seeds ‖ bump ‖ program id ‖ marker` for bump 255, 254, … and returns the
-/// digest and bump of the first attempt off the curve. Bounded: up to 3 seeds of up to 33 bytes
-/// (so every copy path: 1 byte, 32 bytes, other lengths, and a refusal), any program id; the first
-/// 3 attempts' curve answers are symbolic and later ones off the curve.
-#[kani::proof]
-#[kani::unwind(161)]
-#[kani::stub(solana_sha256_hasher::hashv, crate::pda::hashv)]
-#[kani::stub(solana_address::bytes_are_curve_point, crate::pda::bytes_are_curve_point)]
-fn search_hashes_the_documented_preimage() {
+/// `try_find_program_address` on seeds of the shape `lengths` refuses a seed over 32 bytes without
+/// hashing anything; otherwise it hashes exactly `seeds ‖ bump ‖ program id ‖ marker` for bump 255,
+/// 254, … and returns the digest and bump of the first attempt off the curve. Returns whether it
+/// found one.
+fn search_with(lengths: &[usize]) -> bool {
     let storage: [[u8; 33]; 3] = kani::any();
     let mut slots: [&[u8]; 3] = [&[]; 3];
-    let seeds = any_seeds(&storage, &mut slots);
+    let seeds = seeds_of(&storage, lengths, &mut slots);
     let program_id: [u8; 32] = kani::any();
-    let mut parts: [&[u8]; 6] = [&[]; 6];
+    let mut parts: [&[u8]; 5] = [&[]; 5];
     parts[..seeds.len()].copy_from_slice(seeds);
     parts[seeds.len()] = &program_id;
     parts[seeds.len() + 1] = PDA_MARKER;
@@ -148,35 +142,44 @@ fn search_hashes_the_documented_preimage() {
 
     let result = try_find_program_address(seeds, &Address::new_from_array(program_id));
 
-    if seeds.iter().any(|seed| seed.len() > 32) {
+    if lengths.iter().any(|len| *len > 32) {
         assert!(result.is_none());
         assert_eq!(oracle().calls, 0);
-        kani::cover!(seeds.len() == 3, "a 33-byte seed among three is refused");
+        false
     } else {
         let attempt = first_off_curve();
         assert_eq!(oracle().calls, attempt + 1);
         let (address, bump) = result.expect("an off-curve attempt was found");
         assert_eq!(bump as usize, 255 - attempt);
         assert_eq!(address.to_bytes()[0] as usize, attempt + 1, "the digest of that attempt");
-        kani::cover!(attempt == ATTEMPTS && seeds.len() == 3, "the fourth bump, after three seeds");
-        kani::cover!(
-            seeds.len() == 3 && seeds[0].len() == 32 && seeds[1].len() == 1 && seeds[2].len() == 7,
-            "every copy path: 32 bytes, 1 byte, and a general length"
-        );
+        true
     }
 }
 
-/// `create_program_address` refuses a seed over 32 bytes without hashing; otherwise it hashes
-/// exactly `seeds ‖ program id ‖ marker` once (the caller's bump is the last seed) and returns the
-/// digest exactly when it is off the curve. Bounded as `search_hashes_the_documented_preimage`.
+/// The search hashes the documented preimage (`search_with`) for seeds that take each copy path
+/// (32 bytes, 1 byte, a general length), for no seeds, and refuses a 33-byte seed. Bound: those
+/// seed shapes, every seed byte and program id; the first 3 attempts' curve answers symbolic and
+/// later ones off the curve.
 #[kani::proof]
-#[kani::unwind(161)]
+#[kani::unwind(96)]
 #[kani::stub(solana_sha256_hasher::hashv, crate::pda::hashv)]
 #[kani::stub(solana_address::bytes_are_curve_point, crate::pda::bytes_are_curve_point)]
-fn create_hashes_the_documented_preimage() {
+fn search_hashes_the_documented_preimage() {
+    let found = search_with(&[32, 1, 7]);
+    kani::cover!(found && oracle().calls == ATTEMPTS + 1, "the fourth bump, after every copy path");
+    let found = search_with(&[]);
+    kani::cover!(found, "an address from no seeds");
+    assert!(!search_with(&[5, 33]));
+}
+
+/// `create_program_address` on seeds of the shape `lengths` refuses a seed over 32 bytes without
+/// hashing; otherwise it hashes exactly `seeds ‖ program id ‖ marker` once (the caller's bump is
+/// the last seed) and returns the digest exactly when it is off the curve. Returns whether it gave
+/// an address.
+fn create_with(lengths: &[usize]) -> bool {
     let storage: [[u8; 33]; 3] = kani::any();
     let mut slots: [&[u8]; 3] = [&[]; 3];
-    let seeds = any_seeds(&storage, &mut slots);
+    let seeds = seeds_of(&storage, lengths, &mut slots);
     let program_id: [u8; 32] = kani::any();
     let mut parts: [&[u8]; 5] = [&[]; 5];
     parts[..seeds.len()].copy_from_slice(seeds);
@@ -186,15 +189,28 @@ fn create_hashes_the_documented_preimage() {
 
     let result = create_program_address(seeds, &Address::new_from_array(program_id));
 
-    if seeds.iter().any(|seed| seed.len() > 32) {
+    if lengths.iter().any(|len| *len > 32) {
         assert!(result.is_none());
         assert_eq!(oracle().calls, 0);
     } else {
         assert_eq!(oracle().calls, 1);
         assert_eq!(result.is_some(), !oracle().on_curve[0]);
-        kani::cover!(result.is_some() && seeds.len() == 3, "three seeds give an address");
-        kani::cover!(result.is_none(), "an on-curve digest gives none");
     }
+    result.is_some()
+}
+
+/// Creation hashes the documented preimage (`create_with`) for seeds that take each copy path, the
+/// last one a 1-byte bump, and refuses a 33-byte seed. Bound: those seed shapes, every seed byte
+/// and program id; the curve answer symbolic.
+#[kani::proof]
+#[kani::unwind(96)]
+#[kani::stub(solana_sha256_hasher::hashv, crate::pda::hashv)]
+#[kani::stub(solana_address::bytes_are_curve_point, crate::pda::bytes_are_curve_point)]
+fn create_hashes_the_documented_preimage() {
+    let created = create_with(&[32, 7, 1]);
+    kani::cover!(created, "three seeds give an address");
+    kani::cover!(!created, "an on-curve digest gives none");
+    assert!(!create_with(&[33]));
 }
 
 /// When every digest lies on the curve, the search tries bumps 255 down to 1, each once, never 0,

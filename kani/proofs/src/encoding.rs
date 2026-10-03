@@ -188,23 +188,24 @@ fn decode_one<'a>(descriptor: &InputDescriptor, data: &'a [u8]) -> Option<(Runti
     }
 }
 
-/// An input descriptor of one of the six types, or an invalid one (type 0), with a `bytes`
-/// maximum up to 4.
+/// An input descriptor of type `bool`, `u64` or `bytes`, or an invalid one (type 0), with a
+/// `bytes` maximum up to 4. (`i64`, `u128` and `pubkey` take the same fixed-width path as `u64`
+/// with their own widths, which `records.rs` and `register_segments_encode_their_exact_width_or_fail`
+/// check; leaving them out keeps the solver off copies that cannot fit the 10 data bytes.)
 fn any_input() -> InputDescriptor {
-    let value_type = one_of(&[0, VALUE_BOOL, VALUE_U64, VALUE_I64, VALUE_U128, VALUE_PUBKEY, VALUE_BYTES]);
+    let value_type = one_of(&[0, VALUE_BOOL, VALUE_U64, VALUE_BYTES]);
     let max_len: u16 = kani::any_where(|n: &u16| *n <= 4);
     InputDescriptor { value_type, reserved: 0, max_len_le: max_len.to_le_bytes() }
 }
 
 /// Bytes of run data in the input proofs.
-const INPUT_DATA: usize = 12;
+const INPUT_DATA: usize = 10;
 
 /// `parse_inputs` decodes exactly what the documented encoding says (`decode_one`, written
 /// independently): value `i` with descriptor `i`, in order, each `bytes` value borrowing the run
 /// data in place; it fails at the first value that is not there with `InvalidRunInputs` and that
 /// value's index, and rejects trailing bytes with the count as the index. Bound: up to 2
-/// descriptors (each type, or an invalid one; `bytes` maximum up to 4) and up to 12 bytes of data,
-/// so a `u128` or `pubkey` input is only ever seen truncated.
+/// descriptors (`bool`, `u64`, `bytes` up to 4, or an invalid type) and up to 10 bytes of data.
 #[kani::proof]
 #[kani::unwind(5)]
 fn input_decoding_follows_the_documented_encoding() {
@@ -259,7 +260,7 @@ fn input_decoding_follows_the_documented_encoding() {
 /// inputs per batch row: it decodes exactly as `parse_inputs` does over that flattened descriptor
 /// list. So value `F + n·R + o`, the index `LOAD_INPUT` computes for row input `o` in pass `n`, is
 /// row `n`'s `o`th input, and every such index is in range. Bound: up to 2 fixed inputs and 1 row
-/// input (types as in `input_decoding_follows_the_documented_encoding`), up to 2 rows, up to 12
+/// input (types as in `input_decoding_follows_the_documented_encoding`), up to 2 rows, up to 10
 /// bytes of data.
 #[kani::proof]
 #[kani::unwind(5)]

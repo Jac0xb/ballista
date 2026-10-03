@@ -199,7 +199,8 @@ fn write_field_writes_exactly_its_field() {
     if width != 0 {
         if in_range {
             assert_eq!(result, Ok(()));
-            kani::cover!(width == 32 && offset == HEADER, "a pubkey field written right after the header");
+            kani::cover!(width == 16 && offset == HEADER, "a u128 field written right after the header");
+            kani::cover!(width == 32, "a pubkey field written");
             kani::cover!(offset + width == data_len, "a field ending at the end of the data");
         } else {
             assert_eq!(result, Err(err(BallistaError::InvalidTemplateProgram)));

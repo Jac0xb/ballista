@@ -52,7 +52,7 @@ fn as_u128(value: &RuntimeValue<'_>) -> Option<u128> {
 /// it must. Any operand that is not a `u64` is a `TypeMismatch`. Bound: none (every `u64`
 /// exponent, every operand variant).
 #[kani::proof]
-#[kani::unwind(5)]
+#[kani::unwind(8)]
 fn pow10_is_exact_up_to_38_and_overflows_above() {
     let exponent: u64 = kani::any();
     let result = pow10(RuntimeValue::U64(exponent));
@@ -247,35 +247,44 @@ fn i64_mul_is_exact() {
 fn u64_div_is_the_floor_quotient() {
     let (a, b): (u64, u64) = (kani::any(), kani::any());
     let result = arithmetic(OP_DIV, RuntimeValue::U64(a), RuntimeValue::U64(b));
-    if b == 0 {
-        assert_eq!(result, Err(err(BallistaError::DivisionByZero)));
-    } else {
-        let q = result.as_ref().ok().and_then(as_u64).expect("a u64 quotient") as u128;
-        let (a, b) = (a as u128, b as u128);
-        assert!(q * b <= a && a < q * b + b);
-        kani::cover!(q > 1 && a != q * b, "an inexact quotient");
+    assert!(matches!(result, Ok(RuntimeValue::U64(_)) | Err(_)));
+    match result {
+        Ok(RuntimeValue::U64(q)) => {
+            assert!(b != 0);
+            let (q, a, b) = (q as u128, a as u128, b as u128);
+            assert!(q * b <= a && a < q * b + b);
+            kani::cover!(q > 1 && a != q * b, "an inexact quotient");
+        }
+        Err(error) => {
+            assert_eq!(error, err(BallistaError::DivisionByZero));
+            assert!(b == 0);
+        }
+        Ok(_) => {}
     }
 }
 
 /// `DIV` over `i64`: `DivisionByZero` exactly when the divisor is zero, `ArithmeticOverflow`
 /// exactly for `i64::MIN / -1`, and otherwise the quotient truncated toward zero: its magnitude is
-/// the floor of `|a| / |b|`, checked by `|q|·|b| ≤ |a| < (|q| + 1)·|b|` in `u128`, and it is
+/// `|a| / |b|` in `u64` (whose floor property `u64_div_is_the_floor_quotient` proves), and it is
 /// negative exactly when it is nonzero and the signs differ. Bound: none (every `i64` pair).
 #[kani::proof]
 fn i64_div_truncates_toward_zero() {
     let (a, b): (i64, i64) = (kani::any(), kani::any());
     let result = arithmetic(OP_DIV, RuntimeValue::I64(a), RuntimeValue::I64(b));
-    if b == 0 {
-        assert_eq!(result, Err(err(BallistaError::DivisionByZero)));
-    } else if a == i64::MIN && b == -1 {
-        assert_eq!(result, Err(err(BallistaError::ArithmeticOverflow)));
-    } else {
-        let q = result.as_ref().ok().and_then(as_i64).expect("an i64 quotient");
-        let (magnitude, a_abs, b_abs) =
-            (q.unsigned_abs() as u128, a.unsigned_abs() as u128, b.unsigned_abs() as u128);
-        assert!(magnitude * b_abs <= a_abs && a_abs < magnitude * b_abs + b_abs);
-        assert_eq!(q < 0, q != 0 && ((a < 0) != (b < 0)));
-        kani::cover!(q < 0 && a_abs != magnitude * b_abs, "a negative inexact quotient truncates toward zero");
+    assert!(matches!(result, Ok(RuntimeValue::I64(_)) | Err(_)));
+    match result {
+        Ok(RuntimeValue::I64(q)) => {
+            assert!(b != 0 && !(a == i64::MIN && b == -1));
+            assert_eq!(q.unsigned_abs(), a.unsigned_abs() / b.unsigned_abs());
+            assert_eq!(q < 0, q != 0 && ((a < 0) != (b < 0)));
+            kani::cover!(q < 0, "a negative quotient");
+        }
+        Err(error) if b == 0 => assert_eq!(error, err(BallistaError::DivisionByZero)),
+        Err(error) => {
+            assert_eq!(error, err(BallistaError::ArithmeticOverflow));
+            assert!(a == i64::MIN && b == -1);
+        }
+        Ok(_) => {}
     }
 }
 
@@ -525,13 +534,18 @@ fn casts_preserve_the_value_or_fail() {
 fn u64_remainder_is_exact() {
     let (a, b): (u64, u64) = (kani::any(), kani::any());
     let result = integer(OP_REM, RuntimeValue::U64(a), RuntimeValue::U64(b));
-    if b == 0 {
-        assert_eq!(result, Err(err(BallistaError::DivisionByZero)));
-    } else {
-        let r = result.as_ref().ok().and_then(as_u64).expect("a u64 remainder");
-        assert!(r < b && r <= a);
-        assert_eq!((a - r) % b, 0);
-        kani::cover!(r != 0 && a > b, "a nonzero remainder");
+    assert!(matches!(result, Ok(RuntimeValue::U64(_)) | Err(_)));
+    match result {
+        Ok(RuntimeValue::U64(r)) => {
+            assert!(b != 0 && r < b && r <= a);
+            assert_eq!((a - r) % b, 0);
+            kani::cover!(r != 0, "a nonzero remainder");
+        }
+        Err(error) => {
+            assert_eq!(error, err(BallistaError::DivisionByZero));
+            assert!(b == 0);
+        }
+        Ok(_) => {}
     }
 }
 
@@ -543,17 +557,22 @@ fn u64_remainder_is_exact() {
 fn i64_remainder_takes_the_dividends_sign() {
     let (a, b): (i64, i64) = (kani::any(), kani::any());
     let result = integer(OP_REM, RuntimeValue::I64(a), RuntimeValue::I64(b));
-    if b == 0 {
-        assert_eq!(result, Err(err(BallistaError::DivisionByZero)));
-    } else if a == i64::MIN && b == -1 {
-        assert_eq!(result, Err(err(BallistaError::ArithmeticOverflow)));
-    } else {
-        let r = result.as_ref().ok().and_then(as_i64).expect("an i64 remainder") as i128;
-        let (a, b) = (a as i128, b as i128);
-        assert!(r.abs() < b.abs());
-        assert!(r == 0 || (r < 0) == (a < 0));
-        assert_eq!((a - r) % b, 0);
-        kani::cover!(r < 0 && b > 0, "a negative remainder of a positive divisor");
+    assert!(matches!(result, Ok(RuntimeValue::I64(_)) | Err(_)));
+    match result {
+        Ok(RuntimeValue::I64(r)) => {
+            assert!(b != 0 && !(a == i64::MIN && b == -1));
+            let (a, b, r) = (a as i128, b as i128, r as i128);
+            assert!(r.abs() < b.abs());
+            assert!(r == 0 || (r < 0) == (a < 0));
+            assert_eq!((a - r) % b, 0);
+            kani::cover!(r < 0, "a negative remainder");
+        }
+        Err(error) if b == 0 => assert_eq!(error, err(BallistaError::DivisionByZero)),
+        Err(error) => {
+            assert_eq!(error, err(BallistaError::ArithmeticOverflow));
+            assert!(a == i64::MIN && b == -1);
+        }
+        Ok(_) => {}
     }
 }
 

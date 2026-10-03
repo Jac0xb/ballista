@@ -150,8 +150,9 @@ fast. A mutant that survives both is a rule nothing here tests.
 The 21 mutants cover the CPI ceiling, declared accounts and groups, the CPI count,
 read-before-write, read bounds, return data, `EMIT` tags, registry entries and their order, the
 sysvar pin, unused fields, data segment fields and indexes, and unused segments and descriptors.
-The stable tests catch every one, and so does `structured`, within 10 seconds of an empty corpus.
-That includes the critic's `verify-cpi-privilege`, which the proptests in `common/tests` miss.
+The stable tests catch every one, and so does `structured`, within 22 seconds of an empty corpus
+(`python3 fuzz/scripts/mutants.py 90`, 2026-10-03, on a machine running other fuzzers). That
+includes the critic's `verify-cpi-privilege`, which the proptests in `common/tests` miss.
 
 ## First local run
 

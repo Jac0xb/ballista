@@ -6,11 +6,15 @@ Nine reviewers read the docs as different readers, each working the way that rea
 
 **Status:** all nine have reported: newcomer, founder, technical editor, DeFi searcher, advanced author, Rust developer, protocol engineer, security auditor, and TypeScript integrator.
 
-**Verification, 2026-10-02:** each entry below has a status line, checked against the merged fixes at `04585e9`.
-- Fixed: 57.
-- Partly: 2, the Rust SDK install and rules repeating across pages.
+**Verification, 2026-10-02:** each entry below has a status line, checked against the merged fixes at `04585e9`, then updated after the follow-up fixes.
+- Fixed: 59.
 - Changed approach: 2, the Jito join helper and the second signer.
-- Not fixed: 0.
+- Partly or not fixed: 0.
+- The verification also found four problems the fixes had caused, all since fixed:
+  - Getting started installed packages that aren't published;
+  - the devnet upgrade-authority statement appeared five times;
+  - the privilege-ceiling gaps were restated on three pages;
+  - the nested-run tabs didn't follow the reader's language.
 
 **Already fixed on `claude/docs-cleanup`, so not repeated here:**
 - the funds and state wording;
@@ -33,7 +37,7 @@ Nine reviewers read the docs as different readers, each working the way that rea
   - A read-both-then-write-both transfer then credits the sender.
   - Fix: refuse to open an entry that is already open, with a test.
 - **B · The Rust SDK can't be installed as documented.** (R, N)
-  - **Status:** Partly. `clients/rust/Cargo.toml` gives `ballista-common` a version and `docs/reference/rust.md` gives the git line, but `docs/guide/getting-started.md` still installs from crates.io and npm, where neither package exists (crates.io: no such crate; npm: 404).
+  - **Status:** Fixed. `clients/rust/Cargo.toml` gives `ballista-common` a version. Neither package is published yet (crates.io has no such crate; npm returns 404), so `docs/reference/rust.md` and Getting started install the crate from git, and Getting started packs the TypeScript SDK from the clone.
   - `cargo add ballista-sdk` can't work: `cargo package -p ballista-sdk` fails because `ballista-common` is a path dependency with no version (`clients/rust/Cargo.toml:19`).
   - The npm package wasn't checked; the reviewers worked offline.
   - Fix: say what's published. Until then, give a git install line, and add the version before publishing.
@@ -108,7 +112,7 @@ Nine reviewers read the docs as different readers, each working the way that rea
   - The 13-row table appears twice, in different orders (`examples/index.md:31-45`, `protocols/index.md:14-28`).
   - Fix: one name and one table.
 - **M · Rules repeat across pages.** (N, E, A, R, P, F, Au, T)
-  - **Status:** Partly. Finalization checks, output and tag rules, registry rules, the sweep and the PDA and compute-unit definitions now live once and are linked; the step table is still in both `language.md#steps` and `typescript.md#authoring`.
+  - **Status:** Fixed. Finalization checks, output and tag rules, registry rules, the step semantics, the sweep, signing, the privilege ceiling, the devnet upgrade authority and the PDA and compute-unit definitions each live once and are linked. `typescript.md#authoring` keeps only the API index and links to `language.md#steps`.
   - Registry rules appear on 5 pages, 3 times in `registries.md` alone.
   - Output rules appear 5 times, the `emit` tag rule on 6 pages, and the introspection table 4 times.
   - The finalization checks appear 4 times: `why-ballista:73`, `mental-model:109`, `trust-model:51` and `security:15`.

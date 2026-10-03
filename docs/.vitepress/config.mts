@@ -33,7 +33,6 @@ const guideSidebar = [
   {
     text: 'Build templates',
     items: [
-      { text: 'Template lifecycle', link: '/guide/template-lifecycle' },
       { text: 'Inputs and expressions', link: '/guide/expressions' },
       { text: 'Accounts and CPIs', link: '/guide/accounts-and-cpis' },
       { text: 'Batch execution', link: '/guide/batching' },
@@ -41,7 +40,6 @@ const guideSidebar = [
       { text: 'Assertions and snapshots', link: '/guide/assertions' },
       { text: 'PDA and ATA assertions', link: '/guide/pda-assertions' },
       { text: 'Errors and events', link: '/guide/errors-and-events' },
-      { text: 'Inspecting a template', link: '/guide/inspecting-templates' },
     ],
   },
   {
@@ -49,13 +47,19 @@ const guideSidebar = [
     items: [
       { text: 'Trust model', link: '/guide/trust-model' },
       { text: 'Security posture', link: '/guide/security' },
+      { text: 'Inspecting a template', link: '/guide/inspecting-templates' },
       { text: 'Failure modes and recovery', link: '/guide/failure-modes' },
       { text: 'Formal verification', link: '/guide/formal-verification' },
     ],
   },
   {
-    text: 'Deploy',
-    items: [{ text: 'Devnet workflow', link: '/guide/devnet' }],
+    // Last, so devnet's "next" link to the TypeScript SDK still follows the final guide page.
+    text: 'Upload and run',
+    items: [
+      { text: 'Template lifecycle', link: '/guide/template-lifecycle' },
+      { text: 'Transaction v1', link: '/guide/transaction-v1' },
+      { text: 'Devnet workflow', link: '/guide/devnet' },
+    ],
   },
 ];
 
@@ -69,17 +73,17 @@ const examplesSidebar = [
     link: '/examples/protocols/',
     collapsed: true,
     items: [
-      { text: 'Jupiter · Deposit what a swap made', link: '/examples/protocols/jupiter-deposit' },
-      { text: 'Jupiter · Oracle-checked swap', link: '/examples/protocols/jupiter-oracle-swap' },
+      { text: 'Jupiter · Deposit what a swap produced', link: '/examples/protocols/jupiter-deposit' },
+      { text: 'Jupiter · Swap checked against an oracle', link: '/examples/protocols/jupiter-oracle-swap' },
       { text: 'Jupiter · Sell a whole balance', link: '/examples/protocols/token-sweep' },
-      { text: 'Jupiter · Daily cap per caller', link: '/examples/protocols/daily-cap' },
-      { text: 'Kamino · Repay what a swap made', link: '/examples/protocols/kamino-repay' },
-      { text: 'Kamino · Liquidate, minimum payout', link: '/examples/protocols/kamino-liquidate' },
-      { text: 'marginfi · Withdraw everything', link: '/examples/protocols/marginfi-withdraw' },
-      { text: 'Kamino · Move funds from marginfi', link: '/examples/protocols/marginfi-to-kamino' },
+      { text: "Jupiter · Cap a caller's daily swaps", link: '/examples/protocols/daily-cap' },
+      { text: 'Kamino · Repay what a swap produced', link: '/examples/protocols/kamino-repay' },
+      { text: 'Kamino · Liquidate with a minimum payout', link: '/examples/protocols/kamino-liquidate' },
+      { text: 'marginfi · Withdraw everything, with a minimum', link: '/examples/protocols/marginfi-withdraw' },
+      { text: 'marginfi · Move a position into Kamino', link: '/examples/protocols/marginfi-to-kamino' },
       { text: 'Orca · Compound collected fees', link: '/examples/protocols/orca-compound' },
       { text: 'Orca · Harvest positions that earned', link: '/examples/protocols/orca-harvest' },
-      { text: 'Pyth · Act on a fresh price', link: '/examples/protocols/pyth-gate' },
+      { text: 'Pyth · Act only on a fresh price', link: '/examples/protocols/pyth-gate' },
       { text: 'Jito · Tip only from profit', link: '/examples/protocols/jito-tip' },
       { text: 'Ed25519 · Settle at a signed quote', link: '/examples/protocols/signed-quote' },
     ],
@@ -135,6 +139,7 @@ const referenceSidebar = [
     items: [
       { text: 'Template language', link: '/reference/language' },
       { text: 'Wire format', link: '/reference/wire-format' },
+      { text: 'Error codes', link: '/reference/errors' },
       { text: 'Glossary', link: '/reference/glossary' },
     ],
   },
@@ -142,7 +147,6 @@ const referenceSidebar = [
     text: 'Limits and scope',
     items: [
       { text: 'Limits', link: '/reference/limits' },
-      { text: 'Transaction v1', link: '/guide/transaction-v1' },
       { text: 'Scope and design choices', link: '/scope' },
     ],
   },
@@ -205,14 +209,12 @@ export default defineConfig({
       text: 'Edit this page on GitHub',
     },
     nav: [
-      { text: 'Guide', link: '/guide/getting-started', activeMatch: '^/guide/(?!transaction-v1)' },
+      { text: 'Guide', link: '/guide/why-ballista', activeMatch: '^/guide/' },
       { text: 'Examples', link: '/examples/' },
-      { text: 'Reference', link: '/reference/typescript', activeMatch: '^/(reference/|scope|guide/transaction-v1)' },
+      { text: 'Reference', link: '/reference/typescript', activeMatch: '^/(reference/|scope)' },
     ],
     sidebar: {
-      // These two live outside /reference/ but belong with it. They come first: VitePress picks the
-      // deepest matching key, and '/guide/transaction-v1' ties with '/guide/' on depth.
-      '/guide/transaction-v1': referenceSidebar,
+      // Scope lives outside /reference/ but belongs with it.
       '/scope': referenceSidebar,
       '/guide/': guideSidebar,
       '/examples/': examplesSidebar,

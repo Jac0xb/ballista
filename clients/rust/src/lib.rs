@@ -1,10 +1,12 @@
 //! Rust client for Ballista: template addresses, lifecycle and run instruction codecs, typed run
-//! input encoding, error decoding, and re-exports of the shared authoring builder.
+//! input encoding, error decoding, run output decoding from transaction logs, and re-exports of
+//! the shared authoring builder.
 //!
 //! Authoring from Rust uses [`ProgramBuilder`], which emits the same bytecode the TypeScript
 //! compiler produces; see `examples/author_template.rs`. Running a template from Rust needs only
 //! the template address, the account metas in schema order, and inputs encoded with
-//! [`RunInputs`]; see `examples/run_template.rs`.
+//! [`RunInputs`]; see `examples/run_template.rs`. [`program_data`] and [`decode_run_event`] read a
+//! run's events and `EMIT` output back from the transaction's logs.
 
 use ballista_common::instruction::*;
 use solana_program::{
@@ -13,10 +15,15 @@ use solana_program::{
     pubkey::Pubkey,
 };
 
+mod logs;
+
 pub use ballista_common;
 pub use ballista_common::template::{
     decode_ballista_error, DecodedError, ErrorSource, ProgramBuilder, Segment, MAX_REGISTRIES,
     REGISTRY_SEED,
+};
+pub use logs::{
+    decode_run_event, program_data, BallistaOutput, LogError, ProgramDataLine, RunEvent,
 };
 
 pub const ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");

@@ -2811,6 +2811,166 @@ mod tests {
         assert_eq!(custom_code(&result), Some(((at as u32) << 16) | 6130), "{result:#?}");
     }
 
+    /// Real logs for the Rust SDK's log decoders, kept in `clients/rust/tests/fixtures/run-logs.json`
+    /// and rewritten with `UPDATE_FIXTURES=1`.
+    ///
+    /// `nested`: an outer run with the event flag logs `OUTR`, runs an inner template that logs
+    /// `INNR`, its event and returns 7, calls the Token program's `GetAccountDataSize`, which
+    /// returns 165, then logs `DONE` and its own event. It sets no return data, so its
+    /// `Program return:` line names Ballista but holds the Token program's bytes: the runtime
+    /// logs the program whose frame ended, not the one that set the data. `failed`: a run logs
+    /// `TRY1`, then fails a requirement.
+    ///
+    /// Every line but the compute-unit counts must match the fixture, so a change to what runs
+    /// log shows up here.
+    #[test]
+    fn run_logs_for_the_sdk_decoders() {
+        let creator = Pubkey::new_from_array([0x11; 32]);
+        let payer = Pubkey::new_from_array([0x22; 32]);
+        let mint = Pubkey::new_from_array([0x33; 32]);
+        let mut accounts = funded_accounts([creator, payer], 10_000_000_000);
+        accounts.insert(
+            mint,
+            token::create_account_for_mint(Mint {
+                mint_authority: COption::Some(payer),
+                supply: 0,
+                decimals: 6,
+                is_initialized: true,
+                freeze_authority: COption::None,
+            }),
+        );
+        let mut context = context(accounts);
+        let create =
+            |context: &MolluskContext<HashMap<Pubkey, Account>>, id: u16, payload: &[u8]| {
+                let result =
+                    context.process_instruction(&create_template_instruction(creator, id, payload));
+                assert!(result.program_result.is_ok(), "{result:#?}");
+                find_template_pda(&creator, id).0
+            };
+
+        let mut inner = ProgramBuilder::new();
+        inner.flags(ballista_common::template::PROGRAM_FLAG_EMIT_EVENT);
+        let seven = inner.const_u64(7);
+        let tag = inner.blob(b"INNR");
+        let part = Segment::Register(DATA_REG_U64, seven);
+        inner.emit_data(&[Segment::Literal(tag), part]);
+        inner.set_return_data(&[part]);
+        let inner = create(&context, 1, &inner.build().unwrap());
+
+        let mut outer = ProgramBuilder::new();
+        outer.flags(ballista_common::template::PROGRAM_FLAG_EMIT_EVENT);
+        let ballista = outer.account(ACCOUNT_EXECUTABLE, Some(ID.to_bytes()), None, 0);
+        let inner_account = outer.account(0, None, Some(ID.to_bytes()), 80);
+        let token_program = outer.account(ACCOUNT_EXECUTABLE, Some(token::ID.to_bytes()), None, 0);
+        let mint_account = outer.account(0, None, Some(token::ID.to_bytes()), 82);
+        let one = outer.const_u64(1);
+        let tag = outer.blob(b"OUTR");
+        outer.emit_data(&[Segment::Literal(tag), Segment::Register(DATA_REG_U64, one)]);
+        let run = outer.blob(&[IX_RUN]);
+        let nested = outer.cpi(ballista, &[(inner_account, 0)], &[Segment::Literal(run)]);
+        outer.invoke(nested, None);
+        let returned = outer.return_data(OP_READ_U64, 0);
+        let size_of = outer.blob(&[21]); // GetAccountDataSize
+        let size_cpi = outer.cpi(
+            token_program,
+            &[(mint_account, 0)],
+            &[Segment::Literal(size_of)],
+        );
+        outer.invoke(size_cpi, None);
+        let size = outer.return_data(OP_READ_U64, 0);
+        let tag = outer.blob(b"DONE");
+        outer.emit_data(&[
+            Segment::Literal(tag),
+            Segment::Register(DATA_REG_U64, returned),
+            Segment::Register(DATA_REG_U64, size),
+        ]);
+        let outer = create(&context, 2, &outer.build().unwrap());
+
+        let mut failing = ProgramBuilder::new();
+        let tag = failing.blob(b"TRY1");
+        let zero = failing.const_u64(0);
+        failing.emit_data(&[Segment::Literal(tag), Segment::Register(DATA_REG_U64, zero)]);
+        let never = failing.binary(OP_NE, zero, zero);
+        failing.require(never);
+        let failing = create(&context, 3, &failing.build().unwrap());
+
+        let mut logs = |instruction: Instruction, succeeds: bool| {
+            let logger = LogCollector::new_ref();
+            context.mollusk.logger = Some(logger.clone());
+            let result = context.process_instruction(&instruction);
+            assert_eq!(result.program_result.is_ok(), succeeds, "{result:#?}");
+            let lines = logger.borrow().get_recorded_content().to_vec();
+            (lines, result.return_data)
+        };
+        let (nested, returned) = logs(
+            run_instruction(
+                outer,
+                vec![
+                    AccountMeta::new_readonly(ID, false),
+                    AccountMeta::new_readonly(inner, false),
+                    AccountMeta::new_readonly(token::ID, false),
+                    AccountMeta::new_readonly(mint, false),
+                ],
+                &[],
+            ),
+            true,
+        );
+        assert_eq!(
+            returned,
+            165u64.to_le_bytes(),
+            "the Token program's return data"
+        );
+        let last_return = format!(
+            "Program return: {ID} {}",
+            STANDARD.encode(165u64.to_le_bytes())
+        );
+        assert!(nested.contains(&last_return), "{nested:#?}");
+        let (failed, _) = logs(run_instruction(failing, vec![], &[]), false);
+
+        let fixture = serde_json::json!({
+            "ballista": ID.to_string(),
+            "token": token::ID.to_string(),
+            "outer": outer.to_string(),
+            "inner": inner.to_string(),
+            "failing": failing.to_string(),
+            "nested": nested,
+            "failed": failed,
+        });
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../clients/rust/tests/fixtures/run-logs.json"
+        );
+        if std::env::var("UPDATE_FIXTURES").as_deref() == Ok("1") {
+            let text = format!("{}\n", serde_json::to_string_pretty(&fixture).unwrap());
+            std::fs::write(path, text).expect("write run-logs.json");
+            return;
+        }
+        let recorded: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(path).expect("run-logs.json: run with UPDATE_FIXTURES=1"),
+        )
+        .expect("run-logs.json");
+        // Compute-unit counts move with every change to the program; everything else must match.
+        let shape = |value: &serde_json::Value| -> Vec<String> {
+            value
+                .as_array()
+                .expect("an array of lines")
+                .iter()
+                .map(|line| line.as_str().expect("a line").to_owned())
+                .filter(|line| !line.contains(" compute units"))
+                .collect()
+        };
+        for key in ["nested", "failed"] {
+            assert_eq!(
+                shape(&recorded[key]),
+                shape(&fixture[key]),
+                "{key}: rerun with UPDATE_FIXTURES=1"
+            );
+        }
+        for key in ["ballista", "token", "outer", "inner", "failing"] {
+            assert_eq!(recorded[key], fixture[key], "{key}");
+        }
+    }
+
     /// Run data for the output fixture: 1,000 lamports per row and the memo `hello`.
     fn output_fixture_inputs() -> Vec<u8> {
         let mut inputs = 1_000u64.to_le_bytes().to_vec();

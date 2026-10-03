@@ -1,8 +1,8 @@
 # Rust client
 
 `ballista-sdk` derives Ballista's template and registry entry addresses, builds the instructions
-that upload and run a template, encodes run inputs, and decodes error codes, with current Solana
-Rust types. Its `ProgramBuilder` writes the same bytecode as the
+that upload and run a template, encodes run inputs, and decodes error codes and a run's logged
+output, with current Solana Rust types. Its `ProgramBuilder` writes the same bytecode as the
 TypeScript compiler, and it shares the template parser and verifier with the on-chain program
 through `ballista-common`.
 

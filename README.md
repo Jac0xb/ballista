@@ -58,7 +58,7 @@ The [runnable TypeScript example](clients/js/examples/ensure-usdc-ata.ts) compil
 template that invokes the Associated Token Program's ordinary, non-idempotent `Create` instruction
 only when the derived token account is empty. The condition is evaluated by Ballista during `Run`,
 so the caller does not need an RPC existence check or a different transaction shape. A repeat run
-therefore proves the guard was applied: the same CPI would fail if Ballista invoked it again.
+therefore shows the guard was applied: the same CPI would fail if Ballista invoked it again.
 
 These runs used the pre-release devnet build above. It still runs this stored template, but
 rejects templates compiled from this repository today.

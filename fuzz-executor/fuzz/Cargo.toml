@@ -1,0 +1,34 @@
+# Native, coverage-guided fuzz target for the bytecode executor. Its own workspace (cargo-fuzz
+# convention) so libfuzzer-sys and the sanitizer never touch the release build. The program runs
+# on the host through its `spec-api` feature; pinocchio's off-chain CPI, return-data and sysvar
+# stubs make every CPI a no-op, so this fuzzes the interpreter's own branches with CPIs stubbed.
+#
+# Run (nightly): cargo +nightly-2025-11-21 fuzz run run_executor -- -max_total_time=600
+[package]
+name = "ballista-fuzz-executor"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ballista = { path = "../ballista-lib", features = ["no-entrypoint", "spec-api"] }
+ballista-common = { path = "../../common" }
+ballista-fuzz-gen = { path = "../gen" }
+pinocchio = { version = "=0.11.2", features = ["cpi"] }
+solana-address = { version = "=2.7.0", features = ["curve25519", "decode"] }
+
+[[bin]]
+name = "run_executor"
+path = "fuzz_targets/run_executor.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

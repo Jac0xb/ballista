@@ -29,9 +29,9 @@ cargo test -p cvlr-pinocchio --features rt
 
 cd ballista-specs
 cargo certora-sbf --tools-version v1.53  # SBF binary for the prover
-certoraSolanaProver run.conf             # the 14 rules that prove
+certoraSolanaProver run.conf             # the 15 rules that prove
 certoraSolanaProver run.conf --rule rule_u64_arithmetic_is_checked
-certoraSolanaProver run-blocked.conf     # the 16 rules expected to fail; see below
+certoraSolanaProver run-blocked.conf     # 17 rules expected to fail (14 blocked, 3 diagnostic)
 ```
 
 Results appear at `https://prover.certora.com/output/<job>/<key>`. Platform tools v1.53 ship the
@@ -48,8 +48,9 @@ the program on first use. Run it after changes to the executor even when no prov
 `run.conf` holds the rules that prove today: arithmetic, comparisons, casts, error codes, and the
 parser. The typing, account-constraint, lifecycle, and `u128` arithmetic rules are written but
 blocked on the prover's model of heap memory, so they live in `run-blocked.conf` and are expected
-to fail. That file also holds three diagnostic rules that isolate the problem: byte stores read
-back as words, and the constant program parsed from byte stores or from `memcpy`.
+to fail. The `u64` multiply-divide rule sits there too until a prover run confirms it. That file
+also holds three diagnostic rules that isolate the problem: byte stores read back as words, and
+the constant program parsed from byte stores or from `memcpy`.
 
 - **Typing preservation** (blocked). For any register typing, any register values consistent with
   it, and any instruction the verifier accepts against it, the executor returns success or a
@@ -57,7 +58,7 @@ back as words, and the constant program parsed from byte stores or from `memcpy`
   per-instruction step of the argument that finalize-time verification is sound.
 - **Arithmetic, comparisons, casts.** Match Rust's checked semantics for every `u64` and `i64`
   input and reject mixed or non-numeric operands. For signed division only the error cases are
-  proved, and the `u128` rule is blocked.
+  proved, and the `u128` and `u64` multiply-divide rules are blocked.
 - **Parser.** Checks magic and version first, reports truncation rather than misparsing, and
   returns sections that exactly consume the payload.
 - **Account constraints** (blocked). Signer, writable, executable, address, owner, minimum length,

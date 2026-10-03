@@ -114,7 +114,9 @@ SPL Token program must own them, so Token-2022 accounts are rejected.
 ::: warning The Ed25519 instruction goes directly before the run
 The template reads the signature from the instruction just before its own. With nothing before the
 run, it fails at `quoteInstructionIndex`. With any other instruction in between, even a memo, it
-fails at `quoteIsEd25519`.
+fails at `quoteIsEd25519`. `currentInstructionIndex` gives the top-level instruction's index, so if
+another program calls the run through a CPI, the signature must sit directly before that program's
+instruction.
 :::
 
 ## What has been tested

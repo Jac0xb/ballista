@@ -64,10 +64,14 @@ They replay every seed, check every real template, and refuse every negative mut
 **Per address**, the ceiling is wider, and finalization cannot see it. The caller picks the
 address in each slot and the members of each account group.
 
-- An address in a slot declared read-only reaches a callee writable if the same CPI also passes
-  it in a writable slot, or forwards a group holding it that the transaction marked writable.
-  The runtime merges the privileges of an account listed twice.
-- It is a signer to a callee only through a slot declared signer: group members never are.
+- An address in a slot declared read-only reaches a callee writable in two ways:
+  - the same CPI also passes it in a slot declared writable;
+  - the CPI forwards a group holding it, and the transaction marked it writable.
+
+  The runtime merges the flags of an account listed twice in one instruction.
+- It reaches a callee as a signer only through a slot declared signer: group members never are.
+- A template can guard against the first with `notEqual` on the two keys. It cannot guard against
+  the second: group members can't be read or checked.
 - `ceiling::address_ceiling` states this bound, and a test pins it.
 
 ## Known findings

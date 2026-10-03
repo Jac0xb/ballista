@@ -3,7 +3,10 @@
 
 use std::{
     collections::HashSet,
-    sync::{Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, OnceLock,
+    },
 };
 
 use ballista_common::{
@@ -212,6 +215,26 @@ pub fn verify(data: &[u8]) -> Option<VerificationStats> {
     }
 }
 
+/// Accepted programs the ceiling pass has checked in this process, with their invoke sites and
+/// account records. Logged at every power of two, so a run's log says how much it covered.
+fn count_ceiling(found: &ceiling::Ceiling) {
+    static PROGRAMS: AtomicU64 = AtomicU64::new(0);
+    static SITES: AtomicU64 = AtomicU64::new(0);
+    static RECORDS: AtomicU64 = AtomicU64::new(0);
+    static AT_BOUND: AtomicU64 = AtomicU64::new(0);
+    let programs = PROGRAMS.fetch_add(1, Ordering::Relaxed) + 1;
+    let sites = SITES.fetch_add(found.invoke_sites as u64, Ordering::Relaxed) + found.invoke_sites as u64;
+    let records = RECORDS.fetch_add(found.records as u64, Ordering::Relaxed) + found.records as u64;
+    let at_bound = AT_BOUND.fetch_add(u64::from(found.worst_case_cpis == 64), Ordering::Relaxed)
+        + u64::from(found.worst_case_cpis == 64);
+    if programs.is_power_of_two() && programs >= 1 << 10 {
+        eprintln!(
+            "ceiling pass: {programs} accepted programs, {sites} invoke sites, {records} account records, \
+             {at_bound} at exactly 64 worst-case CPIs"
+        );
+    }
+}
+
 /// Breaks one rule in `data`, a payload `verify` accepts, and requires `verify` to reject the
 /// result with that rule's error. `choice` picks which of the breaks that apply.
 pub fn negative(data: &[u8], choice: usize) {
@@ -232,10 +255,13 @@ pub fn differential(data: &[u8]) -> Option<checker::Violation> {
     let model = Program::decode(data).expect("a verified payload fits the model");
     // Only finalization enforces these, so nothing may mask them: no known finding applies.
     match ceiling::check(&model) {
-        Ok(found) => assert_eq!(
-            found.worst_case_cpis, stats.max_expanded_cpis as usize,
-            "the verifier and the ceiling pass count different worst-case CPIs"
-        ),
+        Ok(found) => {
+            assert_eq!(
+                found.worst_case_cpis, stats.max_expanded_cpis as usize,
+                "the verifier and the ceiling pass count different worst-case CPIs"
+            );
+            count_ceiling(&found);
+        }
         Err(violation) => panic!("verify accepted a program whose CPIs break the ceiling: {violation}"),
     }
     match checker::check(&model, data.len()) {

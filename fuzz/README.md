@@ -80,7 +80,10 @@ Each finding has an ignored test in `common/tests/fuzz_findings.rs`.
 | `unreferenced.segment`, `unreferenced.cpi` | A data segment or CPI descriptor that nothing reaches is never checked. |
 
 They are listed in `harness::KNOWN_FINDINGS`, so the targets print them once and keep fuzzing.
-Set `BALLISTA_FUZZ_STRICT=1` to make them fatal, for example to check a fix.
+
+- `BALLISTA_FUZZ_STRICT=1` makes them all fatal again, for example to check a fix.
+- A comma-separated list of rule names makes only those fatal. This is how
+  `fuzz/regressions/differential/` was made: one crash per rule, minimized with `cargo fuzz tmin`.
 
 ## Seeds
 
@@ -95,6 +98,20 @@ The script rebuilds `fuzz/seeds/` from every template payload in:
 - `clients/rust/tests/fixtures/*.hex` and `docs-examples.json`.
 
 That is 87 distinct templates, about 260 KiB in all.
+
+## Triage
+
+Three examples in `support/examples` help with triage:
+
+- `explain FILE` prints a payload's sections and every verdict.
+- `checker_audit TARGET DIR` lists where the checker and `verify` disagree, in both directions. A
+  verifier error the checker lacks is a rule neither side can catch. On the corpora of the first
+  long run, the four known findings were the only disagreements.
+- `corpus_stats TARGET DIR` counts invoke sites by scope, records checked, and worst-case CPI
+  counts.
+
+Run any of them with
+`cargo run --release --manifest-path fuzz/Cargo.toml -p ballista-fuzz-support --example NAME -- ARGS`.
 
 ## Mutation score
 

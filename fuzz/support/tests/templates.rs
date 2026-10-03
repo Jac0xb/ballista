@@ -175,3 +175,39 @@ fn per_address_the_ceiling_is_every_slot_holding_it_plus_the_group() {
         assert_eq!(granted & !allowed, 0, "address {address}");
     }
 }
+
+/// The known findings as the `differential` target found them, minimized with `cargo fuzz tmin`
+/// under `BALLISTA_FUZZ_STRICT=<rule>`. Each file is named for its rule.
+fn reproducers() -> Vec<(String, Vec<u8>)> {
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../regressions/differential");
+    let mut files: Vec<(String, Vec<u8>)> = fs::read_dir(directory)
+        .expect("fuzz/regressions/differential")
+        .map(|entry| {
+            let path = entry.expect("an entry").path();
+            (path.file_name().unwrap().to_string_lossy().into_owned(), fs::read(&path).unwrap())
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+#[test]
+fn each_reproducer_breaks_the_rule_it_is_named_for() {
+    let files = reproducers();
+    assert_eq!(files.len(), harness::KNOWN_FINDINGS.len(), "one reproducer per known finding");
+    for (rule, bytes) in files {
+        assert!(harness::KNOWN_FINDINGS.contains(&rule.as_str()), "{rule} is a known finding");
+        let program = Program::decode(&bytes).expect("decodes");
+        let report = checker::check(&program, bytes.len()).expect("only an encoding rule is broken");
+        assert!(report.notes.iter().any(|note| note.rule == rule), "{rule}: {:?}", report.notes);
+    }
+}
+
+#[test]
+#[ignore = "known findings: verify accepts every reproducer; see common/tests/fuzz_findings.rs"]
+fn verify_refuses_each_reproducer() {
+    for (rule, bytes) in reproducers() {
+        let verdict = ballista_common::template::ProgramView::parse(&bytes).and_then(|view| view.verify());
+        assert!(verdict.is_err(), "{rule}: verify accepts it");
+    }
+}

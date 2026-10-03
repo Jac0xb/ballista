@@ -30,14 +30,21 @@ pub const KNOWN_FINDINGS: &[&str] = &[
     "unreferenced.cpi",
 ];
 
-fn strict() -> bool {
-    static STRICT: OnceLock<bool> = OnceLock::new();
-    *STRICT.get_or_init(|| std::env::var_os("BALLISTA_FUZZ_STRICT").is_some_and(|value| value != "0"))
+/// `BALLISTA_FUZZ_STRICT`: unset or `0` keeps every known finding non-fatal; `1` makes them all
+/// fatal; a comma-separated list of rule names makes just those fatal, so a short run crashes on
+/// one finding and `cargo fuzz tmin` can minimize it.
+fn strict(rule: &str) -> bool {
+    static STRICT: OnceLock<Option<String>> = OnceLock::new();
+    match STRICT.get_or_init(|| std::env::var("BALLISTA_FUZZ_STRICT").ok()).as_deref() {
+        None | Some("0") | Some("") => false,
+        Some("1") => true,
+        Some(rules) => rules.split(',').any(|named| named.trim() == rule),
+    }
 }
 
 /// Whether a violation of `rule` stops the fuzzer.
 pub fn is_fatal(rule: &str) -> bool {
-    strict() || !KNOWN_FINDINGS.contains(&rule)
+    strict(rule) || !KNOWN_FINDINGS.contains(&rule)
 }
 
 /// Prints a known finding the first time this process sees its rule.

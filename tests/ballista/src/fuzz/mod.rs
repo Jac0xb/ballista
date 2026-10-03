@@ -13,6 +13,7 @@
 //!   exact error of each account check, so deleting the check fails them; [`registry_ordering`]
 //!   probes the late-open design question the second critic raised.
 
+mod critic_lost_write;
 mod executor;
 mod harness;
 mod invariants;

@@ -29,24 +29,29 @@ use super::symbolic::{self, assume_constraint, empty, InstructionSlot, Shape};
 use super::util::{pick, unset_registers, REGISTERS};
 
 /// What `validate_runtime_accounts` returned.
+///
+/// Whole eight-byte words: every `*_case` helper returns this through a stack copy, and the
+/// default layout put a two-byte tag and a two-byte `index` or `count` in one word, which the
+/// prover does not rebuild (`scan-stack-copies.py`). Four rules read that field after the copy.
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(C, u64)]
 enum Validation {
-    Accepted { iterations: usize },
+    Accepted { iterations: u64 },
     MissingSignature,
-    ConstraintFailed { index: u16 },
-    WrongCount { count: u16 },
+    ConstraintFailed { index: u64 },
+    WrongCount { count: u64 },
     Other,
 }
 
 fn classify(outcome: &Result<RunLayout, RunError>) -> Validation {
     let validation = match outcome {
-        Ok(layout) => Validation::Accepted { iterations: layout.iterations },
+        Ok(layout) => Validation::Accepted { iterations: layout.iterations as u64 },
         Err(RunError::Program(ProgramError::MissingRequiredSignature)) => Validation::MissingSignature,
         Err(RunError::VmAt(BallistaError::AccountConstraintFailed, index)) => {
-            Validation::ConstraintFailed { index: *index }
+            Validation::ConstraintFailed { index: u64::from(*index) }
         }
         Err(RunError::VmAt(BallistaError::InvalidAccountRange, count)) => {
-            Validation::WrongCount { count: *count }
+            Validation::WrongCount { count: u64::from(*count) }
         }
         Err(_) => Validation::Other,
     };

@@ -55,19 +55,20 @@ platform tools up to v1.53; the program builds with v1.54. Both ship rustc 1.89.
   and bitwise operations.
 - **Error codes:** they round-trip, and runtime and verifier codes stay in their ranges.
 - **Parser:** magic and version come first; short payloads are truncated; sections tile the
-  payload. This covers payloads up to 96 bytes; a Kani probe checked the full 10,240 in 159 s.
+  payload. This covers payloads up to 96 bytes; Kani (track FV5) checked the full 10,240 in 159 s.
 
-At risk: five of these (`u64` and `i64` arithmetic, signed division, casts, `u64` integer
-operations) read an error's kind back from a stack copy the prover may not follow ("Error kinds
-in stack copies" below). Their 2026-09-20 binaries had no such copy; today's do.
+At risk: six of these (`u64` and `i64` arithmetic, signed division, mixed operands, casts, `u64`
+integer operations) read an error's kind back from a stack copy the prover may not follow ("Error
+kinds in stack copies" below). The 2026-09-20 binaries had no such copy in the arithmetic rules;
+today's do.
 
 The section rule was wrong and vacuous until this branch: it counted only the fixed inputs, and a
 `cvlr_satisfy!(true)` turned its asserts into assumptions. Its twin is the old statement.
 
 ### Expected to prove, never run (`run-candidates*.conf`, 15 rules)
 
-- **`u128` arithmetic:** one rule per opcode, where one rule over all six blocked. At risk like the
-  `u64` rule.
+- **`u128` arithmetic:** one rule per opcode, where one rule over all six blocked. Add, sub, mul
+  and div are at risk like the `u64` rule.
 - **Casts:** `u128` to `i64`, the sixth pair. At risk the same way.
 - **Registry:**
   - an entry opens only if it is writable and of the declared size;
@@ -82,7 +83,8 @@ The section rule was wrong and vacuous until this branch: it counted only the fi
 
 | Rules | Reason |
 | --- | --- |
-| Account constraints (6) | Suspected: `validate_account`'s error kinds travel in stack copies |
+| Account constraints (5) | Suspected: `validate_account`'s error kinds travel in stack copies |
+| Account header reads | Suspected: the executor's register write copies one-byte-tagged values by words |
 | Registry: an open of an open entry fails | Suspected: the outcomes differ only in the result, copied the same way |
 | `mul_div` | Suspected: its result is copied the same way |
 | Privilege ceiling, finalization's half | Suspected: `verify_cpi`'s refusals are copied the same way, so one can read as acceptance |
@@ -112,6 +114,8 @@ Everything below was checked against the compiled code (`llvm-objdump`) and the 
   - The `rule_stack_word_copy_*` diagnostics test the mechanism directly.
   - One-byte `RuntimeValue` tags copied the same way may survive: the ordering rule had them when
     it proved on 2026-09-20.
+  - The rules' own types are copied the same way. Keep them in whole words: `u64` tags and fields,
+    as `rules::accounts::Validation` has.
 - **Some calls have no model.**
   - `sol_get_return_data` writes nothing, not even `r0`. A link-time `--wrap` sends the program's
     calls to a stand-in in `src/mocks.rs`.
@@ -138,7 +142,7 @@ The prover analyzes the spec build, not the deployed one. The spec build differs
 - features: `spec-api` and `no-entrypoint`.
 
 Compiled sizes differ too: `ProgramView::parse` is 290 SBF instructions against 118 deployed,
-`read_return_data` 257 against 222, and `registry::open` 84 against 75. The dependencies match;
+`read_return_data` 257 against 222, and `registry::open` 84 against 71. The dependencies match;
 `solana-account-view` is pinned to the program's 2.0.0.
 
 `build-sbf.sh` fails on any frame over SBPF v0's 4 KiB, which `cargo certora-sbf` reports but exits
@@ -146,11 +150,20 @@ Compiled sizes differ too: `ProgramView::parse` is 290 SBF instructions against 
 
 ## What would unblock the rest
 
-- **Program, one line, measured here only by the scanner:** `#[repr(C, u32)]` on `RunError`. Tag
-  and kind become the two four-byte halves the prover rebuilds.
-  - The error-kind copies disappear from every arithmetic, cast and integer rule. The scanner still
-    lists one-byte `RuntimeValue` tags there, and one value read only for logging.
-  - `RunResult<()>` stays 12 bytes and the program's unit tests pass.
-  - Its compute cost is unmeasured.
+- **Program, one line:** `#[repr(C, u32)]` on `RunError`. Tag and kind become the two four-byte
+  halves the prover rebuilds. Measured at 3e2646a on 2026-10-03, then reverted:
+  - **Copies:** all 362 error-kind copies in the spec binary disappear. Seven copies still put one
+    byte beside a four-byte tag, such as a `RunResult<bool>`'s value, in the executor's dispatch
+    and the typing, header-read, registry-field and return-data helpers.
+  - **Expected to unblock:** the five account-constraint rules, `mul_div`, and the open of an open
+    entry. The scanner flags nothing else they reach, except copies it flags only because it
+    ignores control flow.
+  - **De-risked:** the six at-risk `run.conf` rules and the `u128` candidates.
+  - **Still blocked:** typing and header reads (register and verifier copies remain), the ceiling
+    (the verifier's copies, not `RunError`'s), lifecycle (byte-stored inputs) and the diagnostics.
+  - **Cost:** compute rises on 10 of the 14 benchmark cases (+731 CU in all, at most +2.7%) and on
+    all 32 protocol examples (+9 to +1,042 CU, median +1.1%). Both ceiling tests then fail, so the
+    ceilings rise with it. The other 59 Mollusk tests and the 58 unit tests pass, `RunResult<()>`
+    stays 12 bytes, and the binary shrinks by 200 bytes.
 - **Prover:** let a stack word rebuild from cells with unwritten gaps, keeping the written bytes
   exact.

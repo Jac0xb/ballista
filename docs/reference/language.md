@@ -449,8 +449,8 @@ total may not exceed 64.
 
 A batch declares a maximum number of rows (1 to 60), an optional minimum (default 0), and a row of
 1 to 8 named accounts. The caller supplies the rows at run time, and steps inside a `forEach` refer
-to the current row's accounts with `account.iteration(name)` and its [row inputs](#inputs) with
-`expression.rowInput(name)`, so a payroll can pay each recipient a different amount. A run with
+to the current row's accounts with `account.iteration(name)`. Each row can also carry
+[row inputs](#inputs), so a payroll can pay each recipient a different amount. A run with
 fewer rows than the minimum fails instead of succeeding without doing anything. Every `forEach` in
 a template runs over the same rows, from the first. A template with a batch needs at least one
 `forEach`, and a `forEach` needs a batch.

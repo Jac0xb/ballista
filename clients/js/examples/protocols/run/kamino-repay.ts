@@ -1,3 +1,4 @@
+// #region run
 import type { Address, Instruction } from '@solana/kit';
 
 import { buildKitRunInstruction, type KitAccountBinding } from '../../../src/kit.js';
@@ -65,3 +66,4 @@ export function buildKaminoRepayRun(input: {
     },
   });
 }
+// #endregion run

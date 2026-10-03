@@ -34,22 +34,21 @@ emptied of liquidity is collected, not refilled.
 ::: warning Don't use a floor of 0
 A fee above the floor can still be too small to buy any liquidity. The deposit then fails with
 Whirlpools' `LiquidityZero` (6012), and the whole run reverts, collect included. A few base units (a
-token's smallest unit) cover SOL/USDC, but a pool whose token A is worth less per unit needs more;
-the template's header suggests a few thousand. One floor applies to both fees, each counted in its
-own token's base units.
+token's smallest unit) cover SOL/USDC, but a pool whose token A is worth less per unit needs more:
+a few thousand is safer. One floor applies to both fees, each counted in its own token's base units.
 :::
 
 ## Template
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/orca-compound-fees.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/orca-compound-fees.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#orca-compound [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#orca-compound [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/orca-compound.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/orca-compound.ts#run [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#orca-compound [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#orca-compound [Rust · Run]
 
 :::
 

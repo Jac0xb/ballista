@@ -29,13 +29,13 @@ Kamino account that records their deposits and debts.
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/marginfi-to-kamino-rebalance.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/marginfi-to-kamino-rebalance.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#marginfi-to-kamino [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#marginfi-to-kamino [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/marginfi-to-kamino.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/marginfi-to-kamino.ts#run [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#marginfi-to-kamino [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#marginfi-to-kamino [Rust · Run]
 
 :::
 

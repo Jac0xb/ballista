@@ -29,13 +29,13 @@ The template:
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/marginfi-withdraw-all-with-floor.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/marginfi-withdraw-all-with-floor.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#marginfi-withdraw [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#marginfi-withdraw [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/marginfi-withdraw.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/marginfi-withdraw.ts#run [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#marginfi-withdraw [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#marginfi-withdraw [Rust · Run]
 
 :::
 

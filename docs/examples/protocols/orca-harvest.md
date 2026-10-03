@@ -35,13 +35,13 @@ depends on trades, so leave such positions out when you build the run.
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/orca-harvest-many-positions.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/orca-harvest-many-positions.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#orca-harvest [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#orca-harvest [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run-orca-harvest.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run-orca-harvest.ts#run [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#orca-harvest [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#orca-harvest [Rust · Run]
 
 :::
 

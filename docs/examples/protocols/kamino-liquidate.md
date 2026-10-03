@@ -33,13 +33,13 @@ repaid. Collateral Kamino could not redeem stays in `userDestinationCollateral` 
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/kamino-liquidate-with-proof.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/kamino-liquidate-with-proof.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#kamino-liquidate [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#kamino-liquidate [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/kamino-liquidate.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/kamino-liquidate.ts#run [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#kamino-liquidate [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#kamino-liquidate [Rust · Run]
 
 :::
 

@@ -65,13 +65,13 @@ nonce in a [registry entry](/guide/registries).
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/signed-quote-settlement.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/signed-quote-settlement.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#signed-quote [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#signed-quote [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/signed-quote.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/signed-quote.ts#run [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#signed-quote [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#signed-quote [Rust · Run]
 
 :::
 

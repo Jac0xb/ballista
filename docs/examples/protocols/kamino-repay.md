@@ -34,13 +34,13 @@ It does not read the debt. Kamino repays at most what is owed, and the rest stay
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/kamino-repay-swap-output.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/kamino-repay-swap-output.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#kamino-repay [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#kamino-repay [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/kamino-repay.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/kamino-repay.ts#run [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#kamino-repay [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#kamino-repay [Rust · Run]
 
 :::
 

@@ -1,31 +1,5 @@
-/**
- * Move a position from marginfi to Kamino in one transaction, depositing exactly what came out.
- *
- * Kamino's `deposit_reserve_liquidity_and_obligation_collateral_v2(liquidity_amount: u64)` needs a
- * number that the marginfi withdrawal produces moments earlier. A transaction has to guess it.
- * Guess high and the deposit fails on insufficient funds, taking the withdrawal down with it;
- * guess low and the remainder sits in the wallet, earning nothing, until someone notices.
- *
- * The template empties the marginfi balance, measures what landed in the wallet, and deposits
- * exactly that.
- * - `healthAccounts` is what marginfi's health check reads once the withdrawn balance is gone: for
- *   every balance the account still holds, its bank and then its oracle, by bank address from
- *   highest to lowest. It is empty when the withdrawn balance was the only one.
- * - `farmAccounts` is the end of Kamino's v2 deposit: the obligation's farm user state and the
- *   reserve's collateral farm, or the Kamino program for each when the reserve has no collateral
- *   farm; then the Farms program. A group carries them so each keeps its own writable flag.
- * - Kamino takes the deposit only into an obligation refreshed in the same slot. Put
- *   `refresh_reserve` for each reserve the obligation holds, then `refresh_obligation` with those
- *   reserves, before this run.
- * - Kamino mints whole cTokens only, and takes just what they are worth: of the amount it is asked
- *   for, less than one cToken's worth (a base unit or so) can stay in `walletAta`.
- *
- * Without a template this takes two transactions, with the funds sitting in the wallet between
- * them, or a custom program.
- *
- * SPL Token banks and reserves only: `tokenProgram` and `walletAta`'s owner are pinned to SPL
- * Token.
- */
+/** Move a position into Kamino: docs/examples/protocols/marginfi-to-kamino.md. */
+// #region template
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
@@ -77,6 +51,11 @@ export const marginfiToKaminoRebalance = defineTemplate({
     reserveCollateralMint: { writable: true },
     reserveDestinationDepositCollateral: { writable: true },
   },
+  /**
+   * `healthAccounts`: what marginfi's health check reads after the withdrawal, as in
+   * `marginfi-withdraw-all-with-floor.ts`. `farmAccounts`: the end of Kamino's v2 deposit, its own
+   * writable flags kept: the collateral farm pair and the Farms program.
+   */
   accountGroups: ['healthAccounts', 'farmAccounts'],
   steps: [
     step.snapshot(
@@ -122,6 +101,7 @@ export const marginfiToKaminoRebalance = defineTemplate({
       'worthRebalancing',
     ),
 
+    // v2: the v1 handler refuses every caller but Kamino itself and a short whitelist.
     step.invoke({
       program: account.fixed('kamino'),
       accounts: [
@@ -153,3 +133,4 @@ export const marginfiToKaminoRebalance = defineTemplate({
 });
 
 export const compiled = compileTemplate(marginfiToKaminoRebalance);
+// #endregion template

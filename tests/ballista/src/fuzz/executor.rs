@@ -14,6 +14,52 @@ use solana_pubkey::Pubkey;
 use super::harness::{Harness, BALLISTA_ID};
 use super::invariants;
 
+/// Critic (second pass): the oracle this loop lacked. It accepted any Ballista code on a failed run,
+/// so a verified template failing for a structural reason (6002, 6011, 6016, 6012 other than a
+/// `bool` decode, 6009 at a fixed offset; the split in `certora/ballista-specs/src/rules/oracle.rs`)
+/// passed. With `>=` for `>` in `invoke_cpi`'s data-length check, 5,895 of 20,000 seeds failed with
+/// 6016 and the loop still passed. Unmutated, 20,000 seeds give 0 (13,219 runs failed with a
+/// Ballista code). The host enumeration covers this property for 55 opcodes; this covers the other
+/// 21 on generated templates.
+static CRITIC_KINDS: std::sync::Mutex<std::collections::BTreeMap<String, usize>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+static CRITIC_STRUCTURAL: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn critic_classify(seed: u64, plan: &ballista_fuzz_gen::template::TemplatePlan, scenario: &ballista_fuzz_gen::scenario::Scenario, outcome: &super::harness::RunOutcome) {
+    use ballista_common::template::*;
+    let mollusk_svm::result::types::TransactionProgramResult::Failure(index, solana_program_error::ProgramError::Custom(raw)) = &outcome.result.program_result else { return };
+    let (kind, context) = (raw & 0xffff, (raw >> 16) as usize);
+    if !(6000..=6026).contains(&kind) {
+        return;
+    }
+    let program = ProgramView::parse(&plan.bytes).ok();
+    let instruction = program.as_ref().and_then(|p| p.instructions.get(context)).copied();
+    let opcode = instruction.map(|i| i.opcode);
+    let reads = |op: u8| matches!(op, OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_I32 | OP_READ_U128 | OP_READ_PUBKEY | OP_READ_BOOL);
+    let bool_decode = |i: &InstructionRecord| match i.opcode {
+        OP_READ_BOOL => true,
+        OP_RETURN_DATA => i.a == OP_READ_BOOL,
+        OP_READ_INSTRUCTION_DATA => i.immediate() == u64::from(OP_READ_BOOL),
+        OP_READ_REGISTRY => (i.immediate() >> 16) as u8 == OP_READ_BOOL,
+        _ => false,
+    };
+    let structural = match (kind, instruction) {
+        (6002 | 6011 | 6016, _) => true,
+        (6009, Some(i)) => !(reads(i.opcode) && i.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0) && reads(i.opcode),
+        (6012, Some(i)) => !bool_decode(&i),
+        _ => false,
+    };
+    let calls_ballista = plan.calls.contains(&ballista_fuzz_gen::template::Program::Ballista);
+    let key = format!("kind={kind} op={opcode:?}{}", if structural { " STRUCTURAL" } else { "" });
+    *CRITIC_KINDS.lock().unwrap().entry(key.clone()).or_default() += 1;
+    if structural {
+        CRITIC_STRUCTURAL.lock().unwrap().push(format!(
+            "seed {seed}: {key} pc={context} failing_ix={index} before={} wrap={:?} mutation={:?} calls_ballista={calls_ballista} calls={:?}",
+            scenario.before.len(), scenario.wrap, scenario.mutation, plan.calls
+        ));
+    }
+}
+
 fn env_u64(name: &str, default: u64) -> u64 {
     std::env::var(name).ok().and_then(|value| value.parse().ok()).unwrap_or(default)
 }
@@ -88,6 +134,7 @@ fn run_seed(harness: &Harness, seed: u64) -> SeedResult {
     let inputs = invariants::decode_inputs(&plan, &scenario);
     let outcome = harness.run(&scenario, &template, &finalized);
     let report = invariants::check(harness, &world, &plan, &scenario, &template, &finalized, &inputs, &outcome);
+    critic_classify(seed, &plan, &scenario, &outcome);
 
     let succeeded = outcome.result.program_result.is_ok();
     let code = match &outcome.result.program_result {
@@ -169,6 +216,24 @@ fn fuzz_executor_differential() {
     for sample in &soft_samples {
         eprintln!("soft: {sample}");
     }
+    // Kinds raised while instructions run, by the opcode at the code's pc. Account and input
+    // validation kinds (6000-6008, 6010, 6020) carry an index, not a pc, and are left out.
+    for (key, count) in CRITIC_KINDS.lock().unwrap().iter() {
+        let kind: u32 = key[5..9].parse().unwrap_or(0);
+        if !matches!(kind, 6000..=6008 | 6010 | 6020) {
+            eprintln!("in-run failure {key}: {count}");
+        }
+    }
+    let structural = CRITIC_STRUCTURAL.lock().unwrap();
+    eprintln!("structural failures of verified templates: {}", structural.len());
+    for line in structural.iter().take(20) {
+        eprintln!("structural: {line}");
+    }
+    assert!(
+        structural.is_empty(),
+        "verified templates failed with structural errors (replay with FV_SEED=<n>):\n{}",
+        structural.join("\n")
+    );
     assert!(
         hard.is_empty(),
         "hard invariant violations (replay with FV_SEED=<n>):\n{}",

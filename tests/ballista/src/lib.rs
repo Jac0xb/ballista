@@ -15,6 +15,7 @@ mod fuzz;
 #[cfg(test)]
 mod tests {
     mod compiler_fuzz;
+    mod critic_loops;
     mod property_findings;
     mod register_reuse;
 

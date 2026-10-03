@@ -33,7 +33,7 @@
  * - Rewrite the small committed corpus (`fixtures/compiler-fuzz-corpus.json`):
  *   `UPDATE_COMPILER_FUZZ_CORPUS=1 pnpm --dir clients/js exec vitest run src/compiler-fuzz.test.ts`
  */
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, test } from 'vitest';
@@ -1866,11 +1866,12 @@ export function replay(program: DecodedProgram, passes: readonly number[], infer
     if (record.opcode === opcode.repeat) seen.push(`${pc}: count ${registers[record.b]}`);
     const carried = [...Array(64).keys()].filter((register) => (record.immediate >> BigInt(register)) & 1n);
     // A one-register-per-value reference past 64 registers cannot name every carried register in
-    // its 64-bit mask. A body's moves are its assignments, each into a carried register.
+    // its 64-bit mask. A body's assignments are its moves into a register written before the
+    // loop, a carried one; a move into a fresh register is a binding's copy of a carried value.
     if (inferCarried) {
       for (let body = pc + 1; body <= pc + record.a; body += 1) {
         const inner = program.instructions[body]!;
-        if (inner.opcode === opcode.move && !carried.includes(inner.dst)) carried.push(inner.dst);
+        if (inner.opcode === opcode.move && registers[inner.dst] !== 'unset' && !carried.includes(inner.dst)) carried.push(inner.dst);
       }
     }
     const count = passes[loop] ?? 0;
@@ -2477,8 +2478,8 @@ export function materializeAliases(template: TemplateInput): TemplateInput {
 
 /**
  * Whether a loop body binds a carried variable with `let` (directly or through another such
- * binding) and then assigns the variable. The binding shares the variable's register, so after the
- * assignment it reads the new value: finding `carried-alias`, below.
+ * binding) and then assigns the variable: the pattern of fixed finding `carried-alias`, below,
+ * where the binding shared the variable's register and read the new value after the assignment.
  */
 export function carriedAliasHazard(steps: Step[]): boolean {
   for (const loop of steps) {
@@ -2702,20 +2703,20 @@ export function checkCase(fuzzCase: FuzzCase, options: { corpus?: boolean; mutat
 }
 
 // ---------------------------------------------------------------------------------------------
-// Findings, minimized. Each has a skipped test below that fails today.
+// Findings, minimized. Each open one has a skipped test below that fails today.
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Finding `carried-alias` (medium): inside a loop body, `let` or `snapshot` of a carried variable
- * binds the variable's own register, since a `let` of a variable compiles to no instruction. A
- * later `assign` writes that register, so from then on the binding reads the new value. The
- * language says a binding evaluates once and keeps its value, and `snapshot` is named for
- * before-and-after checks. `sharesRegister` copies a carried variable that a binding shares when
- * the loop starts, but nothing does when the binding is made inside the body.
+ * Finding `carried-alias` (medium, fixed): inside a loop body, `let` or `snapshot` of a carried
+ * variable bound the variable's own register, since a `let` of a variable compiles to no
+ * instruction. A later `assign` wrote that register, so from then on the binding read the new
+ * value. The language says a binding evaluates once and keeps its value, and `snapshot` is named
+ * for before-and-after checks. `sharesRegister` copies a carried variable that a binding shares
+ * when the loop starts; a binding made inside the body now gets a copy of its own as it is made.
  *
  * Here each pass snapshots the total, adds one, and requires the total to have grown by one from
- * the snapshot. Every pass should pass; the compiled check compares the new total plus one with
- * itself and fails the first pass. A check of the form `total - before <= cap` passes always.
+ * the snapshot. Every pass should pass; the aliased check compared the new total plus one with
+ * itself and failed the first pass.
  */
 export function carriedAliasDocument(): TemplateInput {
   return {
@@ -2733,6 +2734,37 @@ export function carriedAliasDocument(): TemplateInput {
         { max: 4, carry: ['total'] },
       ),
       step.setReturnData([data.encode('u64', expression.variable('total'))]),
+    ],
+  };
+}
+
+/** The per-pass cap the inputs of `perPassCapDocument` test: at most 10 spent in one pass. */
+const PER_PASS_CAP = 10n;
+
+/**
+ * The check `carried-alias` bypassed: a per-pass cap measured from a snapshot. Each pass snapshots
+ * what has been spent, spends an amount and a fee in two assignments, and requires the pass to
+ * have spent at most `PER_PASS_CAP`. With the snapshot aliased, `spent - before` was zero on every
+ * pass, so no amount was too large.
+ */
+export function perPassCapDocument(): TemplateInput {
+  const spent = expression.variable('spent');
+  return {
+    inputs: { passes: { type: 'u64' }, amount: { type: 'u64' }, fee: { type: 'u64' } },
+    accounts: {},
+    steps: [
+      step.let('spent', u64(0)),
+      step.repeat(
+        expression.input('passes'),
+        [
+          step.snapshot('before', spent),
+          step.assign('spent', expression.add(spent, expression.input('amount'))),
+          step.assign('spent', expression.add(spent, expression.input('fee'))),
+          step.require(expression.lessThanOrEqual(expression.subtract(spent, expression.variable('before')), u64(PER_PASS_CAP)), 'perPassCap'),
+        ],
+        { max: 4, carry: ['spent'] },
+      ),
+      step.setReturnData([data.encode('u64', spent)]),
     ],
   };
 }
@@ -2795,6 +2827,104 @@ export function protoNameDocument(): TemplateInput {
   return document;
 }
 
+type RunError = 'RequirementFailed' | 'ArithmeticOverflow' | 'LoopCountExceeded';
+
+/** How `runProgram` ended: the failing instruction and its error, or the values returned. */
+type RunOutcome = { failed: { pc: number; error: RunError } } | { returned: bigint[] };
+
+const DATA_U64 = 4;
+
+/**
+ * Runs a decoded program on its fixed inputs, in declaration order, to check what a finding's
+ * document computes rather than how it compiles. Registers follow the runtime (`execute.rs`) as
+ * `replay`'s do: a pass starts from the registers as the loop found them plus what it carried so
+ * far, and after the last pass the loop restores them, carried registers excepted. Only the
+ * opcodes the findings' documents use run, on `u64` and `bool` values; any other throws, so a
+ * compile that needs more fails its test instead of passing it.
+ */
+function runProgram(program: DecodedProgram, inputs: readonly bigint[]): RunOutcome {
+  let registers = new Array<bigint | boolean | undefined>(program.registerCount).fill(undefined);
+  let returned: bigint[] = [];
+  const value = (register: number): bigint | boolean => {
+    const held = registers[register];
+    if (held === undefined) throw new Error(`register ${register} is read before it is written`);
+    return held;
+  };
+  const u64Value = (register: number): bigint => {
+    const held = value(register);
+    if (typeof held !== 'bigint') throw new Error(`register ${register} holds a bool, not a u64`);
+    return held;
+  };
+  /** Runs the instruction at `pc`, and returns the error it fails with, if it fails. */
+  const run = (pc: number): RunError | undefined => {
+    const record = program.instructions[pc]!;
+    const write = (result: bigint | boolean) => (registers[record.dst] = result);
+    switch (record.opcode) {
+      case opcode.loadInput: {
+        const input = inputs[record.a];
+        if (input === undefined) throw new Error(`no value for input ${record.a}`);
+        write(input);
+        return undefined;
+      }
+      case opcode.constU64:
+        write(record.immediate);
+        return undefined;
+      case opcode.move:
+        write(value(record.a));
+        return undefined;
+      case opcode.add:
+      case opcode.subtract: {
+        const [left, right] = [u64Value(record.a), u64Value(record.b)];
+        const result = record.opcode === opcode.add ? left + right : left - right;
+        if (result < 0n || result >= 1n << 64n) return 'ArithmeticOverflow';
+        write(result);
+        return undefined;
+      }
+      case opcode.equal:
+        write(value(record.a) === value(record.b));
+        return undefined;
+      case opcode.lessThanOrEqual:
+        write(u64Value(record.a) <= u64Value(record.b));
+        return undefined;
+      case opcode.require:
+        return value(record.a) === true ? undefined : 'RequirementFailed';
+      case opcode.setReturnData:
+        returned = segmentsRead(program, record).map((segment) => {
+          if (segment.kind !== DATA_U64) throw new Error(`runProgram does not encode data kind ${segment.kind}`);
+          return u64Value(segment.register);
+        });
+        return undefined;
+      default:
+        throw new Error(`runProgram does not run opcode ${OPCODE_NAMES.get(record.opcode) ?? record.opcode} (pc ${pc})`);
+    }
+  };
+  for (let pc = 0; pc < program.instructions.length; ) {
+    const record = program.instructions[pc]!;
+    if (record.opcode === opcode.forEach) throw new Error('runProgram does not run forEach');
+    if (record.opcode !== opcode.repeat) {
+      const error = run(pc);
+      if (error) return { failed: { pc, error } };
+      pc += 1;
+      continue;
+    }
+    const passes = u64Value(record.b);
+    if (passes > BigInt(record.c)) return { failed: { pc, error: 'LoopCountExceeded' } };
+    const carried = [...Array(64).keys()].filter((register) => (record.immediate >> BigInt(register)) & 1n);
+    const snapshot = registers.slice();
+    for (let pass = 0n; pass < passes; pass += 1n) {
+      registers = snapshot.slice();
+      for (let body = pc + 1; body <= pc + record.a; body += 1) {
+        const error = run(body);
+        if (error) return { failed: { pc: body, error } };
+      }
+      for (const register of carried) snapshot[register] = registers[register];
+    }
+    registers = snapshot.slice();
+    pc += record.a + 1;
+  }
+  return { returned };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Triage helpers
 // ---------------------------------------------------------------------------------------------
@@ -2841,16 +2971,33 @@ const COMMITTED_CANDIDATES = 400;
 const FINDINGS_FIXTURE = fileURLToPath(new URL('../../../fixtures/compiler-fuzz-findings.json', import.meta.url));
 
 function writeFindings(): void {
-  const passes = new Uint8Array(8);
-  new DataView(passes.buffer).setBigUint64(0, 2n, true);
+  const u64Hex = (value: bigint) => {
+    const bytes = new Uint8Array(8);
+    new DataView(bytes.buffer).setBigUint64(0, value, true);
+    return hex(bytes);
+  };
+  const carried = compileTemplate(carriedAliasDocument());
+  const cap = compileTemplate(perPassCapDocument());
+  const capProgram = decodeProgram(cap.bytes);
+  const capRequire = cap.sourceMap.find((entry) => entry.label === 'perPassCap' && capProgram.instructions[entry.pc]!.opcode === opcode.require)!;
   const findings = {
     command: 'UPDATE_COMPILER_FUZZ_CORPUS=1 pnpm --dir clients/js exec vitest run src/compiler-fuzz.test.ts',
     'carried-alias': {
       document: 'carriedAliasDocument() in clients/js/src/compiler-fuzz.test.ts',
-      payload: hex(compileTemplate(carriedAliasDocument()).bytes),
+      payload: hex(carried.bytes),
       // Two passes: by the language's rules the run succeeds and returns 2.
-      data: hex(passes),
-      returns: '0200000000000000',
+      data: hex(encodeRunInputs(carried, { passes: 2n })),
+      returns: u64Hex(2n),
+    },
+    'per-pass-cap': {
+      document: 'perPassCapDocument() in clients/js/src/compiler-fuzz.test.ts',
+      payload: hex(cap.bytes),
+      // Three passes of 9 + 1 spend the cap exactly: the run succeeds and returns 30.
+      data: hex(encodeRunInputs(cap, { passes: 3n, amount: 9n, fee: 1n })),
+      returns: u64Hex(30n),
+      // Three passes of 10 + 1: a pass spends past the cap and fails at its require.
+      overCap: hex(encodeRunInputs(cap, { passes: 3n, amount: 10n, fee: 1n })),
+      failsAt: capRequire.pc,
     },
   };
   writeFileSync(FINDINGS_FIXTURE, `${JSON.stringify(findings, null, 1)}\n`);
@@ -2955,7 +3102,7 @@ describe('compiler fuzz', () => {
     expect(compiled.length).toBeGreaterThanOrEqual(reports.length * 0.6);
   });
 
-  test.runIf(environment('UPDATE_COMPILER_FUZZ_CORPUS') === '1')('rewrite the committed corpus', () => {
+  test.runIf(environment('UPDATE_COMPILER_FUZZ_CORPUS') === '1')('rewrite the committed corpus', { timeout: 600_000 }, () => {
     // Greedy: each pick adds the most features not yet covered, the smaller payload breaking ties.
     const candidates = Array.from({ length: COMMITTED_CANDIDATES }, (_, index) => {
       const fuzzCase = generateCase(index + 1);
@@ -3055,18 +3202,37 @@ describe('compiler fuzz', () => {
 });
 
 /**
- * The findings, minimized. Each test states what the compiler should do and fails today, so it is
- * skipped; remove the `.skip` with the fix. `tests/ballista` runs the carried-alias template too.
+ * The findings, minimized. An open finding's test states what the compiler should do and fails
+ * today, so it is skipped; remove the `.skip` with the fix. A fixed finding's tests run its
+ * compiled document, and `tests/ballista` runs the same payloads on the real program.
  */
 describe('compiler fuzz findings', () => {
-  // BUG carried-alias: a `let` of a carried variable in a loop body shares its register, so the
-  // body's `assign` changes the binding. See `carriedAliasDocument`.
-  test.skip('carried-alias: a snapshot of a carried value keeps its value after the assignment', () => {
-    const program = decodeProgram(compileTemplate(carriedAliasDocument()).bytes);
-    const assignment = program.instructions.findIndex((record) => record.opcode === opcode.move);
-    // After the move, the first add is `before + 1`: it must not read the register the move wrote.
-    const beforePlusOne = program.instructions.slice(assignment + 1).find((record) => record.opcode === opcode.add)!;
-    expect(beforePlusOne.a).not.toBe(program.instructions[assignment]!.dst);
+  /** The committed payload of a finding: `tests/ballista` runs it, so it must be today's compile. */
+  const committedPayload = (finding: string): unknown =>
+    (JSON.parse(readFileSync(FINDINGS_FIXTURE, 'utf8')) as Record<string, { payload?: string }>)[finding]?.payload;
+  const regenerate = 'regenerate the findings fixture: UPDATE_COMPILER_FUZZ_CORPUS=1';
+
+  // Fixed carried-alias: a `let` of a carried variable in a loop body shared its register, so the
+  // body's `assign` changed the binding. See `carriedAliasDocument`.
+  test('carried-alias: a snapshot of a carried value keeps its value after the assignment', () => {
+    const compiled = compileTemplate(carriedAliasDocument());
+    const program = decodeProgram(compiled.bytes);
+    // Every pass grows the total by one from its snapshot, so a run returns its pass count.
+    for (const passes of [0n, 1n, 2n, 4n]) expect(runProgram(program, [passes])).toEqual({ returned: [passes] });
+    expect(committedPayload('carried-alias'), regenerate).toBe(hex(compiled.bytes));
+  });
+
+  test('carried-alias: a per-pass cap measured from a snapshot is enforced', () => {
+    const compiled = compileTemplate(perPassCapDocument());
+    const program = decodeProgram(compiled.bytes);
+    // Inputs: passes, amount, fee. A pass of 9 + 1 spends the cap exactly.
+    expect(runProgram(program, [3n, 9n, 1n])).toEqual({ returned: [30n] });
+    // A pass of 10 + 1 spends past it, and the run fails at the cap. Aliased, it returned 33.
+    const over = runProgram(program, [3n, 10n, 1n]);
+    expect(over).toMatchObject({ failed: { error: 'RequirementFailed' } });
+    const failedAt = 'failed' in over ? compiled.sourceMap.find((entry) => entry.pc === over.failed.pc) : undefined;
+    expect(failedAt?.label).toBe('perPassCap');
+    expect(committedPayload('per-pass-cap'), regenerate).toBe(hex(compiled.bytes));
   });
 
   // BUG invoke-index: more than 256 invokes fail with a bare `Expected u8`. See `manyInvokesDocument`.
@@ -3096,12 +3262,8 @@ describe('compiler fuzz findings', () => {
     else expect(describeError(outcome.error)).toMatch(/__proto__.*(reserved|not allowed)|identifier/);
   });
 
-  // Today's behaviour, so a change to it is noticed: each finding reproduces.
-  test('every finding reproduces today', () => {
-    const program = decodeProgram(compileTemplate(carriedAliasDocument()).bytes);
-    const assignment = program.instructions.findIndex((record) => record.opcode === opcode.move);
-    const beforePlusOne = program.instructions.slice(assignment + 1).find((record) => record.opcode === opcode.add)!;
-    expect(beforePlusOne.a).toBe(program.instructions[assignment]!.dst);
+  // Today's behaviour, so a change to it is noticed: each open finding reproduces.
+  test('every open finding reproduces today', () => {
     expect(() => compileTemplate(manyInvokesDocument())).toThrow(/^Expected u8$/);
     expect(() => compileTemplate(largeOffsetDocument())).toThrow(/^Expected u32$/);
     expect(() => compileTemplate(deepNestingDocument())).toThrow(/Maximum call stack size exceeded/);

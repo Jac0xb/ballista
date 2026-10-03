@@ -1,28 +1,29 @@
-//! A design finding the second critic asked to test: the verifier's `refuse_entry_data`
-//! (common/src/template/verify.rs) refuses a raw read only of the entry's *own* declared slot, and
-//! the run-time borrow mark that guards an open entry exists only *after* the open. So a Rust-built
-//! template can declare a second, ordinary read-only account, read the entry's raw bytes through
-//! it, and make a CPI — all in the window before the open, with nothing protecting the entry.
+//! A design finding the second critic asked to test, now closed. An open entry's borrow mark, the
+//! run-time guard on it, exists only once the open runs, and `refuse_entry_data`
+//! (common/src/template/verify.rs) refuses a raw read only of the entry's own slot. So a Rust-built
+//! template could read the entry's raw bytes through a second slot that holds it, then make a CPI
+//! that passes the entry writable through that slot, all before the open: a nested run in that
+//! window could change the entry under the read (`critic_lost_write` builds one).
 //!
-//! The docs promise the opposite (reference/language.md, Registries): "Fields are the only way in.
-//! `accountData` and `accountDataBytes` of an entry are refused," and (trust-model.md) an entry is
-//! protected "between this run's read and its write." This module demonstrates the enabling gap
-//! concretely, and marks the safety property it breaks with an `#[ignore]`d regression test.
+//! The verifier now refuses an `OPEN_REGISTRY` with any `INVOKE` at a lower pc, in a loop or not
+//! (`verify_open_registry`), so every CPI meets the mark. The TypeScript compiler always emitted
+//! the opens first; these tests pin the rule for hand-built templates:
 //!
-//! Root cause: `refuse_entry_data` keys on the instruction's own account reference
-//! (`record.a == instruction.a`) and only for a slot declared writable, so an aliased read-only
-//! slot holding the same account at run time is neither scanned nor refused; and `OPEN_REGISTRY`'s
-//! borrow mark, the only run-time guard, is set by the open, not before it. The TypeScript compiler
-//! hoists all opens to the front and pins data-read accounts, so it never emits this shape, but the
-//! program's verifier — the sole check for a hand-built template — accepts it.
+//! - the template that showed the gap is refused at upload, with `InvalidRegistry` at its open;
+//! - with the open moved first, its CPI fails the run with `RegistryReentry`;
+//! - a raw read through the second slot with no call before the open still verifies and runs, and
+//!   reads exactly the bytes the open checks, since nothing can run between the two.
 
+use ballista_common::instruction::IX_RUN;
 use ballista_common::template::{
-    ProgramBuilder, Segment, ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_REG_U64,
-    OP_READ_U64, SYSTEM_PROGRAM_ADDRESS,
+    encode_error, ProgramBuilder, ProgramView, Segment, TemplateError, ACCOUNT_EXECUTABLE,
+    ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_REG_U64, OP_READ_U64, SYSTEM_PROGRAM_ADDRESS,
 };
 use ballista_fuzz_gen::scenario::{entry_address, entry_header};
+use mollusk_svm::result::types::{InstructionResult, ProgramResult};
 use solana_account::Account;
 use solana_instruction::{AccountMeta, Instruction};
+use solana_program_error::ProgramError;
 use solana_pubkey::Pubkey;
 use solana_sdk_ids::system_program;
 
@@ -33,69 +34,113 @@ const PAYER: Pubkey = Pubkey::new_from_array([0x4d; 32]);
 const REGISTRY_INDEX: u8 = 0;
 const REGISTRY_SIZE: u16 = 16;
 const PLANTED_FIELD0: u64 = 0xABCD_1234_5678_9A01;
+const REGISTRY_REENTRY: u32 = 6026;
 
-/// A template that reads the entry's raw field-0 bytes through an aliased read-only slot, makes a
-/// System CPI, then opens the entry — the ordering the verifier should forbid but does not. Returns
-/// the compiled payload. Slots: 0 system, 1 payer, 2 entry (opened), 3 alias (read-only).
-fn aliased_read_template() -> Vec<u8> {
+/// Where the template's one CPI sits, if it makes one.
+#[derive(Clone, Copy, Debug)]
+enum Call {
+    /// Between the raw read and the open: the shape that showed the gap.
+    BeforeTheOpen,
+    /// The same call, guarded by a `true` register.
+    GuardedBeforeTheOpen,
+    /// The same call, in a one-pass `REPEAT` body.
+    InALoopBeforeTheOpen,
+    /// After the open, where the borrow mark meets it.
+    AfterTheOpen,
+    /// No call at all.
+    None,
+}
+
+/// Reads the entry's raw field-0 bytes through a second writable slot that holds it at run time,
+/// makes (per `call`) a zero-lamport System transfer that passes that slot writable, opens the
+/// entry, and returns what the raw read saw. Slots: 0 system, 1 payer, 2 entry (opened), 3 the
+/// alias. Returns the payload, the open's pc, and the invoke's pc if there is one.
+fn aliased_read_template(call: Call) -> (Vec<u8>, usize, Option<usize>) {
     let mut builder = ProgramBuilder::new();
     let system = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
     let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
     let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
-    // The alias: a second writable account with a minimum length that covers field 0, pinning
-    // neither owner nor address (the program's verifier does not require it; that is compiler-only).
-    // `verify_open_registry` scans CPIs only for the entry's own slot, so routing through this one
-    // evades it, and `refuse_entry_data` does not refuse a read of a slot no open names.
+    // A second writable slot whose minimum length covers field 0, pinning neither owner nor
+    // address. No open names it, so neither registry rule that keys on the entry's own slot
+    // applies to it.
     let alias = builder.account(ACCOUNT_WRITABLE, None, None, (72 + 8) as u32);
 
-    // 1. Read the entry's raw field-0 bytes through the alias, before any open.
     let raw = builder.read(OP_READ_U64, alias, 72);
-    // 2. A CPI in the read->open window that passes the entry (through the alias slot) writable. A
-    // zero-lamport System transfer here is benign, but the entry reaches a CPI writable with no
-    // borrow mark yet set — the window a nested run could use to change it under the read.
-    let literal = builder.blob(&{
-        let mut data = vec![2, 0, 0, 0];
-        data.extend_from_slice(&0u64.to_le_bytes());
-        data
-    });
-    let transfer = builder.cpi(
-        system,
-        &[(payer, ACCOUNT_SIGNER | ACCOUNT_WRITABLE), (alias, ACCOUNT_WRITABLE)],
-        &[Segment::Literal(literal)],
+    let mut invoke = None;
+    let mut call_here = |builder: &mut ProgramBuilder| {
+        let literal = builder.blob(&{
+            let mut data = vec![2, 0, 0, 0];
+            data.extend_from_slice(&0u64.to_le_bytes());
+            data
+        });
+        let transfer = builder.cpi(
+            system,
+            &[(payer, ACCOUNT_SIGNER | ACCOUNT_WRITABLE), (alias, ACCOUNT_WRITABLE)],
+            &[Segment::Literal(literal)],
+        );
+        match call {
+            Call::GuardedBeforeTheOpen => {
+                let yes = builder.const_bool(true);
+                invoke = Some(builder.instructions_mut().len());
+                builder.invoke(transfer, Some(yes));
+            }
+            Call::InALoopBeforeTheOpen => {
+                let once = builder.const_u64(1);
+                builder.repeat(once, 1, 0, |body| {
+                    invoke = Some(body.instructions_mut().len());
+                    body.invoke(transfer, None);
+                });
+            }
+            _ => {
+                invoke = Some(builder.instructions_mut().len());
+                builder.invoke(transfer, None);
+            }
+        }
+    };
+    let before = matches!(
+        call,
+        Call::BeforeTheOpen | Call::GuardedBeforeTheOpen | Call::InALoopBeforeTheOpen
     );
-    builder.invoke(transfer, None);
-    // 3. Only now open the entry.
-    builder.open_registry(entry, None, payer, REGISTRY_INDEX, REGISTRY_SIZE, system);
-    // 4. Hand back what the raw aliased read saw, so the test can confirm it read the entry.
+    if before {
+        call_here(&mut builder);
+    }
+    let open = builder.open_registry(entry, None, payer, REGISTRY_INDEX, REGISTRY_SIZE, system);
+    if matches!(call, Call::AfterTheOpen) {
+        call_here(&mut builder);
+    }
     builder.set_return_data(&[Segment::Register(DATA_REG_U64, raw)]);
-    builder.build().unwrap()
+    (builder.build().unwrap(), open, invoke)
 }
 
+/// What a failed upload or run reports for `error`, as `Harness::upload` formats it.
+fn refused_with(kind: u32, context: u16) -> String {
+    format!("{:?}", ProgramResult::Failure(ProgramError::Custom(encode_error(kind, context))))
+}
 
-/// Uploads the template and seeds an existing entry holding `PLANTED_FIELD0` in field 0, then runs
-/// it. Returns the run result. The entry must already exist and be at least 80 bytes so the alias
-/// slot's minimum-length check passes.
-fn run_aliased_read(harness: &Harness, id: u16) -> mollusk_svm::result::types::InstructionResult {
+/// The custom `(kind, context)` a run failed with.
+fn custom(result: &InstructionResult) -> Option<(u32, u32)> {
+    match &result.program_result {
+        ProgramResult::Failure(ProgramError::Custom(code)) => Some((code & 0xffff, code >> 16)),
+        _ => None,
+    }
+}
+
+/// Uploads `payload` and seeds an existing entry holding `PLANTED_FIELD0` in field 0, then runs it
+/// with the entry in both the entry slot and the alias slot, writable.
+fn run_with_alias(harness: &Harness, id: u16, payload: &[u8]) -> InstructionResult {
     harness.reset();
-    let payload = aliased_read_template();
-    let (template, _) = harness.upload(&CREATOR, id, &payload).expect("the aliased-read template verifies and uploads");
-
-    let key = [0u8; 32];
-    let ballista = BALLISTA_ID.to_bytes();
+    let (template, _) = harness.upload(&CREATOR, id, payload).expect("the template verifies and uploads");
     let entry = Pubkey::new_from_array(entry_address(
         &|seeds, program| {
             let (address, bump) = Pubkey::find_program_address(seeds, &Pubkey::new_from_array(*program));
             (address.to_bytes(), bump)
         },
-        &ballista,
+        &BALLISTA_ID.to_bytes(),
         &template.to_bytes(),
         REGISTRY_INDEX,
-        &key,
+        &[0u8; 32],
     ));
-
-    // Build the existing entry: the correct header, then fields, with field 0 set to the planted
-    // value so a successful raw read returns exactly it.
-    let mut data = entry_header(&template.to_bytes(), REGISTRY_INDEX, &key).to_vec();
+    let mut data = entry_header(&template.to_bytes(), REGISTRY_INDEX, &[0u8; 32]).to_vec();
     data.extend_from_slice(&PLANTED_FIELD0.to_le_bytes());
     data.extend_from_slice(&[0u8; (REGISTRY_SIZE as usize) - 8]);
     let rent = harness.rent_minimum(data.len());
@@ -104,8 +149,6 @@ fn run_aliased_read(harness: &Harness, id: u16) -> mollusk_svm::result::types::I
         store.insert(PAYER, Account::new(10_000_000_000, 0, &system_program::id()));
         store.insert(entry, Account { lamports: rent, data, owner: BALLISTA_ID, executable: false, rent_epoch: 0 });
     }
-
-    // Accounts: template, system, payer, entry (writable, slot 2), entry again (read-only, slot 3).
     let instruction = Instruction {
         program_id: BALLISTA_ID,
         accounts: vec![
@@ -113,56 +156,63 @@ fn run_aliased_read(harness: &Harness, id: u16) -> mollusk_svm::result::types::I
             AccountMeta::new_readonly(system_program::id(), false),
             AccountMeta::new(PAYER, true),
             AccountMeta::new(entry, false),
-            // The alias slot, writable, holding the same entry account.
             AccountMeta::new(entry, false),
         ],
-        data: vec![ballista_common::instruction::IX_RUN],
+        data: vec![IX_RUN],
     };
     harness.context.process_instruction(&instruction)
 }
 
-/// Demonstrates the enabling gap: the template verifies, uploads and runs, and the raw aliased read
-/// returns the entry's own field-0 bytes — proving `accountData` of an entry is reachable through
-/// an alias, and that a CPI runs in the read->open window. This passes against the program today.
+/// The gap's own template, which verified, uploaded and ran before the rule: the upload now fails
+/// with `InvalidRegistry` at the open, before any run.
 #[test]
-fn aliased_entry_read_and_window_cpi_are_accepted_today() {
+fn aliased_entry_read_and_window_cpi_are_refused_at_upload() {
     let harness = Harness::new();
-    let result = run_aliased_read(&harness, 1);
-    assert!(
-        result.program_result.is_ok(),
-        "the aliased-read template runs today (the gap): {result:?}"
-    );
+    harness.reset();
+    let (payload, open, _) = aliased_read_template(Call::BeforeTheOpen);
+    let (kind, context) = TemplateError::InvalidRegistry(open).code();
     assert_eq!(
-        result.return_data,
-        PLANTED_FIELD0.to_le_bytes(),
-        "the raw aliased read returned the entry's field-0 bytes, bypassing the field interface"
+        harness.upload(&CREATOR, 1, &payload).map(|_| ()),
+        Err(refused_with(kind, context)),
+        "a call before the open is refused at create, with InvalidRegistry at the open"
     );
 }
 
-/// The safety property the docs promise: a template must not be able to read an entry's raw data
-/// through an aliased slot, and nothing may touch an entry in the read->open window. If the
-/// verifier refused this shape (as the compiler does), uploading it would fail. It does not today,
-/// so this regression test fails; it is `#[ignore]`d until the owner closes the gap.
-///
-/// FINDING (registry-ordering / aliased entry read): `refuse_entry_data` guards only the entry's
-/// own declared slot and only when that slot is writable, so a second read-only slot aliased to the
-/// entry reads its raw bytes; and `OPEN_REGISTRY`'s borrow mark exists only after the open, so a
-/// CPI in the read->open window is unguarded. Together these let a hand-built template read an
-/// entry outside the field interface and act on a value a concurrent write could change (a
-/// lost-update window). The fix would refuse a raw read or a CPI-writable pass of any account that
-/// an open also names, by address at run time, not only by the entry's own slot reference.
+/// The regression the critic asked for: nothing may reach an entry in the window before its open.
+/// Every variant of the call before the open is refused at its open; the raw read alone is not,
+/// since with no call before the open it reads what the open checks.
 #[test]
-#[ignore = "documents the registry-ordering finding; fails until refuse_entry_data covers aliased slots"]
 fn aliased_entry_read_should_be_refused() {
+    for call in [Call::BeforeTheOpen, Call::GuardedBeforeTheOpen, Call::InALoopBeforeTheOpen] {
+        let (payload, open, invoke) = aliased_read_template(call);
+        assert!(invoke.is_some_and(|invoke| invoke < open), "{call:?}");
+        let verdict = ProgramView::parse(&payload).and_then(|program| program.verify());
+        assert_eq!(verdict.map(|_| ()), Err(TemplateError::InvalidRegistry(open)), "{call:?}");
+    }
+    for call in [Call::AfterTheOpen, Call::None] {
+        let (payload, _, _) = aliased_read_template(call);
+        let verdict = ProgramView::parse(&payload).and_then(|program| program.verify());
+        assert!(verdict.is_ok(), "{call:?}: {verdict:?}");
+    }
+}
+
+/// With the open first, the same CPI through the alias meets the borrow mark: the run fails with
+/// `RegistryReentry` at the invoke, so no nested run can write the entry this run holds open.
+#[test]
+fn a_call_through_the_alias_after_the_open_fails_with_registry_reentry() {
     let harness = Harness::new();
-    let payload = aliased_read_template();
-    harness.reset();
-    // The safe behavior: the program rejects the template at create (as the compiler does), so the
-    // upload fails. Today it succeeds, so this assertion fails, marking the open finding.
-    let uploaded = harness.upload(&CREATOR, 2, &payload);
-    assert!(
-        uploaded.is_err(),
-        "a template that reads an entry's raw data through an aliased slot should be refused at create, \
-         but it verified and uploaded: the refuse_entry_data gap is open"
-    );
+    let (payload, _, invoke) = aliased_read_template(Call::AfterTheOpen);
+    let result = run_with_alias(&harness, 2, &payload);
+    assert_eq!(custom(&result), Some((REGISTRY_REENTRY, invoke.unwrap() as u32)), "{result:?}");
+}
+
+/// What the rule leaves: a raw read through the alias with no call before the open. It runs, and
+/// returns the entry's field 0, the bytes the open then checks and marks.
+#[test]
+fn an_aliased_read_with_no_call_before_the_open_reads_what_the_open_checks() {
+    let harness = Harness::new();
+    let (payload, _, _) = aliased_read_template(Call::None);
+    let result = run_with_alias(&harness, 3, &payload);
+    assert!(result.program_result.is_ok(), "{result:?}");
+    assert_eq!(result.return_data, PLANTED_FIELD0.to_le_bytes());
 }

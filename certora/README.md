@@ -77,7 +77,8 @@ The section rule was wrong and vacuous until this branch: it counted only the fi
     `-solanaOptimisticMemcmp`, and says nothing about the header's first word.
 - **Return data:** a read returns the invoked program's data or nothing, and nothing without an
   invoke.
-- **Memory controls:** two diagnostics expected to prove.
+- **Memory controls:** two diagnostics expected to prove. The `run-candidates.conf` job at cb2fb2d
+  found one, `rule_stack_word_copy_keeps_both_halves`, violated (see "Error kinds in stack copies").
 
 ### Blocked (`run-blocked.conf`, 20 rules)
 
@@ -106,10 +107,13 @@ Everything below was checked against the compiled code (`llvm-objdump`) and the 
   reads into wide loads on SBF, so constants written a byte at a time and then parsed reach the
   parser as unrelated values. The rules now build inputs over havoced memory instead
   (`rules::symbolic`), constrained through the program's own accessors.
-- **Error kinds in stack copies.** The stack keeps values by offset and rebuilds an eight-byte
-  load from narrower stores only when they are two four-byte halves. Executor errors are built as
+- **Error kinds in stack copies.** The stack keeps values by offset. Executor errors are built as
   a two-byte tag, two bytes never written, and a four-byte kind, then copied as one word. The copy
-  carries at most the tag, so a rule that reads the kind afterwards sees an unknown value.
+  carries at most the tag, so a rule that reads the kind afterwards sees an unknown value. The
+  prover was thought to rebuild a word from two four-byte halves, but the control for that,
+  `rule_stack_word_copy_keeps_both_halves`, came back violated at cb2fb2d
+  ([job](https://prover.certora.com/output/5644982/88f0a104b1624caf821dc961242d6bec)): no shape of
+  narrower stores is known to survive the copy.
   - `scan-stack-copies.py` lists these copies in every rule.
   - The `rule_stack_word_copy_*` diagnostics test the mechanism directly.
   - One-byte `RuntimeValue` tags copied the same way may survive: the ordering rule had them when
@@ -150,20 +154,8 @@ Compiled sizes differ too: `ProgramView::parse` is 290 SBF instructions against 
 
 ## What would unblock the rest
 
-- **Program, one line:** `#[repr(C, u32)]` on `RunError`. Tag and kind become the two four-byte
-  halves the prover rebuilds. Measured at 3e2646a on 2026-10-03, then reverted:
-  - **Copies:** all 362 error-kind copies in the spec binary disappear. Seven copies still put one
-    byte beside a four-byte tag, such as a `RunResult<bool>`'s value, in the executor's dispatch
-    and the typing, header-read, registry-field and return-data helpers.
-  - **Expected to unblock:** the five account-constraint rules, `mul_div`, and the open of an open
-    entry. The scanner flags nothing else they reach, except copies it flags only because it
-    ignores control flow.
-  - **De-risked:** the six at-risk `run.conf` rules and the `u128` candidates.
-  - **Still blocked:** typing and header reads (register and verifier copies remain), the ceiling
-    (the verifier's copies, not `RunError`'s), lifecycle (byte-stored inputs) and the diagnostics.
-  - **Cost:** compute rises on 10 of the 14 benchmark cases (+731 CU in all, at most +2.7%) and on
-    all 32 protocol examples (+9 to +1,042 CU, median +1.1%). Both ceiling tests then fail, so the
-    ceilings rise with it. The other 59 Mollusk tests and the 58 unit tests pass, `RunResult<()>`
-    stays 12 bytes, and the binary shrinks by 200 bytes.
-- **Prover:** let a stack word rebuild from cells with unwritten gaps, keeping the written bytes
-  exact.
+- **Program: `#[repr(C, u32)]` on `RunError`, dropped.** It would turn the tag and the kind into
+  two four-byte halves, for about +0.74% compute. The prover does not rebuild a value from two
+  halves in that shape either (the violated control above), so it would not unblock the rules.
+- **Prover:** let a stack word rebuild from narrower stores, halves or not, keeping the written
+  bytes exact.

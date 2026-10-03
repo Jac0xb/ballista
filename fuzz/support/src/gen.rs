@@ -130,7 +130,8 @@ struct Gen<'s, S: Source> {
     max_rows: usize,
     /// Descriptors made so far, so a later invoke can name one again from another place.
     descriptors: Vec<Descriptor>,
-    /// Entry accounts still to open. Opens go anywhere at the root, between other steps.
+    /// Entry accounts still to open. Opens go anywhere at the root before the first invoke,
+    /// between other steps.
     pending_opens: Vec<u8>,
     /// Invoke often and push loop maxima toward the 64-CPI bound.
     cpi_heavy: bool,
@@ -328,7 +329,7 @@ impl<S: Source> Gen<'_, S> {
     }
 
     /// Opens the next pending entry one time in three, so opens fall before, between and after
-    /// the root's invokes and field reads.
+    /// the root's field reads. The first invoke opens every entry still pending.
     fn maybe_open(&mut self, pool: &mut Pool) {
         if !self.pending_opens.is_empty() && self.s.chance(1, 3) {
             let entry = self.pending_opens.remove(0);
@@ -756,6 +757,17 @@ impl<S: Source> Gen<'_, S> {
     /// A CPI: a program account declared executable, up to four accounts passed with at most
     /// their declared privileges, data from the pool, sometimes a group, a guard, and return data.
     fn invoke(&mut self, scope: Scope, pool: &mut Pool, passes: usize) {
+        // Every open precedes every invoke, so the pending ones go first, at the root. A loop body
+        // cannot hold an open, so it calls nothing while one is pending.
+        if !self.pending_opens.is_empty() && !self.sloppy() {
+            if scope != Scope::Root {
+                return;
+            }
+            while !self.pending_opens.is_empty() {
+                let entry = self.pending_opens.remove(0);
+                self.open(entry, pool);
+            }
+        }
         if self.cpis + passes > MAX_CPIS && !self.sloppy() {
             return;
         }
@@ -807,8 +819,8 @@ impl<S: Source> Gen<'_, S> {
 
     /// A new descriptor: a program account declared executable and up to four account records,
     /// each passed with at most its slot's declared privileges, often exactly them, and sometimes
-    /// naming one slot twice. Data comes from the pool. One descriptor in six gets a data segment
-    /// whose unused fields are not the canonical ones.
+    /// naming one slot twice. Data comes from the pool. A sloppy pick gives one of its data
+    /// segments a non-canonical value in a field its kind leaves unused, which `verify` refuses.
     fn descriptor(&mut self, scope: Scope, pool: &Pool) -> Option<u8> {
         let program = self.account(scope, |d| d.flags & ACCOUNT_EXECUTABLE != 0)?;
         let entries = self.accounts.entries.clone();
@@ -841,7 +853,7 @@ impl<S: Source> Gen<'_, S> {
         let cpi = self.b.cpi_with_group(program.reference, &records, &parts, group);
         let declared = if self.sloppy() { width as u16 ^ 1 } else { width as u16 };
         self.b.set_cpi_max_data_len(cpi, declared);
-        if !parts.is_empty() && self.s.chance(1, 6) {
+        if !parts.is_empty() && self.sloppy() {
             // The wire format fixes a literal's source register at 0xff and a register
             // segment's offset and length at zero.
             let segment = &mut self.b.segments_mut()[first_segment + self.s.below(parts.len())];

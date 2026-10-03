@@ -234,6 +234,92 @@ fn known_opcode(opcode: u8) -> bool {
     matches!(opcode, 1..=38 | 40..=77)
 }
 
+/// The fields of an instruction record one opcode uses. Every other field must be `0xff`, or zero
+/// for the immediate.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Fields {
+    pub dst: bool,
+    pub a: bool,
+    pub b: bool,
+    pub c: bool,
+    pub imm: bool,
+}
+
+/// The fields `opcode` uses with `flags`, from `docs/reference/wire-format.md`: the destination of
+/// every opcode that produces a value (all but the eight the opcode table's preamble lists), and
+/// the operands and immediate its row's Operands column names. A read's `b` is its offset register
+/// only under the dynamic-offset flag. `None` for an unassigned opcode.
+pub fn used_fields(opcode: u8, flags: u8) -> Option<Fields> {
+    let produces_value = !matches!(
+        opcode,
+        op::REQUIRE
+            | op::INVOKE
+            | op::FOREACH
+            | op::REPEAT
+            | op::EMIT
+            | op::SET_RETURN_DATA
+            | op::OPEN_REGISTRY
+            | op::WRITE_REGISTRY
+    );
+    // (a, b, c, immediate), row by row.
+    let (a, b, c, imm) = match opcode {
+        op::CLOCK_SLOT | op::CLOCK_TIMESTAMP | op::LOOP_INDEX => (false, false, false, false),
+        op::CONST_U64 | op::CONST_I64 | op::CONST_U128 | op::CONST_BYTES => (false, false, false, true),
+        op::LOAD_INPUT
+        | op::CONST_BOOL
+        | op::CONST_PUBKEY
+        | op::ACCOUNT_KEY
+        | op::ACCOUNT_OWNER
+        | op::ACCOUNT_LAMPORTS
+        | op::ACCOUNT_DATA_LEN
+        | op::ACCOUNT_IS_EMPTY
+        | op::NOT
+        | op::CAST_U64
+        | op::CAST_I64
+        | op::CAST_U128
+        | op::MOVE
+        | op::POW10
+        | op::BYTES_LEN
+        | op::INSTRUCTION_COUNT
+        | op::INSTRUCTION_INDEX
+        | op::REQUIRE => (true, false, false, false),
+        opcode if read_opcode(opcode).is_some() => (true, flags & FLAG_DYNAMIC_OFFSET != 0, false, true),
+        op::DERIVE_PDA | op::RETURN_DATA | op::READ_REGISTRY | op::FOREACH => (true, false, false, true),
+        op::ADD
+        | op::SUB
+        | op::MUL
+        | op::DIV
+        | op::REM
+        | op::MIN
+        | op::MAX
+        | op::EQ
+        | op::NE
+        | op::LT
+        | op::LTE
+        | op::GT
+        | op::GTE
+        | op::AND
+        | op::OR
+        | op::SHL
+        | op::SHR
+        | op::BIT_AND
+        | op::BIT_OR
+        | op::BIT_XOR
+        | op::INSTRUCTION_PROGRAM
+        | op::INSTRUCTION_ACCOUNT_COUNT
+        | op::INSTRUCTION_DATA_LEN
+        | op::INVOKE => (true, true, false, false),
+        op::CREATE_PDA | op::READ_ACCOUNT_BYTES | op::WRITE_REGISTRY => (true, true, false, true),
+        op::SELECT | op::MUL_DIV | op::MUL_DIV_CEIL | op::INSTRUCTION_ACCOUNT | op::INSTRUCTION_ACCOUNT_FLAGS => {
+            (true, true, true, false)
+        }
+        op::READ_INSTRUCTION_DATA | op::READ_INSTRUCTION_BYTES | op::REPEAT | op::OPEN_REGISTRY => (true, true, true, true),
+        op::EMIT | op::SET_RETURN_DATA => (false, false, false, true),
+        _ => return None,
+    };
+    Some(Fields { dst: produces_value, a, b, c, imm })
+}
+
 /// What a data segment builds. `docs/reference/wire-format.md` gives every use one layout: a
 /// literal's source register is `0xff`, and a register segment's offset and length are zero.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -416,7 +502,7 @@ impl<'p> Checker<'p> {
 
     // ---- Every record, whether or not anything uses it ---------------------------------------
 
-    fn records(&self) -> Check {
+    fn records(&mut self) -> Check {
         let p = self.p;
         for (index, account) in p.accounts.iter().enumerate() {
             let pin_ok = |pin: u8| pin == NONE || (pin as usize) < p.pubkeys.len();
@@ -452,6 +538,13 @@ impl<'p> Checker<'p> {
             ensure(instr.flags & !allowed == 0, "format.instruction-flags", Some(pc), || {
                 format!("flags {:#x} on opcode {}", instr.flags, instr.op)
             })?;
+            let used = used_fields(instr.op, instr.flags).expect("a known opcode");
+            let canonical = (used.dst || instr.dst == NONE)
+                && (used.a || instr.a == NONE)
+                && (used.b || instr.b == NONE)
+                && (used.c || instr.c == NONE)
+                && (used.imm || instr.imm == 0);
+            self.note(canonical, "format.unused-field", Some(pc), || format!("{instr:?} uses only {used:?}"));
         }
         for (index, cpi) in p.cpis.iter().enumerate() {
             self.cpi_shape(index, cpi)?;
@@ -1151,6 +1244,11 @@ impl<'p> Checker<'p> {
             at,
             String::new,
         )?;
+        // Until its open marks the entry, a CPI could reach it through another slot or a group.
+        ensure(!p.instrs[..pc].iter().any(|instr| instr.op == op::INVOKE), "registry.open-after-invoke", at, || {
+            let invoke = p.instrs[..pc].iter().position(|instr| instr.op == op::INVOKE).unwrap_or_default();
+            format!("invoke at {invoke}")
+        })?;
         self.report.registry_opens += 1;
         Ok(())
     }
@@ -1200,40 +1298,18 @@ impl<'p> Checker<'p> {
         Ok(())
     }
 
-    /// The records no instruction reaches still follow the wire format: "The verifier rejects
-    /// non-zero reserved bytes in records", and a CPI account record "May not include a flag that
-    /// the account's constraint lacks".
+    /// Nothing is left unreached (`docs/reference/wire-format.md`, "CPI descriptors" and "Data
+    /// segments"): every descriptor is invoked, and every data segment is part of an invoked
+    /// descriptor's data, an output or a PDA's seeds. Unreached, a record would never be checked.
     fn unreferenced(&mut self) -> Check {
         let p = self.p;
         for (index, segment) in p.segments.iter().enumerate() {
-            if self.used_segments[index] {
-                continue;
-            }
-            self.note(segment.reserved == [0; 2] && segment.kind <= 9, "unreferenced.segment", None, || {
-                format!("segment {index}: {segment:?}")
-            });
+            let used = self.used_segments[index];
+            self.note(used, "unreferenced.segment", None, || format!("segment {index}: {segment:?}"));
         }
         for (index, cpi) in p.cpis.iter().enumerate() {
-            if self.used_cpis[index] {
-                continue;
-            }
-            let declared = |reference: u8| {
-                if reference & ROW_BIT == 0 {
-                    p.accounts.get(reference as usize).filter(|_| (reference as usize) < self.fixed)
-                } else {
-                    let offset = (reference & !ROW_BIT) as usize;
-                    p.accounts.get(self.fixed + offset).filter(|_| offset < self.stride)
-                }
-            };
-            let program = declared(cpi.program).is_some_and(|program| program.flags & EXECUTABLE != 0);
-            let start = cpi.account_start as usize;
-            let records = p.cpi_accounts[start..start + cpi.account_len as usize].iter().all(|record| {
-                record.flags & !(SIGNER | WRITABLE) == 0
-                    && declared(record.account).is_some_and(|declared| record.flags & !declared.flags == 0)
-            });
-            self.note(program && records, "unreferenced.cpi", None, || {
-                format!("descriptor {index}, which nothing invokes: {cpi:?}")
-            });
+            let used = self.used_cpis[index];
+            self.note(used, "unreferenced.cpi", None, || format!("descriptor {index}, which nothing invokes: {cpi:?}"));
         }
         Ok(())
     }

@@ -49,6 +49,11 @@ pub fn breaks(program: &Program) -> Vec<Break> {
     ninth_loop(program, &mut out);
     ninth_open(program, &mut out);
     open_after_return_data(program, &mut out);
+    open_after_invoke(program, &mut out);
+    unused_field(program, &mut out);
+    cpi_segment_fields(program, &mut out);
+    unreferenced_segment(program, &mut out);
+    uninvoked_descriptor(program, &mut out);
     out
 }
 
@@ -477,4 +482,155 @@ fn open_after_return_data(program: &Program, out: &mut Vec<Break>) {
     let invoke_later = broken.instrs[open + 1..].iter().any(|instr| instr.op == op::INVOKE);
     let expected = if invoke_later { TemplateError::InvalidOutput(open) } else { TemplateError::InvalidRegistry(open + 1) };
     out.push(Break { rule: "open-after-return-data", program: broken, expected });
+}
+
+/// An `INVOKE` inserted just before the first registry open: a call of a new descriptor that passes
+/// no account and no data to a fixed account declared executable, valid on its own. Until an open
+/// marks its entry, a CPI could reach the entry through another slot, so every open precedes every
+/// invoke: the open, now one later, is refused with `InvalidRegistry`.
+fn open_after_invoke(program: &Program, out: &mut Vec<Break>) {
+    let Some(open) = program.instrs.iter().position(|instr| instr.op == op::OPEN_REGISTRY) else { return };
+    let fixed = program.header.fixed_accounts as usize;
+    let Some(executable) = program.accounts[..fixed].iter().position(|account| account.flags & EXECUTABLE != 0) else {
+        return;
+    };
+    if program.instrs.len() >= checker::limit::INSTRUCTIONS || program.cpis.len() >= u8::MAX as usize {
+        return;
+    }
+    let mut broken = program.clone();
+    let descriptor = broken.cpis.len() as u8;
+    broken.cpis.push(crate::model::Cpi {
+        program: executable as u8,
+        group: NONE,
+        account_start: 0,
+        account_len: 0,
+        segment_len: 0,
+        segment_start: 0,
+        max_data_len: 0,
+        reserved: [0; 2],
+    });
+    broken.instrs.insert(open, Instr::new(op::INVOKE, NONE, descriptor, NONE, NONE, 0));
+    broken.sync_counts();
+    out.push(Break { rule: "open-after-invoke", program: broken, expected: TemplateError::InvalidRegistry(open + 1) });
+}
+
+/// The error `verify` refuses a record with when a field its opcode leaves unused is set
+/// (`docs/reference/wire-format.md`, "Instruction record"): a FOREACH's `InvalidBatch`, a
+/// REPEAT's `InvalidLoop`, the registry opcodes' `InvalidRegistry`, and otherwise
+/// `InvalidInstruction` at the record.
+fn unused_field_error(opcode: u8, pc: usize) -> TemplateError {
+    match opcode {
+        op::FOREACH => TemplateError::InvalidBatch,
+        op::REPEAT => TemplateError::InvalidLoop(pc),
+        op::OPEN_REGISTRY | op::READ_REGISTRY | op::WRITE_REGISTRY => TemplateError::InvalidRegistry(pc),
+        _ => TemplateError::InvalidInstruction(pc),
+    }
+}
+
+/// A field its opcode leaves unused, set: the first unused destination or operand to 0, or an
+/// unused immediate to 1. Every other record stays canonical, so the record is refused where
+/// `verify` reaches it, with its opcode's error.
+fn unused_field(program: &Program, out: &mut Vec<Break>) {
+    let (mut operands, mut immediates) = (0, 0);
+    for (pc, instr) in program.instrs.iter().enumerate() {
+        let Some(used) = checker::used_fields(instr.op, instr.flags) else { continue };
+        if operands < 3 {
+            let mut broken = program.clone();
+            let record = &mut broken.instrs[pc];
+            let field = if !used.dst {
+                Some(&mut record.dst)
+            } else if !used.a {
+                Some(&mut record.a)
+            } else if !used.b {
+                Some(&mut record.b)
+            } else if !used.c {
+                Some(&mut record.c)
+            } else {
+                None
+            };
+            if let Some(field) = field {
+                *field = 0;
+                out.push(Break { rule: "unused-operand", program: broken, expected: unused_field_error(instr.op, pc) });
+                operands += 1;
+            }
+        }
+        if !used.imm && immediates < 2 {
+            let mut broken = program.clone();
+            broken.instrs[pc].imm = 1;
+            out.push(Break { rule: "unused-immediate", program: broken, expected: unused_field_error(instr.op, pc) });
+            immediates += 1;
+        }
+    }
+}
+
+/// A data segment of an invoked descriptor, given the field its kind leaves unused: a literal a
+/// source register, a register segment a blob offset. Every use checks a segment alike and names
+/// it by its index in the table, so wherever `verify` first reaches it, the error is
+/// `InvalidDataSegment` with that index.
+fn cpi_segment_fields(program: &Program, out: &mut Vec<Break>) {
+    let (mut literal, mut register) = (false, false);
+    for (pc, _) in ceiling::invoke_sites(program) {
+        let Some(cpi) = program.cpis.get(program.instrs[pc].a as usize) else { continue };
+        let start = cpi.segment_start as usize;
+        for index in start..start + cpi.segment_len as usize {
+            let mut broken = program.clone();
+            if broken.segments[index].kind == 0 && !literal {
+                broken.segments[index].register = 0;
+                out.push(Break {
+                    rule: "cpi-segment-literal-register",
+                    program: broken,
+                    expected: TemplateError::InvalidDataSegment(index),
+                });
+                literal = true;
+            } else if broken.segments[index].kind != 0 && !register {
+                broken.segments[index].offset = 1;
+                out.push(Break {
+                    rule: "cpi-segment-register-fields",
+                    program: broken,
+                    expected: TemplateError::InvalidDataSegment(index),
+                });
+                register = true;
+            }
+        }
+    }
+}
+
+/// A well-formed, empty literal segment appended to the table, which nothing names. It is refused
+/// once the walk is over, after the descriptors, with `InvalidDataSegment` and its index.
+fn unreferenced_segment(program: &Program, out: &mut Vec<Break>) {
+    if program.segments.len() >= u16::MAX as usize || program.encode().len() + 8 > checker::limit::PAYLOAD {
+        return;
+    }
+    let mut broken = program.clone();
+    let index = broken.segments.len();
+    broken.segments.push(crate::model::Segment { kind: 0, register: NONE, offset: 0, len: 0, reserved: [0; 2] });
+    broken.sync_counts();
+    out.push(Break { rule: "unreferenced-segment", program: broken, expected: TemplateError::InvalidDataSegment(index) });
+}
+
+/// A well-formed descriptor appended to the table, which nothing invokes: a call of a fixed
+/// account declared executable, with no account and no data. It is refused once the walk is over,
+/// with `InvalidCpi` and its index.
+fn uninvoked_descriptor(program: &Program, out: &mut Vec<Break>) {
+    let fixed = program.header.fixed_accounts as usize;
+    let Some(executable) = program.accounts[..fixed].iter().position(|account| account.flags & EXECUTABLE != 0) else {
+        return;
+    };
+    if program.cpis.len() >= u8::MAX as usize || program.encode().len() + 12 > checker::limit::PAYLOAD {
+        return;
+    }
+    let mut broken = program.clone();
+    let descriptor = broken.cpis.len();
+    broken.cpis.push(crate::model::Cpi {
+        program: executable as u8,
+        group: NONE,
+        account_start: 0,
+        account_len: 0,
+        segment_len: 0,
+        segment_start: 0,
+        max_data_len: 0,
+        reserved: [0; 2],
+    });
+    broken.sync_counts();
+    out.push(Break { rule: "uninvoked-descriptor", program: broken, expected: TemplateError::InvalidCpi(descriptor) });
 }

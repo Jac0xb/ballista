@@ -89,6 +89,11 @@ of the TypeScript compiler's rules, so these pass `build()` and fail `verify()`:
   the CPI's maximum data length to equal the total with each `bytes` register at its maximum
   length. Set it with `set_cpi_max_data_len`, or `verify` fails with `InvalidCpi` (6115).
 - **A `create_pda` bump of another type.** The bump is a `u64` register: `TypeMismatch` (6119).
+- **Anything left unused.** A `cpi` that no `invoke` names fails with `InvalidCpi` (6115), and a
+  data segment nothing uses with `InvalidDataSegment` (6116). A record from `op` or `emit` needs
+  `NO_INDEX` in each operand its opcode doesn't use and zero in an unused immediate:
+  `InvalidInstruction` (6114), or the [unused-field](/reference/wire-format#opcodes) error of its
+  opcode.
 
 `create_pda(program, bump, seeds)` derives the address with the bump you supply. Unlike
 `derive_pda`, it does not search for the canonical bump, so a bump from an input lets the caller
@@ -189,7 +194,8 @@ one for each key the template computes.
 <<< @/../clients/rust/examples/docs_rust_reference.rs#registry
 
 The builder checks none of the [registry rules](/reference/language#registries); `verify` rejects a
-break with `InvalidRegistry` (6132). Pass each entry writable, at the address
+break with `InvalidRegistry` (6132). Put every `open_registry` before the first `invoke`, as the
+TypeScript compiler does: an open after one is refused. Pass each entry writable, at the address
 `find_registry_entry_address` derives. A run fails with `InvalidRegistryEntry` (6025) when the
 account is not that entry, and when two entries of one registry get equal keys: both name one
 account, and its second open fails.

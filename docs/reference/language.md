@@ -67,9 +67,11 @@ account's address or its owner program, and require a minimum data length. To pi
 fix it in the template, so that a run fails if the caller passes anything else.
 
 A CPI in the template may ask for the same privileges as the account's declaration or fewer, never
-more. Reading a finalized template's schema therefore tells you the most any run of it can do with
-the accounts it declares. Ballista only passes on signatures the transaction already carries, so a
-template cannot gain authority the transaction did not already have; see
+more. Reading a finalized template's schema therefore tells you the most any run of it can do
+through each slot it declares. The caller fills the slots, so one address can still reach a call
+writable through another slot or an account group; see [Privileges](/guide/trust-model#privileges).
+Ballista only passes on signatures the transaction already carries, so a template cannot gain
+authority the transaction did not already have; see
 [When Ballista signs](/guide/trust-model#signing).
 
 A run checks each account against its own declaration, so the caller can pass one account in two
@@ -549,9 +551,10 @@ Ballista program; its seeds are on [Wire format](/reference/wire-format#registry
   entry account's `key`, `owner`, `lamports`, `dataLength`, and `isEmpty` stay readable, as for any
   account.
 - **A CPI may pass an entry read-only, never writable.** The compiler refuses it, and the verifier
-  refuses the template with `InvalidRegistry` (6132). If a batch-row account or account group
-  member that a CPI passes writable turns out to be an open entry, the CPI fails with
-  `RegistryReentry` (6026). So no other run can change an entry between this run's read and its
+  refuses the template with `InvalidRegistry` (6132). If another fixed account, a batch-row
+  account or an account group member that a CPI passes writable turns out to be an open entry,
+  the CPI fails with `RegistryReentry` (6026). The verifier also refuses an open after any CPI, so
+  every CPI meets this check, and no other run can change an entry between this run's read and its
   write.
 
 ### Spending limits
@@ -586,9 +589,10 @@ requirement `withinRateLimit`.
 
 The language leaves these out on purpose:
 
-- There are no jumps, recursion, nested loops, or unbounded loops. Every template is therefore
-  known to finish, and its worst case is known before it runs, rather than being cut off by the
-  transaction's compute budget.
+- There are no jumps, recursion, nested loops, or unbounded loops. Every template therefore
+  finishes, and its worst case in steps and calls is known before it runs. Its compute is not
+  bounded that way: a loop of costly steps, such as PDA searches, can exhaust the transaction's
+  budget and fail.
 - A template cannot discover accounts at run time. The only accounts outside the schema are
   account group members, which a template can forward to a CPI but never read, check, or sign
   with. Everything a template checks is fixed in the stored template, where anyone can review it.

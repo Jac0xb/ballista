@@ -68,9 +68,11 @@ fuzz/scripts/coverage.sh differential
     program or group, and a loop maximum past 64 CPIs;
   - registers: a read before a write, and a type mismatch;
   - outputs: an `EMIT` tag, and `SET_RETURN_DATA` before an invoke, in a loop, or before an open;
-  - registries: a writable entry, and a ninth open;
+  - registries: a writable entry, a ninth open, and an open after an invoke;
   - other limits and pins: a ninth loop, a read past the minimum length, a guarded invoke before
-    `RETURN_DATA`, and the sysvar pin.
+    `RETURN_DATA`, and the sysvar pin;
+  - encodings: an unused operand or immediate set, a CPI data segment's unused field set, and an
+    unused data segment or descriptor added.
 
 **Per address**, the ceiling is wider, and finalization cannot see it. The caller picks the
 address in each slot and the members of each account group.
@@ -85,26 +87,27 @@ address in each slot and the members of each account group.
   the second: group members can't be read or checked.
 - `ceiling::address_ceiling` states this bound, and a test pins it.
 
-## Known findings
+## Findings
 
-Each finding has an ignored test in `common/tests/fuzz_findings.rs`.
+The first long run found four encoding gaps, and a review of the entry points two more. The
+verifier now refuses each, and `common/tests/fuzz_findings.rs` asserts the exact error:
 
-| Rule | Finding |
-| --- | --- |
-| `cpi.segment-literal-register`, `cpi.segment-register-fields` | `verify_cpi` checks invocation data segments with its own loop and skips the two unused-field checks that `verify_segment` makes. |
-| `unreferenced.segment`, `unreferenced.cpi` | A data segment or CPI descriptor that nothing reaches is never checked. |
+- `verify_cpi` checked invocation data segments with its own loop, and skipped the two unused-field
+  checks that `verify_segment` makes (rules `cpi.segment-literal-register` and
+  `cpi.segment-register-fields`). It now calls `verify_segment`, which also names a bad segment by
+  its index in the table, not from the descriptor's first.
+- A data segment or CPI descriptor that nothing reached was never checked (`unreferenced.segment`
+  and `unreferenced.cpi`). Every one must now be used.
+- `verify_single_instruction` panicked on a view with more than 64 registers. It now returns
+  `TooManyRegisters`.
 
-Two more findings there have no checker rule:
+The checker also holds every record to the opcode table's unused fields (`format.unused-field`):
+`0xff` in each operand an opcode doesn't use, and zero in an unused immediate.
 
-- `verify_cpi` numbers a bad segment from the descriptor's first, not the table's.
-- `verify_single_instruction` panics on a view with more than 64 registers.
-
-The four rules in the table are listed in `harness::KNOWN_FINDINGS`, so the targets print them once
-and keep fuzzing.
-
-- `BALLISTA_FUZZ_STRICT=1` makes them all fatal again, for example to check a fix.
-- A comma-separated list of rule names makes only those fatal. This is how
-  `fuzz/regressions/differential/` was made: one crash per rule, minimized with `cargo fuzz tmin`.
+`fuzz/regressions/differential/` keeps one crash per old finding, minimized with
+`cargo fuzz tmin`. `harness::KNOWN_FINDINGS` lists rules whose violations the targets print once
+and keep fuzzing past, for a finding not fixed yet; it is empty. `BALLISTA_FUZZ_STRICT=1`, or a
+comma-separated list of rule names, makes such rules fatal again.
 
 ## Seeds
 
@@ -127,7 +130,7 @@ Three examples in `support/examples` help with triage:
 - `explain FILE` prints a payload's sections and every verdict.
 - `checker_audit TARGET DIR` lists where the checker and `verify` disagree, in both directions. A
   verifier error the checker lacks is a rule neither side can catch. Over the corpora of the first
-  long run, about 14,700 inputs, the four known findings were the only disagreements.
+  long run, about 14,700 inputs, the four encoding findings were the only disagreements.
 - `corpus_stats TARGET DIR` counts invoke sites by scope, records checked, and worst-case CPI
   counts.
 
@@ -144,10 +147,12 @@ The script deletes one verifier rule at a time, in a throwaway worktree. For eac
 stable tests and `structured` from an empty corpus, and reports which catch the deletion and how
 fast. A mutant that survives both is a rule nothing here tests.
 
-The 14 mutants cover the CPI ceiling, declared accounts and groups, the CPI count,
-read-before-write, read bounds, return data, `EMIT` tags, registry entries and the sysvar pin.
-The stable tests catch every one, and so does `structured`, within 10 seconds of an empty corpus.
-That includes the critic's `verify-cpi-privilege`, which the proptests in `common/tests` miss.
+The 21 mutants cover the CPI ceiling, declared accounts and groups, the CPI count,
+read-before-write, read bounds, return data, `EMIT` tags, registry entries and their order, the
+sysvar pin, unused fields, data segment fields and indexes, and unused segments and descriptors.
+The stable tests catch every one, and so does `structured`, within 22 seconds of an empty corpus
+(`python3 fuzz/scripts/mutants.py 90`, 2026-10-03, on a machine running other fuzzers). That
+includes the critic's `verify-cpi-privilege`, which the proptests in `common/tests` miss.
 
 ## First local run
 

@@ -2632,9 +2632,12 @@ mod tests {
         for _ in 0..MAX_ROW_INPUTS {
             builder.row_input(VALUE_BOOL, 0);
         }
-        // Never invoked, but every descriptor sizes the invocation buffer: 4 KiB here.
+        // Every descriptor sizes the invocation buffer: 4 KiB here. Its one invoke is guarded by a
+        // false register, so it never runs.
         let padding = builder.blob(&[0; MAX_CPI_DATA_LEN]);
-        builder.cpi(program, &[], &[Segment::Literal(padding)]);
+        let cpi = builder.cpi(program, &[], &[Segment::Literal(padding)]);
+        let never = builder.const_bool(false);
+        builder.invoke(cpi, Some(never));
         let count = builder.const_u64(1);
         builder.for_each(0, |body| {
             body.loop_index();
@@ -3212,26 +3215,26 @@ mod tests {
         let register_count = if assert_delta { 6 } else { input_count };
         let mut instructions = Vec::new();
         if require_guard {
-            instructions.push(record(OP_LOAD_INPUT, 0, 0, 0, 0, 0));
-            instructions.push(record(OP_REQUIRE, NO_INDEX, 0, 0, 0, 0));
-            instructions.push(record(OP_LOAD_INPUT, 1, 1, 0, 0, 0));
+            instructions.push(record(OP_LOAD_INPUT, 0, 0, NO_INDEX, NO_INDEX, 0));
+            instructions.push(record(OP_REQUIRE, NO_INDEX, 0, NO_INDEX, NO_INDEX, 0));
+            instructions.push(record(OP_LOAD_INPUT, 1, 1, NO_INDEX, NO_INDEX, 0));
         } else {
-            instructions.push(record(OP_LOAD_INPUT, 0, 0, 0, 0, 0));
+            instructions.push(record(OP_LOAD_INPUT, 0, 0, NO_INDEX, NO_INDEX, 0));
         }
         let amount_register = if require_guard { 1 } else { 0 };
         if assert_delta {
             // This register is the runtime representation of `step.snapshot("before", ...)`.
-            instructions.push(record(OP_ACCOUNT_LAMPORTS, 2, 1, 0, 0, 0));
+            instructions.push(record(OP_ACCOUNT_LAMPORTS, 2, 1, NO_INDEX, NO_INDEX, 0));
         }
         if batch {
-            instructions.push(record(OP_FOREACH, NO_INDEX, 1, 0, 0, 0));
+            instructions.push(record(OP_FOREACH, NO_INDEX, 1, NO_INDEX, NO_INDEX, 0));
         }
-        instructions.push(record(OP_INVOKE, NO_INDEX, 0, NO_INDEX, 0, 0));
+        instructions.push(record(OP_INVOKE, NO_INDEX, 0, NO_INDEX, NO_INDEX, 0));
         if assert_delta {
-            instructions.push(record(OP_ACCOUNT_LAMPORTS, 3, 1, 0, 0, 0));
-            instructions.push(record(OP_SUB, 4, 2, amount_register, 0, 0));
-            instructions.push(record(OP_EQ, 5, 3, 4, 0, 0));
-            instructions.push(record(OP_REQUIRE, NO_INDEX, 5, 0, 0, 0));
+            instructions.push(record(OP_ACCOUNT_LAMPORTS, 3, 1, NO_INDEX, NO_INDEX, 0));
+            instructions.push(record(OP_SUB, 4, 2, amount_register, NO_INDEX, 0));
+            instructions.push(record(OP_EQ, 5, 3, 4, NO_INDEX, 0));
+            instructions.push(record(OP_REQUIRE, NO_INDEX, 5, NO_INDEX, NO_INDEX, 0));
         }
 
         let header = ProgramHeader::new(
@@ -3339,9 +3342,9 @@ mod tests {
             max_len_le: [0; 2],
         }];
         let instructions = [
-            record(OP_LOAD_INPUT, 0, 0, 0, 0, 0),
-            record(OP_FOREACH, NO_INDEX, 1, 0, 0, 0),
-            record(OP_INVOKE, NO_INDEX, 0, NO_INDEX, 0, 0),
+            record(OP_LOAD_INPUT, 0, 0, NO_INDEX, NO_INDEX, 0),
+            record(OP_FOREACH, NO_INDEX, 1, NO_INDEX, NO_INDEX, 0),
+            record(OP_INVOKE, NO_INDEX, 0, NO_INDEX, NO_INDEX, 0),
         ];
         let cpis = [CpiDescriptor {
             program_account: 0,
@@ -3423,18 +3426,18 @@ mod tests {
             max_len_le: [0; 2],
         }];
         let instructions = [
-            record(OP_LOAD_INPUT, 0, 0, 0, 0, 0),
-            record(OP_FOREACH, NO_INDEX, 10, 0, 0, 0),
-            record(OP_ACCOUNT_KEY, 1, 0x80, 0, 0, 0),
-            record(OP_ACCOUNT_KEY, 2, 1, 0, 0, 0),
-            record(OP_ACCOUNT_KEY, 3, 6, 0, 0, 0),
-            record(OP_DERIVE_PDA, 4, 0, 0, 0, 3u64 << 32),
-            record(OP_ACCOUNT_KEY, 5, 0x81, 0, 0, 0),
-            record(OP_EQ, 6, 4, 5, 0, 0),
-            record(OP_REQUIRE, NO_INDEX, 6, 0, 0, 0),
-            record(OP_ACCOUNT_IS_EMPTY, 7, 0x81, 0, 0, 0),
-            record(OP_INVOKE, NO_INDEX, 0, 7, 0, 0),
-            record(OP_INVOKE, NO_INDEX, 1, NO_INDEX, 0, 0),
+            record(OP_LOAD_INPUT, 0, 0, NO_INDEX, NO_INDEX, 0),
+            record(OP_FOREACH, NO_INDEX, 10, NO_INDEX, NO_INDEX, 0),
+            record(OP_ACCOUNT_KEY, 1, 0x80, NO_INDEX, NO_INDEX, 0),
+            record(OP_ACCOUNT_KEY, 2, 1, NO_INDEX, NO_INDEX, 0),
+            record(OP_ACCOUNT_KEY, 3, 6, NO_INDEX, NO_INDEX, 0),
+            record(OP_DERIVE_PDA, 4, 0, NO_INDEX, NO_INDEX, 3u64 << 32),
+            record(OP_ACCOUNT_KEY, 5, 0x81, NO_INDEX, NO_INDEX, 0),
+            record(OP_EQ, 6, 4, 5, NO_INDEX, 0),
+            record(OP_REQUIRE, NO_INDEX, 6, NO_INDEX, NO_INDEX, 0),
+            record(OP_ACCOUNT_IS_EMPTY, 7, 0x81, NO_INDEX, NO_INDEX, 0),
+            record(OP_INVOKE, NO_INDEX, 0, 7, NO_INDEX, 0),
+            record(OP_INVOKE, NO_INDEX, 1, NO_INDEX, NO_INDEX, 0),
         ];
         let cpis = [
             CpiDescriptor {

@@ -49,6 +49,12 @@ fn every_template_verifies_and_passes_every_check() {
     }
 }
 
+/// Whether the reference checker flags `program`: a violation, or a broken encoding rule.
+fn flagged(program: &Program) -> bool {
+    let encoded = program.encode();
+    checker::check(program, encoded.len()).map_or(true, |report| !report.notes.is_empty())
+}
+
 #[test]
 fn every_break_of_every_template_is_refused_with_its_error() {
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
@@ -62,12 +68,7 @@ fn every_break_of_every_template_is_refused_with_its_error() {
                     .unwrap_or_else(|| "a panic".into());
                 panic!("{name}: {message}");
             }
-            let encoded = broken.program.encode();
-            assert!(
-                checker::check(&broken.program, encoded.len()).is_err(),
-                "{name}: the reference checker accepts the break {}",
-                broken.rule
-            );
+            assert!(flagged(&broken.program), "{name}: the reference checker accepts the break {}", broken.rule);
             if broken.rule.starts_with("privilege")
                 || broken.rule.starts_with("undeclared")
                 || broken.rule.starts_with("cpi-count")
@@ -100,6 +101,13 @@ fn every_break_of_every_template_is_refused_with_its_error() {
         "ninth-loop",
         "ninth-open",
         "open-after-return-data",
+        "open-after-invoke",
+        "unused-operand",
+        "unused-immediate",
+        "cpi-segment-literal-register",
+        "cpi-segment-register-fields",
+        "unreferenced-segment",
+        "uninvoked-descriptor",
     ] {
         assert!(counts.contains_key(rule), "no template exercises the break {rule}");
     }
@@ -187,8 +195,9 @@ fn per_address_the_ceiling_is_every_slot_holding_it_plus_the_group() {
     }
 }
 
-/// The known findings as the `differential` target found them, minimized with `cargo fuzz tmin`
-/// under `BALLISTA_FUZZ_STRICT=<rule>`. Each file is named for its rule.
+/// The findings the `differential` target made, minimized with `cargo fuzz tmin` under
+/// `BALLISTA_FUZZ_STRICT=<rule>`, each file named for its rule. The verifier now refuses each
+/// shape (`common/tests/fuzz_findings.rs`), so they stay as regressions.
 fn reproducers() -> Vec<(String, Vec<u8>)> {
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../regressions/differential");
     let mut files: Vec<(String, Vec<u8>)> = fs::read_dir(directory)
@@ -205,20 +214,22 @@ fn reproducers() -> Vec<(String, Vec<u8>)> {
 #[test]
 fn each_reproducer_breaks_the_rule_it_is_named_for() {
     let files = reproducers();
-    assert_eq!(files.len(), harness::KNOWN_FINDINGS.len(), "one reproducer per known finding");
+    assert_eq!(files.len(), 4, "one reproducer per finding");
     for (rule, bytes) in files {
-        assert!(harness::KNOWN_FINDINGS.contains(&rule.as_str()), "{rule} is a known finding");
+        assert!(!harness::KNOWN_FINDINGS.contains(&rule.as_str()), "{rule} is fixed, not known");
         let program = Program::decode(&bytes).expect("decodes");
-        let report = checker::check(&program, bytes.len()).expect("only an encoding rule is broken");
+        let report = checker::check(&program, bytes.len()).expect("only encoding rules are broken");
         assert!(report.notes.iter().any(|note| note.rule == rule), "{rule}: {:?}", report.notes);
     }
 }
 
+/// Fuzzed, then minimized for one rule, each also breaks others, such as an unused field, so the
+/// verifier may refuse it at an earlier check than the rule it is named for.
 #[test]
-#[ignore = "known findings: verify accepts every reproducer; see common/tests/fuzz_findings.rs"]
 fn verify_refuses_each_reproducer() {
     for (rule, bytes) in reproducers() {
         let verdict = ballista_common::template::ProgramView::parse(&bytes).and_then(|view| view.verify());
         assert!(verdict.is_err(), "{rule}: verify accepts it");
+        assert_eq!(harness::differential(&bytes), None, "{rule}");
     }
 }

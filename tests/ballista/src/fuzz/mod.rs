@@ -11,7 +11,8 @@
 //! - [`executor`] is the main seeded fuzz loop; [`lifecycle`] runs random create/begin/write/
 //!   finalize/cancel/run sequences; [`mutation_guards`] are deterministic tests that assert the
 //!   exact error of each account check, so deleting the check fails them; [`registry_ordering`]
-//!   probes the late-open design question the second critic raised.
+//!   and [`critic_lost_write`] pin the rule that closed the late-open window the critics found:
+//!   every registry open precedes every invoke.
 
 mod critic_lost_write;
 mod executor;

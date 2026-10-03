@@ -86,7 +86,9 @@ the immediates of the registry opcodes; see [Registries](#registries).
   `FromBytes`, `IntoBytes`, `KnownLayout`, and `Unaligned` traits.
 - The header's counts determine where every section starts and ends.
 - Parsing rejects a payload that is truncated, has bytes left over, sets an unknown header flag,
-  or uses the reserved header byte. The verifier rejects non-zero reserved bytes in records.
+  or uses the reserved header byte. The verifier rejects non-zero reserved bytes in records, an
+  [unused field](#opcodes) that isn't `0xff` or zero, and a data segment or CPI descriptor that
+  nothing uses, so each template has one encoding.
 - Instructions refer to registers, accounts, and table records by index, and the verifier checks
   that every index is in range.
 - Literal data is stored once in the blob and referred to by offset and length.
@@ -173,8 +175,14 @@ in its high 32 bits.
 ### Opcodes
 
 `REQUIRE`, `INVOKE`, `FOREACH`, `REPEAT`, `EMIT`, `SET_RETURN_DATA`, `OPEN_REGISTRY`, and
-`WRITE_REGISTRY` produce no value. All but the first three must set the destination to `0xff`.
-Every other instruction writes its result to the destination register.
+`WRITE_REGISTRY` produce no value. Every other instruction writes its result to the destination
+register.
+
+A field an opcode doesn't use is fixed: the destination of an opcode that produces no value, and
+each operand and the immediate that its row below doesn't name. An unused destination or operand
+must be `0xff`, and an unused immediate zero. The verifier refuses anything else with
+`InvalidBatch` for `FOREACH`, `InvalidLoop` for `REPEAT`, `InvalidRegistry` for opcodes 75 to 77,
+and `InvalidInstruction` otherwise.
 
 | Opcode | Name | Operands | Result |
 | ---: | --- | --- | --- |
@@ -258,8 +266,8 @@ Every other instruction writes its result to the destination register.
 Opcodes 0 and 39 are unassigned, as is every number above 77.
 
 Read opcodes (13 to 16, 43 to 46, and 60) with the dynamic-offset flag take their offset from the
-`u64` register in `b`, and must have a zero immediate. Without the flag, the immediate offset plus
-the read width must fit inside the account's declared minimum data length.
+`u64` register in `b`, and must have a zero immediate. Without the flag, `b` is unused, and the
+immediate offset plus the read width must fit inside the account's declared minimum data length.
 
 #### Loops
 
@@ -318,15 +326,14 @@ A `READ_REGISTRY` or `WRITE_REGISTRY` immediate packs one field:
 The verifier checks:
 
 - `OPEN_REGISTRY` sits at the top level, never in a loop body, and never after a
-  `SET_RETURN_DATA`. A template holds at most 8, opens each entry account at most once, and gives
-  every open of one registry index the same size.
+  `SET_RETURN_DATA` or any `INVOKE`, including one in a loop body. A template holds at most 8,
+  opens each entry account at most once, and gives every open of one registry index the same size.
 - The entry account is a fixed account declared writable and nothing else: no signer or executable
   flag, no address or owner pin, and a minimum data length of 0. The payer is a fixed account
   declared signer and writable. The System program account is a fixed account pinned to the System
   program's address.
 - `b` is a set `pubkey` register, or `0xff` for the zero key of 32 zero bytes.
-- No CPI account record lists an entry account writable, whether its `INVOKE` comes before the
-  open, after it, or never.
+- No CPI account record lists an entry account writable, whether it is invoked or not.
 - `READ_REGISTRY` and `WRITE_REGISTRY` name an account opened by an `OPEN_REGISTRY` at a lower
   index, and a field that fits inside that registry's size. A read's `b` and `c`, and a write's
   destination and `c`, are `0xff`.
@@ -342,14 +349,16 @@ counts each open as 3 CPIs toward the limit of 64, since creating an entry whose
 holds lamports takes a transfer, an allocate, and an assign.
 
 At run time, an open checks the entry or creates it, as [Registry entries](#registry-entries)
-describes, and marks it borrowed for the rest of the run, so a CPI that passes it writable fails
-with `RegistryReentry` (6026). The run-time rules and errors are under
+describes, and marks it borrowed for the rest of the run. Every CPI comes after the opens, so one
+that passes an open entry writable, through any slot or account group, fails with
+`RegistryReentry` (6026). The run-time rules and errors are under
 [Registries](/reference/language#registries).
 
 ## CPI descriptors
 
 Each CPI the template can make is described once by a 12-byte descriptor. An `INVOKE` names a
-descriptor, and a loop can invoke the same descriptor on every pass.
+descriptor, and a loop can invoke the same descriptor on every pass. The verifier refuses a
+descriptor that no `INVOKE` names with `InvalidCpi`.
 
 | Offset | Bytes | Field |
 | ---: | ---: | --- |
@@ -378,7 +387,8 @@ Each record is 2 bytes:
 
 Each segment is 8 bytes. CPI descriptors use segments to build instruction data, `EMIT` and
 `SET_RETURN_DATA` use them to build their output, and `DERIVE_PDA` and `CREATE_PDA` use them as
-seeds.
+seeds. Every segment must have one of these uses, and every use checks the fields below alike. The
+verifier refuses a bad or unused segment with `InvalidDataSegment` and its index in this table.
 
 | Offset | Bytes | Field |
 | ---: | ---: | --- |

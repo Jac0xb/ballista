@@ -105,7 +105,8 @@ one account can fill two roles: one signer can count as two approvers, and one d
 two "received at least" checks. Where a template's checks assume two accounts differ, require it
 with `notEqual(accountKey(a), accountKey(b))`, as
 [Exact lamport delta](/guide/assertions#exact-lamport-delta) does. Registry entries are the
-exception: opening an entry that is already open in the run fails with `InvalidRegistryEntry`.
+exception: opening an entry that is already open in the run fails with `InvalidRegistryEntry`
+(6025).
 
 ## Pins
 

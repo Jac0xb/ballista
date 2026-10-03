@@ -37,7 +37,6 @@ const JITO_TIP_PAYMENT: Pubkey = pubkey!("T1pyyaTNZsKv2WcRAB8oVnk93mLJw2XzjtVYqC
 /// Every Kamino v2 lending instruction takes the instructions sysvar.
 const SYSVAR_INSTRUCTIONS: Pubkey = pubkey!("Sysvar1nstructions1111111111111111111111111");
 const WRAPPED_SOL_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
-const USDC_MINT: Pubkey = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
 /// Orca's v2 instructions take the memo program, for Token-2022 transfers that need a memo.
 const MEMO_PROGRAM: Pubkey = pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
@@ -80,14 +79,6 @@ const ED25519_MESSAGE_DATA_OFFSET: u64 = 10;
 /// Each Jupiter template requires `platform_fee_bps` to be at most this before it calls `route`.
 const MAX_PLATFORM_FEE_BPS: u64 = 0;
 
-/// The oracle swap's feed, Pyth's SOL/USD: `ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d`.
-const SOL_USD_FEED_ID: [u8; 32] = [
-    0xef, 0x0d, 0x8b, 0x6f, 0xda, 0x2c, 0xeb, 0xa4, 0x1d, 0xa1, 0x5d, 0x40, 0x95, 0xd1, 0xda, 0x39,
-    0x2a, 0x0d, 0x2f, 0x8e, 0xd0, 0xc6, 0xc7, 0xbc, 0x0f, 0x4c, 0xfa, 0xc8, 0xc2, 0x80, 0xb5, 0x6d,
-];
-/// 1%, in basis points: how far below the oracle's valuation the oracle swap's fill may land.
-const ORACLE_TOLERANCE_BPS: u128 = 100;
-
 /// Jupiter `route`'s `route_plan`: at most 512 bytes.
 const ROUTE_ARGS_MAX: u16 = 512;
 /// What follows the plan in `route`'s data: `in_amount`, `quoted_out_amount` (u64 each),
@@ -108,9 +99,8 @@ fn token_account(builder: &mut ProgramBuilder) -> u8 {
     builder.account(WRITE, None, Some(TOKEN_PROGRAM_ID.to_bytes()), TOKEN_ACCOUNT_LEN)
 }
 
-/// The SPL Token mint at `address`.
-fn mint(builder: &mut ProgramBuilder, address: Pubkey) -> u8 {
-    builder.account(READ, Some(address.to_bytes()), Some(TOKEN_PROGRAM_ID.to_bytes()), MINT_LEN)
+fn mint(builder: &mut ProgramBuilder) -> u8 {
+    builder.account(READ, None, Some(TOKEN_PROGRAM_ID.to_bytes()), MINT_LEN)
 }
 
 /// Requires the pubkey at `offset` in `account`'s data to be the address of account `expected`.
@@ -254,6 +244,21 @@ pub fn jupiter_deposit_exact_output() -> Vec<u8> {
 // #endregion jupiter-deposit
 
 // #region jupiter-oracle-swap
+const USDC_MINT: Pubkey = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+/// The feed the price must come from, Pyth's SOL/USD:
+/// `ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d`.
+const SOL_USD_FEED_ID: [u8; 32] = [
+    0xef, 0x0d, 0x8b, 0x6f, 0xda, 0x2c, 0xeb, 0xa4, 0x1d, 0xa1, 0x5d, 0x40, 0x95, 0xd1, 0xda, 0x39,
+    0x2a, 0x0d, 0x2f, 0x8e, 0xd0, 0xc6, 0xc7, 0xbc, 0x0f, 0x4c, 0xfa, 0xc8, 0xc2, 0x80, 0xb5, 0x6d,
+];
+/// 1%, in basis points: how far below the oracle's valuation the fill may land.
+const TOLERANCE_BPS: u128 = 100;
+
+/// Declares the SPL Token mint at `address`, read-only.
+fn pinned_mint(builder: &mut ProgramBuilder, address: Pubkey) -> u8 {
+    builder.account(READ, Some(address.to_bytes()), Some(TOKEN_PROGRAM_ID.to_bytes()), MINT_LEN)
+}
+
 /// Sell wrapped SOL for USDC on Jupiter, and require the fill to beat Pyth's SOL/USD price less
 /// 1%. The feed, the two mints and the tolerance are constants, not run inputs.
 pub fn jupiter_oracle_checked_swap() -> Vec<u8> {
@@ -267,8 +272,8 @@ pub fn jupiter_oracle_checked_swap() -> Vec<u8> {
     let source_ata = token_account(&mut b);
     let destination_ata = token_account(&mut b);
     // The pair the feed prices: what the route sells, and what it buys.
-    let source_mint = mint(&mut b, WRAPPED_SOL_MINT);
-    let destination_mint = mint(&mut b, USDC_MINT);
+    let source_mint = pinned_mint(&mut b, WRAPPED_SOL_MINT);
+    let destination_mint = pinned_mint(&mut b, USDC_MINT);
     b.account_groups(1); // routeAccounts
     let route_plan = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
     let in_amount = b.input(VALUE_U64, 0);
@@ -286,7 +291,7 @@ pub fn jupiter_oracle_checked_swap() -> Vec<u8> {
     let sixty = b.const_i64(60);
     let zero = b.const_i64(0);
     let max_platform_fee_bps = b.const_u64(MAX_PLATFORM_FEE_BPS);
-    let kept_bps = b.const_u128(10_000 - ORACLE_TOLERANCE_BPS);
+    let kept_bps = b.const_u128(10_000 - TOLERANCE_BPS);
     let bps = b.const_u128(10_000);
 
     // The verification level decides where every other field sits.

@@ -90,6 +90,8 @@ fn every_break_of_every_template_is_refused_with_its_error() {
         "read-before-write",
         "type-mismatch",
         "emit-tag",
+        "return-data-before-invoke",
+        "return-data-in-loop",
         "entry-writable",
         "guarded-return-data",
         "read-bounds",

@@ -40,6 +40,7 @@ pub fn breaks(program: &Program) -> Vec<Break> {
     read_before_write(program, &mut out);
     type_mismatch(program, &mut out);
     emit_tag(program, &mut out);
+    return_data_placement(program, &mut out);
     entry_writable(program, &mut out);
     guarded_return_data(program, &mut out);
     read_bounds(program, &mut out);
@@ -254,6 +255,38 @@ fn emit_tag(program: &Program, out: &mut Vec<Break>) {
     let at = tag.offset as usize;
     broken.blob[at..at + 3].copy_from_slice(b"BEV");
     out.push(Break { rule: "emit-tag", program: broken, expected: TemplateError::InvalidOutput(pc) });
+}
+
+/// A `SET_RETURN_DATA` of one empty literal, inserted where none may go: before the first root
+/// invoke, since an invoke clears return data, and as the first step of the first loop body. The
+/// literal is a new segment, so nothing else changes. Programs that already set return data are
+/// left alone, so the "once" rule never fires first.
+fn return_data_placement(program: &Program, out: &mut Vec<Break>) {
+    if program.instrs.len() >= checker::limit::INSTRUCTIONS
+        || program.instrs.iter().any(|instr| instr.op == op::SET_RETURN_DATA)
+    {
+        return;
+    }
+    let with_output = |at: usize| {
+        let mut broken = program.clone();
+        let segment = broken.segments.len() as u64;
+        broken.segments.push(crate::model::Segment { kind: 0, register: NONE, offset: 0, len: 0, reserved: [0; 2] });
+        broken.instrs.insert(at, Instr::new(op::SET_RETURN_DATA, NONE, NONE, NONE, NONE, segment | 1 << 32));
+        broken
+    };
+    if let Some((pc, _)) = ceiling::invoke_sites(program).into_iter().find(|(_, site)| *site == Site::Root) {
+        let mut broken = with_output(pc);
+        broken.sync_counts();
+        out.push(Break { rule: "return-data-before-invoke", program: broken, expected: TemplateError::InvalidOutput(pc) });
+    }
+    if let Some(header) = program.instrs.iter().position(|instr| matches!(instr.op, op::FOREACH | op::REPEAT)) {
+        if program.instrs[header].a < u8::MAX {
+            let mut broken = with_output(header + 1);
+            broken.instrs[header].a += 1;
+            broken.sync_counts();
+            out.push(Break { rule: "return-data-in-loop", program: broken, expected: TemplateError::InvalidOutput(header + 1) });
+        }
+    }
 }
 
 /// A CPI account record turned into the first opened entry, passed writable. The entry's slot is

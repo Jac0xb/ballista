@@ -97,7 +97,10 @@ template's `emit` lines can be paired with its run event, which names the templa
 
 <<< @/../clients/js/examples/sdk/simulate-run.ts#events [TypeScript]
 
-Return data names the program that set it, so it proves only that Ballista set it, not which
-template ran:
+The return data that simulation or the transaction's metadata reports names the program that set
+it, so it proves only that Ballista set it, not which template ran:
 
 <<< @/../clients/js/examples/sdk/simulate-run.ts#return-data [TypeScript]
+
+A `Program return:` log line names the program whose call ended instead: after a run that sets no
+return data, it can show a called program's bytes under Ballista's name.

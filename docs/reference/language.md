@@ -407,9 +407,10 @@ and clients to read.
 - **A tag first.** Its first part must be a literal tag of at least 4 bytes that does not start
   with `BEV`, so the line cannot pass for Ballista's own
   [run event](/guide/errors-and-events#run-events), which starts with `BEV1`.
-- **The tag doesn't identify the template.** A log line names the program that wrote it, Ballista,
-  and any template can log the same tag. Before trusting a line, check which template ran: the
-  run instruction's template account, or the run event's template address.
+- **The tag doesn't identify the template.** The line names no program; the `invoke` lines around
+  it do, and `parseProgramData` (TypeScript) and `program_data` (Rust) follow them. Any template can
+  log the same tag, so before trusting a line, check which template ran: the run instruction's
+  template account, or the run event's template address.
 - **Logs can be cut short.** Solana keeps 10,000 bytes of a transaction's logs by default, counting
   every program's lines, then writes `Log truncated` and drops the rest. Base64 makes an `emit`'s
   line a third longer than its bytes, so many emits, or a transaction whose other programs log a
@@ -428,8 +429,9 @@ invoked it.
   reads a nested run's return data must pin the inner template's address, or a run of any template
   could supply it.
 - **A transaction's return data is its last instruction's.** Each instruction starts with none, so
-  any instruction after the run replaces it. Put the run last, simulate the transaction, or read
-  the run's `Program return:` log line.
+  any instruction after the run replaces it. Put the run last, or read the run's `Program return:`
+  log line. That line names the program whose call ended, not the one that set the bytes, so after
+  a run that sets none, it can show a called program's bytes under Ballista's name.
 
 ## Loops
 

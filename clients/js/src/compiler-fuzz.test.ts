@@ -2521,7 +2521,10 @@ export interface CorpusCase {
   forced?: CorpusVariant;
   /** `materializeAliases(document)`, compiled. */
   materialized?: CorpusVariant;
-  /** Known findings this document can trigger, so a harness counts them rather than failing. */
+  /**
+   * Patterns of fixed findings this document uses (`carried-alias`): the committed corpus keeps a
+   * case of each, and a harness counts them. They must run the same as any other case.
+   */
   hazards: string[];
   accounts: unknown[];
   /** The run data after the instruction tag; absent for a mutated document its world no longer fits. */

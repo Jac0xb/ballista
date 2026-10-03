@@ -325,7 +325,9 @@ struct Tally {
     forced_compared: usize,
     materialized_compared: usize,
     verified_only: usize,
-    known: std::collections::BTreeMap<String, usize>,
+    /// Materialized comparisons of cases that use a fixed finding's pattern, by pattern. They must
+    /// match like any other.
+    patterns: std::collections::BTreeMap<String, usize>,
     /// Each finding's category and message: `verifier rejects`, `upload refused`, `structural
     /// error`, `forced differs` or `materialized differs`.
     findings: Vec<(&'static str, String)>,
@@ -446,15 +448,12 @@ fn run_corpus(corpus: &str) -> Tally {
                 tally.forced_compared += 1;
             } else {
                 tally.materialized_compared += 1;
+                for hazard in &hazards {
+                    *tally.patterns.entry((*hazard).to_owned()).or_default() += 1;
+                }
             }
             let found = differences(natural, outcome, natural_paths, other_paths, exact);
             if found.is_empty() {
-                continue;
-            }
-            // Finding carried-alias, fixed: the committed corpus was compiled before the fix, so
-            // its cases of the pattern are counted, not failed, until the corpus is regenerated.
-            if !exact && hazards.contains(&"carried-alias") {
-                *tally.known.entry("carried-alias".to_owned()).or_default() += 1;
                 continue;
             }
             tally.finding(
@@ -480,7 +479,7 @@ fn compiler_fuzz_corpus_runs_the_same_with_and_without_register_reuse() {
     });
     let tally = run_corpus(external.as_deref().unwrap_or(COMMITTED));
     eprintln!(
-        "compiler fuzz corpus: {} cases, {} payloads verified ({} of them not run: mutated documents their world no longer fits), {} runs; natural runs: {} succeeded, failures {:?}; {} forced-reuse and {} materialized comparisons; known findings {:?}",
+        "compiler fuzz corpus: {} cases, {} payloads verified ({} of them not run: mutated documents their world no longer fits), {} runs; natural runs: {} succeeded, failures {:?}; {} forced-reuse and {} materialized comparisons, of which fixed-finding patterns {:?}",
         tally.cases,
         tally.payloads,
         tally.verified_only,
@@ -489,7 +488,7 @@ fn compiler_fuzz_corpus_runs_the_same_with_and_without_register_reuse() {
         tally.failures,
         tally.forced_compared,
         tally.materialized_compared,
-        tally.known,
+        tally.patterns,
     );
     assert!(
         tally.cases > 0 && tally.forced_compared > 0,

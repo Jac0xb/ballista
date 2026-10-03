@@ -32,10 +32,11 @@ Move a token account's entire balance to another token account.
 :::
 
 `accountData` reads a value of the given type at a byte offset in an account's data. An SPL Token
-account stores its balance as a `u64` at offset 64, so the template reads it there. That read is
-only meaningful if the account really is a token account, so the template requires both accounts
-to be owned by the Token program and to hold at least 165 bytes of data. The `require` stops the
-run when the balance is zero.
+account stores its balance as a `u64` at offset 64, so the template reads it there. It requires
+both accounts to be owned by the Token program and to hold at least 165 bytes. Those pins don't
+prove a token account: a 355-byte Token multisig passes them too, though the transfer from or to
+one then fails. See [what a pin proves](/guide/trust-model#pins). The `require` stops the run when
+the balance is zero.
 
 ::: tip Finding a field's offset
 An offset is the number of bytes before the field in the account's data. Add up the sizes of the

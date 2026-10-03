@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """Lists the stack copies in the spec binary that the Certora prover may not follow.
 
-The prover keeps stack values by offset and rebuilds an eight-byte stack load from narrower stores
-only when they are exactly two four-byte halves. A load that spans narrower stores in any other
-shape carries at most the store at its own offset: a field at another offset inside the word, such
-as an error code at offset 4 after a two-byte tag, is lost. LLVM moves `RunResult` errors and
-`RuntimeValue`s this way.
+The prover keeps stack values by offset. An eight-byte stack load that spans narrower stores carries
+at most the store at its own offset: a field at another offset inside the word, such as an error
+code at offset 4 after a two-byte tag, is lost. Two four-byte halves are no exception. The control
+`rule_stack_word_copy_keeps_both_halves` failed at cb2fb2d (prover jobs
+88f0a104b1624caf821dc961242d6bec and a83bc7fc09084b30ac2d1ab974763c62): the front end turned the
+copy into a `memcpy`, and the load after it read the first half alone. LLVM moves `RunResult` errors
+and `RuntimeValue`s this way.
 
 For every function whose name contains PATTERN (default: rule_), this prints each eight-byte load
-from the stack that spans narrower stores other than two halves. It scans each function's code in
-address order and ignores control flow, so a hit marks code to read, not a proven imprecision. Some
-rules with hits did prove in past prover jobs.
+from the stack that spans narrower stores. It scans each function's code in address order and
+ignores control flow, so a hit marks code to read, not a proven imprecision. Some rules with hits
+did prove in prover jobs: a copy loses nothing a rule reads if the rule reads only the first store,
+such as a one-byte `Ok`/`Err` tag at offset 0.
 
 Usage, after certora/build-sbf.sh:
     certora/scan-stack-copies.py [PATTERN]
@@ -62,7 +65,7 @@ def scan(start, stop):
         if match:
             offset = -int(match.group(2), 16)
             inside = sorted((o, w) for o, w in cells.items() if offset <= o < offset + 8)
-            if inside and inside != [(offset, 8)] and inside != [(offset, 4), (offset + 4, 4)]:
+            if inside and inside != [(offset, 8)]:
                 hits.append((match.group(1), offset, inside))
     return hits
 

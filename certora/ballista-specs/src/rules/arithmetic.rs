@@ -447,8 +447,11 @@ fn mul_div_case() -> (u64, u128, MulDivOutcome) {
 ///
 /// Blocked, suspected: `mul_div` is out of line and builds its result in a stack temporary whose
 /// `RuntimeValue` tag is one byte, then copies it out with eight-byte moves, and its errors as
-/// two-byte tags and four-byte kinds. The prover rebuilds a stack word only from two four-byte
-/// halves, so it may lose the kind, or the tag.
+/// two-byte tags and four-byte kinds. After such a copy the prover keeps only the word's first
+/// store and rebuilds no word from narrower stores, not even two four-byte halves
+/// (`rule_stack_word_copy_keeps_both_halves` failed at cb2fb2d), so it may lose the kind. At
+/// cb2fb2d its three reachability rules passed and its twin failed, but the rule itself had no
+/// result when the blocked job's log ended (10 splits, 21.875% proved).
 #[rule]
 pub fn rule_u64_mul_div_is_exact() {
     let (c, rounded, outcome) = mul_div_case();

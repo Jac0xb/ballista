@@ -8,9 +8,19 @@
 //!   initialized in the prover's encoding: only globals loaded directly and branched on, or compared
 //!   by a 32-byte `memcmp`, are); the code at offset 4 of a stack word whose tag was a one-byte
 //!   store, after one eight-byte copy, as executor errors are copied.
-//! - Expected to prove: a word stored and read back as a word; both halves of the same copy when
-//!   each half was a four-byte store, the one merge the prover rebuilds on the stack.
-//! - Probe: whether the one-byte tag of that copy survives.
+//! - Expected to prove: a word stored and read back as a word.
+//! - Probes: whether the one-byte tag of that copy survives, and whether both halves survive when
+//!   each was a four-byte store.
+//!
+//! Results at cb2fb2d: the word control proved; the tag survives (job
+//! `8da461a1c1194ba4bec337139d7c5cba`); the code at offset 4 is lost, and so is the second
+//! four-byte half (jobs `88f0a104b1624caf821dc961242d6bec`, `a83bc7fc09084b30ac2d1ab974763c62`).
+//! The prover's front end turns the stack load and heap store of the copy into a `memcpy`, which
+//! moves each stack cell as it was stored, and the eight-byte load after it returns the cell at its
+//! own offset alone. So a copied word keeps only its first store, at that store's value, and no
+//! shape of narrower stores is rebuilt. The rebuild in the prover's source
+//! (`PointerDomain.reconstructFromIntegerCells`) runs only for a load straight from the stack, over
+//! two four-byte cells that hold known constants.
 
 use ballista_common::template::*;
 use cvlr::nondet::havoc::alloc_mut_ref_havoced;
@@ -110,11 +120,12 @@ fn copied_word(short: bool) -> u64 {
     }
 }
 
-/// Expected to fail: the code at offset 4 does not survive a copy of a word whose first store was
-/// narrower. The prover keeps stack values by offset and rebuilds a word only from two four-byte
-/// halves, so the copy carries the tag's store alone, or an unknown value. Rules that read an
-/// error's kind after such a copy (the account, `mul_div`, registry-refusal, ceiling and typing
-/// rules) are suspected blocked on this.
+/// Expected to fail, and failed at cb2fb2d: the code at offset 4 does not survive a copy of a word
+/// whose first store was narrower. The copy carries the tag's store alone. Rules that read an
+/// error after such a copy (the account, `mul_div`, registry-refusal, ceiling and typing rules)
+/// were suspected blocked on this. At cb2fb2d the account and registry-refusal rules proved, except
+/// the writable and executable rule, which failed for another reason, as the ceiling rule did
+/// (`rules::accounts`, `rules::ceiling`); `mul_div` and typing had no result.
 #[rule]
 pub fn rule_stack_word_copy_keeps_the_code_after_a_short_tag() {
     cvlr_assert!(copied_word(true) >> 32 == 6012);
@@ -127,8 +138,12 @@ pub fn rule_stack_word_copy_keeps_a_short_tag() {
     cvlr_assert!(copied_word(true) & 0xff == 7);
 }
 
-/// Expected to prove, the control: the same copy keeps both halves when each was a four-byte
-/// store, the one merge the prover rebuilds on the stack.
+/// Was the control, expected to prove: the same copy keeps both halves when each was a four-byte
+/// store. Failed at cb2fb2d (job `88f0a104b1624caf821dc961242d6bec`; trace in
+/// `a83bc7fc09084b30ac2d1ab974763c62`): the stores `*(u32 *)(r10 - 8) = 7` and
+/// `*(u32 *)(r10 - 4) = 6012` reach the heap as two cells through a `promoted_memcpy`, and the
+/// eight-byte load reads 7, the first cell alone. The presolver folds the assert to `false`.
+/// Kept as the record of that result; two four-byte halves are not a safe shape.
 #[rule]
 pub fn rule_stack_word_copy_keeps_both_halves() {
     let word = copied_word(false);

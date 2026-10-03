@@ -1,9 +1,9 @@
 # Formal verification with the Certora Solana Prover
 
-**Nothing here has been proved against the current code.** CI runs the prover only when the
-repository has a `CERTORAKEY` secret, and no prover job has run on this code: the last one ran on
-2026-09-20, on a branch rewritten since. Every status below is an expectation until a prover job at
-a named commit confirms it.
+**Prover jobs ran at cb2fb2d on 2026-10-03. "Prover results at cb2fb2d" lists the 19 rules they
+proved, and supersedes the statuses below where they differ.** CI runs the prover only when the
+repository has a `CERTORAKEY` secret, and then only `run.conf`. Every other status is an expectation
+until a prover job at a named commit confirms it.
 
 This directory is its own Cargo workspace, so nothing here touches the release build, its lock
 file, or its dependency policy.
@@ -45,6 +45,79 @@ platform tools up to v1.53; the program builds with v1.54. Both ship rustc 1.89.
   assumption.
 - **Vacuity.** Every conf sets `rule_sanity: basic`.
 - **Coverage.** A host test checks that each of the 112 rules sits in exactly one conf.
+
+## Prover results at cb2fb2d
+
+certora-cli 8.19.2, 2026-10-03. **Proved** means the rule verified, its sanity check passed, every
+reachability rule it has passed, and its twin failed.
+
+| Conf | Job | Rules | Result |
+| --- | --- | --- | --- |
+| `run.conf` | [48efedc3](https://prover.certora.com/output/5644982/48efedc37e174aef8dfa7a46c9e70db8) | 17 | All verified |
+| `run-candidates.conf` | [88f0a104](https://prover.certora.com/output/5644982/88f0a104b1624caf821dc961242d6bec) | 29 | 27 verified, 2 violated |
+| `run-candidates-memcmp.conf` | [7225c27f](https://prover.certora.com/output/5644982/7225c27f21dd44c48e719fe3e14ac65f) | 2 | All verified |
+| `run-twins.conf` | [705ecbe0](https://prover.certora.com/output/5644982/705ecbe0edc7474db6773d7005171d35) | 13 | All violated, as required |
+| `run-twins-memcmp.conf` | [d142c280](https://prover.certora.com/output/5644982/d142c280baa7435593750520e6b46d20) | 1 | Violated, as required |
+| `run-blocked.conf` | [8da461a1](https://prover.certora.com/output/5644982/8da461a1c1194ba4bec337139d7c5cba) | 50 | 22 verified, 15 violated, 13 no result |
+
+Every verified rule with asserts also passed its sanity check. The blocked conf's 15 violations
+are 9 twins and 4 diagnostics, as expected, and the 2 triaged below. Its 13 rules without a result
+(`mul_div`, typing and lifecycle) were still running when the saved log ended at 38 minutes.
+
+**Proved (19):**
+
+- `run.conf`: sections tile the payload. The other 14 verified but have no twin or reachability
+  rules.
+- Candidates: `u128` sub, mul, div, min and max; `u128` to `i64`; a registry entry opens only if
+  writable and of the declared size; fields need an open entry; return data comes from the
+  invoked program, and is empty without an invoke; an open binds the template and key (under
+  `-solanaOptimisticMemcmp`).
+- Blocked conf: signers, pinned address and owner, minimum data length, account count, account
+  header reads, and an open of an open entry fails. The suspected stack-copy blocker did not bite
+  them.
+
+`u128` add verified but is not proved: its overflow branch is unreachable in the prover's model.
+
+### The four violations
+
+Traces from triage jobs
+[aac2bacd](https://prover.certora.com/output/5644982/aac2bacd98254d8bae289bcc83067eef) (ceiling,
+writable) and [a83bc7fc](https://prover.certora.com/output/5644982/a83bc7fc09084b30ac2d1ab974763c62)
+(the other two). None is a program bug.
+
+| Rule | Cause | Evidence |
+| --- | --- | --- |
+| Writable and executable constraints | Prover: an AND of two unknowns | The program refused correctly, at index 0. LLVM compiled `!satisfied && index == 0` to `~satisfied & (index == 0)`, and the trace says `Imprecision detected: BWAnd(18446744073709551615, 1) = 1, but is 0`. |
+| CPI privilege ceiling | Prover: an OR in the rule's own return value | The verifier refused (tag 0xf, `InvalidCpi`: descriptor `reserved1[0]` was 1), and the rule logged `accepted: 0`. `Invoke` came back packed in one register, built with ORs, and the solver set its `accepted` byte (`Imprecision detected: BWOr(...)`). No error copy was lost, and the verifier accepted nothing it should refuse. |
+| `u128` add reaches overflow | Model: no 64-bit wraparound | Each limb add is a 256-bit `Add` with no mod 2^64, so LLVM's carry tests (`sum >= operand`) always hold. The prover wraps only the adds it matches as `checked_add` patterns within one block. No rule input reaches the branch. |
+| Stack word copy keeps both halves | Model: a copied word is never rebuilt | The front end turned the copy into a `memcpy`, which moved two cells (7 and 6012). The eight-byte load read 7, and the presolver folded the assert to `false`. |
+
+Fixes in this commit:
+
+- The writable rule asserts its two facts separately.
+- `Invoke` is whole words returned through memory.
+- The ceiling rule checks each privilege against a constant bit.
+- `the_counterexample_descriptor_is_refused` rebuilds the ceiling trace's input on the host.
+- `scan-stack-copies.py` no longer exempts two four-byte halves.
+
+### What the results change
+
+- A copied word keeps only its first store. The one-byte tag at offset 0 survives
+  (`rule_stack_word_copy_keeps_a_short_tag` verified); everything at other offsets is lost, two
+  four-byte halves included. So `#[repr(C, u32)]` on `RunError` would not have helped.
+- Outside matched `checked_add` patterns, an overflow branch is vacuous unless a reachability rule
+  for it passes. `run.conf`'s `u64` and `i64` arithmetic rules have none.
+- Bitwise operations on two unknowns are imprecise. They produce spurious counterexamples, and
+  could produce spurious witnesses: check a passing satisfy rule's trace for "Imprecision detected".
+
+### Run next
+
+- The two fixed rules, with their reachability rules and twins: the eight `rule_cpi_requests_*`
+  and `rule_writable_and_executable_*` rules in `run-blocked.conf`.
+- `rule_u128_add_reaches_overflow` with `-solanaTACSoundSignedMath true` added to the conf's
+  `prover_args`. The flag masks every 64-bit operation, and is experimental.
+- Overflow reachability rules for `run.conf`'s `u64` and `i64` arithmetic.
+- The blocked conf's 13 rules without a result, saving the job's report URL and key.
 
 ## Status
 

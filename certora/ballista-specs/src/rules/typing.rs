@@ -12,8 +12,11 @@
 //! reads back as words. Suspected besides: the executor copies each operand register to its stack
 //! with eight-byte moves and reads its one-byte tag back, writes the destination by copying a stack
 //! temporary whose tag is one byte, and the verifier's helpers return their errors the same way.
-//! The prover rebuilds a stack word only from two four-byte halves, so it may lose those tags. `tests/typing_enumeration.rs` checks the same property on the
-//! host, exhaustively over the rules' structural inputs, and passes.
+//! After such a copy the prover keeps only the word's first store and rebuilds no word from
+//! narrower stores, not even two four-byte halves (`rule_stack_word_copy_keeps_both_halves` failed
+//! at cb2fb2d); a one-byte tag at offset 0 survives. These rules had no result in the cb2fb2d
+//! blocked job's log. `tests/typing_enumeration.rs` checks the same property on the host,
+//! exhaustively over the rules' structural inputs, and passes.
 //!
 //! Each rule has reachability rules for success and for a value-dependent failure, and a twin that
 //! must fail: it claims every accepted instruction succeeds.

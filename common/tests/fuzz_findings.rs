@@ -7,8 +7,9 @@
 //! field accepted at finalization stays accepted for good, and can never take a meaning later.
 
 use ballista_common::template::{
-    ProgramBuilder, ProgramView, Segment, TemplateError, VerificationStats, ACCOUNT_EXECUTABLE,
-    ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_REG_U64,
+    record, LoopScope, ProgramBuilder, ProgramView, Segment, TemplateError, VerificationStats,
+    ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_REG_U64, MAX_REGISTERS, NO_INDEX,
+    OP_CONST_U64,
 };
 
 fn verify(builder: &ProgramBuilder) -> Result<VerificationStats, TemplateError> {
@@ -157,4 +158,26 @@ fn uninvoked_descriptors_follow_the_record_rules() {
         verify(&builder).is_err(),
         "every CPI account record keeps to its slot's declaration"
     );
+}
+
+/// `verify_single_instruction`, public for the Certora specs, skips the header checks `verify`
+/// makes first, so a view that declares more than `MAX_REGISTERS` registers indexes past the
+/// 64-entry typing table and panics where `verify` returns `TooManyRegisters`. Finalization always
+/// calls `verify`, so no upload reaches this; the specs parse a fixed 4-register program. Found
+/// while reviewing the harness's entry points.
+#[test]
+#[ignore = "finding: verify_single_instruction panics on a view with more than 64 registers"]
+fn verifying_one_instruction_never_panics() {
+    let mut builder = ProgramBuilder::new();
+    builder.const_u64(1);
+    let mut bytes = builder.build().expect("builds");
+    bytes[9] = 200; // the header's register count
+    let program = ProgramView::parse(&bytes).expect("parses");
+    assert_eq!(program.verify(), Err(TemplateError::TooManyRegisters));
+    let mut typing = [None; MAX_REGISTERS];
+    let constant = record(OP_CONST_U64, 100, NO_INDEX, NO_INDEX, NO_INDEX, 0, 7);
+    let verdict = std::panic::catch_unwind(move || {
+        program.verify_single_instruction(&constant, 0, LoopScope::Root, None, &mut typing)
+    });
+    assert!(verdict.is_ok(), "an error, not a panic");
 }

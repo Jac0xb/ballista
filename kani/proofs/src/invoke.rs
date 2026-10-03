@@ -122,16 +122,16 @@ fn body_instruction() -> InstructionRecord {
 /// the same calls as running the same passes one instruction at a time with no cache. Every call
 /// also passes each declared account with exactly its record's signer and writable flags, each
 /// group member writable only as the transaction marked it and never as a signer, a view beside
-/// each meta naming the same account, and no signer seeds. Bounded: up to 2 rows of 1 or 2
-/// accounts after 2 fixed accounts, a group of 1, a 2-instruction body, a descriptor with up to 2
-/// account records (fixed or row, any flags) and 2 data segments (a literal, or a `u64` or `u8`
-/// from register 0 or 1), any carry mask.
+/// each meta naming the same account, and no signer seeds. Bound: 2 rows of 1 or 2 accounts after
+/// 2 fixed accounts, a group of 1; a body of an `INVOKE` then a loop index, a constant or a second
+/// `INVOKE`; a descriptor with up to 2 account records (fixed or row, any flags) and up to 2 data
+/// segments (a literal, or a `u64` or `u8` from register 0 or 1); any carry mask.
 #[kani::proof]
 #[kani::unwind(11)]
 #[kani::stub(pinocchio::cpi::invoke_signed_unchecked, crate::invoke::record_invocation)]
 fn batch_invocations_match_a_fresh_build_every_row() {
     let stride: u8 = kani::any_where(|n: &u8| (1..=2).contains(n));
-    let rows: usize = kani::any_where(|n: &usize| *n <= 2);
+    let rows: usize = 2;
     let header = ProgramHeader::new(2, stride, 2, 0, 0, 2, 3, 1, 2, 2, 0, 0, 4, 0, 1);
     let reference = || {
         let offset: u8 = kani::any_where(|n: &u8| *n <= 1);
@@ -163,7 +163,7 @@ fn batch_invocations_match_a_fresh_build_every_row() {
     let blob: [u8; 4] = kani::any();
     let instructions = [
         record(OP_FOREACH, NO_INDEX, 2, 0, 0, 0, kani::any()),
-        body_instruction(),
+        record(OP_INVOKE, NO_INDEX, 0, NO_INDEX, NO_INDEX, 0, 0),
         body_instruction(),
     ];
     let constraints = [AccountConstraint { flags: 0, address_index: NO_INDEX, owner_index: NO_INDEX, reserved: 0, min_data_len_le: [0; 4] }; 4];

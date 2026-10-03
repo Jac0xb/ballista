@@ -88,17 +88,17 @@ fn input_for<'a>(descriptor: &InputDescriptor, pool: &'a [u8; BYTES_MAX]) -> Run
 }
 
 /// Runs the soundness step for `opcode`, every other field of the record symbolic, in a program
-/// with one fixed input and one row input (two batch rows of one row account each), an 8-byte
+/// with one fixed input and one row input (two batch rows of one row account each), a 16-byte
 /// blob, one pubkey and two data segments, all symbolic; 4 registers with any typing and values
 /// of those types; any scope (root, a FOREACH pass over either row, a REPEAT pass). Returns whether
 /// the verifier accepted the instruction and it ran to success.
 fn typing_preserved(opcode: u8) -> bool {
-    let header = ProgramHeader::new(0, 1, 2, 0, 1, REGISTERS as u8, 1, 0, 0, 2, 1, 0, 8, 1, 0);
+    let header = ProgramHeader::new(0, 1, 2, 0, 1, REGISTERS as u8, 1, 0, 0, 2, 1, 0, 16, 1, 0);
     let constraints = [any::constraint()];
     let inputs_table = [valid_input(), valid_input()];
     let segments = [any::segment(), any::segment()];
     let pubkeys = [PubkeyRecord { bytes: kani::any() }];
-    let blob: [u8; 8] = kani::any();
+    let blob: [u8; 16] = kani::any();
     let mut instruction = any::instruction();
     instruction.opcode = opcode;
     let program = ProgramView {

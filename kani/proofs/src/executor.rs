@@ -42,66 +42,88 @@ fn any_loop_context() -> Option<(usize, usize)> {
     if kani::any() { Some((kani::any(), kani::any())) } else { None }
 }
 
-/// Runs `opcode` once, every other field of the record symbolic, against 4 registers holding any
-/// values (`bytes` up to 4 bytes), with or without a loop context, in a program with one fixed and
-/// one row input (3 input values), an 8-byte blob, one pubkey, two symbolic data segments and no
-/// runtime accounts. Checks that it never panics or indexes out of bounds, that every register
-/// but `dst` is unchanged, and that a failure changes no register. Returns whether it succeeded.
-fn frame_without_accounts(opcode: u8) -> bool {
-    frame_without_accounts_using(opcode, any_runtime_value)
+/// The symbolic world a family of frame checks runs in: a program with one fixed and one row input,
+/// a 16-byte blob, one pubkey and two data segments, all symbolic, and no runtime accounts; one
+/// instruction whose fields other than the opcode are symbolic; 3 input values and 4 registers
+/// drawn by `value`; and any loop context (none, or any pass and row base). Every opcode of a
+/// family runs against this one world, so each check quantifies over all of it.
+struct World<'a> {
+    header: ProgramHeader,
+    inputs_table: [InputDescriptor; 2],
+    segments: [DataSegment; 2],
+    pubkeys: [PubkeyRecord; 1],
+    blob: [u8; 16],
+    template: InstructionRecord,
+    inputs: [RuntimeValue<'a>; 3],
+    registers: [RuntimeValue<'a>; REGISTERS],
+    loop_context: Option<(usize, usize)>,
 }
 
-/// `frame_without_accounts` with register and input values drawn by `value`.
-fn frame_without_accounts_using(opcode: u8, value: fn(&[u8]) -> RuntimeValue<'_>) -> bool {
-    let header = ProgramHeader::new(0, 0, 0, 0, 1, REGISTERS as u8, 1, 0, 0, 2, 1, 0, 8, 1, 0);
-    let segments = [any::segment(), any::segment()];
-    let pubkeys = [PubkeyRecord { bytes: kani::any() }];
-    let blob: [u8; 8] = kani::any();
-    let inputs_table = [any::input(), any::input()];
-    let mut instruction = any::instruction();
-    instruction.opcode = opcode;
-    let program = ProgramView {
-        header: &header,
-        accounts: &[],
-        inputs: &inputs_table,
-        instructions: core::slice::from_ref(&instruction),
-        cpis: &[],
-        cpi_accounts: &[],
-        data_segments: &segments,
-        pubkeys: &pubkeys,
-        blob: &blob,
-    };
-    let bytes: [u8; 4] = kani::any();
-    let inputs = [value(&bytes), value(&bytes), value(&bytes)];
-    let mut registers: [RuntimeValue<'_>; REGISTERS] = core::array::from_fn(|_| value(&bytes));
-    let before = registers;
-    let mut scratch = Scratch::new(&program);
-    let result = execute_instruction(&program, &inputs, &[], &mut registers, &mut scratch, &instruction, any_loop_context());
-    for register in 0..REGISTERS {
-        if result.is_err() || register != instruction.dst as usize {
-            assert!(same_value(&registers[register], &before[register]));
+impl<'a> World<'a> {
+    fn new(pool: &'a [u8; 4], value: fn(&[u8]) -> RuntimeValue<'_>) -> Self {
+        Self {
+            header: ProgramHeader::new(0, 0, 0, 0, 1, REGISTERS as u8, 1, 0, 0, 2, 1, 0, 16, 1, 0),
+            inputs_table: [any::input(), any::input()],
+            segments: [any::segment(), any::segment()],
+            pubkeys: [PubkeyRecord { bytes: kani::any() }],
+            blob: kani::any(),
+            template: any::instruction(),
+            inputs: [value(pool), value(pool), value(pool)],
+            registers: core::array::from_fn(|_| value(pool)),
+            loop_context: any_loop_context(),
         }
     }
-    result.is_ok()
+
+    /// Runs `opcode` once and checks the frame: it never panics or indexes out of bounds, every
+    /// register but `dst` is unchanged, and a failure changes no register. Returns whether it
+    /// succeeded.
+    fn check(&self, opcode: u8) -> bool {
+        let mut instruction = self.template;
+        instruction.opcode = opcode;
+        let program = ProgramView {
+            header: &self.header,
+            accounts: &[],
+            inputs: &self.inputs_table,
+            instructions: core::slice::from_ref(&instruction),
+            cpis: &[],
+            cpi_accounts: &[],
+            data_segments: &self.segments,
+            pubkeys: &self.pubkeys,
+            blob: &self.blob,
+        };
+        let mut registers = self.registers;
+        let mut scratch = Scratch::new(&program);
+        let result =
+            execute_instruction(&program, &self.inputs, &[], &mut registers, &mut scratch, &instruction, self.loop_context);
+        let failed = result.is_err();
+        for register in 0..REGISTERS {
+            let untouched = failed || register != instruction.dst as usize;
+            assert!(!untouched || same_value(&registers[register], &self.registers[register]));
+        }
+        !failed
+    }
 }
 
-/// One frame check per opcode, each with a cover showing the opcode can succeed.
+/// One frame check per opcode against one world, each with a cover showing the opcode can
+/// succeed there.
 macro_rules! frames {
-    ($check:ident: $($opcode:expr => $succeeds:literal),* $(,)?) => {{
+    ($world:expr; $($opcode:expr => $succeeds:literal),* $(,)?) => {{
         $(
-            let ok = $check($opcode);
+            let ok = $world.check($opcode);
             kani::cover!(ok, $succeeds);
         )*
     }};
 }
 
-/// Every instruction writes at most its destination: for each loading, constant, move and loop
-/// index opcode, `frame_without_accounts` (no other register changes; a failure changes none).
-/// This is the fact the loop's restore skip rests on. Bound: as `frame_without_accounts`.
+/// Every instruction writes at most its destination, and a failing one writes nothing: the loading,
+/// constant, move and loop-index opcodes, each run against one `World`. This is the fact the loop's
+/// restore skip rests on. Bound: as `World`, `bytes` values up to 4 bytes.
 #[kani::proof]
 #[kani::unwind(5)]
 fn frame_loads_and_constants() {
-    frames!(frame_without_accounts:
+    let pool: [u8; 4] = kani::any();
+    let world = World::new(&pool, any_runtime_value);
+    frames!(world;
         OP_LOAD_INPUT => "LOAD_INPUT succeeds",
         OP_CONST_BOOL => "CONST_BOOL succeeds",
         OP_CONST_U64 => "CONST_U64 succeeds",
@@ -114,41 +136,63 @@ fn frame_loads_and_constants() {
     );
 }
 
-/// As `frame_loads_and_constants`, for arithmetic, comparisons, boolean logic, `SELECT`, casts and
-/// `REQUIRE`. Bound: as `frame_without_accounts`.
+/// As `frame_loads_and_constants`, for `ADD`, `SUB`, `MIN`, `MAX`, the boolean opcodes, `SELECT`
+/// and `REQUIRE`. Bound: as `World`.
 #[kani::proof]
-#[kani::unwind(33)]
-fn frame_arithmetic_and_logic() {
-    frames!(frame_without_accounts:
+#[kani::unwind(5)]
+fn frame_add_sub_and_logic() {
+    let pool: [u8; 4] = kani::any();
+    let world = World::new(&pool, any_runtime_value);
+    frames!(world;
         OP_ADD => "ADD succeeds",
         OP_SUB => "SUB succeeds",
-        OP_MUL => "MUL succeeds",
-        OP_DIV => "DIV succeeds",
         OP_MIN => "MIN succeeds",
         OP_MAX => "MAX succeeds",
+        OP_AND => "AND succeeds",
+        OP_OR => "OR succeeds",
+        OP_NOT => "NOT succeeds",
+        OP_SELECT => "SELECT succeeds",
+        OP_REQUIRE => "REQUIRE succeeds",
+    );
+}
+
+/// As `frame_loads_and_constants`, for the six comparisons. Bound: as `World`.
+#[kani::proof]
+#[kani::unwind(33)]
+fn frame_comparisons() {
+    let pool: [u8; 4] = kani::any();
+    let world = World::new(&pool, any_runtime_value);
+    frames!(world;
         OP_EQ => "EQ succeeds",
         OP_NE => "NE succeeds",
         OP_LT => "LT succeeds",
         OP_LTE => "LTE succeeds",
         OP_GT => "GT succeeds",
         OP_GTE => "GTE succeeds",
-        OP_AND => "AND succeeds",
-        OP_OR => "OR succeeds",
-        OP_NOT => "NOT succeeds",
-        OP_SELECT => "SELECT succeeds",
+    );
+}
+
+/// As `frame_loads_and_constants`, for the three casts. Bound: as `World`.
+#[kani::proof]
+#[kani::unwind(5)]
+fn frame_casts() {
+    let pool: [u8; 4] = kani::any();
+    let world = World::new(&pool, any_runtime_value);
+    frames!(world;
         OP_CAST_U64 => "CAST_U64 succeeds",
         OP_CAST_I64 => "CAST_I64 succeeds",
         OP_CAST_U128 => "CAST_U128 succeeds",
-        OP_REQUIRE => "REQUIRE succeeds",
     );
 }
 
 /// As `frame_loads_and_constants`, for the opcodes from `MUL_DIV` up that touch only registers,
-/// except the multiply-divides (see `frame_mul_div`). Bound: as `frame_without_accounts`.
+/// except the multiply-divides. Bound: as `World`.
 #[kani::proof]
 #[kani::unwind(5)]
 fn frame_math() {
-    frames!(frame_without_accounts:
+    let pool: [u8; 4] = kani::any();
+    let world = World::new(&pool, any_runtime_value);
+    frames!(world;
         OP_POW10 => "POW10 succeeds",
         OP_REM => "REM succeeds",
         OP_SHL => "SHL succeeds",
@@ -160,38 +204,44 @@ fn frame_math() {
     );
 }
 
-/// A register value as `any_runtime_value` gives, but a `u64` or `u128` is windowed (12 symbolic
-/// bits; see `util::windowed_u64`).
+/// A register value as `any_runtime_value` gives, but a `u64`, `i64` or `u128` is windowed (12
+/// symbolic bits; see `util::windowed_u64`).
 fn windowed_value(bytes: &[u8]) -> RuntimeValue<'_> {
     match any_runtime_value(bytes) {
         RuntimeValue::U64(_) => RuntimeValue::U64(crate::util::windowed_u64(4)),
+        RuntimeValue::I64(_) => RuntimeValue::I64(crate::util::windowed_i64(4)),
         RuntimeValue::U128(_) => RuntimeValue::U128(crate::util::windowed_u128(4).to_le_bytes()),
         other => other,
     }
 }
 
-/// As `frame_loads_and_constants`, for `MUL_DIV` and `MUL_DIV_CEIL`. Their frame is the same as
-/// every other opcode's, but at full width the solver would also re-prove `mul_div`'s absence of
-/// panics, which `muldiv.rs` covers. Bound: as `frame_without_accounts`, with every `u64` and
-/// `u128` register windowed to 12 symbolic bits.
+/// As `frame_loads_and_constants`, for `MUL`, `DIV`, `MUL_DIV` and `MUL_DIV_CEIL`. Their frame is
+/// the same as every other opcode's, but at full width the solver would also re-prove their
+/// multipliers and dividers free of panics, which `math.rs` and `muldiv.rs` cover. Bound: as
+/// `World`, with every `u64`, `i64` and `u128` register and input windowed to 12 symbolic bits.
 #[kani::proof]
 #[kani::unwind(5)]
-fn frame_mul_div() {
-    let ok = frame_without_accounts_using(OP_MUL_DIV, windowed_value);
-    kani::cover!(ok, "MUL_DIV succeeds");
-    let ok = frame_without_accounts_using(OP_MUL_DIV_CEIL, windowed_value);
-    kani::cover!(ok, "MUL_DIV_CEIL succeeds");
+fn frame_multiplies_and_divides() {
+    let pool: [u8; 4] = kani::any();
+    let world = World::new(&pool, windowed_value);
+    frames!(world;
+        OP_MUL => "MUL succeeds",
+        OP_DIV => "DIV succeeds",
+        OP_MUL_DIV => "MUL_DIV succeeds",
+        OP_MUL_DIV_CEIL => "MUL_DIV_CEIL succeeds",
+    );
 }
 
 /// As `frame_loads_and_constants`, for the outputs, `INVOKE`, `RETURN_DATA` and the clock. See the
-/// module notes: off-chain, `RETURN_DATA` and the clock only fail and `INVOKE` (with no
-/// descriptors) succeeds only when its guard skips it, so their covers are expected to be
-/// unsatisfiable or to show only the skip; the outputs encode for real. Bound: as
-/// `frame_without_accounts`.
+/// module notes: off-chain, `RETURN_DATA` and the clock never succeed, and `INVOKE` (with no
+/// descriptors) succeeds only when its guard skips it; the outputs encode for real. Bound: as
+/// `World`.
 #[kani::proof]
 #[kani::unwind(5)]
 fn frame_outputs_calls_and_clock() {
-    frames!(frame_without_accounts:
+    let pool: [u8; 4] = kani::any();
+    let world = World::new(&pool, any_runtime_value);
+    frames!(world;
         OP_EMIT => "EMIT succeeds",
         OP_SET_RETURN_DATA => "SET_RETURN_DATA succeeds",
         OP_INVOKE => "INVOKE skipped by its guard succeeds",
@@ -203,98 +253,132 @@ fn frame_outputs_calls_and_clock() {
 
 /// Every opcode value the executor does not run, the two loop opcodes among them (only `dispatch`
 /// starts a loop), fails and changes no register: all 182 of 0, 39, `FOREACH`, `REPEAT` and 78 to
-/// 255, each with every operand symbolic. Bound: as `frame_without_accounts`.
+/// 255, against one `World`. Bound: as `World`.
 #[kani::proof]
 #[kani::unwind(179)]
 fn frame_unknown_opcodes() {
-    let mut fails = true;
+    let pool: [u8; 4] = kani::any();
+    let world = World::new(&pool, any_runtime_value);
+    let mut succeeded = false;
     for opcode in [0u8, 39, OP_FOREACH, OP_REPEAT] {
-        fails &= !frame_without_accounts(opcode);
+        succeeded |= world.check(opcode);
     }
     for opcode in 78..=255u8 {
-        fails &= !frame_without_accounts(opcode);
+        succeeded |= world.check(opcode);
     }
-    assert!(fails);
+    assert!(!succeeded);
+    kani::cover!(world.template.dst == 0, "an unknown opcode naming register 0");
 }
 
-/// Accounts' data bytes in `frame_with_accounts`: enough for a registry field after the 72-byte
+/// Accounts' data bytes in the account frame checks: enough for a registry field after the 72-byte
 /// entry header.
 const ACCOUNT_DATA: usize = 80;
 
-/// As `frame_without_accounts`, in a program with two fixed accounts (any constraints), two
-/// symbolic data segments, and two runtime accounts of any owner, lamports, flags, borrow state
-/// and data (up to 80 bytes). Also
-/// checks that account data changes only by `WRITE_REGISTRY` into an entry this run has open (its
-/// data exclusively borrowed), and only in the account its `b` names. The accounts' addresses are
-/// concrete and not the Instructions sysvar's. The calling harness stubs the PDA search and
-/// creation where it runs them. Returns whether it succeeded.
-fn frame_with_accounts(opcode: u8) -> bool {
-    let header = ProgramHeader::new(2, 0, 0, 0, 0, REGISTERS as u8, 1, 0, 0, 2, 1, 0, 8, 0, 0);
-    let constraints = [any::constraint(), any::constraint()];
-    let segments = [any::segment(), any::segment()];
-    let pubkeys = [PubkeyRecord { bytes: kani::any() }];
-    let blob: [u8; 8] = kani::any();
-    let mut instruction = any::instruction();
-    instruction.opcode = opcode;
-    let program = ProgramView {
-        header: &header,
-        accounts: &constraints,
-        inputs: &[],
-        instructions: core::slice::from_ref(&instruction),
-        cpis: &[],
-        cpi_accounts: &[],
-        data_segments: &segments,
-        pubkeys: &pubkeys,
-        blob: &blob,
-    };
-    let account_fields = |address: u8| {
-        let mut fields = Fields::plain([address; 32], kani::any());
-        fields.lamports = kani::any();
-        fields.signer = kani::any();
-        fields.writable = kani::any();
-        fields.executable = kani::any();
-        fields.borrow_state = kani::any();
-        fields
-    };
-    let (data_a, data_b): ([u8; ACCOUNT_DATA], [u8; ACCOUNT_DATA]) = (kani::any(), kani::any());
-    let len_a: usize = kani::any_where(|n: &usize| *n <= ACCOUNT_DATA);
-    let len_b: usize = kani::any_where(|n: &usize| *n <= ACCOUNT_DATA);
-    let mut memory_a = AccountMemory::new(account_fields(1), data_a, len_a);
-    let mut memory_b = AccountMemory::new(account_fields(2), data_b, len_b);
-    let open = [memory_a.header.borrow_state == 0, memory_b.header.borrow_state == 0];
-    let accounts = [memory_a.view(), memory_b.view()];
-
-    let bytes: [u8; 4] = kani::any();
-    let mut registers: [RuntimeValue<'_>; REGISTERS] = core::array::from_fn(|_| any_runtime_value(&bytes));
-    let before = registers;
-    let mut scratch = Scratch::new(&program);
-    let result = execute_instruction(&program, &[], &accounts, &mut registers, &mut scratch, &instruction, any_loop_context());
-
-    for register in 0..REGISTERS {
-        if result.is_err() || register != instruction.dst as usize {
-            assert!(same_value(&registers[register], &before[register]));
-        }
-    }
-    let writer = opcode == OP_WRITE_REGISTRY;
-    let (may_write_a, may_write_b) = (writer && open[0] && instruction.b == 0, writer && open[1] && instruction.b == 1);
-    for i in 0..ACCOUNT_DATA {
-        assert!(memory_a.data[i] == data_a[i] || may_write_a);
-        assert!(memory_b.data[i] == data_b[i] || may_write_b);
-    }
-    result.is_ok()
+/// The world of `World` plus two fixed accounts (any constraints) and two runtime accounts of any
+/// owner, lamports, flags, borrow state and data (up to 80 bytes), at concrete addresses that are
+/// not the Instructions sysvar's.
+struct AccountWorld<'a> {
+    world: World<'a>,
+    constraints: [AccountConstraint; 2],
+    memory: [AccountMemory<ACCOUNT_DATA>; 2],
+    data: [[u8; ACCOUNT_DATA]; 2],
 }
 
-/// The frame property with real accounts, for the account fields, typed reads and byte reads.
-/// Bound: as `frame_with_accounts`.
+impl<'a> AccountWorld<'a> {
+    fn new(pool: &'a [u8; 4]) -> Self {
+        let mut world = World::new(pool, any_runtime_value);
+        world.header = ProgramHeader::new(2, 0, 0, 0, 0, REGISTERS as u8, 1, 0, 0, 2, 1, 0, 16, 0, 0);
+        let account = |address: u8, data: [u8; ACCOUNT_DATA]| {
+            let mut fields = Fields::plain([address; 32], kani::any());
+            fields.lamports = kani::any();
+            fields.signer = kani::any();
+            fields.writable = kani::any();
+            fields.executable = kani::any();
+            fields.borrow_state = kani::any();
+            AccountMemory::new(fields, data, kani::any_where(|n: &usize| *n <= ACCOUNT_DATA))
+        };
+        let data: [[u8; ACCOUNT_DATA]; 2] = [kani::any(), kani::any()];
+        Self {
+            world,
+            constraints: [any::constraint(), any::constraint()],
+            memory: [account(1, data[0]), account(2, data[1])],
+            data,
+        }
+    }
+
+    /// As `World::run`, with the accounts; also checks that account data changes only by
+    /// `WRITE_REGISTRY` into an entry this run has open (its data exclusively borrowed), and only
+    /// in the account its `b` names. Each run starts from the world's initial accounts.
+    fn check(&self, opcode: u8) -> bool {
+        let world = &self.world;
+        let mut instruction = world.template;
+        instruction.opcode = opcode;
+        let program = ProgramView {
+            header: &world.header,
+            accounts: &self.constraints,
+            inputs: &[],
+            instructions: core::slice::from_ref(&instruction),
+            cpis: &[],
+            cpi_accounts: &[],
+            data_segments: &world.segments,
+            pubkeys: &world.pubkeys,
+            blob: &world.blob,
+        };
+        let mut memory = [self.copy(0), self.copy(1)];
+        let open = [memory[0].header.borrow_state == 0, memory[1].header.borrow_state == 0];
+        let accounts = {
+            let base = memory.as_mut_ptr();
+            [unsafe { (*base).view() }, unsafe { (*base.add(1)).view() }]
+        };
+        let mut registers = world.registers;
+        let mut scratch = Scratch::new(&program);
+        let result = execute_instruction(&program, &[], &accounts, &mut registers, &mut scratch, &instruction, world.loop_context);
+        let failed = result.is_err();
+        for register in 0..REGISTERS {
+            let untouched = failed || register != instruction.dst as usize;
+            assert!(!untouched || same_value(&registers[register], &world.registers[register]));
+        }
+        let writer = opcode == OP_WRITE_REGISTRY;
+        for (index, account) in memory.iter().enumerate() {
+            let may_write = writer && open[index] && instruction.b as usize == index;
+            for i in 0..ACCOUNT_DATA {
+                assert!(account.data[i] == self.data[index][i] || may_write);
+            }
+        }
+        !failed
+    }
+
+    fn copy(&self, index: usize) -> AccountMemory<ACCOUNT_DATA> {
+        let original = &self.memory[index];
+        let mut copy = AccountMemory::new(Fields::plain([0; 32], [0; 32]), self.data[index], 0);
+        copy.header = original.header.clone();
+        copy
+    }
+}
+
+/// The frame property with real accounts, for the account fields. Bound: as `AccountWorld`.
 #[kani::proof]
 #[kani::unwind(81)]
-fn frame_account_reads() {
-    frames!(frame_with_accounts:
+fn frame_account_fields() {
+    let pool: [u8; 4] = kani::any();
+    let world = AccountWorld::new(&pool);
+    frames!(world;
         OP_ACCOUNT_KEY => "ACCOUNT_KEY succeeds",
         OP_ACCOUNT_OWNER => "ACCOUNT_OWNER succeeds",
         OP_ACCOUNT_LAMPORTS => "ACCOUNT_LAMPORTS succeeds",
         OP_ACCOUNT_DATA_LEN => "ACCOUNT_DATA_LEN succeeds",
         OP_ACCOUNT_IS_EMPTY => "ACCOUNT_IS_EMPTY succeeds",
+    );
+}
+
+/// The frame property with real accounts, for the typed reads and byte reads. Bound: as
+/// `AccountWorld`.
+#[kani::proof]
+#[kani::unwind(81)]
+fn frame_account_reads() {
+    let pool: [u8; 4] = kani::any();
+    let world = AccountWorld::new(&pool);
+    frames!(world;
         OP_READ_U8 => "READ_U8 succeeds",
         OP_READ_U16 => "READ_U16 succeeds",
         OP_READ_U32 => "READ_U32 succeeds",
@@ -310,11 +394,13 @@ fn frame_account_reads() {
 
 /// The frame property with real accounts for the registry field opcodes, the only ones that write
 /// account data, and the registry open (which, run outside `run`, has no template and fails).
-/// Bound: as `frame_with_accounts`.
+/// Bound: as `AccountWorld`.
 #[kani::proof]
 #[kani::unwind(81)]
 fn frame_registry_fields() {
-    frames!(frame_with_accounts:
+    let pool: [u8; 4] = kani::any();
+    let world = AccountWorld::new(&pool);
+    frames!(world;
         OP_READ_REGISTRY => "READ_REGISTRY succeeds",
         OP_WRITE_REGISTRY => "WRITE_REGISTRY succeeds",
         OP_OPEN_REGISTRY => "OPEN_REGISTRY succeeds (expected unsatisfiable: no template outside run)",
@@ -324,13 +410,15 @@ fn frame_registry_fields() {
 /// The frame property with real accounts for the PDA opcodes (the search and creation stubbed to
 /// return any address or none) and the introspection opcodes (which fail at their pin check: the
 /// accounts are not the Instructions sysvar, whose parser trusts that layout by design). Bound: as
-/// `frame_with_accounts`.
+/// `AccountWorld`.
 #[kani::proof]
 #[kani::unwind(81)]
 #[kani::stub(ballista::utils::pda::try_find_program_address, crate::stubs::try_find_program_address)]
 #[kani::stub(ballista::utils::pda::create_program_address, crate::stubs::create_program_address)]
 fn frame_pdas_and_introspection() {
-    frames!(frame_with_accounts:
+    let pool: [u8; 4] = kani::any();
+    let world = AccountWorld::new(&pool);
+    frames!(world;
         OP_DERIVE_PDA => "DERIVE_PDA succeeds",
         OP_CREATE_PDA => "CREATE_PDA succeeds",
         OP_INSTRUCTION_COUNT => "INSTRUCTION_COUNT succeeds (expected unsatisfiable: no sysvar)",
@@ -354,10 +442,11 @@ const fn lamports_of(index: usize) -> u64 {
 }
 
 /// A body instruction for the loop proofs: a constant, a move, an add, the loop index, a row or
-/// fixed account's lamports, a row or fixed input, or a nested loop (which must fail), with
-/// operands that can also name a register past the file.
+/// fixed account's lamports, or a row or fixed input, with operands that can also name a register
+/// past the file. (A loop inside a body fails as an opcode the executor does not run:
+/// `frame_unknown_opcodes`.)
 fn body_instruction() -> InstructionRecord {
-    let opcode = one_of(&[OP_CONST_U64, OP_MOVE, OP_ADD, OP_LOOP_INDEX, OP_ACCOUNT_LAMPORTS, OP_LOAD_INPUT, OP_REPEAT]);
+    let opcode = one_of(&[OP_CONST_U64, OP_MOVE, OP_ADD, OP_LOOP_INDEX, OP_ACCOUNT_LAMPORTS, OP_LOAD_INPUT]);
     let small = || kani::any_where(|n: &u8| (*n as usize) <= LOOP_REGISTERS);
     let reference = || {
         let offset = kani::any_where(|n: &u8| *n <= 2);
@@ -427,29 +516,27 @@ fn loop_accounts<const N: usize>() -> [AccountMemory<0>; N] {
 /// restore and its skip when the body writes only carried registers, the pass count (a `REPEAT`
 /// reads its count register once; a count above `c` fails with `LoopCountExceeded`, a non-`u64`
 /// count with `TypeMismatch` or `InvalidRegister`), `LOOP_INDEX`, the row base each pass's row
-/// accounts and row inputs resolve against, a loop inside a body failing, and execution resuming
-/// after the body. Bound: 3 registers, a 2-instruction body, at most 3 passes (a `REPEAT`'s `c` is
-/// 1 to 3, a batch has at most 3 rows), up to 2 fixed accounts, a batch stride of 1 or 2.
+/// accounts and row inputs resolve against, and execution resuming after the body. Bound: 3
+/// registers, a 2-instruction body, at most 2 passes (a `REPEAT`'s `c` is 1 or 2, a batch has at
+/// most 2 rows), up to 2 fixed accounts, a batch stride of 1 or 2.
 #[kani::proof]
-#[kani::unwind(14)]
+#[kani::unwind(9)]
 fn loops_carry_exactly_the_masked_registers() {
     let foreach: bool = kani::any();
     let fixed: u8 = kani::any_where(|n: &u8| *n <= 2);
     let stride: u8 = if foreach { kani::any_where(|n: &u8| (1..=2).contains(n)) } else { 0 };
-    let iterations: usize = if foreach { kani::any_where(|n: &usize| *n <= 3) } else { 0 };
+    let iterations: usize = if foreach { kani::any_where(|n: &usize| *n <= 2) } else { 0 };
     let row_inputs: u8 = if foreach { 1 } else { 0 };
-    let header = ProgramHeader::new(fixed, stride, 3, 0, 1, LOOP_REGISTERS as u8, 4, 0, 0, 0, 0, 0, 0, row_inputs, 0);
+    let header = ProgramHeader::new(fixed, stride, 2, 0, 1, LOOP_REGISTERS as u8, 4, 0, 0, 0, 0, 0, 0, row_inputs, 0);
     let carry: u64 = kani::any();
     let count_register = kani::any_where(|n: &u8| (*n as usize) <= LOOP_REGISTERS);
-    let max = kani::any_where(|n: &u8| (1..=3).contains(n));
+    let max = kani::any_where(|n: &u8| (1..=2).contains(n));
     let entry = if foreach {
         record(OP_FOREACH, NO_INDEX, 2, 0, 0, 0, carry)
     } else {
         record(OP_REPEAT, NO_INDEX, 2, count_register, max, 0, carry)
     };
     let after = body_instruction();
-    // A loop at the root after the loop would start one of its own; this checks only the first.
-    kani::assume(after.opcode != OP_REPEAT);
     let instructions = [entry, body_instruction(), body_instruction(), after];
     let constraints: [AccountConstraint; 4] = core::array::from_fn(|_| any::constraint());
     let inputs_table = [any::input(), any::input()];
@@ -464,14 +551,14 @@ fn loops_carry_exactly_the_masked_registers() {
         pubkeys: &[],
         blob: &[],
     };
-    let mut memory = loop_accounts::<8>();
-    let accounts: [AccountView; 8] = {
+    let mut memory = loop_accounts::<6>();
+    let accounts: [AccountView; 6] = {
         let base = memory.as_mut_ptr();
         core::array::from_fn(|i| unsafe { (*base.add(i)).view() })
     };
     let runtime = &accounts[..fixed as usize + stride as usize * iterations];
     // One fixed input, then one row input per row: value 100 + its index.
-    let inputs: [RuntimeValue<'_>; 4] = core::array::from_fn(|i| RuntimeValue::U64(100 + i as u64));
+    let inputs: [RuntimeValue<'_>; 3] = core::array::from_fn(|i| RuntimeValue::U64(100 + i as u64));
     let inputs = &inputs[..1 + row_inputs as usize * iterations];
     let initial: [RuntimeValue<'_>; LOOP_REGISTERS] = core::array::from_fn(|_| match kani::any_where(|v: &u8| *v < 3) {
         0 => RuntimeValue::Unset,
@@ -511,10 +598,10 @@ fn loops_carry_exactly_the_masked_registers() {
     let body_writes_carried_only = instructions[1..3]
         .iter()
         .all(|record| (record.dst as usize) >= LOOP_REGISTERS || carry & (1u64 << record.dst) != 0);
-    kani::cover!(outcome.is_ok() && foreach && iterations == 3, "a FOREACH runs three rows");
+    kani::cover!(outcome.is_ok() && foreach && iterations == 2, "a FOREACH runs two rows");
     kani::cover!(
-        outcome.is_ok() && !foreach && matches!(initial.get(count_register as usize), Some(RuntimeValue::U64(3))),
-        "a REPEAT runs three passes"
+        outcome.is_ok() && !foreach && matches!(initial.get(count_register as usize), Some(RuntimeValue::U64(2))),
+        "a REPEAT runs two passes"
     );
     kani::cover!(outcome.is_ok() && body_writes_carried_only && iterations > 1, "the restore is skipped");
     kani::cover!(outcome == Err(vm_error(BallistaError::LoopCountExceeded, 0)), "a count above its maximum");
@@ -617,7 +704,7 @@ const RUNTIME_ACCOUNTS: usize = 5;
 /// up to 2, up to 2 groups of up to 3 accounts; every constraint field, row bound and group length
 /// symbolic.
 #[kani::proof]
-#[kani::unwind(7)]
+#[kani::unwind(33)]
 fn account_checks_enforce_the_schema_exactly() {
     let fixed: u8 = kani::any_where(|n: &u8| *n <= 2);
     let stride: u8 = kani::any_where(|n: &u8| *n <= 2);

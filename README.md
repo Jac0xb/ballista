@@ -12,7 +12,9 @@ It is designed for the space between a one-off transaction and a bespoke smart c
 batches, guarded token operations, account setup, treasury flows, post-CPI invariants, and other
 complex but finite orchestration. Templates can read accounts and the clock, perform checked typed
 math, require conditions, invoke arbitrary programs, and iterate one statically bounded account
-range. They cannot keep mutable state, run unbounded loops, custody PDAs, or invent signer authority.
+range. They keep state between runs only in the
+[registry entries](https://jac0xb.github.io/ballista/guide/registries) they declare, and cannot run
+unbounded loops, custody PDAs, or invent signer authority.
 
 The runtime validates the complete flat program before finalization and then executes fixed-size
 records directly from borrowed account memory. Developer names and `let` bindings disappear during
@@ -136,7 +138,8 @@ blocks. See Solana's [larger transaction migration guide](https://solana.com/upg
   through untouched.
 - Programs and data reads must be pinned unless the author opts out with `unsafeUnpinned`.
 - Public, repeatable execution. CPI signers must already be outer transaction signers.
-- No PDA custody, mutable instance state, scheduler, replay policy, or unbounded control flow.
+- State between runs only in declared [registry entries](https://jac0xb.github.io/ballista/guide/registries).
+- No PDA custody, scheduler, built-in replay policy, or unbounded control flow.
 
 ## Quick start
 

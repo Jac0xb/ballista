@@ -130,6 +130,23 @@ loop at its maximum, must fit in 64.
 
 Solana's own limits often bind before Ballista's.
 
+### Transaction size {#transaction-size}
+
+A legacy or version 0 transaction holds at most **1,232 bytes**, and each upload instruction goes
+in a transaction of its own. With the creator as fee payer, these are the largest that fit:
+
+| Transaction | Largest upload chunk | Largest template uploaded in one shot |
+| --- | ---: | ---: |
+| Legacy | 1,023 bytes | 960 bytes |
+| Version 0 | 1,021 bytes | 958 bytes |
+
+One byte more makes 1,233. Larger templates upload in chunks. In one shot, the version 0
+transaction would be 1,288 bytes for the [daily cap](/examples/protocols/daily-cap), 1,636 for the
+[signed quote](/examples/protocols/signed-quote) and 1,866 for the
+[oracle swap](/examples/protocols/jupiter-oracle-swap). In TypeScript, give
+`buildKitTemplateUploadPlan` the `transactionMessage` you send, and it fits each instruction to it
+([Lifecycle](/reference/typescript#lifecycle)).
+
 ### Accounts per transaction
 
 A transaction uses at most **64 accounts**, whatever its version. Accounts loaded from address

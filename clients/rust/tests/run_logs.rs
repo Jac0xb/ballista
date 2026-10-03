@@ -2,7 +2,7 @@
 //! Mollusk by `run_logs_for_the_sdk_decoders` in `tests/ballista`, which `UPDATE_FIXTURES=1`
 //! rewrites.
 
-use ballista_sdk::{program_data, BallistaOutput, LogError, RunEvent, ID};
+use ballista_sdk::{program_data, BallistaOutput, ProgramDataLine, RunEvent, ID};
 use solana_program::pubkey::Pubkey;
 use std::str::FromStr;
 
@@ -40,7 +40,7 @@ fn emit(tag: &[u8; 4], values: &[u64]) -> Vec<u8> {
 
 /// An outer run logs `OUTR`, runs an inner template that logs `INNR` and its event, calls the
 /// Token program, then logs `DONE` and its own event. Each line is attributed to its run by stack
-/// height, and the events say which template ran and which invokes ran.
+/// height and invocation number, and the events say which template ran and which invokes ran.
 #[test]
 fn a_nested_run_s_lines_are_told_from_the_outer_run_s() {
     let logs = lines("nested");
@@ -48,32 +48,41 @@ fn a_nested_run_s_lines_are_told_from_the_outer_run_s() {
     let found = program_data(&logs).unwrap();
     assert!(found.iter().all(|line| line.program == ID), "{found:?}");
 
-    let outputs: Vec<(usize, BallistaOutput)> = found
+    let outputs: Vec<(usize, usize, BallistaOutput)> = found
         .iter()
-        .map(|line| (line.height, line.ballista_output(&ID).unwrap()))
+        .map(|line| {
+            let output = line.ballista_output(&ID).unwrap();
+            (line.height, line.invocation, output)
+        })
         .collect();
     let (outr, innr, done) = (
         emit(b"OUTR", &[1]),
         emit(b"INNR", &[7]),
         emit(b"DONE", &[7, 165]),
     );
-    let event = |expanded, executed, template| RunEvent {
+    let event = |expanded, executed, template_address| RunEvent {
         version: 1,
         iterations: 0,
         expanded,
         executed,
-        template,
+        template_address,
     };
+    // The outer run is invocation 0, the inner run 1, and the Token call 2.
     assert_eq!(
         outputs,
         [
-            (1, BallistaOutput::Emit(&outr)),
-            (2, BallistaOutput::Emit(&innr)),
-            (2, BallistaOutput::RunEvent(event(0, 0, address("inner")))),
-            (1, BallistaOutput::Emit(&done)),
+            (1, 0, BallistaOutput::Emit(&outr)),
+            (2, 1, BallistaOutput::Emit(&innr)),
+            (
+                2,
+                1,
+                BallistaOutput::RunEvent(event(0, 0, address("inner")))
+            ),
+            (1, 0, BallistaOutput::Emit(&done)),
             // Two invokes reached, the nested run and the Token call, and both ran.
             (
                 1,
+                0,
                 BallistaOutput::RunEvent(event(2, 0b11, address("outer")))
             ),
         ]
@@ -109,11 +118,15 @@ fn a_failed_run_still_logs_what_came_before_the_failure() {
     assert_eq!(outputs, [Some(BallistaOutput::Emit(&emit(b"TRY1", &[0])))]);
 }
 
+/// Logs cut at Solana's limit parse up to the cut, so a reader that needs every event checks for
+/// the `Log truncated` line itself.
 #[test]
-fn cut_logs_are_reported_rather_than_read_in_part() {
+fn cut_logs_parse_up_to_the_cut() {
     let logs = lines("nested");
+    let whole = program_data(&logs).unwrap();
     let mut cut = logs[..6].to_vec();
     cut.push("Log truncated");
-    assert_eq!(program_data(&cut), Err(LogError::Truncated));
-    assert_eq!(program_data(&logs[..6]), Err(LogError::Truncated));
+    let before: Vec<ProgramDataLine> = whole[..3].to_vec();
+    assert_eq!(program_data(&cut), Ok(before.clone()));
+    assert_eq!(program_data(&logs[..6]), Ok(before));
 }

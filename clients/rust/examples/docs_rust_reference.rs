@@ -260,7 +260,7 @@ pub fn print_run_output(logs: &[String]) -> Result<(), ballista_sdk::LogError> {
         match line.ballista_output(&ballista_sdk::ID) {
             Some(BallistaOutput::RunEvent(event)) => println!(
                 "{} ran {} of the {} invokes it reached (mask {:#b})",
-                event.template,
+                event.template_address,
                 event.executed.count_ones(),
                 event.expanded,
                 event.executed,

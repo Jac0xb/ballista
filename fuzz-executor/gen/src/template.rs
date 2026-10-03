@@ -451,6 +451,9 @@ impl TemplateGen<'_, '_> {
             self.b.flags(PROGRAM_FLAG_EMIT_EVENT);
         }
 
+        if self.g.chance(1, 3) {
+            self.edge_arithmetic();
+        }
         // Some templates do work before their opens, never a call: the verifier refuses an open
         // after an invoke (`statement` picks a value instead).
         let early = if self.g.chance(1, 4) { self.g.range(1, 4) } else { 0 };
@@ -501,6 +504,50 @@ impl TemplateGen<'_, '_> {
             self.fill_to_the_limits();
         }
         self.plan.bytes = self.b.build().expect("generated templates stay under the payload limit");
+    }
+
+    /// An `ADD`, `SUB` or `MUL` at the edge of its type, first thing in the template: a constant a
+    /// few steps from the bound and a small one, which overflow or not by a coin flip (never, in a
+    /// friendly template). The model knows every value this early, so it predicts the exact code
+    /// and instruction of the failure, and a check that stops firing shows as a mismatch.
+    fn edge_arithmetic(&mut self) {
+        let (k, mut j) = (self.g.below(4) as u64, self.g.below(4) as u64);
+        if self.plan.friendly {
+            j = j.min(k);
+        }
+        let opcode = [OP_ADD, OP_SUB, OP_MUL][self.g.below(3)];
+        let (left, right, ty) = match self.g.below(3) {
+            0 => {
+                let (a, b) = match opcode {
+                    OP_ADD => (u64::MAX - k, j),
+                    OP_SUB => (k, j),
+                    // (2^32 + k)(2^32 - 1) overflows u64 once k reaches 2.
+                    _ => ((1u64 << 32) + if self.plan.friendly { k.min(1) } else { k }, (1u64 << 32) - 1),
+                };
+                (self.b.const_u64(a), self.b.const_u64(b), Ty::U64)
+            }
+            1 => {
+                let (a, b) = match opcode {
+                    OP_ADD => (u128::MAX - k as u128, j as u128),
+                    OP_SUB => (k as u128, j as u128),
+                    _ => ((1u128 << 64) + if self.plan.friendly { k.min(1) } else { k } as u128, (1u128 << 64) - 1),
+                };
+                (self.b.const_u128(a), self.b.const_u128(b), Ty::U128)
+            }
+            _ => {
+                let (a, b) = match opcode {
+                    OP_ADD => (i64::MAX - k as i64, j as i64),
+                    OP_SUB => (i64::MIN + k as i64, j as i64),
+                    _ => ((1i64 << 32) + if self.plan.friendly { k.min(1) } else { k } as i64, (1i64 << 31) - 1),
+                };
+                (self.b.const_i64(a), self.b.const_i64(b), Ty::I64)
+            }
+        };
+        self.define(left, ty);
+        self.define(right, ty);
+        let result = self.b.binary(opcode, left, right);
+        self.define(result, ty);
+        self.mark();
     }
 
     /// At the limits: a `REPEAT` whose maximum is the whole CPI budget left, around one probe

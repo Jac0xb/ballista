@@ -158,30 +158,30 @@ struct Floor {
 }
 
 const FLOORS: [Floor; 12] = [
-    // Measured per 1,000 at 20,000 seeds, normal / limits: 195 / 113.
-    Floor { what: "successful runs the model compared", normal: 95, limits: 55, count: |s| s.compared_runs },
-    // 284 / 1,008.
-    Floor { what: "CPIs compared by program and accounts", normal: 140, limits: 500, count: |s| s.compared_cpis },
-    // 0 / 33: only limits mode names a program in a batch row.
-    Floor { what: "CPIs into a row-account program compared", normal: 0, limits: 16, count: |s| s.compared_row_program_cpis },
-    // 0 / 133: only limits mode passes 16 or more accounts.
-    Floor { what: "CPIs with 16 or more accounts compared", normal: 0, limits: 65, count: |s| s.compared_wide_cpis },
-    // 270 / 958.
-    Floor { what: "CPIs compared byte for byte", normal: 135, limits: 480, count: |s| s.compared_data },
-    // 144 / 887.
-    Floor { what: "probe calls whose received flags were compared", normal: 70, limits: 440, count: |s| s.compared_flags },
-    // 369 / 613.
-    Floor { what: "EMIT lines compared byte for byte", normal: 180, limits: 300, count: |s| s.compared_emits },
-    // 17.6 / 10.4.
-    Floor { what: "return data compared byte for byte", normal: 8, limits: 5, count: |s| s.compared_return_data },
-    // 264 / 1,178.
-    Floor { what: "loop passes on compared runs", normal: 130, limits: 580, count: |s| s.compared_loop_passes },
-    // 358 / 384.
-    Floor { what: "failures the model predicted", normal: 180, limits: 190, count: |s| s.predicted_failures },
-    // 93 / 42.5.
-    Floor { what: "predicted failures the run matched exactly", normal: 45, limits: 20, count: |s| s.exact_failures },
-    // 405 / 391.
-    Floor { what: "failed runs whose Ballista code was classified", normal: 200, limits: 195, count: |s| s.classified_failures },
+    // Measured per 1,000 at 20,000 seeds, normal / limits: 175 / 99.
+    Floor { what: "successful runs the model compared", normal: 87, limits: 50, count: |s| s.compared_runs },
+    // 262 / 850.
+    Floor { what: "CPIs compared by program and accounts", normal: 130, limits: 425, count: |s| s.compared_cpis },
+    // 0 / 30: only limits mode names a program in a batch row.
+    Floor { what: "CPIs into a row-account program compared", normal: 0, limits: 15, count: |s| s.compared_row_program_cpis },
+    // 0 / 118: only limits mode passes 16 or more accounts.
+    Floor { what: "CPIs with 16 or more accounts compared", normal: 0, limits: 58, count: |s| s.compared_wide_cpis },
+    // 252 / 810.
+    Floor { what: "CPIs compared byte for byte", normal: 125, limits: 405, count: |s| s.compared_data },
+    // 133 / 754.
+    Floor { what: "probe calls whose received flags were compared", normal: 65, limits: 375, count: |s| s.compared_flags },
+    // 311 / 590.
+    Floor { what: "EMIT lines compared byte for byte", normal: 155, limits: 295, count: |s| s.compared_emits },
+    // 15.3 / 9.3.
+    Floor { what: "return data compared byte for byte", normal: 7, limits: 4, count: |s| s.compared_return_data },
+    // 230 / 1,006.
+    Floor { what: "loop passes on compared runs", normal: 115, limits: 500, count: |s| s.compared_loop_passes },
+    // 439 / 461.
+    Floor { what: "failures the model predicted", normal: 220, limits: 230, count: |s| s.predicted_failures },
+    // 140 / 80.
+    Floor { what: "predicted failures the run matched exactly", normal: 70, limits: 40, count: |s| s.exact_failures },
+    // 441 / 424.
+    Floor { what: "failed runs whose Ballista code was classified", normal: 220, limits: 210, count: |s| s.classified_failures },
 ];
 
 /// Floors apply from this many cases; fewer are a smoke run whose counts are too noisy to judge.

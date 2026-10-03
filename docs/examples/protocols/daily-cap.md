@@ -2,12 +2,18 @@
 
 <p class="protocol-line">Jupiter · Registry</p>
 
-**Status:** Run as real transactions against Jupiter, a Meteora pool and a Raydium pool, copied from
-mainnet at one slot into LiteSVM, a local Solana runtime. Not yet run on mainnet itself.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against Jupiter, Meteora
+and Raydium programs and accounts copied from mainnet; not yet run on devnet or mainnet.
+
+**Cost:** Ballista's own work took 9,644 of the tested transaction's 82,728
+[compute units](/reference/glossary#compute-units) when it created the caller's entry, and 7,909 of
+71,942 after; the protocols took the rest. The first run also pays the entry's rent, below.
+Ballista charges no fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
-Sells SOL through Jupiter, and limits each caller to 1.728 SOL a day.
+Sells SOL through Jupiter, and limits each caller to 1.728 SOL at once, refilling daily. A caller
+who spends it all can spend it again as it refills, so about 3.456 SOL can move in any 24 hours.
 
 A daily limit has to remember earlier sales, and a run's values are gone when it ends. So the
 template keeps each caller's total in a [registry](/guide/registries) entry: an account that
@@ -49,15 +55,18 @@ It does not guard against:
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/jupiter-daily-cap-swap.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/jupiter-daily-cap-swap.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#jupiter-daily-cap [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#jupiter-daily-cap [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/jupiter-daily-cap.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/jupiter-daily-cap.ts [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#jupiter-daily-cap [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#jupiter-daily-cap [Rust · Run]
 
 :::
+
+The Rust tabs' `program`, `anchor` and account flags are
+[shared helpers](/examples/protocols/#rust-helpers).
 
 The Rust template writes out the steps that `rateLimit` returns.
 
@@ -78,38 +87,28 @@ and the actor's address.
 
 The actor's first run creates the entry, with no separate instruction, and the actor pays its
 [rent](/reference/glossary#rent), the lamports Solana requires an account to hold for its size:
-1,503,360 lamports, about 0.0015 SOL, for this 88-byte entry. Nothing closes an entry, so the rent
-isn't returned.
+1,097,280 lamports, about 0.0011 SOL, on mainnet, for this 88-byte entry. Nothing closes an entry,
+so the rent isn't returned.
 
-::: tip Requesting the route
-Ask Jupiter's Swap API for `useSharedAccounts: false`. The template always sends Jupiter's `route`
-instruction. The API's default, `shared_accounts_route`, is a different instruction whose accounts
-are in a different order.
-:::
+[Getting a Jupiter route](/examples/protocols/#jupiter-routes) says how to request the route from
+Jupiter's Swap API and what to keep from its response.
 
 ## What has been tested
 
-- **Against the real programs.** `tests/protocols/tests/jupiter_daily_cap.rs` sells 1 SOL for USDC
+- **In LiteSVM.** `tests/protocols/tests/jupiter_daily_cap.rs` sells 1 SOL for USDC
   through Jupiter and a Meteora pool, in place of `route` in the transaction Jupiter's API built.
   The first run creates the caller's entry and buys the same USDC as that transaction alone. A
   second sale fails at `withinRateLimit` before Jupiter is called, and still fails 13,599 seconds
   later. At 13,600 seconds it lands, and `spent` ends exactly at the cap. Another caller, with the
   first's limit spent, still sells, on an entry of their own.
-- **Cost.** The transaction took 82,728 compute units (Solana's measure of execution cost) when it
-  created the entry, and 71,942 when the entry already existed. Ballista's own share, its run less
-  Jupiter's `route`, was 9,644 and 7,909. The transaction is 807 bytes, 109 more than Jupiter's
-  own, and the template 1,014 bytes.
+- **Size.** The transaction is 807 bytes, 109 more than Jupiter's own, and the template 1,014
+  bytes.
 - **Failures.** Each of these fails, and the whole transaction reverts, so no entry is created or
   changed: a route selling 150 USDC through a Raydium pool (`spendsWrappedSol`, before Jupiter is
   called); the same route with a second wSOL account of the caller's at `sourceAta`
   (`soldWhatTheCapCharged`, after the route); a caller passing another caller's entry, before or
   after it exists (`InvalidRegistryEntry`, before the first step); a route that charges a platform
   fee (`platformFeeWithinCap`, before Jupiter is called).
-- A test reads the template and checks `route`'s accounts, that no input but `inAmount` reaches
-  the limit, the order of the checks, and that the signing actor keys and pays for the entry
-  (`clients/js/src/protocol-semantics.test.ts`).
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
 - **Not tested.** Neither gap above has a test.
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

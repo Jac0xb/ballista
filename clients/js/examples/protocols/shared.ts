@@ -67,6 +67,15 @@ export const TOKEN_ACCOUNT_OWNER_OFFSET = 32;
 /** The wrapped SOL mint. Its token accounts count their balance in lamports. */
 export const WRAPPED_SOL_MINT = 'So11111111111111111111111111111111111111112' as const;
 
+/** Circle's USDC mint. */
+export const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' as const;
+
+/** A Pyth feed id, which Pyth publishes as 64 hex digits, as the 32 bytes a price account stores. */
+export function pythFeedId(hex: string): Uint8Array<ArrayBuffer> {
+  if (!/^[0-9a-f]{64}$/.test(hex)) throw new Error('A Pyth feed id is 64 lowercase hex digits');
+  return Uint8Array.from({ length: 32 }, (_, index) => Number.parseInt(hex.slice(2 * index, 2 * index + 2), 16));
+}
+
 /** SPL Token `Mint`: `decimals` is the u8 at offset 44 of the 82-byte layout. */
 export const SPL_MINT = { length: 82, decimals: 44 } as const;
 
@@ -92,9 +101,9 @@ export const PYTH = {
   /**
    * Offsets for a `Full` account. A `Partial` one shifts each by one.
    *
-   * `feedId` is `price_message.feed_id`, the 32 bytes that say which feed the price belongs to:
-   * SOL/USD's is `ef0d8b6f…c280b56d`. The receiver owns every feed's account alike, so nothing
-   * else about the account says which one it is.
+   * `feedId` is `price_message.feed_id`, the 32 bytes that say which feed the price belongs to.
+   * The receiver owns every feed's account alike, so nothing else about the account says which
+   * one it is.
    */
   feedId: 41,
   price: 73,
@@ -156,6 +165,80 @@ export function splitJupiterRoute(data: Uint8Array) {
     quotedOutAmount: tail.getBigUint64(8, true),
     slippageBps: tail.getUint16(16, true),
     platformFeeBps: tail.getUint8(18),
+  };
+}
+
+/** The shape the Jupiter Swap API returns for `swapInstruction`. */
+export interface JupiterSwapInstruction {
+  programId: string;
+  accounts: readonly { pubkey: string; isSigner: boolean; isWritable: boolean }[];
+  /** Base64. */
+  data: string;
+}
+
+/** One quoted leg: its quote's `inputMint` and `outputMint`, and the Swap API's `swapInstruction`. */
+export interface JupiterLeg {
+  inputMint: string;
+  outputMint: string;
+  swapInstruction: JupiterSwapInstruction;
+}
+
+/** `route`'s own accounts, before its steps': the four a template passes, then five more. */
+const ROUTE_ACCOUNTS_BEFORE_STEPS = 9;
+
+/**
+ * Joins two quoted legs, wrapped SOL to another token and back, into one `route`: a round trip,
+ * which the Swap API won't quote whole. The plan is the first leg's step, then the second's with
+ * its input and output indices moved up by one, so that it spends exactly what the first produced.
+ * The accounts are the second leg's own nine, then both legs' steps. It sells the first leg's input
+ * for at least the second leg's quote less its slippage. `round_trip` in
+ * `tests/protocols/tests/jito_tip.rs` is the same join in Rust.
+ *
+ * Each leg must be one step: a step ends in its two indices, but the `Swap` enum before them has
+ * variants of different lengths, so a longer plan can't be renumbered without decoding it.
+ *
+ * Returns the joined `route` data, and its accounts from the fifth on, which a run passes as its
+ * group: the template passes the token program, the signer and the wrapped SOL account twice.
+ */
+export function joinRoundTrip(
+  first: JupiterLeg,
+  second: JupiterLeg,
+): { routeData: Uint8Array<ArrayBuffer>; strategyAccounts: { address: Address; writable: boolean }[] } {
+  if (first.inputMint !== WRAPPED_SOL_MINT || second.outputMint !== WRAPPED_SOL_MINT) {
+    throw new Error('A round trip starts and ends in wrapped SOL');
+  }
+  const routes = [first, second].map(({ swapInstruction }) => {
+    if (swapInstruction.programId !== JUPITER_V6) throw new Error('Both legs must be Jupiter v6 `route`');
+    return splitJupiterRoute(Uint8Array.from(atob(swapInstruction.data), (char) => char.charCodeAt(0)));
+  }) as [ReturnType<typeof splitJupiterRoute>, ReturnType<typeof splitJupiterRoute>];
+  const source = first.swapInstruction.accounts[2]?.pubkey;
+  if (source === undefined || source !== second.swapInstruction.accounts[3]?.pubkey) {
+    throw new Error('The legs must start and end in the same token account');
+  }
+
+  const steps = routes.flatMap(({ routePlan }, position) => {
+    const [count, step] = [new DataView(routePlan.buffer, routePlan.byteOffset).getUint32(0, true), routePlan.slice(4)];
+    if (count !== 1) throw new Error('Each leg must be a single step');
+    if (step.at(-2) !== 0 || step.at(-1) !== 1) throw new Error('A single step reads index 0 and writes index 1');
+    return [...step.slice(0, -2), position, position + 1];
+  });
+  const tail = new DataView(new ArrayBuffer(JUPITER_ROUTE_TAIL_LENGTH));
+  tail.setBigUint64(0, routes[0].inAmount, true);
+  tail.setBigUint64(8, routes[1].quotedOutAmount, true);
+  tail.setUint16(16, routes[1].slippageBps, true);
+  tail.setUint8(18, routes[1].platformFeeBps);
+  const routeData = Uint8Array.from([...JUPITER_ROUTE, 2, 0, 0, 0, ...steps, ...new Uint8Array(tail.buffer)]);
+
+  const accounts = [
+    ...second.swapInstruction.accounts.slice(0, ROUTE_ACCOUNTS_BEFORE_STEPS),
+    ...first.swapInstruction.accounts.slice(ROUTE_ACCOUNTS_BEFORE_STEPS),
+    ...second.swapInstruction.accounts.slice(ROUTE_ACCOUNTS_BEFORE_STEPS),
+  ];
+  return {
+    routeData,
+    strategyAccounts: accounts
+      .slice(JUPITER_ROUTE_FIXED_ACCOUNTS)
+      .map((meta) => ({ address: address(meta.pubkey), writable: meta.isWritable })),
   };
 }
 

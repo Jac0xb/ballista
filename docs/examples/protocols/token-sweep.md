@@ -2,8 +2,12 @@
 
 <p class="protocol-line">Jupiter · SPL Token</p>
 
-**Status:** Run as real transactions against Jupiter and a Raydium pool, copied from mainnet at one
-slot into LiteSVM, a local Solana runtime. Not yet run on mainnet itself.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against Jupiter and
+Raydium programs and accounts copied from mainnet; not yet run on devnet or mainnet.
+
+**Cost:** Ballista's own work took 7,375 of the tested transaction's 71,563
+[compute units](/reference/glossary#compute-units); the protocols took the rest. Ballista charges no
+fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -37,15 +41,18 @@ It guards against the market moving after the quote. It does not guard against:
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/token-sweep-into-swap.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/token-sweep-into-swap.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#token-sweep [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#token-sweep [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/token-sweep.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/token-sweep.ts [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#token-sweep [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#token-sweep [Rust · Run]
 
 :::
+
+The Rust tabs' `program`, `anchor` and account flags are
+[shared helpers](/examples/protocols/#rust-helpers).
 
 The route plan splits its input by percentage, so the same plan can sell more or less than it was
 quoted for. Above the quote, the extra size's price impact has to fit within `slippageBps`, and the
@@ -68,29 +75,20 @@ The Run tabs pass the five declared accounts, `jupiter`, `tokenProgram`, `seller
 `platformFeeBps` and `dustFloor`, then the group. `splitJupiterRoute` (TypeScript) and
 `RouteQuote::split` (Rust) split the Swap API's `route` data into the plan and the quote's numbers.
 
-::: tip Requesting the route
-Ask Jupiter's Swap API for `useSharedAccounts: false`. The template always sends Jupiter's `route`
-instruction. The API's default, `shared_accounts_route`, is a different instruction whose accounts
-are in a different order.
-:::
+[Getting a Jupiter route](/examples/protocols/#jupiter-routes) says how to request the route from
+Jupiter's Swap API and what to keep from its response.
 
 ## What has been tested
 
-- **Against the real programs.** `tests/protocols/tests/token_sweep.rs` sells USDC for SOL through
+- **In LiteSVM.** `tests/protocols/tests/token_sweep.rs` sells USDC for SOL through
   Jupiter and Raydium's SOL/USDC pool, in place of `route` in the transaction Jupiter's API built.
   With the route quoted for 150 USDC, balances 3% over, 3% under and ten times that each sold in
-  full and met the scaled quote. The run added about 7,400 compute units (Solana's measure of
-  execution cost) and 52 bytes to Jupiter's transaction.
+  full and met the scaled quote. The run added 52 bytes to Jupiter's transaction.
 - **Failures.** Each of these fails, and the whole transaction reverts: a balance at `dustFloor`
   (`worthSelling`); another wallet's source or an attacker's destination
   (`sweepsTheSellersOwnBalance`, `proceedsGoToTheSeller`, before Jupiter is called); a route that
   pays the attacker while the seller's account is measured (`saleMetTheQuote`); a balance 10,000
   times the quote (inside Raydium); a route that charges a platform fee (`platformFeeWithinCap`,
   before Jupiter is called).
-- A test reads the template and checks that it calls `route` with its accounts in `route`'s order,
-  sells the balance it read, scales the quote to it, and makes the two owner checks first
-  (`clients/js/src/protocol-semantics.test.ts`).
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

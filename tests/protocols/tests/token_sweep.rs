@@ -622,8 +622,10 @@ fn measure_compute_units() {
     for times in [1, 100, 1_000] {
         let outcome = start.copy().sell(quoted * times).unwrap();
         println!(
-            "the run at {times} times the quote: {} CU, {} bytes",
-            outcome.compute_units, outcome.size
+            "the run at {times} times the quote: {} CU, {} of them Ballista's own, {} bytes",
+            outcome.compute_units,
+            outcome.own_compute_units_of(&ballista_sdk::ID).unwrap(),
+            outcome.size
         );
     }
 

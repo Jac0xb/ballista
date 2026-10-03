@@ -1,30 +1,8 @@
 /**
- * Act only on a Pyth price that is fresh, confident, and inside a band. The checks run during
- * execution, not before signing.
- *
- * Inside a program this is `get_price_no_older_than`. A transaction cannot do it: it can read the
- * feed while it is being built, but the price it acts on is the one at execution, and the gap
- * between the two is the entire risk. Slots pass, the publisher stalls, the market moves.
- *
- * The first requirement is not about the price at all: it pins the account's verification level.
- * `VerificationLevel` is a Borsh enum whose `Full` variant is one byte and whose `Partial` is
- * two, so every field after it sits one byte earlier in a `Full` account than in a `Partial`
- * one. Reading a price at a fixed offset without checking the level is reading whichever field
- * happens to be there. Requiring `Full` fixes the layout and is the stronger guarantee besides.
- *
- * The second pins the feed. The Pyth receiver owns every feed's price account alike, so the owner
- * pin alone takes any feed's price, and a band set for SOL could be met by another asset's.
- * `get_price_no_older_than` checks the feed id for the same reason; the template checks it
- * against `feedId`.
- *
- * The third pins the exponent. A Pyth price is `price × 10^exponent`, and the bounds are raw
- * integers at the exponent the caller set them for: SOL/USD's −8 makes them hundred-millionths of
- * a dollar. If the feed's exponent ever changed, every bound would be off by a power of ten, so the
- * template requires the account's exponent to equal `exponent`.
- *
- * The action here is a Jupiter `route`. It takes the token program and the signer first, so the
- * template passes those two itself and the rest of the route's list arrives as a group.
+ * Run a Jupiter swap only on a fresh, confident Pyth price in a band:
+ * docs/examples/protocols/pyth-gate.md.
  */
+// #region template
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
@@ -48,7 +26,7 @@ export const pythFreshPriceGate = defineTemplate({
   inputs: {
     /**
      * The Pyth feed the price must come from, as its 32-byte id: SOL/USD's is
-     * `ef0d8b6f…c280b56d`.
+     * `ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d`.
      */
     feedId: { type: 'pubkey' },
     /**
@@ -154,5 +132,6 @@ export const pythFreshPriceGate = defineTemplate({
     }),
   ],
 });
+// #endregion template
 
 export const compiled = compileTemplate(pythFreshPriceGate);

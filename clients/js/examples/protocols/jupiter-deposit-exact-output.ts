@@ -1,44 +1,8 @@
 /**
- * Deposit into Kamino exactly what a Jupiter swap produced.
- *
- * Jupiter v6's `route` carries the input amount, the *quoted* output, `slippageBps` and
- * `platformFeeBps`. What actually comes out is reported as an Anchor `SwapEvent` emitted through
- * a self-CPI (an event, not return data), so a caller cannot read it back with
- * `get_return_data`. The destination token account is the only reliable source, and it can only
- * be read after the route has run.
- *
- * Kamino's `deposit_reserve_liquidity_and_obligation_collateral_v2(liquidity_amount: u64)` needs
- * that number. A plain transaction has to write it before the swap has happened: quote it high
- * and the deposit fails, quote it low and the remainder is stranded in the ATA.
- *
- * `route` takes the token program, the signing owner, and the owner's source and destination token
- * accounts first, and the template passes those four itself. The destination is the account the
- * template measures, and the run deposits exactly its measured increase. Kamino mints whole
- * cTokens only, so it keeps back less than one cToken's worth as rounding (see below). If the
- * destination is not the signer's, the deposit fails closed: Kamino refuses to debit it. The rest
- * of the route's list varies in length with the route, so it arrives as the `routeAccounts` group.
- * Group members are forwarded with the transaction's own writable flag and never sign.
- *
- * The deposit is Kamino's `_v2` handler. The v1 handler refuses every caller but Kamino itself and
- * a short whitelist (`CpiDisabled`), so a template cannot call it at all. v2 takes 17 accounts:
- * - The 14 declared below. The unused `placeholder_user_destination_collateral` slot holds the
- *   Kamino program: Kamino requires every optional slot to be present and reads its own ID as
- *   "none". Both token-program slots hold the SPL Token program.
- * - Then `farmAccounts`: the obligation's farm user state and the reserve's collateral farm, then
- *   the Farms program. When the reserve has no collateral farm, both farm slots hold the Kamino
- *   program. A group carries them because they are writable when present and read-only when they
- *   are the Kamino program, and a declared slot has one fixed writable flag. Before an
- *   obligation's first deposit into a reserve with a farm, `init_obligation_farms_for_reserve` must
- *   create its user state.
- *
- * Kamino mints whole cTokens only, and takes just what they are worth: of the amount it is asked
- * for, less than one cToken's worth (a base unit or so) can stay in `destinationAta`.
- *
- * Kamino takes a deposit only into an obligation refreshed in the same slot. It does not care
- * where in the transaction that happened, so the refreshes belong to the transaction, not the
- * template. Put `refresh_reserve` for each reserve the obligation holds, then `refresh_obligation`
- * with those reserves, before this run.
+ * Deposit into Kamino exactly what a Jupiter swap produced:
+ * docs/examples/protocols/jupiter-deposit.md.
  */
+// #region template
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
@@ -85,7 +49,10 @@ export const jupiterDepositExactOutput = defineTemplate({
     owner: { signer: true, writable: true },
     /** What the route sells from. */
     sourceAta: { writable: true },
-    /** The route's destination, and the account the deposit draws from. */
+    /**
+     * The route's destination, and the account the deposit draws from. Kamino debits it with
+     * `owner`'s authority, so another wallet's account fails the deposit.
+     */
     destinationAta: {
       writable: true,
       owner: TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -102,7 +69,9 @@ export const jupiterDepositExactOutput = defineTemplate({
   },
   /**
    * `routeAccounts`: Jupiter's own list, whose length depends on the route. `farmAccounts`:
-   * Kamino's v2 tail, described above.
+   * Kamino's v2 tail, the farm pair and the Farms program. It is a group because the pair is
+   * writable when the reserve has a farm and the Kamino program, read-only, when it doesn't, and a
+   * declared account has one fixed writable flag.
    */
   accountGroups: ['routeAccounts', 'farmAccounts'],
   steps: [
@@ -151,6 +120,7 @@ export const jupiterDepositExactOutput = defineTemplate({
       'swapMetItsFloor',
     ),
 
+    // Kamino's v2 deposit: v1 refuses calls from other programs (`CpiDisabled`).
     step.invoke({
       program: account.fixed('kamino'),
       accounts: [
@@ -182,5 +152,6 @@ export const jupiterDepositExactOutput = defineTemplate({
     }),
   ],
 });
+// #endregion template
 
 export const compiled = compileTemplate(jupiterDepositExactOutput);

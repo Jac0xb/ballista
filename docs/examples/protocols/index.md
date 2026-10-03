@@ -158,3 +158,26 @@ Each page shows the template and a run of it, in TypeScript and in Rust.
   `buildKitRunInstruction` puts them in the template's order.
 - Rust templates are in `clients/rust/examples/protocol_templates.rs`, built with
   `ProgramBuilder`. Rust runs are in `clients/rust/examples/protocol_templates_run.rs`.
+
+## Getting a Jupiter route {#jupiter-routes}
+
+Seven templates call Jupiter's `route` instruction, and each takes the route from Jupiter's Swap
+API:
+
+1. **Quote** with `swapMode=ExactIn` and `instructionVersion=V1`. `ExactOut` returns
+   `exact_out_route` instead, and `V2` returns `route_v2`.
+2. **Ask `/swap-instructions` for that quote** with `useSharedAccounts: false`. Without it, Jupiter
+   may return `shared_accounts_route`, whose accounts are in another order. The response's
+   `swapInstruction` is the `route` call: its data is the route data, and its accounts are the
+   route's. The tests' routes were fetched this way, by `scripts/snapshot/jupiter.mjs`.
+3. **Split the data** with `splitJupiterRoute` (TypeScript) or `RouteQuote::split` (Rust) into
+   `routePlan` and the four numbers after it. Both refuse data that isn't `route`.
+4. **Drop the accounts the template passes itself:** the first four, or three for the
+   [daily cap](/examples/protocols/daily-cap) and two for the
+   [price gate](/examples/protocols/pyth-gate). The rest are the run's account group. For the
+   [Jito tip](/examples/protocols/jito-tip), `joinRoundTrip` joins two quotes and does this.
+5. **Keep the rest of the response.** Put the setup instructions before the run and the cleanup
+   after it: they create token accounts and wrap and unwrap SOL. Compile the transaction with the
+   lookup tables in `addressLookupTableAddresses`; most routes don't fit without them.
+6. **Set your own compute limit.** The response's is either the 1,400,000 maximum or, with
+   `dynamicComputeUnitLimit`, a limit fitted to `route` alone, which the run around it exceeds.

@@ -214,37 +214,54 @@ pub fn jupiter_deposit_exact_output() -> Vec<u8> {
 // #endregion jupiter-deposit
 
 // #region jupiter-oracle-swap
-/// Swap on Jupiter and require the fill to beat a Pyth price, less a tolerance.
+const USDC_MINT: Pubkey = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+/// The feed the price must come from, Pyth's SOL/USD:
+/// `ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d`.
+const SOL_USD_FEED_ID: [u8; 32] = [
+    0xef, 0x0d, 0x8b, 0x6f, 0xda, 0x2c, 0xeb, 0xa4, 0x1d, 0xa1, 0x5d, 0x40, 0x95, 0xd1, 0xda, 0x39,
+    0x2a, 0x0d, 0x2f, 0x8e, 0xd0, 0xc6, 0xc7, 0xbc, 0x0f, 0x4c, 0xfa, 0xc8, 0xc2, 0x80, 0xb5, 0x6d,
+];
+/// 1%, in basis points: how far below the oracle's valuation the fill may land.
+const TOLERANCE_BPS: u128 = 100;
+
+/// Declares the SPL Token mint at `address`, read-only.
+fn pinned_mint(builder: &mut ProgramBuilder, address: Pubkey) -> u8 {
+    builder.account(READ, Some(address.to_bytes()), Some(TOKEN_PROGRAM_ID.to_bytes()), MINT_LEN)
+}
+
+/// Sell wrapped SOL for USDC on Jupiter, and require the fill to beat Pyth's SOL/USD price less
+/// 1%. The feed, the two mints and the tolerance are constants, not run inputs.
 pub fn jupiter_oracle_checked_swap() -> Vec<u8> {
     let mut b = ProgramBuilder::new();
+    // The compiler records a constant pubkey before the accounts' addresses.
+    b.pubkey(SOL_USD_FEED_ID);
     let jupiter = program(&mut b, JUPITER_V6);
     let token_program = program(&mut b, TOKEN_PROGRAM_ID);
     let price_update = b.account(READ, None, Some(PYTH_RECEIVER.to_bytes()), PYTH_LEN);
     let trader = b.account(SIGN | WRITE, None, None, 0);
     let source_ata = token_account(&mut b);
     let destination_ata = token_account(&mut b);
-    let source_mint = mint(&mut b);
-    let destination_mint = mint(&mut b);
+    // The pair the feed prices: what the route sells, and what it buys.
+    let source_mint = pinned_mint(&mut b, WRAPPED_SOL_MINT);
+    let destination_mint = pinned_mint(&mut b, USDC_MINT);
     b.account_groups(1); // routeAccounts
-    let feed_id = b.input(VALUE_PUBKEY, 0);
     let route_plan = b.input(VALUE_BYTES, ROUTE_ARGS_MAX);
     let in_amount = b.input(VALUE_U64, 0);
     let quoted_out_amount = b.input(VALUE_U64, 0);
     let slippage_bps = b.input(VALUE_U64, 0);
     let platform_fee_bps = b.input(VALUE_U64, 0);
-    let tolerance_bps = b.input(VALUE_U64, 0);
 
-    let feed_id = b.load_input(feed_id);
     let route_plan = b.load_input(route_plan);
     let in_amount = b.load_input(in_amount);
     let quoted_out_amount = b.load_input(quoted_out_amount);
     let slippage_bps = b.load_input(slippage_bps);
     let platform_fee_bps = b.load_input(platform_fee_bps);
-    let tolerance_bps = b.load_input(tolerance_bps);
     let full = b.const_u64(1);
+    let feed_id = b.const_pubkey(SOL_USD_FEED_ID);
     let sixty = b.const_i64(60);
     let zero = b.const_i64(0);
     let max_platform_fee_bps = b.const_u64(MAX_PLATFORM_FEE_BPS);
+    let kept_bps = b.const_u128(10_000 - TOLERANCE_BPS);
     let bps = b.const_u128(10_000);
 
     // The verification level decides where every other field sits.
@@ -266,7 +283,8 @@ pub fn jupiter_oracle_checked_swap() -> Vec<u8> {
     // The decimals below are read from these mints, and both accounts are the trader's.
     require_mint(&mut b, source_ata, source_mint);
     require_mint(&mut b, destination_ata, destination_mint);
-    // The trader's key is read once: the template is at the runtime's 64 registers.
+    // The trader's key is read once, into a register both checks share: without register reuse,
+    // the template uses 62 of the runtime's 64.
     let trader_key = b.account_key(trader);
     for token_account in [source_ata, destination_ata] {
         let owner = b.read(OP_READ_PUBKEY, token_account, TOKEN_OWNER);
@@ -331,8 +349,6 @@ pub fn jupiter_oracle_checked_swap() -> Vec<u8> {
     let down = b.cast(OP_CAST_U64, down);
     let down = b.pow10(down);
     let at_oracle = b.mul_div(value, up, down);
-    let tolerance_bps = b.cast(OP_CAST_U128, tolerance_bps);
-    let kept_bps = b.binary(OP_SUB, bps, tolerance_bps);
     let fair_out = b.mul_div(at_oracle, kept_bps, bps);
     let fair_out = b.cast(OP_CAST_U64, fair_out);
 

@@ -11,8 +11,9 @@ rule from common/src/template/verify.rs, then
   2. run the `structured` fuzz target from an empty corpus for up to SECONDS (default 120), and
      record how long it takes to crash.
 
-A mutant that survives both is a rule the harness does not test. `verify-cpi-privilege` is the
-critic's mutant (scripts/critic/mutate.py on branch claude/critic-tests); the existing proptests in
+A mutant that survives both is a rule the harness does not test; the script then exits 1 (and 2
+when a mutant does not build), so CI can run it nightly. `verify-cpi-privilege` is the critic's
+mutant (scripts/critic/mutate.py on branch claude/critic-tests); the existing proptests in
 common/tests pass under it. Needs cargo-fuzz and a nightly toolchain, as fuzz/scripts/run.sh does.
 """
 
@@ -198,7 +199,14 @@ def main():
     for name, tests, found in rows:
         print(f"{name:32} {tests:14} {found}")
     print(f"logs: {logs}")
+    survivors = [name for name, tests, found in rows if tests == "all pass" and found.startswith("survived")]
+    if any(tests == "does not build" for _, tests, _ in rows):
+        return 2
+    if survivors:
+        print(f"survived every check: {', '.join(survivors)}")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

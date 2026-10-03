@@ -2,6 +2,11 @@
 //! operation; everything it does is confined to accounts it owns and privileges the transaction
 //! granted, so a correctly behaving Ballista run around it stays within the trust model. The op
 //! codes match `ballista_fuzz_gen::template::probe`.
+//!
+//! Every invocation first logs the signer and writable flag of each account it received, as one
+//! `Program log: probe:<digits>` line with a digit per account (bit 0 signer, bit 1 writable).
+//! Mollusk 0.14 records a CPI's accounts but not their flags, so this line is how the fuzzer checks
+//! the privileges a run's call actually granted against the reference model.
 #![allow(unexpected_cfgs)]
 
 use pinocchio::{
@@ -10,6 +15,8 @@ use pinocchio::{
     cpi::invoke_with_bounds,
     error::{ProgramError, ProgramResult},
     instruction::{InstructionAccount, InstructionView},
+    sysvars::{rent::Rent, Sysvar},
+    Resize,
 };
 
 pub const NOOP: u8 = 0;
@@ -21,6 +28,13 @@ pub const INVOKE: u8 = 5;
 pub const TRANSFER: u8 = 6;
 pub const FAIL_BASE: u32 = 0x0fee_d000;
 
+/// The prefix of the flags line, after the runtime's `Program log: `.
+pub const FLAGS_LOG_PREFIX: &[u8] = b"probe:";
+
+/// Accounts the entrypoint parses, and so the most the flags line lists: a Ballista CPI passes at
+/// most 64.
+const MAX_ACCOUNTS: usize = 64;
+
 #[cfg(not(feature = "no-entrypoint"))]
 mod entry {
     use super::process;
@@ -28,9 +42,10 @@ mod entry {
 }
 
 pub fn process(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) -> ProgramResult {
+    log_flags(accounts);
     let (&op, rest) = data.split_first().unwrap_or((&NOOP, &[]));
     match op {
-        NOOP | RESIZE_FIRST => Ok(()),
+        NOOP => Ok(()),
         SET_RETURN => {
             pinocchio::cpi::set_return_data(rest);
             Ok(())
@@ -44,6 +59,10 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) 
                 }
             }
             Ok(())
+        }
+        RESIZE_FIRST => {
+            let Some(account) = accounts.first_mut() else { return Ok(()) };
+            resize_first(program_id, account, 4 * usize::from(rest.first().copied().unwrap_or(0)))
         }
         FAIL => {
             let code = FAIL_BASE | u32::from(rest.first().copied().unwrap_or(0));
@@ -67,6 +86,39 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], data: &[u8]) 
         INVOKE => reinvoke(accounts, rest),
         _ => Err(ProgramError::Custom(FAIL_BASE)),
     }
+}
+
+/// Logs `probe:` and one digit per account received, `'0' + signer + 2 * writable`.
+#[inline(never)]
+fn log_flags(accounts: &[AccountView]) {
+    let mut line = [0u8; FLAGS_LOG_PREFIX.len() + MAX_ACCOUNTS];
+    line[..FLAGS_LOG_PREFIX.len()].copy_from_slice(FLAGS_LOG_PREFIX);
+    let count = accounts.len().min(MAX_ACCOUNTS);
+    for (digit, account) in line[FLAGS_LOG_PREFIX.len()..].iter_mut().zip(&accounts[..count]) {
+        *digit = b'0' + u8::from(account.is_signer()) + 2 * u8::from(account.is_writable());
+    }
+    #[cfg(target_os = "solana")]
+    // SAFETY: the pointer and length name the initialized prefix of `line`.
+    unsafe {
+        pinocchio::syscalls::sol_log_(line.as_ptr(), (FLAGS_LOG_PREFIX.len() + count) as u64);
+    }
+    #[cfg(not(target_os = "solana"))]
+    let _ = line;
+}
+
+/// Resizes the first account's data to `new_len` bytes (zero-extended), if the probe owns it, it is
+/// writable, and its lamports keep it rent-exempt at the new length, as a real program must ensure.
+/// A shrink can leave a fixed-offset read in a later instruction of the run past the data's end,
+/// the one way an account's length changes under a run that validated it.
+#[inline(never)]
+fn resize_first(program_id: &Address, account: &mut AccountView, new_len: usize) -> ProgramResult {
+    if !account.owned_by(program_id) || !account.is_writable() || new_len == account.data_len() {
+        return Ok(());
+    }
+    if new_len > account.data_len() && Rent::get()?.try_minimum_balance(new_len)? > account.lamports() {
+        return Ok(());
+    }
+    account.resize(new_len)
 }
 
 /// How many accounts the probe forwards in a nested invoke. Small, to keep the meta array within

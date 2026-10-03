@@ -1,41 +1,79 @@
-//! Invariants checked on every run outcome, and the reference-model comparison for successful
-//! runs. A hard violation returns `Err` and fails the fuzz test with a replayable seed; a model
-//! divergence is collected as a soft finding (a model bug could cause it) and only reported.
+//! Invariants checked on every run outcome, and the reference-model comparison. Every check is hard:
+//! a violation fails the fuzz test with a replayable seed. That includes any disagreement with a
+//! concrete prediction of the independent model ([`ballista_fuzz_gen::model`]): a model bug and an
+//! executor bug look the same from here, and either is worth a failing seed.
+//!
+//! What a failed run may fail with:
+//! - never an abort, a panic or an access violation ([`classify`]);
+//! - never one of the runtime's account-rule errors in Ballista's own frame
+//!   ([`ballista_enforcement_error`]): Ballista asking for a privilege it was not granted, or
+//!   touching an account it may not;
+//! - never a structural Ballista error from a template the verifier accepted ([`structural`], P40).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use ballista_common::template::{REGISTRY_ENTRY_MAGIC, REGISTRY_ENTRY_VERSION};
-use ballista_fuzz_gen::model::{self, Accounts, CpiData, InputVal, Prediction};
+use ballista_common::template::*;
+use ballista_fuzz_gen::model::{self, Accounts, CpiData, ExpectedMeta, InputVal, Prediction, RunContext};
 use ballista_fuzz_gen::scenario::{Kind, Scenario};
-use ballista_fuzz_gen::template::{Program, TemplatePlan, World, ALL_PROGRAMS};
+use ballista_fuzz_gen::template::{probe, Program, TemplatePlan, World, ALL_PROGRAMS};
 use mollusk_svm::result::types::{TransactionProgramResult, TransactionResult};
 use solana_account::Account;
 use solana_instruction::error::InstructionError;
+use solana_program_error::ProgramError;
 use solana_pubkey::Pubkey;
 
-use super::harness::{captured_cpis, program_pubkey, Harness, RunOutcome};
+use super::harness::{
+    captured_cpis, log_trace, program_pubkey, Harness, LogTrace, RunOutcome, BALLISTA_ID, PROBE_COPY_ID, PROBE_ID,
+};
 
-/// What a check turned up. A hard finding fails the test; a soft one is reported for triage.
+/// What a check turned up, and what it actually compared, for the loop's floors.
 #[derive(Debug, Default)]
 pub struct Report {
     pub hard: Vec<String>,
-    pub soft: Vec<String>,
-    /// Whether the reference model predicted this run concretely and its CPIs were compared.
-    pub model_compared: bool,
-    /// How many CPIs the comparison matched one for one.
-    pub cpis_compared: usize,
+    pub compared: Compared,
+    /// Why the model did not compare a successful run, if it did not.
+    pub skipped: Option<String>,
+}
+
+/// How much of one run the oracles checked. The fuzz loop sums these and fails when a sum falls
+/// under its floor, so a generator or model change that quietly stops the comparisons fails too.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Compared {
+    /// The model predicted the successful run concretely and every CPI was compared.
+    pub run: bool,
+    /// CPIs compared by program and accounts.
+    pub cpis: usize,
+    /// Of those, CPIs whose program a batch row named.
+    pub row_program_cpis: usize,
+    /// Of those, CPIs passing 16 or more accounts.
+    pub wide_cpis: usize,
+    /// CPIs whose data the model knew and compared byte for byte.
+    pub data: usize,
+    /// Probe CPIs whose received signer and writable flags were compared.
+    pub flags: usize,
+    /// EMIT lines compared byte for byte.
+    pub emits: usize,
+    /// Return data compared byte for byte.
+    pub return_data: bool,
+    /// Loop passes the model ran on a compared run (each restores or carries registers).
+    pub loop_passes: usize,
+    /// The model predicted a failure from concrete values, and the run failed.
+    pub predicted_failure: bool,
+    /// The model knew every value up to its predicted failure, and the run failed with exactly
+    /// that code at exactly that instruction.
+    pub exact_failure: bool,
+    /// A failure with an in-run Ballista code, classified as structural or value-dependent.
+    pub classified_failure: bool,
 }
 
 impl Report {
     fn hard(&mut self, message: impl Into<String>) {
         self.hard.push(message.into());
     }
-    fn soft(&mut self, message: impl Into<String>) {
-        self.soft.push(message.into());
-    }
 }
 
 /// Runs every check against one outcome.
+#[allow(clippy::too_many_arguments)]
 pub fn check(
     harness: &Harness,
     world: &World,
@@ -48,8 +86,11 @@ pub fn check(
 ) -> Report {
     let mut report = Report::default();
     let result = &outcome.result;
+    let trace = log_trace(outcome);
 
     classify(result, &mut report);
+    ballista_enforcement_error(outcome, &trace, &mut report);
+    structural_failure(plan, outcome, &trace, &mut report);
 
     let succeeded = result.program_result.is_ok();
 
@@ -87,8 +128,8 @@ pub fn check(
         opened_entries_distinct(plan, scenario, &mut report);
         output_rules(plan, scenario, template, outcome, &mut report);
         account_set_and_programs(world, scenario, template, outcome, &mut report);
-        reference_model(harness, world, plan, scenario, template, inputs, outcome, &mut report);
     }
+    reference_model(harness, world, plan, scenario, inputs, outcome, &trace, &mut report);
 
     report
 }
@@ -101,6 +142,7 @@ fn classify(result: &TransactionResult, report: &mut Report) {
         TransactionProgramResult::Success => {}
         TransactionProgramResult::Failure(_, _) => {
             // A `ProgramError`, including every Ballista custom code and a callee's own code.
+            // `structural_failure` checks Ballista's codes.
         }
         TransactionProgramResult::UnknownError(index, error) => {
             if matches!(error, InstructionError::ProgramFailedToComplete) {
@@ -115,7 +157,9 @@ fn classify(result: &TransactionResult, report: &mut Report) {
     }
 }
 
-/// Instruction errors a well-behaved run may legitimately return, beyond a `ProgramError`.
+/// Instruction errors a well-behaved run may legitimately return, beyond a `ProgramError`. The
+/// account-rule errors here are acceptable only from another program's frame; see
+/// [`ballista_enforcement_error`].
 fn acceptable_instruction_error(error: &InstructionError) -> bool {
     use InstructionError::*;
     matches!(
@@ -150,6 +194,114 @@ fn acceptable_instruction_error(error: &InstructionError) -> bool {
             | UnbalancedInstruction
             | InvalidError
     )
+}
+
+/// The runtime's errors for breaking an account rule: asking a CPI for a signer or writable
+/// privilege the caller lacks (`PrivilegeEscalation`), and changing an account's data, lamports
+/// or size without the right to. Another program may raise them, the probe or the System program
+/// refusing what a template asked of it. In Ballista's own frame they mean a run asked for a
+/// privilege its template's verified declarations and the run's account checks should have ruled
+/// out (the CPI privilege ceiling, `trust-model.md#privileges`), or touched an account it must not:
+/// Ballista writes only the registry entries it opened.
+fn ballista_enforcement_error(outcome: &RunOutcome, trace: &LogTrace, report: &mut Report) {
+    use InstructionError::*;
+    let TransactionProgramResult::UnknownError(index, error) = &outcome.result.program_result else { return };
+    let enforcement = matches!(
+        error,
+        PrivilegeEscalation
+            | ReadonlyDataModified
+            | ReadonlyLamportChange
+            | ExternalAccountDataModified
+            | ExternalAccountLamportSpend
+            | ExecutableDataModified
+            | ExecutableLamportChange
+            | UnbalancedInstruction
+    );
+    if !enforcement || *index != outcome.top_index {
+        return;
+    }
+    if let Some((program, height, message)) = &trace.first_failure {
+        if *program == BALLISTA_ID {
+            report.hard(format!("Ballista itself raised {error:?} (stack height {height}): {message}"));
+        }
+    }
+}
+
+/// P40: a template the verifier accepted never fails for a structural reason, one the verifier's
+/// checks exclude, only for a value-dependent one (what a run meets: register values, accounts and
+/// data, what a callee returns). A structural error means the verifier and the executor disagree.
+///
+/// The split is the documented one in `certora/ballista-specs/src/rules/oracle.rs`, kept here as
+/// the fuzzer's own list so neither oracle silently follows the other:
+///
+/// | Kind | Structural when |
+/// | --- | --- |
+/// | 6002 `InvalidTemplateProgram`, 6011 `InvalidRegister`, 6016 `CpiDataTooLarge` | always |
+/// | 6012 `TypeMismatch` | the failing instruction does not decode a `bool` from bytes |
+/// | 6009 `InvalidRuntimeAccount` | not a typed account read at a dynamic offset, and not a typed read at a fixed offset after the run made a CPI |
+/// | 6013-6015, 6017-6019, 6021-6026 | never (value-dependent) |
+/// | 6000, 6001, 6003-6008, 6010, 6020 | not checked: raised before or outside execution, with an index, not a pc |
+///
+/// The one refinement over oracle.rs, whose split assumes the state a run validated before its
+/// first instruction: a fixed-offset read is in bounds because validation checked the declared
+/// minimum length, but a callee that owns the account may shrink it in a CPI (the probe's
+/// `RESIZE_FIRST` does), after which the read legitimately fails (critic: "post-CPI
+/// realloc/close/reassign"). So after any CPI that error counts as value-dependent.
+fn structural(program: &ProgramView, kind: u32, pc: usize, made_cpi: bool) -> bool {
+    let instruction = program.instructions.get(pc);
+    match kind {
+        6002 | 6011 | 6016 => true,
+        6012 => !instruction.is_some_and(decodes_a_bool),
+        6009 => match instruction {
+            Some(record) if typed_account_read(record.opcode) => {
+                record.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET == 0 && !made_cpi
+            }
+            Some(_) => true,
+            None => false,
+        },
+        _ => false,
+    }
+}
+
+/// The typed reads of account data.
+fn typed_account_read(opcode: u8) -> bool {
+    matches!(
+        opcode,
+        OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I64 | OP_READ_I32 | OP_READ_U128 | OP_READ_PUBKEY | OP_READ_BOOL
+    )
+}
+
+/// Whether `instruction` decodes a `bool` from bytes, which fails on any byte but 0 and 1: a typed
+/// account read, and a return-data, instruction-data or registry-field read whose read opcode is
+/// `READ_BOOL` (the operand `a`, the immediate, and byte 2 of the immediate, respectively).
+fn decodes_a_bool(instruction: &InstructionRecord) -> bool {
+    match instruction.opcode {
+        OP_READ_BOOL => true,
+        OP_RETURN_DATA => instruction.a == OP_READ_BOOL,
+        OP_READ_INSTRUCTION_DATA => instruction.immediate() == u64::from(OP_READ_BOOL),
+        OP_READ_REGISTRY => (instruction.immediate() >> 16) as u8 == OP_READ_BOOL,
+        _ => false,
+    }
+}
+
+fn structural_failure(plan: &TemplatePlan, outcome: &RunOutcome, trace: &LogTrace, report: &mut Report) {
+    let TransactionProgramResult::Failure(index, ProgramError::Custom(raw)) = &outcome.result.program_result else { return };
+    let (kind, context) = (raw & 0xffff, (raw >> 16) as usize);
+    if *index != outcome.top_index || !(6000..=6026).contains(&kind) {
+        return;
+    }
+    if matches!(kind, 6000 | 6001 | 6003..=6008 | 6010 | 6020) {
+        return;
+    }
+    report.compared.classified_failure = true;
+    let Ok(program) = ProgramView::parse(&plan.bytes) else { return };
+    if structural(&program, kind, context, trace.made_cpi) {
+        let opcode = program.instructions.get(context).map(|record| record.opcode);
+        report.hard(format!(
+            "a verified template failed with structural error {kind} at pc {context} (opcode {opcode:?}, made a CPI: {})",
+            trace.made_cpi
+        ));
+    }
 }
 
 fn result_account<'a>(result: &'a TransactionResult, key: &Pubkey) -> Option<&'a Account> {
@@ -248,23 +400,67 @@ fn account_set_and_programs(
     }
 }
 
-/// The scenario as the reference model reads it: runtime accounts in slot order, pre-run state.
+/// The scenario as the reference model reads it: runtime accounts in slot order, in the state the
+/// run meets them, with the flags Ballista sees.
 struct ScenarioAccounts<'a> {
     scenario: &'a Scenario,
+    /// Accounts a probe instruction before the run may have changed: the model treats their data
+    /// and lamports as unknown.
+    dirty: HashSet<[u8; 32]>,
+    /// Ballista's own view of each runtime account's writable flag.
+    writable: Vec<bool>,
 }
 
-impl ScenarioAccounts<'_> {
-    /// The template, registry-entry and Instructions-sysvar accounts hold live data (the finalized
-    /// payload, the entry header, the transaction's instructions) the generated pool does not
-    /// mirror, so the model treats their data and lamports as unknown; key and owner stay
-    /// predictable.
-    fn live_only(&self, index: usize) -> bool {
+impl<'a> ScenarioAccounts<'a> {
+    fn new(scenario: &'a Scenario, outcome: &RunOutcome) -> Self {
+        let mut dirty = HashSet::new();
+        for extra in &scenario.before {
+            // NOOP changes nothing; WRITE_FIRST and RESIZE_FIRST change the first account's data,
+            // TRANSFER the first two accounts' lamports.
+            if extra.data.first().is_some_and(|&op| op != probe::NOOP) {
+                for &index in extra.accounts.iter().take(2) {
+                    dirty.insert(scenario.pool[index].address);
+                }
+            }
+        }
+        let writable = ballista_writable(scenario, outcome);
+        Self { scenario, dirty, writable }
+    }
+
+    /// The template and the Instructions sysvar hold live data (the finalized payload, the
+    /// transaction's instructions) the generated pool does not mirror, so the model treats their
+    /// data and lamports as unknown; key and owner stay predictable. So does an account a probe
+    /// instruction before the run touched.
+    fn unknown(&self, index: usize) -> bool {
         self.scenario
             .slots
             .get(index)
-            .map(|&i| matches!(self.scenario.pool[i].kind, Kind::Template | Kind::Entry { .. } | Kind::Sysvar))
+            .map(|&i| {
+                matches!(self.scenario.pool[i].kind, Kind::Template | Kind::Sysvar) || self.dirty.contains(&self.scenario.pool[i].address)
+            })
             .unwrap_or(false)
     }
+}
+
+/// Ballista's view of each runtime account's writable flag. A top-level run sees the transaction's
+/// flag. A wrapped run sees what the probe forwarded: the transaction's flag, cleared where the
+/// probe's policy demotes that forwarded position, and merged over every forwarded copy of the same
+/// address, as the runtime merges a CPI's duplicate accounts.
+fn ballista_writable(scenario: &Scenario, outcome: &RunOutcome) -> Vec<bool> {
+    let pool = |index: usize| &scenario.pool[index];
+    let policy = match (outcome.wrapped, scenario.wrap) {
+        (true, Some(policy)) => policy,
+        _ => return scenario.slots.iter().map(|&index| pool(index).writable).collect(),
+    };
+    // The probe forwards the template first, then every runtime account; `reinvoke` demotes
+    // forwarded position `n` when bit `n` of the policy is set, for `n` below 8.
+    let forwarded: Vec<usize> = std::iter::once(scenario.template).chain(scenario.slots.iter().copied()).collect();
+    let mut by_address: HashMap<[u8; 32], bool> = HashMap::new();
+    for (position, &index) in forwarded.iter().enumerate() {
+        let demoted = position < 8 && policy & (1 << position) != 0;
+        *by_address.entry(pool(index).address).or_default() |= pool(index).writable && !demoted;
+    }
+    scenario.slots.iter().map(|&index| by_address[&pool(index).address]).collect()
 }
 
 impl Accounts for ScenarioAccounts<'_> {
@@ -281,19 +477,19 @@ impl Accounts for ScenarioAccounts<'_> {
         Some(self.scenario.pool[i].owner)
     }
     fn lamports(&self, index: usize) -> Option<u64> {
-        if self.live_only(index) {
+        if self.unknown(index) {
             return None;
         }
         self.scenario.slots.get(index).map(|&i| self.scenario.pool[i].lamports)
     }
     fn data(&self, index: usize) -> Option<&[u8]> {
-        if self.live_only(index) {
+        if self.unknown(index) {
             return None;
         }
         self.scenario.slots.get(index).map(|&i| self.scenario.pool[i].data.as_slice())
     }
     fn is_writable(&self, index: usize) -> Option<bool> {
-        self.scenario.slots.get(index).map(|&i| self.scenario.pool[i].writable)
+        self.writable.get(index).copied()
     }
     fn executable(&self, index: usize) -> Option<bool> {
         self.scenario.slots.get(index).map(|&i| self.scenario.pool[i].executable)
@@ -303,62 +499,121 @@ impl Accounts for ScenarioAccounts<'_> {
     }
 }
 
-/// Compares the run's cross-program invocations with what the independent model predicts, when the
-/// model ran the template with concrete control flow. Restricted to templates with no registry
-/// opens (whose entry-creation CPIs the model does not predict) and at most one account group
-/// (the model forwards only a single group exactly).
+/// The flags the callee sees for each of a CPI's accounts: the runtime merges a CPI's duplicate
+/// accounts, so every copy of an address carries the union of the flags its metas asked for.
+fn received_flags(metas: &[ExpectedMeta]) -> Vec<u8> {
+    let mut merged: HashMap<[u8; 32], u8> = HashMap::new();
+    for meta in metas {
+        *merged.entry(meta.address).or_default() |= u8::from(meta.signer) | 2 * u8::from(meta.writable);
+    }
+    metas.iter().map(|meta| merged[&meta.address]).collect()
+}
+
+/// Compares the run with what the independent model predicts, whenever the model can follow the
+/// run with concrete control flow. Not for scenarios with a deliberate mutation, which change the
+/// account layout or the run data the model reads.
+///
+/// A successful run must match a [`Prediction::Calls`] exactly: the same CPIs in the same order,
+/// each to the same program with the same accounts, the same data where the model knows it, and,
+/// for a probe call, the same flags as the probe logged receiving; and the same return data. A
+/// [`Prediction::Fails`] must meet a failed run.
+#[allow(clippy::too_many_arguments)]
 fn reference_model(
     harness: &Harness,
     world: &World,
     plan: &TemplatePlan,
     scenario: &Scenario,
-    _template: &Pubkey,
     inputs: &[InputVal],
     outcome: &RunOutcome,
+    trace: &LogTrace,
     report: &mut Report,
 ) {
-    // The model predicts a run from the template's declarations. It cannot follow a scenario whose
-    // deliberate mutation changed the account layout or iteration count, nor registry-open runs
-    // (whose entry-creation CPIs it does not model), nor more than one account group.
-    if !plan.opens.is_empty() || plan.groups > 1 || scenario.mutation.is_some() || !harness.has_probe {
-        return;
+    let succeeded = outcome.result.program_result.is_ok();
+    let skip = |report: &mut Report, reason: &str| {
+        if succeeded {
+            report.skipped = Some(reason.to_string());
+        }
+    };
+    if !harness.has_probe {
+        return skip(report, "no probe");
     }
-    let bytes = &plan.bytes;
-    let Ok(program) = ballista_common::template::ProgramView::parse(bytes) else { return };
+    if scenario.mutation.is_some() {
+        return skip(report, "mutation");
+    }
+    let Ok(program) = ProgramView::parse(&plan.bytes) else { return skip(report, "unparsable") };
     if std::env::var("FV_DUMP").is_ok() {
-        eprintln!("dump: iterations={} groups={} fixed={} rows={} inputs={:?}", scenario.iterations, plan.groups, plan.fixed.len(), plan.row.len(), inputs);
+        eprintln!("dump: iterations={} groups={:?} fixed={} rows={} inputs={:?}", scenario.iterations, scenario.group_lengths, plan.fixed.len(), plan.row.len(), inputs);
         for (slot, &i) in scenario.slots.iter().enumerate() {
             let spec = &scenario.pool[i];
-            eprintln!("  slot {slot}: kind={:?} exec={} data_len={} writable={}", spec.kind, spec.executable, spec.data.len(), spec.writable);
+            eprintln!("  slot {slot}: kind={:?} exec={} data_len={} writable={} signer={}", spec.kind, spec.executable, spec.data.len(), spec.writable, spec.signer);
         }
         for (index, record) in program.instructions.iter().enumerate() {
-            eprintln!("  [{index}] op={} dst={} a={} b={} c={} imm={}", record.opcode, record.dst, record.a, record.b, record.c, record.immediate());
+            eprintln!("  [{index}] op={} dst={} a={} b={} c={} flags={} imm={}", record.opcode, record.dst, record.a, record.b, record.c, record.flags, record.immediate());
         }
     }
-    let accounts = ScenarioAccounts { scenario };
-    let prediction = model::predict(
-        &program,
-        &accounts,
+    let accounts = ScenarioAccounts::new(scenario, outcome);
+    let rent = |len: usize| harness.rent_minimum(len);
+    let context = RunContext {
         inputs,
-        scenario.iterations,
-        super::harness::CLOCK_SLOT,
-        super::harness::CLOCK_TIMESTAMP,
-    );
-    let (expected, return_data) = match prediction {
-        Prediction::Calls { cpis, return_data, .. } => (cpis, return_data),
-        Prediction::Indeterminate(_) => return,
-        Prediction::Fails(reason) => {
-            report.soft(format!("model predicted failure ({reason}) but the run succeeded"));
+        iterations: scenario.iterations,
+        group_lengths: &scenario.group_lengths,
+        clock_slot: super::harness::CLOCK_SLOT,
+        clock_timestamp: super::harness::CLOCK_TIMESTAMP,
+        rent: &rent,
+        ballista: world.ballista,
+    };
+    let prediction = model::predict(&program, &accounts, &context);
+    // The Ballista code and pc of a failure inside execution, past the run's account and input
+    // checks: the only failures the model can speak to.
+    let executing = match &outcome.result.program_result {
+        TransactionProgramResult::Failure(index, ProgramError::Custom(raw)) if *index == outcome.top_index => {
+            let kind = raw & 0xffff;
+            ((6000..=6026).contains(&kind) && !matches!(kind, 6000..=6008 | 6010 | 6020)).then_some((kind, (raw >> 16) as usize))
+        }
+        _ => None,
+    };
+    let (expected, emits, return_data, loop_passes) = match prediction {
+        Prediction::Calls { exact, .. } if !succeeded => {
+            // The model predicts only what the template computes; a run also fails for reasons it
+            // does not follow (account validation, a callee's refusal, compute). But when it knew
+            // every value and the run made no call, nothing inside execution can fail.
+            if let (true, Some((kind, pc))) = (exact, executing) {
+                report.hard(format!(
+                    "the model ran the template on known values without a call or a failure, but the run failed with {kind} at pc {pc}"
+                ));
+            }
+            return;
+        }
+        Prediction::Calls { cpis, emits, return_data, loop_passes, .. } => (cpis, emits, return_data, loop_passes),
+        Prediction::Indeterminate(reason) => return skip(report, reason),
+        Prediction::Fails(failure) => {
+            if succeeded {
+                report.hard(format!(
+                    "the model predicted a failure ({}, {} at pc {}) but the run succeeded",
+                    failure.reason, failure.kind, failure.pc
+                ));
+                return;
+            }
+            report.compared.predicted_failure = true;
+            if let (true, Some((kind, pc))) = (failure.exact, executing) {
+                if (kind, pc) == (failure.kind, failure.pc) {
+                    report.compared.exact_failure = true;
+                } else {
+                    report.hard(format!(
+                        "the run failed with {kind} at pc {pc}, but the model, which knew every value up to it, \
+                         predicted {} at pc {} ({})",
+                        failure.kind, failure.pc, failure.reason
+                    ));
+                }
+            }
             return;
         }
     };
     let captured = captured_cpis(outcome);
-    report.model_compared = true;
-    report.cpis_compared = expected.len().min(captured.len());
     if captured.len() != expected.len() {
         let captured_programs: Vec<_> = captured.iter().map(|cpi| program_of(world, &cpi.program)).collect();
-        report.soft(format!(
-            "CPI count mismatch: model {} vs run {} (iterations={}, calls={:?}, captured={:?})",
+        report.hard(format!(
+            "CPI count: model {} vs run {} (iterations={}, calls={:?}, captured={:?})",
             expected.len(),
             captured.len(),
             scenario.iterations,
@@ -367,20 +622,50 @@ fn reference_model(
         ));
         return;
     }
+    let mut probe_calls = trace.probe_flags.iter();
     for (index, (want, got)) in expected.iter().zip(&captured).enumerate() {
         let want_program = Pubkey::new_from_array(want.program);
         if want_program != got.program {
-            report.soft(format!("CPI {index} program: model {want_program} vs run {}", got.program));
+            report.hard(format!("CPI {index} program: model {want_program} vs run {}", got.program));
             continue;
         }
         let want_accounts: Vec<Pubkey> = want.accounts.iter().map(|meta| Pubkey::new_from_array(meta.address)).collect();
         if want_accounts != got.accounts {
-            report.soft(format!("CPI {index} accounts differ: model {want_accounts:?} vs run {:?}", got.accounts));
+            report.hard(format!("CPI {index} accounts: model {want_accounts:?} vs run {:?}", got.accounts));
             continue;
         }
         if let CpiData::Concrete(data) = &want.data {
             if data != &got.data {
-                report.soft(format!("CPI {index} data: model {:02x?} vs run {:02x?}", data, got.data));
+                report.hard(format!("CPI {index} data: model {:02x?} vs run {:02x?}", data, got.data));
+            }
+            report.compared.data += 1;
+        }
+        if got.program == PROBE_ID || got.program == PROBE_COPY_ID {
+            let want_flags = received_flags(&want.accounts);
+            match probe_calls.next() {
+                Some(flags) if *flags == want_flags => report.compared.flags += 1,
+                Some(flags) => report.hard(format!(
+                    "CPI {index} flags (bit 0 signer, bit 1 writable): model {want_flags:?} vs probe received {flags:?}"
+                )),
+                None => report.hard(format!("CPI {index} to the probe logged no flags")),
+            }
+        }
+        report.compared.cpis += 1;
+        report.compared.row_program_cpis += usize::from(want.row_program);
+        report.compared.wide_cpis += usize::from(want.accounts.len() >= 16);
+    }
+    // Every EMIT line, in order: the run's own Program data lines other than the run event.
+    let (lines, _) = run_data_lines(outcome);
+    let logged: Vec<&Vec<u8>> = lines.iter().filter(|line| !line.starts_with(b"BEV")).collect();
+    if logged.len() != emits.len() {
+        report.hard(format!("EMIT count: model {} vs run {}", emits.len(), logged.len()));
+    } else {
+        for (index, (want, got)) in emits.iter().zip(logged).enumerate() {
+            if let CpiData::Concrete(bytes) = want {
+                if bytes != got {
+                    report.hard(format!("EMIT {index}: model {bytes:02x?} vs run {got:02x?}"));
+                }
+                report.compared.emits += 1;
             }
         }
     }
@@ -389,14 +674,13 @@ fn reference_model(
     if plan.sets_return_data && scenario.after.is_empty() && !outcome.wrapped {
         if let CpiData::Concrete(bytes) = return_data {
             if bytes != outcome.result.return_data {
-                report.soft(format!(
-                    "return data: model {:02x?} vs run {:02x?}",
-                    bytes, outcome.result.return_data
-                ));
+                report.hard(format!("return data: model {:02x?} vs run {:02x?}", bytes, outcome.result.return_data));
             }
+            report.compared.return_data = true;
         }
     }
-    let _ = world;
+    report.compared.run = true;
+    report.compared.loop_passes = loop_passes;
 }
 
 /// The output rules (reference/language.md, Output; wire-format.md, Run event), checked against
@@ -406,33 +690,9 @@ fn reference_model(
 /// naming this template and the row count; one that does not, logs none. Every line is at most
 /// 1,024 bytes, and the run's return data too.
 fn output_rules(plan: &TemplatePlan, scenario: &Scenario, template: &Pubkey, outcome: &RunOutcome, report: &mut Report) {
-    use base64::Engine as _;
-    let run_height = outcome.ballista_cpi_height - 1;
-    let ballista = super::harness::BALLISTA_ID.to_string();
-    let mut stack: Vec<(String, u32)> = Vec::new();
-    let mut lines: Vec<Vec<u8>> = Vec::new();
-    for line in &outcome.logs {
-        if let Some(fields) = line.strip_prefix("Program data: ") {
-            let innermost_is_run = stack.last().is_some_and(|(id, height)| *id == ballista && *height == run_height);
-            if innermost_is_run {
-                let parts: Vec<&str> = fields.split(' ').collect();
-                if parts.len() != 1 {
-                    report.hard(format!("a run's Program data line holds {} fields, not one", parts.len()));
-                }
-                match base64::engine::general_purpose::STANDARD.decode(parts[0]) {
-                    Ok(bytes) => lines.push(bytes),
-                    Err(_) => report.hard("a run's Program data line is not base64".to_string()),
-                }
-            }
-            continue;
-        }
-        let Some(rest) = line.strip_prefix("Program ") else { continue };
-        let Some((id, tail)) = rest.split_once(' ') else { continue };
-        if let Some(height) = tail.strip_prefix("invoke [").and_then(|t| t.strip_suffix(']')) {
-            stack.push((id.to_string(), height.parse().unwrap_or(0)));
-        } else if tail == "success" || tail.starts_with("failed") {
-            stack.pop();
-        }
+    let (lines, malformed) = run_data_lines(outcome);
+    for problem in malformed {
+        report.hard(problem);
     }
 
     let events: Vec<&Vec<u8>> = lines.iter().filter(|bytes| bytes.starts_with(b"BEV")).collect();
@@ -483,6 +743,41 @@ fn output_rules(plan: &TemplatePlan, scenario: &Scenario, template: &Pubkey, out
     if outcome.result.return_data.len() > ballista_common::template::MAX_RETURN_DATA_LEN {
         report.hard(format!("return data of {} bytes exceeds 1,024", outcome.result.return_data.len()));
     }
+}
+
+/// The run's own `Program data:` lines, decoded, in order: those logged while the run's invocation
+/// is innermost, not a nested run's. Also what is malformed about any of them.
+fn run_data_lines(outcome: &RunOutcome) -> (Vec<Vec<u8>>, Vec<String>) {
+    use base64::Engine as _;
+    let run_height = outcome.ballista_cpi_height - 1;
+    let ballista = super::harness::BALLISTA_ID.to_string();
+    let mut stack: Vec<(String, u32)> = Vec::new();
+    let mut lines: Vec<Vec<u8>> = Vec::new();
+    let mut malformed = Vec::new();
+    for line in &outcome.logs {
+        if let Some(fields) = line.strip_prefix("Program data: ") {
+            let innermost_is_run = stack.last().is_some_and(|(id, height)| *id == ballista && *height == run_height);
+            if innermost_is_run {
+                let parts: Vec<&str> = fields.split(' ').collect();
+                if parts.len() != 1 {
+                    malformed.push(format!("a run's Program data line holds {} fields, not one", parts.len()));
+                }
+                match base64::engine::general_purpose::STANDARD.decode(parts[0]) {
+                    Ok(bytes) => lines.push(bytes),
+                    Err(_) => malformed.push("a run's Program data line is not base64".to_string()),
+                }
+            }
+            continue;
+        }
+        let Some(rest) = line.strip_prefix("Program ") else { continue };
+        let Some((id, tail)) = rest.split_once(' ') else { continue };
+        if let Some(height) = tail.strip_prefix("invoke [").and_then(|t| t.strip_suffix(']')) {
+            stack.push((id.to_string(), height.parse().unwrap_or(0)));
+        } else if tail == "success" || tail.starts_with("failed") {
+            stack.pop();
+        }
+    }
+    (lines, malformed)
 }
 
 /// Decodes a scenario's run inputs into the model's input values, mirroring the executor's

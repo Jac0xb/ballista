@@ -6,9 +6,12 @@ on:
     branches: [main]
   schedule:
     - cron: '17 6 * * *'
+  # Runs the nightly jobs on demand too.
+  workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # The event is part of the group, so a push to main does not cancel the nightly run.
+  group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -44,12 +47,21 @@ jobs:
           workspaces: |
             . -> target
             tests/ballista -> tests/ballista/target
+            fuzz-executor -> fuzz-executor/target
       - name: Install Solana platform tools
         # Agave 4.1 ships platform tools v1.54 (rustc 1.89), which pinocchio 0.11 requires.
         run: |
           sh -c "$(curl -sSfL https://release.anza.xyz/v4.1.0/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
       - run: cargo build-sbf --manifest-path programs/ballista/Cargo.toml
+      - name: Release hash
+        # Not gating yet: fixtures/program-sha256.txt records the hash of a local macOS build, and
+        # no CI run has yet confirmed that this Linux build produces the same bytes. Once one
+        # matches, drop continue-on-error so a binary change needs a deliberate fixture update.
+        continue-on-error: true
+        run: scripts/program-hash.sh
+      # The executor fuzz loop calls this test program; without it the loop refuses to run.
+      - run: cargo build-sbf --manifest-path fuzz-executor/probe/Cargo.toml
       - run: cargo test --manifest-path tests/ballista/Cargo.toml
 
   protocols:
@@ -90,9 +102,11 @@ jobs:
       - run: cargo build-sbf --manifest-path programs/ballista/Cargo.toml
       - run: cargo test --manifest-path tests/protocols/Cargo.toml
 
+  # ---- Nightly: long fuzzing, property and mutation runs ------------------------------------
+
   nightly-properties:
     name: Extended property tests
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       PROPTEST_CASES: 4096
@@ -100,4 +114,199 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p ballista-common --test no_panic --test generated
+      # The property tests only exist with the `proptest` feature; without it this ran nothing.
+      - run: cargo test -p ballista-common --features proptest --test no_panic --test generated
+
+  nightly-verifier-fuzz:
+    name: Verifier fuzz target ${{ matrix.target }}
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parse, verify, structured, differential]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz -> fuzz/target
+          key: ${{ matrix.target }}
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      # Fifteen minutes from the committed seeds, with AddressSanitizer, which works on Linux
+      # (it hangs at startup on macOS, hence run.sh's default of none). libFuzzer exits non-zero
+      # on a crash, which fails the job.
+      - name: Fuzz for 15 minutes
+        env:
+          FUZZ_SANITIZER: address
+        run: fuzz/scripts/run.sh ${{ matrix.target }} 900
+      - name: Keep the crash
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verifier-fuzz-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+
+  nightly-executor-fuzz:
+    name: Executor fuzz, 20,000 seeds on mainnet features
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      BALLISTA_MAINNET_FEATURES: 1
+      FV_CASES: 20000
+      # Mollusk logs every runtime message at debug level, tens of megabytes over a long run.
+      RUST_LOG: error
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            tests/ballista -> tests/ballista/target
+            fuzz-executor -> fuzz-executor/target
+      - name: Install Solana platform tools
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v4.1.0/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - run: cargo build-sbf --manifest-path programs/ballista/Cargo.toml
+      - run: cargo build-sbf --manifest-path fuzz-executor/probe/Cargo.toml
+      # Templates at the format's limits: 128 instructions, 64 registers, 64 worst-case CPIs,
+      # 64 accounts in one CPI, and CPIs into row-account programs.
+      - name: Limits mode
+        env:
+          FV_LIMITS: 1
+        run: cargo test --manifest-path tests/ballista/Cargo.toml fuzz_executor_differential -- --nocapture
+      - name: Normal mode
+        run: cargo test --manifest-path tests/ballista/Cargo.toml fuzz_executor_differential -- --nocapture
+
+  nightly-compiler-fuzz:
+    name: Compiler fuzz, 20,000 seeds
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      RUST_LOG: error
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            tests/ballista -> tests/ballista/target
+      - name: Install Solana platform tools
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v4.1.0/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - run: pnpm install --frozen-lockfile
+      - run: cargo build-sbf --manifest-path programs/ballista/Cargo.toml
+      # The generator, mutator and replay check in TypeScript, writing every case to a corpus...
+      - name: Compile 20,000 seeds
+        env:
+          FUZZ_SEEDS: 20000
+          FUZZ_CORPUS: ${{ runner.temp }}/compiler-corpus.json
+        run: pnpm --dir clients/js exec vitest run src/compiler-fuzz.test.ts
+      # ...that the verifier must accept, and that must run the same in Mollusk with and without
+      # register reuse.
+      - name: Verify the corpus
+        env:
+          COMPILER_FUZZ_CORPUS: ${{ runner.temp }}/compiler-corpus.json
+        run: cargo test -p ballista-common --test compiler_corpus
+      - name: Run the corpus in Mollusk
+        env:
+          COMPILER_FUZZ_CORPUS: ${{ runner.temp }}/compiler-corpus.json
+        run: cargo test --manifest-path tests/ballista/Cargo.toml compiler_fuzz -- --nocapture
+
+  nightly-mutants-list:
+    name: List the executor mutants
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      mutants: ${{ steps.list.outputs.mutants }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: list
+        run: |
+          names=$(python3 scripts/critic/mutate2.py --list)
+          echo "mutants=$(echo "$names" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read().split()))')" \
+            >> "$GITHUB_OUTPUT"
+
+  nightly-mutants:
+    name: Executor mutant ${{ matrix.mutant }}
+    needs: nightly-mutants-list
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      RUST_LOG: error
+    strategy:
+      fail-fast: false
+      matrix:
+        mutant: ${{ fromJSON(needs.nightly-mutants-list.outputs.mutants) }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: List the LFS objects
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-objects
+      - name: Restore the LFS objects
+        uses: actions/cache/restore@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-objects') }}
+      - run: git lfs pull
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            tests/ballista -> tests/ballista/target
+            tests/protocols -> tests/protocols/target
+            fuzz-executor -> fuzz-executor/target
+      - name: Install Solana platform tools
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v4.1.0/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - run: cargo build-sbf --manifest-path programs/ballista/Cargo.toml
+      - run: cargo build-sbf --manifest-path fuzz-executor/probe/Cargo.toml
+      # Applies the mutant, rebuilds, runs the Mollusk (with the executor fuzz loop), protocol and
+      # host suites, restores the source and checks the rebuilt binary is byte-identical. Fails
+      # unless some behaviour test caught the mutant: one that only a compute-unit ceiling notices
+      # counts as a survivor (scripts/critic/mutant_verdict.py).
+      - name: Run the suites against the mutant
+        env:
+          MUTANTS_DIR: ${{ runner.temp }}/mutants
+        run: scripts/critic/run-mutant2.sh ${{ matrix.mutant }} mollusk protocols host
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutant-${{ matrix.mutant }}
+          path: ${{ runner.temp }}/mutants
+
+  nightly-verifier-mutants:
+    name: Verifier mutants
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz -> fuzz/target
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      # Each mutant deletes one verifier rule in a throwaway worktree; the support crate's stable
+      # tests and two minutes of the structured target must catch it. Exits 1 on a survivor.
+      - name: Run the verifier mutants
+        env:
+          MUTANTS_DIR: ${{ runner.temp }}/verifier-mutants
+        run: python3 fuzz/scripts/mutants.py 120

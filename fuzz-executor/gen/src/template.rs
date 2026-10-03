@@ -45,9 +45,13 @@ pub enum Program {
     Probe,
     Ballista,
     Token,
+    /// The probe's program loaded at a second address, so a batch can call a different program
+    /// in each row with the same data and every call succeeds: what a CPI into a row-account
+    /// program needs to be checked per row.
+    ProbeCopy,
 }
 
-pub const ALL_PROGRAMS: [Program; 4] = [Program::System, Program::Probe, Program::Ballista, Program::Token];
+pub const ALL_PROGRAMS: [Program; 5] = [Program::System, Program::Probe, Program::Ballista, Program::Token, Program::ProbeCopy];
 
 /// Addresses the generators know about. The harness creates every one of these accounts.
 #[derive(Clone, Debug)]
@@ -55,6 +59,9 @@ pub struct World {
     pub ballista: [u8; 32],
     pub probe: [u8; 32],
     pub token: [u8; 32],
+    /// Where the harness loads the probe a second time: the probe's address with its last byte
+    /// flipped.
+    pub probe_copy: [u8; 32],
     /// System-owned accounts a template may pin by address.
     pub users: Vec<[u8; 32]>,
     /// Probe-owned accounts a template may pin by address.
@@ -69,10 +76,13 @@ impl World {
             address[31] = 0x5a;
             address
         };
+        let mut probe_copy = probe;
+        probe_copy[31] ^= 0xff;
         Self {
             ballista,
             probe,
             token,
+            probe_copy,
             users: (0..6).map(|index| tagged(0xa1, index)).collect(),
             probe_data: (0..4).map(|index| tagged(0xb2, index)).collect(),
         }
@@ -84,6 +94,7 @@ impl World {
             Program::Probe => self.probe,
             Program::Ballista => self.ballista,
             Program::Token => self.token,
+            Program::ProbeCopy => self.probe_copy,
         }
     }
 }
@@ -165,6 +176,10 @@ pub struct TemplatePlan {
     pub reads_clock: bool,
     /// True when generation overran a limit and the minimal fallback template was returned.
     pub fell_back: bool,
+    /// Half the templates, and their runs, avoid the deliberate faults: small constants and inputs,
+    /// counts and offsets in range, no probe failures or junk calls, valid accounts and run data.
+    /// So more runs succeed and the model compares them; the other half keeps every fault.
+    pub friendly: bool,
 }
 
 impl TemplatePlan {
@@ -268,9 +283,30 @@ struct ReturnShape {
 const INSTRUCTION_LIMIT: usize = 108;
 const REGISTER_LIMIT: u8 = 58;
 
+/// How far the template generator pushes the wire format.
+#[derive(Clone, Debug, Default)]
+pub struct Config {
+    /// Generate at the format's limits instead of well inside them; see [`Config::limits`].
+    pub limits: bool,
+}
+
+impl Config {
+    /// Templates at the format's limits: up to `MAX_VM_INSTRUCTIONS` (128) instructions and
+    /// `MAX_REGISTERS` (64) registers, invokes whose worst-case count reaches `MAX_EXPANDED_CPIS`
+    /// (64), CPIs listing up to `MAX_CPI_ACCOUNTS` (64) accounts, batches of up to 64 rows, and
+    /// batches whose rows name the program a CPI calls (a row account with the executable flag,
+    /// supplied as the probe or its copy, so each row may call a different program).
+    pub fn limits() -> Self {
+        Self { limits: true }
+    }
+}
+
 struct TemplateGen<'a, 'g> {
     g: &'a mut Gen<'g>,
     world: &'a World,
+    limits: bool,
+    instruction_limit: usize,
+    register_limit: u8,
     b: ProgramBuilder,
     plan: TemplatePlan,
     regs: Vec<Option<Ty>>,
@@ -290,9 +326,19 @@ struct TemplateGen<'a, 'g> {
 
 /// Generates one template. The result verifies unless the generator has a bug; callers check.
 pub fn generate_template(g: &mut Gen, world: &World) -> TemplatePlan {
+    generate_template_with(g, world, &Config::default())
+}
+
+/// Generates one template under `config`.
+pub fn generate_template_with(g: &mut Gen, world: &World, config: &Config) -> TemplatePlan {
     let mut generator = TemplateGen {
         g,
         world,
+        limits: config.limits,
+        // At the limits the whole instruction and register budget is the generator's; the
+        // epilogue's reserve below still keeps a forced loop and the output in reach.
+        instruction_limit: if config.limits { MAX_VM_INSTRUCTIONS } else { INSTRUCTION_LIMIT },
+        register_limit: if config.limits { MAX_REGISTERS as u8 - 3 } else { REGISTER_LIMIT },
         b: ProgramBuilder::new(),
         plan: TemplatePlan {
             bytes: Vec::new(),
@@ -311,6 +357,7 @@ pub fn generate_template(g: &mut Gen, world: &World) -> TemplatePlan {
             calls: Vec::new(),
             reads_clock: false,
             fell_back: false,
+            friendly: false,
         },
         regs: vec![None; MAX_REGISTERS],
         scope: Scope::Root,
@@ -356,11 +403,13 @@ fn minimal_plan() -> TemplatePlan {
         calls: Vec::new(),
         reads_clock: false,
         fell_back: true,
+        friendly: false,
     }
 }
 
 impl TemplateGen<'_, '_> {
     fn run(&mut self) {
+        self.plan.friendly = self.g.chance(1, 2);
         self.declare_accounts();
         self.declare_inputs();
         // Each open counts as three calls: creating a pre-funded entry takes three.
@@ -404,10 +453,69 @@ impl TemplateGen<'_, '_> {
         for _ in 0..self.g.below(3) {
             self.statement();
         }
+        // Half the templates end by logging their latest values, so what the template computed,
+        // and not just what it passed to a call, is compared with the model.
+        if self.g.chance(1, 2) {
+            let latest: Vec<u8> = (0..self.b.register_count()).rev().filter(|&r| self.regs[r as usize].is_some()).take(4).collect();
+            self.emit_registers(&latest);
+        }
+        if self.limits {
+            self.spend_cpi_budget();
+        }
         if self.g.chance(1, 3) && self.room(4) {
             self.emit_output(false);
         }
+        if self.limits {
+            self.fill_to_the_limits();
+        }
         self.plan.bytes = self.b.build().expect("generated templates stay under the payload limit");
+    }
+
+    /// At the limits: a `REPEAT` whose maximum is the whole CPI budget left, around one probe
+    /// call, so the worst-case invoke count reaches exactly `MAX_EXPANDED_CPIS`. Its count is
+    /// usually small, so a run makes a few of those calls and stays under the runtime's
+    /// instruction-trace limit of 64.
+    fn spend_cpi_budget(&mut self) {
+        let Some(probe) = self.program_slot(Program::Probe) else { return };
+        if self.cpi_budget == 0 || self.loops >= MAX_LOOPS || !self.room(6) || !self.g.chance(3, 4) {
+            return;
+        }
+        let max = self.cpi_budget.min(255);
+        let value = if self.g.chance(7, 8) { self.g.below(4) as u64 } else { self.g.below(max + 1) as u64 };
+        let count = self.b.const_u64(value);
+        self.define(count, Ty::U64);
+        self.mark();
+        let start = self.b.emit(record(OP_REPEAT, NO_INDEX, 0, count, max as u8, 0, 0));
+        let noop = self.b.blob(&[probe::NOOP]);
+        let cpi = self.b.cpi(probe, &[], &[Segment::Literal(noop)]);
+        self.b.set_cpi_max_data_len(cpi, 1);
+        self.b.invoke(cpi, None);
+        let body = self.b.instructions_mut().len() - start - 1;
+        self.b.instructions_mut()[start].a = body as u8;
+        self.loops += 1;
+        self.cpi_budget = 0;
+        if !self.plan.calls.contains(&Program::Probe) {
+            self.plan.calls.push(Program::Probe);
+        }
+    }
+
+    /// At the limits: constants until the register file is full, then requirements of a true
+    /// constant until the instruction count is, so the template's header and the executor's
+    /// register file sit at their maximum.
+    fn fill_to_the_limits(&mut self) {
+        if self.b.register_count() as usize >= MAX_REGISTERS || self.b.instructions_mut().len() >= MAX_VM_INSTRUCTIONS {
+            return;
+        }
+        let truth = self.b.const_bool(true);
+        self.define(truth, Ty::Bool);
+        while self.b.instructions_mut().len() < MAX_VM_INSTRUCTIONS {
+            if (self.b.register_count() as usize) < MAX_REGISTERS {
+                let ty = self.random_type();
+                self.constant(ty);
+            } else {
+                self.b.require(truth);
+            }
+        }
     }
 
     // ---- declarations -------------------------------------------------------------------------
@@ -426,7 +534,9 @@ impl TemplateGen<'_, '_> {
     fn declare_accounts(&mut self) {
         let world = self.world;
         let mut programs = Vec::new();
-        if self.g.chance(2, 3) {
+        // At the limits the probe is always there: it takes the many-account calls and spends the
+        // CPI budget.
+        if self.limits || self.g.chance(2, 3) {
             programs.push(Program::Probe);
         }
         if self.g.chance(1, 2) {
@@ -459,15 +569,28 @@ impl TemplateGen<'_, '_> {
             self.declare_registries();
         }
 
-        if self.g.chance(2, 5) {
-            let stride = self.g.range(1, 3);
-            for _ in 0..stride {
-                let slot = self.random_slot(true);
+        if self.g.chance(2, 5) || (self.limits && self.g.chance(1, 2)) {
+            let stride = if self.limits { self.g.range(1, 2) } else { self.g.range(1, 3) };
+            // At the limits, half the batches name a program in each row, which the body calls.
+            let program_row = self.limits && self.g.chance(1, 2);
+            for position in 0..stride {
+                let slot = if program_row && position == 0 {
+                    Slot { flags: ACCOUNT_EXECUTABLE, address: None, owner: None, min_len: 0, role: Role::Program(Program::Probe) }
+                } else {
+                    self.random_slot(true)
+                };
                 let reference = self.b.row_account(slot.flags, slot.address, slot.owner, slot.min_len);
                 debug_assert_eq!(reference & !ITERATION_ACCOUNT_BIT, self.plan.row.len() as u8);
                 self.plan.row.push(slot);
             }
-            let max = self.g.range(1, 5);
+            // At the limits, up to 64 rows when the runtime accounts allow: at most 120, and the
+            // fixed ones and the groups need room too.
+            let max = if self.limits && self.g.chance(1, 2) {
+                let room = 100usize.saturating_sub(self.plan.fixed.len()) / stride;
+                self.g.range(1, room.clamp(1, 64))
+            } else {
+                self.g.range(1, 5)
+            };
             let min = self.g.below(max + 1);
             self.plan.batch_max = max;
             self.plan.batch_min = min;
@@ -625,8 +748,8 @@ impl TemplateGen<'_, '_> {
     // ---- registers ----------------------------------------------------------------------------
 
     fn room(&mut self, instructions: usize) -> bool {
-        self.b.instructions_mut().len() + instructions + 8 <= INSTRUCTION_LIMIT
-            && self.b.register_count() < REGISTER_LIMIT
+        self.b.instructions_mut().len() + instructions + 8 <= self.instruction_limit
+            && self.b.register_count() < self.register_limit
     }
 
     fn of(&self, predicate: impl Fn(Ty) -> bool) -> Vec<u8> {
@@ -660,18 +783,19 @@ impl TemplateGen<'_, '_> {
     }
 
     fn constant(&mut self, ty: Ty) -> u8 {
+        let friendly = self.plan.friendly;
         let register = match ty {
             Ty::Bool => self.b.const_bool(self.g.chance(2, 3)),
             Ty::U64 => {
-                let value = self.g.interesting_u64();
+                let value = if friendly { self.g.below(1000) as u64 } else { self.g.interesting_u64() };
                 self.b.const_u64(value)
             }
             Ty::I64 => {
-                let value = self.g.interesting_i64();
+                let value = if friendly { self.g.below(2001) as i64 - 1000 } else { self.g.interesting_i64() };
                 self.b.const_i64(value)
             }
             Ty::U128 => {
-                let value = self.g.interesting_u128();
+                let value = if friendly { self.g.below(1000) as u128 } else { self.g.interesting_u128() };
                 self.b.const_u128(value)
             }
             Ty::Pubkey => {
@@ -744,7 +868,8 @@ impl TemplateGen<'_, '_> {
         if !self.room(3) {
             return;
         }
-        match self.g.weighted(&[14, 2, 5, 2, 2]) {
+        let invoke_weight = if self.limits { 9 } else { 5 };
+        match self.g.weighted(&[14, 2, invoke_weight, 2, 2]) {
             0 => self.value(),
             1 => self.require(),
             2 if self.opened.len() < self.plan.opens.len() => self.value(),
@@ -872,7 +997,14 @@ impl TemplateGen<'_, '_> {
         let candidates = self.readable();
         let Some((reference, slot)) = self.g.pick(&candidates) else { return };
         let read = READS[self.g.below(READS.len())];
-        let offset = if self.g.chance(3, 4) { self.small_u64(slot.min_len as usize + 40) } else { self.need(Ty::U64) };
+        let width = read_width(read);
+        let offset = if self.plan.friendly && slot.min_len as usize >= width {
+            self.small_u64(slot.min_len as usize - width + 1)
+        } else if self.g.chance(3, 4) {
+            self.small_u64(slot.min_len as usize + 40)
+        } else {
+            self.need(Ty::U64)
+        };
         let register = self.b.read_dynamic(read, reference, offset);
         self.define(register, Ty::from_read(read));
     }
@@ -886,8 +1018,14 @@ impl TemplateGen<'_, '_> {
             .filter(|(reference, slot)| reference & ITERATION_ACCOUNT_BIT != 0 || slot.flags & ACCOUNT_WRITABLE == 0)
             .collect();
         let Some((reference, slot)) = self.g.pick(&candidates) else { return };
-        let offset = if self.g.chance(3, 4) { self.small_u64(slot.min_len as usize + 24) } else { self.need(Ty::U64) };
         let len = self.g.range(1, 32) as u16;
+        let offset = if self.plan.friendly && slot.min_len >= len as u32 {
+            self.small_u64((slot.min_len - len as u32) as usize + 1)
+        } else if self.g.chance(3, 4) {
+            self.small_u64(slot.min_len as usize + 24)
+        } else {
+            self.need(Ty::U64)
+        };
         let register = self.b.read_account_bytes(reference, offset, len);
         self.define(register, Ty::Bytes(len));
     }
@@ -1057,7 +1195,7 @@ impl TemplateGen<'_, '_> {
         if !self.room(2) {
             return;
         }
-        let register = if self.g.chance(1, 2) {
+        let register = if !self.plan.friendly && self.g.chance(1, 2) {
             // A bump in range exercises `create_program_address`; occasionally an out-of-range
             // bump exercises the rejection path instead.
             let bump = if self.g.chance(9, 10) { self.small_u64(256) } else { self.need(Ty::U64) };
@@ -1236,24 +1374,31 @@ impl TemplateGen<'_, '_> {
         }
         let mut targets = Vec::new();
         for (program, weight) in [(Program::Probe, 6), (Program::System, 3), (Program::Token, 1), (Program::Ballista, 2)] {
-            if self.program_slot(program).is_some() {
-                targets.push((program, weight));
+            if let Some(slot) = self.program_slot(program) {
+                targets.push((program, slot, weight));
+            }
+        }
+        // In a batch loop, a row may name the program to call.
+        if self.scope == Scope::Rows {
+            for (offset, slot) in self.plan.row.iter().enumerate() {
+                if slot.role == Role::Program(Program::Probe) {
+                    targets.push((Program::Probe, ITERATION_ACCOUNT_BIT | offset as u8, 8));
+                }
             }
         }
         if targets.is_empty() {
             self.value();
             return;
         }
-        let weights: Vec<u32> = targets.iter().map(|(_, weight)| *weight).collect();
-        let program = targets[self.g.weighted(&weights)].0;
-        let program_slot = self.program_slot(program).expect("present");
+        let weights: Vec<u32> = targets.iter().map(|(_, _, weight)| *weight).collect();
+        let (program, program_slot, _) = targets[self.g.weighted(&weights)];
         let group = (self.plan.groups > 0 && self.g.chance(1, 2)).then(|| self.g.below(self.plan.groups) as u8);
 
         let mut segments = Vec::new();
         let mut max_len = 0usize;
         let mut returns: Option<usize> = None;
         let accounts = match program {
-            Program::Probe => {
+            Program::Probe | Program::ProbeCopy => {
                 let op = [
                     probe::NOOP,
                     probe::SET_RETURN,
@@ -1262,7 +1407,7 @@ impl TemplateGen<'_, '_> {
                     probe::FAIL,
                     probe::INVOKE,
                     probe::TRANSFER,
-                ][self.g.weighted(&[4, 6, 2, 1, 1, 1, 2])];
+                ][self.g.weighted(&[4, 6, 2, 1, if self.plan.friendly { 0 } else { 1 }, 1, 2])];
                 let mut prefix = vec![op];
                 if matches!(op, probe::RESIZE_FIRST | probe::FAIL | probe::TRANSFER | probe::INVOKE) {
                     prefix.push(self.g.u8());
@@ -1277,7 +1422,12 @@ impl TemplateGen<'_, '_> {
                 if op == probe::SET_RETURN {
                     returns = Some(max_len - 1);
                 }
-                let count = self.g.range(0, 4);
+                // At the limits, a quarter of the probe calls list 16 to 64 accounts.
+                let count = if self.limits && self.g.chance(1, 4) {
+                    self.g.range(16, MAX_CPI_ACCOUNTS)
+                } else {
+                    self.g.range(0, 4)
+                };
                 self.call_accounts(count)
             }
             Program::System => {
@@ -1309,6 +1459,10 @@ impl TemplateGen<'_, '_> {
                         segments.push(Segment::Register(DATA_REG_U64, amount));
                         max_len = 12;
                         vec![(from, ACCOUNT_SIGNER | ACCOUNT_WRITABLE), (to, ACCOUNT_WRITABLE)]
+                    }
+                    _ if self.plan.friendly => {
+                        self.value();
+                        return;
                     }
                     _ => {
                         // No transfer fits: send the System program junk, which it refuses.
@@ -1427,9 +1581,10 @@ impl TemplateGen<'_, '_> {
         let (passes, count) = if foreach {
             (self.plan.batch_max, None)
         } else {
-            let max = self.g.range(1, 6);
+            // At the limits a third of the count loops may run up to 64 passes.
+            let max = if self.limits && self.g.chance(1, 3) { self.g.range(1, 64) } else { self.g.range(1, 6) };
             let count = if self.g.chance(4, 5) {
-                let value = self.g.below(max + 2) as u64;
+                let value = if self.plan.friendly { self.g.below(max + 1) } else { self.g.below(max + 2) } as u64;
                 let register = self.b.const_u64(value);
                 self.define(register, Ty::U64)
             } else {
@@ -1462,16 +1617,54 @@ impl TemplateGen<'_, '_> {
         self.passes = passes;
         self.carried = carried.clone();
         self.after_invoke = None;
-        for _ in 0..self.g.range(1, 5) {
+
+        // Restore observers. A pass must start from the registers the loop started with, apart
+        // from the carried ones, and the code after the loop must see them too (`next_pass`).
+        // Half the bodies first EMIT a few registers set before the loop and later overwrite some
+        // of them, so a pass that does not restore shows a different line in the next pass; and
+        // half the loops EMIT what the body overwrote, and what it carried, after the loop. The
+        // model predicts every EMIT, so a wrong restore or carry is a mismatch.
+        let before_loop: Vec<u8> = (0..self.b.register_count()).filter(|&r| saved_regs[r as usize].is_some()).collect();
+        let observed: Vec<u8> = if !before_loop.is_empty() && self.g.chance(1, 2) {
+            let mut observed = Vec::new();
+            for _ in 0..self.g.range(1, 3) {
+                if let Some(register) = self.g.pick(&before_loop) {
+                    if !observed.contains(&register) {
+                        observed.push(register);
+                    }
+                }
+            }
+            self.emit_registers(&observed);
+            observed
+        } else {
+            Vec::new()
+        };
+
+        let statements = if self.limits { self.g.range(1, 8) } else { self.g.range(1, 5) };
+        for _ in 0..statements {
             if !self.room(4) { break; }
             self.statement();
+        }
+        // Overwrite an observed register that the loop does not carry, with any value: the
+        // restore puts its pre-loop value back, type included.
+        for &register in &observed {
+            if carried.contains(&register) || !self.room(3) || !self.g.chance(2, 3) {
+                continue;
+            }
+            let all = self.of(|_| true);
+            if let Some(source) = self.g.pick(&all) {
+                let ty = self.ty(source);
+                self.b.mov(register, source);
+                self.define(register, ty);
+            }
         }
         for register in &carried {
             if !self.room(2) {
                 break;
             }
             let ty = self.ty(*register);
-            let other = self.need(ty);
+            // Mostly a small step, so the sum seldom overflows and the run gets past the loop.
+            let other = if ty == Ty::U64 && self.g.chance(3, 4) { self.small_u64(10) } else { self.need(ty) };
             let sum = self.b.binary(OP_ADD, *register, other);
             self.define(sum, ty);
             self.b.mov(*register, sum);
@@ -1483,11 +1676,56 @@ impl TemplateGen<'_, '_> {
 
         let body = self.b.instructions_mut().len() - start - 1;
         self.b.instructions_mut()[start].a = body as u8;
+        // Registers set before the loop that its body writes: the ones the restore protects.
+        let written: Vec<u8> = self.b.instructions_mut()[start + 1..]
+            .iter()
+            .map(|record| record.dst)
+            .filter(|&dst| dst != NO_INDEX && (dst as usize) < MAX_REGISTERS && saved_regs[dst as usize].is_some())
+            .collect();
         self.loops += 1;
         self.regs = saved_regs;
         self.scope = saved_scope;
         self.passes = saved_passes;
         self.carried.clear();
         self.after_invoke = None;
+
+        if self.g.chance(1, 2) {
+            let mut after: Vec<u8> = Vec::new();
+            for register in written.into_iter().chain(carried) {
+                if !after.contains(&register) && after.len() < 4 {
+                    after.push(register);
+                }
+            }
+            self.emit_registers(&after);
+        }
+    }
+
+    /// An `EMIT` of a fresh tag and `registers`, each at its type's full width, so the line holds
+    /// their values exactly; a `bytes` register longer than 64 is left out.
+    fn emit_registers(&mut self, registers: &[u8]) {
+        if registers.is_empty() || !self.room(3) {
+            return;
+        }
+        let len = self.g.range(MIN_EMIT_TAG_LEN, 8);
+        let mut tag = self.g.bytes(len);
+        if tag.starts_with(&RUN_EVENT_TAG_FAMILY) {
+            tag[0] ^= 0x80;
+        }
+        let mut parts = vec![Segment::Literal(self.b.blob(&tag))];
+        for &register in registers {
+            let kind = match self.ty(register) {
+                Ty::Bool => DATA_REG_BOOL,
+                Ty::U64 => DATA_REG_U64,
+                Ty::I64 => DATA_REG_I64,
+                Ty::U128 => DATA_REG_U128,
+                Ty::Pubkey => DATA_REG_PUBKEY,
+                Ty::Bytes(len) if len <= 64 => DATA_REG_BYTES,
+                Ty::Bytes(_) => continue,
+            };
+            parts.push(Segment::Register(kind, register));
+        }
+        self.plan.emit_tags.push(tag);
+        self.mark();
+        self.b.emit_data(&parts);
     }
 }

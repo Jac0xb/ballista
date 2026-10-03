@@ -9,11 +9,13 @@
 //! - introspection reads.
 //!
 //! Opaque data taints the CPI data built from it, which the model marks [`CpiData::Opaque`] and the
-//! harness then skips comparing, while still checking the call's program and account privileges. A
-//! control-flow decision (a guard, a `repeat` count, a `require`, a `select`) that depends on an
-//! opaque value makes the whole prediction [`Prediction::Indeterminate`], and the harness falls
-//! back to its model-free checks for that run. Concrete control flow, which is the common case,
-//! yields a full [`Prediction::Calls`] the harness matches against the captured inner instructions.
+//! harness then skips comparing, while still checking the call's program, accounts and the flags
+//! each account is passed with. A control-flow decision (a guard, a `repeat` count, a `require`, a
+//! `select`) that depends on an opaque value makes the whole prediction
+//! [`Prediction::Indeterminate`], and the harness falls back to its model-free checks for that run.
+//! Concrete control flow, which is the common case, yields a full [`Prediction::Calls`] the harness
+//! matches against the captured inner instructions, or a [`Prediction::Fails`] the run must agree
+//! with. Every disagreement with a concrete prediction fails the fuzz test.
 
 use ballista_common::template::*;
 
@@ -24,6 +26,9 @@ pub struct ExpectedCpi {
     /// One meta per listed account, then the forwarded group members.
     pub accounts: Vec<ExpectedMeta>,
     pub data: CpiData,
+    /// Whether the descriptor named a row account as the program, so the program may differ by
+    /// batch row.
+    pub row_program: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,13 +47,46 @@ pub enum CpiData {
 
 #[derive(Clone, Debug)]
 pub enum Prediction {
-    /// The model ran the whole template with concrete control flow.
-    Calls { cpis: Vec<ExpectedCpi>, return_data: CpiData, sets_return_data: bool },
+    /// The model ran the whole template with concrete control flow: its CPIs in order, the bytes
+    /// of every `EMIT` line in order, and the return data. `loop_passes` counts the loop passes it
+    /// made, so the harness knows how often a loop's register restore was compared. `exact` says
+    /// the model knew every value and made no call, so no instruction can have failed: a run that
+    /// gets past its account checks must not fail with a Ballista code while it executes.
+    Calls { cpis: Vec<ExpectedCpi>, emits: Vec<CpiData>, return_data: CpiData, sets_return_data: bool, loop_passes: usize, exact: bool },
     /// A control-flow decision depended on an opaque value; only the model-free checks apply.
     Indeterminate(&'static str),
-    /// The model predicts the run fails. The harness treats a success here as a soft mismatch to
-    /// investigate, not a hard finding, since a model bug could cause it.
-    Fails(&'static str),
+    /// The model predicts the run fails, for a reason it computed from concrete values. A run that
+    /// succeeds anyway disagrees with the model, and the harness fails the test.
+    Fails(Failure),
+}
+
+/// A failure the model predicts: the reason, the Ballista error code the executor raises for it,
+/// and the instruction that raises it.
+#[derive(Clone, Debug)]
+pub struct Failure {
+    pub reason: &'static str,
+    /// The error kind, 6000 to 6026 (`BallistaError`), without the pc the run encodes above it.
+    pub kind: u32,
+    /// The failing instruction's index.
+    pub pc: usize,
+    /// Whether the model knew every value up to the failure and no call or registry access came
+    /// before it. Then a run that gets past its account checks and fails while it executes must
+    /// fail exactly here, with exactly this code.
+    pub exact: bool,
+}
+
+const ARITHMETIC_OVERFLOW: u32 = 6013;
+const DIVISION_BY_ZERO: u32 = 6014;
+const REQUIREMENT_FAILED: u32 = 6015;
+const INVALID_RUNTIME_ACCOUNT: u32 = 6009;
+const TYPE_MISMATCH: u32 = 6012;
+const LOOP_COUNT_EXCEEDED: u32 = 6022;
+const INSTRUCTION_OUT_OF_RANGE: u32 = 6023;
+const WRITABLE_ACCOUNT_BYTES_READ: u32 = 6024;
+
+/// A failure with the code the executor raises; `Model::step` fills in where.
+fn fails(reason: &'static str, kind: u32) -> Prediction {
+    Prediction::Fails(Failure { reason, kind, pc: usize::MAX, exact: false })
 }
 
 /// What the model needs to know about one runtime account, by its index among the run's accounts
@@ -102,47 +140,78 @@ impl InputVal {
     }
 }
 
+/// What a run meets besides its accounts: the run data's values and layout, the clock, the rent
+/// schedule and Ballista's own address.
+pub struct RunContext<'a> {
+    /// Decoded run input values, fixed first then one row per iteration.
+    pub inputs: &'a [InputVal],
+    /// Batch rows the run passes.
+    pub iterations: usize,
+    /// Each account group's length, from the run data's prefix.
+    pub group_lengths: &'a [u8],
+    pub clock_slot: u64,
+    pub clock_timestamp: i64,
+    /// The rent-exempt minimum balance for a data length, which an entry the run creates gets.
+    pub rent: &'a dyn Fn(usize) -> u64,
+    /// The program that owns the entries a run creates.
+    pub ballista: [u8; 32],
+}
+
 pub struct Model<'a, A: Accounts> {
     program: &'a ProgramView<'a>,
     accounts: &'a A,
     inputs: &'a [InputVal],
     iterations: usize,
+    group_lengths: &'a [u8],
     clock_slot: u64,
     clock_timestamp: i64,
+    rent: &'a dyn Fn(usize) -> u64,
+    ballista: [u8; 32],
     /// Once any CPI has run, account state may have changed, so reads become opaque.
     mutated: bool,
+    /// Every account a CPI so far was passed, the template's or an entry creation's: only those
+    /// can have changed, since a program changes only accounts it is passed.
+    touched: Vec<[u8; 32]>,
+    /// Set once an instruction produced a value the model does not know, or the run made a call or
+    /// touched a registry: from then on the run can fail where the model cannot tell.
+    uncertain: bool,
     cpis: Vec<ExpectedCpi>,
+    emits: Vec<CpiData>,
     return_data: CpiData,
     sets_return_data: bool,
+    loop_passes: usize,
 }
 
-/// Runs the model. The result is the harness's soft oracle.
-pub fn predict<A: Accounts>(
-    program: &ProgramView,
-    accounts: &A,
-    inputs: &[InputVal],
-    iterations: usize,
-    clock_slot: u64,
-    clock_timestamp: i64,
-) -> Prediction {
+/// Runs the model: what a run of `program` over `accounts` in `context` should do.
+pub fn predict<A: Accounts>(program: &ProgramView, accounts: &A, context: &RunContext) -> Prediction {
     let mut model = Model {
         program,
         accounts,
-        inputs,
-        iterations,
-        clock_slot,
-        clock_timestamp,
+        inputs: context.inputs,
+        iterations: context.iterations,
+        group_lengths: context.group_lengths,
+        clock_slot: context.clock_slot,
+        clock_timestamp: context.clock_timestamp,
+        rent: context.rent,
+        ballista: context.ballista,
         mutated: false,
+        touched: Vec::new(),
+        uncertain: false,
         cpis: Vec::new(),
+        emits: Vec::new(),
         return_data: CpiData::Concrete(Vec::new()),
         sets_return_data: false,
+        loop_passes: 0,
     };
     let mut registers = vec![Val::Unset; program.header.register_count()];
     match model.run(&mut registers) {
         Ok(()) => Prediction::Calls {
             cpis: model.cpis,
+            emits: model.emits,
             return_data: model.return_data,
             sets_return_data: model.sets_return_data,
+            loop_passes: model.loop_passes,
+            exact: !model.uncertain,
         },
         Err(stop) => stop,
     }
@@ -173,7 +242,7 @@ impl<A: Accounts> Model<'_, A> {
                         _ => return Err(Prediction::Indeterminate("repeat count not u64")),
                     };
                     if count > instruction.c as usize {
-                        return Err(Prediction::Fails("repeat count exceeds max"));
+                        return Err(self.locate(fails("repeat count exceeds max", LOOP_COUNT_EXCEEDED), pc));
                     }
                     self.run_loop(registers, body.clone(), count, false, instruction.immediate())?;
                     pc = body.end;
@@ -202,6 +271,7 @@ impl<A: Accounts> Model<'_, A> {
             for pc in body.clone() {
                 self.step(registers, pc, Some((pass, row_base)))?;
             }
+            self.loop_passes += 1;
             for register in 0..registers.len() {
                 if carried(register) {
                     snapshot[register] = registers[register].clone();
@@ -212,7 +282,33 @@ impl<A: Accounts> Model<'_, A> {
         Ok(())
     }
 
+    /// Runs one instruction, places a failure it predicts, and notes whether the model still knows
+    /// everything: an opaque result, a call or a registry access ends that.
     fn step(&mut self, registers: &mut [Val], pc: usize, loop_context: Option<(usize, usize)>) -> Flow {
+        let instruction = &self.program.instructions[pc];
+        if matches!(instruction.opcode, OP_INVOKE | OP_OPEN_REGISTRY | OP_READ_REGISTRY | OP_WRITE_REGISTRY) {
+            self.uncertain = true;
+        }
+        let result = self.execute(registers, pc, loop_context).map_err(|stop| self.locate(stop, pc));
+        let dst = instruction.dst as usize;
+        if dst < registers.len() && matches!(registers[dst], Val::Opaque) {
+            self.uncertain = true;
+        }
+        result
+    }
+
+    fn locate(&self, stop: Prediction, pc: usize) -> Prediction {
+        match stop {
+            Prediction::Fails(mut failure) if failure.pc == usize::MAX => {
+                failure.pc = pc;
+                failure.exact = !self.uncertain;
+                Prediction::Fails(failure)
+            }
+            other => other,
+        }
+    }
+
+    fn execute(&mut self, registers: &mut [Val], pc: usize, loop_context: Option<(usize, usize)>) -> Flow {
         let instruction = &self.program.instructions[pc];
         let dst = instruction.dst as usize;
         macro_rules! set {
@@ -281,24 +377,22 @@ impl<A: Accounts> Model<'_, A> {
             OP_REQUIRE => {
                 match &registers[instruction.a as usize] {
                     Val::Bool(true) => {}
-                    Val::Bool(false) => return Err(Prediction::Fails("require false")),
+                    Val::Bool(false) => return Err(fails("require false", REQUIREMENT_FAILED)),
                     Val::Opaque => return Err(Prediction::Indeterminate("require opaque")),
                     _ => return Err(Prediction::Indeterminate("require non-bool")),
                 }
             }
             OP_INVOKE => self.invoke(registers, instruction, loop_context)?,
-            OP_EMIT => { /* logged, not compared here */ self.mutated = true; let _ = self.build_output(registers, instruction)?; }
+            // A log line changes no account, so reads stay predictable after it.
+            OP_EMIT => {
+                let line = self.build_output(registers, instruction)?;
+                self.emits.push(line);
+            }
             OP_SET_RETURN_DATA => {
                 self.return_data = self.build_output(registers, instruction)?;
                 self.sets_return_data = true;
             }
-            OP_OPEN_REGISTRY => {
-                // Opening may create the entry (System CPIs), which the harness sees as inner
-                // instructions. The model does not predict those three calls; it records that the
-                // registry opens happened by leaving a gap the harness tolerates. Opening also
-                // touches chain state, so later reads are opaque.
-                self.mutated = true;
-            }
+            OP_OPEN_REGISTRY => self.open_registry(instruction)?,
             OP_READ_REGISTRY => set!(Val::Opaque),
             OP_WRITE_REGISTRY => { self.mutated = true; }
             _ => return Err(Prediction::Indeterminate("unknown opcode")),
@@ -308,7 +402,7 @@ impl<A: Accounts> Model<'_, A> {
 
     fn blob(&self, instruction: &InstructionRecord) -> Result<&[u8], Prediction> {
         let (offset, len) = instruction.blob_range();
-        self.program.blob.get(offset..offset + len).ok_or(Prediction::Indeterminate("blob range"))
+        offset.checked_add(len).and_then(|end| self.program.blob.get(offset..end)).ok_or(Prediction::Indeterminate("blob range"))
     }
 
     fn load_input(&self, instruction: &InstructionRecord, loop_context: Option<(usize, usize)>) -> Result<Val, Prediction> {
@@ -374,7 +468,7 @@ impl<A: Accounts> Model<'_, A> {
         } else {
             instruction.immediate() as usize
         };
-        Ok(decode_read(instruction.opcode, data, offset))
+        decode_read(instruction.opcode, data, offset)
     }
 
     fn read_account_bytes(&self, registers: &[Val], instruction: &InstructionRecord, loop_context: Option<(usize, usize)>) -> Result<Val, Prediction> {
@@ -382,7 +476,14 @@ impl<A: Accounts> Model<'_, A> {
             return Ok(Val::Opaque);
         }
         let index = self.resolve(instruction.a, loop_context)?;
-        if self.accounts.executable(index) != Some(false) {
+        // The executor refuses an account writable in this instruction before it looks at the
+        // range: its bytes could change under a CPI.
+        match self.accounts.is_writable(index) {
+            Some(true) => return Err(fails("account bytes of a writable account", WRITABLE_ACCOUNT_BYTES_READ)),
+            Some(false) => {}
+            None => return Ok(Val::Opaque),
+        }
+        if self.mutated || self.accounts.executable(index) != Some(false) {
             return Ok(Val::Opaque);
         }
         let Some(data) = self.accounts.data(index) else { return Ok(Val::Opaque) };
@@ -392,9 +493,9 @@ impl<A: Accounts> Model<'_, A> {
             _ => return Err(Prediction::Indeterminate("byte offset not u64")),
         };
         let len = instruction.immediate() as usize;
-        match data.get(offset..offset + len) {
+        match offset.checked_add(len).and_then(|end| data.get(offset..end)) {
             Some(bytes) => Ok(Val::Bytes(bytes.to_vec())),
-            None => Err(Prediction::Fails("account bytes out of range")),
+            None => Err(fails("account bytes out of range", INSTRUCTION_OUT_OF_RANGE)),
         }
     }
 
@@ -417,7 +518,8 @@ impl<A: Accounts> Model<'_, A> {
                 };
                 match value {
                     Some(value) => $wrap(value),
-                    None => return Err(Prediction::Fails("arithmetic overflow or div0")),
+                    None if instruction.opcode == OP_DIV && $r == 0 => return Err(fails("division by zero", DIVISION_BY_ZERO)),
+                    None => return Err(fails("arithmetic overflow", ARITHMETIC_OVERFLOW)),
                 }
             }};
         }
@@ -458,7 +560,7 @@ impl<A: Accounts> Model<'_, A> {
                 };
                 match value {
                     Some(value) => $wrap(value),
-                    None => return Err(Prediction::Fails("rem by zero")),
+                    None => return Err(fails("rem by zero", DIVISION_BY_ZERO)),
                 }
             }};
         }
@@ -467,7 +569,8 @@ impl<A: Accounts> Model<'_, A> {
             (Val::U128(l), Val::U128(r)) => bit!(l, r, Val::U128),
             (Val::I64(l), Val::I64(r)) if opcode == OP_REM => match l.checked_rem(r) {
                 Some(value) => Val::I64(value),
-                None => return Err(Prediction::Fails("i64 rem overflow")),
+                None if r == 0 => return Err(fails("rem by zero", DIVISION_BY_ZERO)),
+                None => return Err(fails("i64 rem overflow", ARITHMETIC_OVERFLOW)),
             },
             _ => return Err(Prediction::Indeterminate("integer op type")),
         })
@@ -482,10 +585,11 @@ impl<A: Accounts> Model<'_, A> {
         }
         let ceil = instruction.opcode == OP_MUL_DIV_CEIL;
         match (a, b, c) {
+            (Val::U64(_), Val::U64(_), Val::U64(0)) => Err(fails("mul_div by zero", DIVISION_BY_ZERO)),
             (Val::U64(a), Val::U64(b), Val::U64(c)) => mul_div(a as u128, b as u128, c as u128, ceil)
                 .and_then(|value| u64::try_from(value).ok())
                 .map(Val::U64)
-                .ok_or(Prediction::Fails("mul_div u64")),
+                .ok_or(fails("mul_div u64 overflow", ARITHMETIC_OVERFLOW)),
             (Val::U128(a), Val::U128(b), Val::U128(c)) => mul_div_u128(a, b, c, ceil),
             _ => Err(Prediction::Indeterminate("mul_div type")),
         }
@@ -496,7 +600,7 @@ impl<A: Accounts> Model<'_, A> {
             Val::Opaque => Ok(Val::Opaque),
             Val::U64(exp) => {
                 if exp > 38 {
-                    Err(Prediction::Fails("pow10 overflow"))
+                    Err(fails("pow10 overflow", ARITHMETIC_OVERFLOW))
                 } else {
                     Ok(Val::U128(10u128.pow(exp as u32)))
                 }
@@ -570,7 +674,7 @@ impl<A: Accounts> Model<'_, A> {
         if matches!(value, Val::Opaque) {
             return Ok(Val::Opaque);
         }
-        let fail = |_| Prediction::Fails("cast out of range");
+        let fail = |_| fails("cast out of range", ARITHMETIC_OVERFLOW);
         Ok(match instruction.opcode {
             OP_CAST_U64 => Val::U64(match value {
                 Val::U64(v) => v,
@@ -636,31 +740,77 @@ impl<A: Accounts> Model<'_, A> {
             }
         }
         let data = self.build_cpi_data(registers, descriptor)?;
-        self.cpis.push(ExpectedCpi { program, accounts, data });
+        self.touched.extend(accounts.iter().map(|meta| meta.address));
+        let row_program = descriptor.program_account & ITERATION_ACCOUNT_BIT != 0;
+        self.cpis.push(ExpectedCpi { program, accounts, data, row_program });
         self.mutated = true;
         Ok(())
     }
 
+    /// `OPEN_REGISTRY` on a run that succeeds: an entry Ballista owns already is checked and costs
+    /// no call; a missing one is created from the payer's lamports, with one `create_account`
+    /// when its address holds none, or else a transfer of any shortfall to rent exemption, then
+    /// `allocate` and `assign` (`processor/registry.rs`, `create_entry`). The entry's address and
+    /// header are the run's to check; a run that gets past the open passed them.
+    fn open_registry(&mut self, instruction: &InstructionRecord) -> Flow {
+        let open = RegistryOpen::decode(instruction.immediate()).ok_or(Prediction::Indeterminate("open immediate"))?;
+        let entry_index = instruction.a as usize;
+        let payer_index = instruction.c as usize;
+        let entry = self.accounts.key(entry_index).ok_or(Prediction::Indeterminate("entry account"))?;
+        let payer = self.accounts.key(payer_index).ok_or(Prediction::Indeterminate("payer account"))?;
+        // The entry's state decides the calls. A call that was passed the entry may have changed it
+        // (a transfer to it, say), and so may an earlier open whose payer it was, so the model
+        // stops there.
+        if self.touched.contains(&entry) {
+            return Err(Prediction::Indeterminate("open of an account a call was passed"));
+        }
+        let (Some(owner), Some(lamports)) = (self.accounts.owner(entry_index), self.accounts.lamports(entry_index)) else {
+            return Err(Prediction::Indeterminate("entry state unknown"));
+        };
+        self.touched.extend([payer, entry]);
+        self.mutated = true;
+        if owner == self.ballista {
+            return Ok(());
+        }
+        let space = REGISTRY_ENTRY_HEADER_LEN + open.size as usize;
+        let required = (self.rent)(space);
+        let system = SYSTEM_PROGRAM_ADDRESS;
+        let meta = |address, signer, writable| ExpectedMeta { address, signer, writable };
+        let call = |accounts, data: Vec<u8>| ExpectedCpi { program: system, accounts, data: CpiData::Concrete(data), row_program: false };
+        let space_le = (space as u64).to_le_bytes();
+        if lamports == 0 {
+            let mut data = 0u32.to_le_bytes().to_vec();
+            data.extend_from_slice(&required.to_le_bytes());
+            data.extend_from_slice(&space_le);
+            data.extend_from_slice(&self.ballista);
+            self.cpis.push(call(vec![meta(payer, true, true), meta(entry, true, true)], data));
+        } else {
+            let shortfall = required.saturating_sub(lamports);
+            if shortfall > 0 {
+                let mut data = 2u32.to_le_bytes().to_vec();
+                data.extend_from_slice(&shortfall.to_le_bytes());
+                self.cpis.push(call(vec![meta(payer, true, true), meta(entry, false, true)], data));
+            }
+            let mut data = 8u32.to_le_bytes().to_vec();
+            data.extend_from_slice(&space_le);
+            self.cpis.push(call(vec![meta(entry, true, true)], data));
+            let mut data = 1u32.to_le_bytes().to_vec();
+            data.extend_from_slice(&self.ballista);
+            self.cpis.push(call(vec![meta(entry, true, true)], data));
+        }
+        Ok(())
+    }
+
     /// Where each declared account group falls among the runtime accounts, from the run layout:
-    /// after the fixed accounts and every batch row.
+    /// after the fixed accounts and every batch row, in declaration order, each as long as the run
+    /// data's prefix says.
     fn group_ranges(&self) -> Vec<(usize, usize)> {
         let header = self.program.header;
-        let declared = header.fixed_account_count() + self.iterations * header.batch_stride();
-        let mut start = declared;
+        let mut start = header.fixed_account_count() + self.iterations * header.batch_stride();
         let mut ranges = Vec::new();
-        // The group lengths are the run-data prefix; the model learns them from the account count,
-        // distributing the remainder is not possible, so it asks the accounts source for the total
-        // and treats all remaining accounts as belonging to groups it cannot split. With one group
-        // this is exact; with several the harness only checks pre-group accounts.
-        let total = self.accounts.count();
-        let remaining = total.saturating_sub(declared);
-        if header.account_group_count() == 1 {
-            ranges.push((start, remaining));
-        } else {
-            for _ in 0..header.account_group_count() {
-                ranges.push((start, 0));
-                start += 0;
-            }
+        for &len in self.group_lengths.iter().take(header.account_group_count()) {
+            ranges.push((start, len as usize));
+            start += len as usize;
         }
         ranges
     }
@@ -699,10 +849,14 @@ impl<A: Accounts> Model<'_, A> {
     }
 }
 
-fn decode_read(opcode: u8, data: &[u8], offset: usize) -> Val {
+/// A typed read of account data the model knows: past the end, or a `bool` byte other than 0 or 1,
+/// the run fails.
+fn decode_read(opcode: u8, data: &[u8], offset: usize) -> Result<Val, Prediction> {
     let width = read_width(opcode);
-    let Some(slice) = data.get(offset..offset + width) else { return Val::Opaque };
-    match opcode {
+    let Some(slice) = offset.checked_add(width).and_then(|end| data.get(offset..end)) else {
+        return Err(fails("typed read past the account data", INVALID_RUNTIME_ACCOUNT));
+    };
+    Ok(match opcode {
         OP_READ_U8 => Val::U64(slice[0] as u64),
         OP_READ_U16 => Val::U64(u16::from_le_bytes(slice.try_into().unwrap()) as u64),
         OP_READ_U32 => Val::U64(u32::from_le_bytes(slice.try_into().unwrap()) as u64),
@@ -714,10 +868,10 @@ fn decode_read(opcode: u8, data: &[u8], offset: usize) -> Val {
         OP_READ_BOOL => match slice[0] {
             0 => Val::Bool(false),
             1 => Val::Bool(true),
-            _ => Val::Opaque,
+            _ => return Err(fails("bool byte other than 0 or 1", TYPE_MISMATCH)),
         },
         _ => Val::Opaque,
-    }
+    })
 }
 
 fn encode_register(kind: u8, value: &Val) -> Result<Vec<u8>, Prediction> {
@@ -731,18 +885,18 @@ fn encode_register(kind: u8, value: &Val) -> Result<Vec<u8>, Prediction> {
     Ok(match kind {
         DATA_REG_U8 => {
             let value = as_u128(value)?;
-            vec![u8::try_from(value).map_err(|_| Prediction::Fails("u8 narrow"))?]
+            vec![u8::try_from(value).map_err(|_| fails("u8 narrow", ARITHMETIC_OVERFLOW))?]
         }
         DATA_REG_U16 => {
-            let value = u16::try_from(as_u128(value)?).map_err(|_| Prediction::Fails("u16 narrow"))?;
+            let value = u16::try_from(as_u128(value)?).map_err(|_| fails("u16 narrow", ARITHMETIC_OVERFLOW))?;
             value.to_le_bytes().to_vec()
         }
         DATA_REG_U32 => {
-            let value = u32::try_from(as_u128(value)?).map_err(|_| Prediction::Fails("u32 narrow"))?;
+            let value = u32::try_from(as_u128(value)?).map_err(|_| fails("u32 narrow", ARITHMETIC_OVERFLOW))?;
             value.to_le_bytes().to_vec()
         }
         DATA_REG_U64 => {
-            let value = u64::try_from(as_u128(value)?).map_err(|_| Prediction::Fails("u64 narrow"))?;
+            let value = u64::try_from(as_u128(value)?).map_err(|_| fails("u64 narrow", ARITHMETIC_OVERFLOW))?;
             value.to_le_bytes().to_vec()
         }
         DATA_REG_I64 => match value {
@@ -772,13 +926,13 @@ fn encode_register(kind: u8, value: &Val) -> Result<Vec<u8>, Prediction> {
 fn shift_u128(value: u128, shift: u64, width: u32, opcode: u8) -> Result<u128, Prediction> {
     if opcode == OP_SHL {
         if shift >= width as u64 {
-            return if value == 0 { Ok(0) } else { Err(Prediction::Fails("shl drops a bit")) };
+            return if value == 0 { Ok(0) } else { Err(fails("shl drops a bit", ARITHMETIC_OVERFLOW)) };
         }
         let shifted = value << shift;
         // A set bit shifted past the width is lost.
         let mask = if width == 128 { u128::MAX } else { (1u128 << width) - 1 };
         if shifted & !mask != 0 || (shifted & mask) >> shift != value {
-            return Err(Prediction::Fails("shl drops a bit"));
+            return Err(fails("shl drops a bit", ARITHMETIC_OVERFLOW));
         }
         Ok(shifted & mask)
     } else {
@@ -804,7 +958,7 @@ fn mul_div(a: u128, b: u128, c: u128, ceil: bool) -> Option<u128> {
 
 fn mul_div_u128(a: u128, b: u128, c: u128, ceil: bool) -> Result<Val, Prediction> {
     if c == 0 {
-        return Err(Prediction::Fails("mul_div by zero"));
+        return Err(fails("mul_div by zero", DIVISION_BY_ZERO));
     }
     // The program holds `a * b` exactly in 256 bits and fails only if the quotient exceeds u128.
     // When the product already fits u128 the model computes it; when it overflows, the exact

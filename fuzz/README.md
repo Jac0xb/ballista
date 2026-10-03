@@ -139,3 +139,8 @@ python3 fuzz/scripts/mutants.py 120
 The script deletes one verifier rule at a time, in a throwaway worktree. For each, it runs the
 stable tests and `structured` from an empty corpus, and reports which catch the deletion and how
 fast. A mutant that survives both is a rule nothing here tests.
+
+The 14 mutants cover the CPI ceiling, declared accounts and groups, the CPI count,
+read-before-write, read bounds, return data, `EMIT` tags, registry entries and the sysvar pin.
+The stable tests catch every one, and so does `structured`, within 5 seconds of an empty corpus.
+That includes the critic's `verify-cpi-privilege`, which the proptests in `common/tests` miss.

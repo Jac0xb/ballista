@@ -7,12 +7,17 @@
 //! reads those bytes back as words, which the prover models as unrelated values. They now also
 //! cover more than the constants did: any minimum data length, and any pinned address and owner.
 //!
-//! Blocked all the same, suspected. `validate_account` builds each error in a stack temporary from a
-//! two-byte tag and a four-byte code and copies it out with an eight-byte move across two bytes it
-//! never wrote. The prover rebuilds a stack word only from two four-byte halves, so the code is lost
-//! and the tag may be; then a refused account can read as accepted, or as the wrong refusal. The
-//! header-read rule meets the same question in the executor's register write, which copies a value
-//! whose tag is one byte as eight-byte words. The `rule_stack_word_copy_*` diagnostics settle it.
+//! Suspected blocked until the prover ran at cb2fb2d. `validate_account` builds each error in a
+//! stack temporary from a two-byte tag and a four-byte code and copies it out with an eight-byte
+//! move across two bytes it never wrote, and the prover rebuilds no word from narrower stores after
+//! such a copy (`rule_stack_word_copy_*`). The suspected loss did not bite these rules: in job
+//! `8da461a1c1194ba4bec337139d7c5cba` the signer, pinned address and owner, minimum data length,
+//! account count and header-read rules verified, their reachability rules passed and their twins
+//! failed. The writable and executable rule failed on its own assert instead: LLVM lowered
+//! `!satisfied && index == 0` to a bitwise AND of two unknowns, which the prover models
+//! imprecisely, and its counterexample (job `aac2bacd98254d8bae289bcc83067eef`) is a correct refusal
+//! at index 0 that the solver read as `BWAnd(u64::MAX, 1) = 0`. That rule now asserts each half on
+//! its own.
 //!
 //! Each rule has a reachability rule for each branch that asserts and a twin that must fail.
 
@@ -139,11 +144,17 @@ fn flags_case() -> (bool, Validation) {
     (satisfied, classify(&validate_runtime_accounts(&program, &views[..], empty())))
 }
 
+/// The refusal's two facts are separate asserts. As one `!satisfied && index == 0`, LLVM computes
+/// `!satisfied & (index == 0)`, and the prover's integer encoding of an AND of two unknowns let the
+/// solver return 0 for `u64::MAX & 1` (job `aac2bacd98254d8bae289bcc83067eef`).
 #[rule]
 pub fn rule_writable_and_executable_constraints_are_enforced() {
     match flags_case() {
         (satisfied, Validation::Accepted { .. }) => cvlr_assert!(satisfied),
-        (satisfied, Validation::ConstraintFailed { index }) => cvlr_assert!(!satisfied && index == 0),
+        (satisfied, Validation::ConstraintFailed { index }) => {
+            cvlr_assert!(!satisfied);
+            cvlr_assert!(index == 0);
+        }
         _ => cvlr_assert!(false),
     }
 }

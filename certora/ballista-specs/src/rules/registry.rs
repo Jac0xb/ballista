@@ -5,9 +5,11 @@
 //! `NOT_BORROWED` to 0, and nothing else in an open writes that byte. The rules observe that byte
 //! rather than the `RunResult` an open returns: `registry::open` builds its errors on its own stack
 //! from a two-byte tag and a four-byte code and copies them out with an eight-byte move across two
-//! bytes it never wrote. The prover rebuilds a stack word only from two four-byte halves, so it may
-//! not follow the returned tag. The byte is written with one-byte stores and read the same way
-//! everywhere.
+//! bytes it never wrote. After such a copy the prover keeps only the word's first store, and
+//! rebuilds no word from narrower stores, not even two four-byte halves
+//! (`rule_stack_word_copy_keeps_both_halves` failed at cb2fb2d), so the code is lost. The tag
+//! survives: `rule_registry_open_refuses_an_open_entry`, which reads only `is_err`, proved. The
+//! byte is written with one-byte stores and read the same way everywhere.
 //!
 //! Model limits, which narrow what these rules cover:
 //!

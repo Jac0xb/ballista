@@ -2,9 +2,10 @@
 //! program reads it.
 //!
 //! The prover keys each heap cell by its address and the width it was written or first read at.
-//! A load of a different width than the last store to a cell gets an unrelated value: only the
-//! stack reconstructs a word from narrower stores, and only from two four-byte halves (see
-//! `PointerDomain.reconstructFromIntegerCells` in the prover's source). `ProgramView::parse` reads
+//! A load of a different width than the last store to a cell gets an unrelated value. The prover's
+//! source rebuilds a word only for a load straight from the stack over two four-byte cells holding
+//! known constants (`PointerDomain.reconstructFromIntegerCells`), and not for a copied word: the
+//! control `rule_stack_word_copy_keeps_both_halves` failed at cb2fb2d. `ProgramView::parse` reads
 //! the header and records with word-sized loads (SBF allows unaligned loads, so LLVM merges
 //! adjacent byte reads), which is why every rule that parsed a constant written one byte at a time
 //! saw arbitrary bytes and could not prove.

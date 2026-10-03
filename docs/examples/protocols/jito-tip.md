@@ -2,12 +2,13 @@
 
 <p class="protocol-line">Jito · Jupiter</p>
 
-**Status:** Tested locally in LiteSVM against Jupiter, Meteora and Raydium programs and a Jito tip
-account copied from mainnet; not yet run on devnet or mainnet, or through Jito's tip auction.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against Jupiter, Meteora
+and Raydium programs and a Jito tip account copied from mainnet; not yet run on devnet or mainnet,
+or through Jito's tip auction.
 
-**Cost:** Ballista's own work in the measured run took 9,012
-[compute units](/reference/glossary#compute-units), the tip's transfer included, beyond what
-Jupiter's route used. Ballista charges no fee; see [what it costs](/guide/why-ballista#cost).
+**Cost:** Ballista's own work, the tip's transfer included, took 9,012 of the tested transaction's
+120,102 [compute units](/reference/glossary#compute-units); the protocols took the rest. Ballista
+charges no fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -45,6 +46,9 @@ The searcher is the wallet that signs, trades and pays the tip. The template:
 
 :::
 
+The Rust tabs' `program`, `anchor` and account flags are
+[shared helpers](/examples/protocols/#rust-helpers).
+
 The tip is a fixed input, not a share of the profit computed during the run. Jito's block engine,
 which runs the tip auction, is closed source, and it is unclear whether it ranks a computed tip by
 its simulated value or by an amount read from the instruction. A tip paid but ranked as zero would
@@ -78,7 +82,7 @@ Jupiter's Swap API and what to keep from its response.
 
 ## What has been tested
 
-- **Against the real programs.** `tests/protocols/tests/jito_tip.rs` runs the round trip through
+- **In LiteSVM.** `tests/protocols/tests/jito_tip.rs` runs the round trip through
   Jupiter, 1 SOL to USDC on Meteora and back to SOL on Raydium, with the run in place of `route` in
   the transaction Jupiter's API built for the first leg. At the copied prices the round trip loses
   to the pools' fees, so a test wallet first sells 500 SOL into the Raydium pool, and the round trip

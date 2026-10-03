@@ -2,12 +2,12 @@
 
 <p class="protocol-line">Jupiter · Kamino</p>
 
-**Status:** Tested locally in LiteSVM against Jupiter, Meteora and Kamino programs and accounts
-copied from mainnet; not yet run on devnet or mainnet.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against Jupiter, Meteora
+and Kamino programs and accounts copied from mainnet; not yet run on devnet or mainnet.
 
-**Cost:** Ballista's own work in the measured run took 8,503
-[compute units](/reference/glossary#compute-units), beyond what Jupiter's route and Kamino's deposit
-used. Ballista charges no fee; see [what it costs](/guide/why-ballista#cost).
+**Cost:** Ballista's own work took 8,503 of the tested transaction's 151,372
+[compute units](/reference/glossary#compute-units); the protocols took the rest. Ballista charges no
+fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -52,6 +52,9 @@ It does not guard against:
 
 :::
 
+The Rust tabs' `program`, `anchor` and account flags are
+[shared helpers](/examples/protocols/#rust-helpers).
+
 ## Run it
 
 `route` starts its account list with the token program, the signing owner, and the owner's source
@@ -74,10 +77,10 @@ to `reserveDestinationDepositCollateral`), then the inputs `routePlan`, `inAmoun
 
 Before the run:
 
-- **Refresh Kamino in the same transaction:** `refresh_reserve` for each reserve the obligation
-  holds, then `refresh_obligation`. Kamino deposits only into an obligation refreshed in the same
-  slot, and the template doesn't refresh. `buildKaminoRefreshes` (TypeScript) and
-  `kamino_refreshes` (Rust), next to the runs, build them.
+- **Refresh Kamino in the same transaction.** Kamino deposits only into an obligation refreshed
+  in the same slot, and the template doesn't refresh.
+  [Refreshing Kamino](/examples/protocols/#kamino-refreshes) has the order and the helpers that
+  build it.
 - **Create the farm user state once,** with `init_obligation_farms_for_reserve`, before an
   obligation's first deposit into a reserve with a collateral farm.
 
@@ -90,7 +93,7 @@ Jupiter's Swap API and what to keep from its response.
 
 ## What has been tested
 
-- **Against the real programs.** `tests/protocols/tests/jupiter_deposit_exact_output.rs` sells 1 SOL
+- **In LiteSVM.** `tests/protocols/tests/jupiter_deposit_exact_output.rs` sells 1 SOL
   for USDC through Jupiter and a Meteora pool, then deposits into Kamino's USDC reserve, which has
   a collateral farm. Of the 121,391,105 USDC units the swap produced, Kamino took all but 1, its
   cToken rounding. The whole transaction, refreshes included, took 151,372 compute units and 1,085

@@ -2,12 +2,12 @@
 
 <p class="protocol-line">Pyth · Jupiter</p>
 
-**Status:** Tested locally in LiteSVM against Jupiter, Meteora and Pyth programs and accounts
-copied from mainnet; not yet run on devnet or mainnet.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against Jupiter, Meteora
+and Pyth programs and accounts copied from mainnet; not yet run on devnet or mainnet.
 
-**Cost:** Ballista's own work in the measured run took 6,978
-[compute units](/reference/glossary#compute-units), beyond what Jupiter's route used. Ballista
-charges no fee; see [what it costs](/guide/why-ballista#cost).
+**Cost:** Ballista's own work took 6,978 of the tested transaction's 80,062
+[compute units](/reference/glossary#compute-units); the protocols took the rest. Ballista charges no
+fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -67,6 +67,9 @@ It does not guard against:
 
 :::
 
+The Rust tabs' `program`, `anchor` and account flags are
+[shared helpers](/examples/protocols/#rust-helpers).
+
 ## Run it
 
 The swap is Jupiter's `route` instruction, which starts its account list with the token program and
@@ -89,7 +92,7 @@ Jupiter's Swap API and what to keep from its response.
 
 ## What has been tested
 
-- **Against the real programs.** `tests/protocols/tests/pyth_fresh_price_gate.rs` sells 1 SOL for
+- **In LiteSVM.** `tests/protocols/tests/pyth_fresh_price_gate.rs` sells 1 SOL for
   USDC through Jupiter and a Meteora pool, gated on Pyth's SOL/USD price, with the run in place of
   `route` in the transaction Jupiter's API built. With a fresh price in band, it fills exactly as
   that transaction does alone, for 180 more bytes. A price exactly `maximumAge` old passes, and so

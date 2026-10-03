@@ -2,12 +2,12 @@
 
 <p class="protocol-line">Jupiter · Pyth</p>
 
-**Status:** Tested locally in LiteSVM against Jupiter, Meteora and Pyth programs and accounts
-copied from mainnet; not yet run on devnet or mainnet.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against Jupiter, Meteora
+and Pyth programs and accounts copied from mainnet; not yet run on devnet or mainnet.
 
-**Cost:** Ballista's own work in the measured run took 9,770
-[compute units](/reference/glossary#compute-units), beyond what Jupiter's route used. Ballista
-charges no fee; see [what it costs](/guide/why-ballista#cost).
+**Cost:** Ballista's own work took 9,770 of the tested transaction's 82,854
+[compute units](/reference/glossary#compute-units); the protocols took the rest. Ballista charges no
+fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -67,6 +67,9 @@ It does not guard against:
 
 :::
 
+The Rust tabs' `program`, `anchor` and account flags are
+[shared helpers](/examples/protocols/#rust-helpers).
+
 SOL/USD prices the SOL sold in the USDC bought, counting a USDC as a dollar. Pyth publishes a price
 as `price × 10^exponent` per whole token. The template reads the exponent and both mints' decimals
 on chain, and values what was sold, in the destination token's smallest units, as
@@ -94,7 +97,7 @@ Jupiter's Swap API and what to keep from its response.
 
 ## What has been tested
 
-- **Against the real programs.** `tests/protocols/tests/oracle_checked_swap.rs` sells 1 SOL for
+- **In LiteSVM.** `tests/protocols/tests/oracle_checked_swap.rs` sells 1 SOL for
   USDC through Jupiter and a Meteora pool, valued at Pyth's SOL/USD price, in place of `route` in
   the transaction Jupiter's API built. It fills exactly as that transaction does alone, for 110
   more bytes. Its floor matches the formula above to the last unit. Jupiter's `route` on its own

@@ -2,12 +2,12 @@
 
 <p class="protocol-line">Jupiter · SPL Token</p>
 
-**Status:** Tested locally in LiteSVM against Jupiter and Raydium programs and accounts copied from
-mainnet; not yet run on devnet or mainnet.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against Jupiter and
+Raydium programs and accounts copied from mainnet; not yet run on devnet or mainnet.
 
-**Cost:** Ballista's own work in the measured run took 7,375
-[compute units](/reference/glossary#compute-units), beyond what Jupiter's route used. Ballista
-charges no fee; see [what it costs](/guide/why-ballista#cost).
+**Cost:** Ballista's own work took 7,375 of the tested transaction's 71,563
+[compute units](/reference/glossary#compute-units); the protocols took the rest. Ballista charges no
+fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -51,6 +51,9 @@ It guards against the market moving after the quote. It does not guard against:
 
 :::
 
+The Rust tabs' `program`, `anchor` and account flags are
+[shared helpers](/examples/protocols/#rust-helpers).
+
 The route plan splits its input by percentage, so the same plan can sell more or less than it was
 quoted for. Above the quote, the extra size's price impact has to fit within `slippageBps`, and the
 swap has to stay within what the route's pool accounts cover. On a deep pool the slippage limit
@@ -77,7 +80,7 @@ Jupiter's Swap API and what to keep from its response.
 
 ## What has been tested
 
-- **Against the real programs.** `tests/protocols/tests/token_sweep.rs` sells USDC for SOL through
+- **In LiteSVM.** `tests/protocols/tests/token_sweep.rs` sells USDC for SOL through
   Jupiter and Raydium's SOL/USDC pool, in place of `route` in the transaction Jupiter's API built.
   With the route quoted for 150 USDC, balances 3% over, 3% under and ten times that each sold in
   full and met the scaled quote. The run added 52 bytes to Jupiter's transaction.

@@ -132,6 +132,19 @@ program standing in for a farm the reserve doesn't have.
 :::
 ::::
 
+## TypeScript helpers {#typescript-helpers}
+
+The TypeScript templates and run files take their program addresses, account offsets,
+discriminators and route helpers (`splitJupiterRoute`, `joinRoundTrip`) from
+[`shared.ts`](https://github.com/Jac0xb/ballista/blob/main/clients/js/examples/protocols/shared.ts).
+The run files bind accounts with `pinned` and `at`:
+
+::: details The run files' bindings
+
+<<< @/../clients/js/examples/protocols/run/programs.ts
+
+:::
+
 ## Rust helpers {#rust-helpers}
 
 The Rust templates share these helpers and constants: the account flags, the program addresses and

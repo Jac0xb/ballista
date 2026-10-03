@@ -10,44 +10,20 @@ one transaction, which still succeeds or fails as a whole.
 
 ## Set the resource limits
 
-A v1 transaction must declare two limits in its message: the compute-unit limit (compute units
-measure the work a transaction may do) and the loaded-account-data limit (how many bytes of account
-data it may load). Both default to zero. Compute Budget instructions, which set these limits for
-older transaction versions, do not set them for v1.
+A v1 transaction must declare two limits in its message: the
+[compute-unit](/reference/glossary#compute-units) limit and the loaded-account-data limit (how many
+bytes of account data it may load). Both default to zero. Compute Budget instructions, which set
+these limits for older transaction versions, do not set them for v1.
+
+The code continues [Getting started](/guide/getting-started): `payer` signs, and `runInstruction`
+(`run` in Rust) is a run instruction such as its sweep. In Rust, v1 messages need
+`solana-message` 4.2 or later, which Getting started's install line adds.
 
 ::: code-group
 
-```ts [TypeScript · Solana Kit]
-const message = pipe(
-  createTransactionMessage({ version: 1 }),
-  (m) => setTransactionMessageFeePayerSigner(payer, m),
-  (m) => setTransactionMessageLifetimeUsingBlockhash(blockhash, m),
-  (m) => appendTransactionMessageInstruction(runInstruction, m),
-);
+<<< @/../clients/js/examples/start/transaction-v1.ts#v1 [TypeScript]
 
-const resources = createComputeUnitProvider({ rpc, marginBps: 1_000 });
-const { transactionMessage, estimate } = await resources.estimateAndSet(message);
-
-console.log(estimate.computeUnitLimit);
-console.log(estimate.loadedAccountsDataSizeLimit);
-```
-
-```rust [Rust · Solana 4.2]
-use solana_message::v1::{Message, TransactionConfig};
-
-let config = TransactionConfig::empty()
-    .with_compute_unit_limit(measured_cu)
-    .with_loaded_accounts_data_size_limit(measured_loaded_bytes)
-    .with_priority_fee(priority_fee_lamports);
-
-let message = Message::try_compile_with_config(
-    &payer,
-    &[run_instruction],
-    &[],
-    recent_blockhash,
-    config,
-)?;
-```
+<<< @/../clients/rust/examples/docs_start.rs#v1 [Rust]
 
 :::
 
@@ -59,9 +35,9 @@ then set them in the message's `TransactionConfig`.
 
 ## Limits
 
-A v1 transaction lists at most 64 account addresses and cannot use address lookup tables, so a run
-fits about 60 runtime accounts. [Limits](/reference/limits#accounts-per-transaction) has the
-details, and when a larger run needs a v0 transaction instead.
+A transaction uses at most 64 accounts in any version, lookup tables included, so a run fits about
+61 runtime accounts. A v1 transaction lists them all without a table. See
+[accounts per transaction](/reference/limits#accounts-per-transaction).
 
 - A run of a 30-recipient SOL payroll template measures 1,240 bytes as a v1 transaction.
 - Encode large transactions as base64 when you send or simulate them.

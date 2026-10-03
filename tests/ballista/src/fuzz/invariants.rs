@@ -78,6 +78,7 @@ pub fn check(
 
     if succeeded {
         lamports_conserved(outcome, &mut report);
+        output_rules(plan, scenario, template, outcome, &mut report);
         account_set_and_programs(world, scenario, template, outcome, &mut report);
         reference_model(harness, world, plan, scenario, template, inputs, outcome, &mut report);
     }
@@ -217,7 +218,13 @@ impl Accounts for ScenarioAccounts<'_> {
         self.scenario.slots.get(index).map(|&i| self.scenario.pool[i].address)
     }
     fn owner(&self, index: usize) -> Option<[u8; 32]> {
-        self.scenario.slots.get(index).map(|&i| self.scenario.pool[i].owner)
+        // Mollusk synthesizes the Instructions sysvar owned by the Sysvar program; the generated
+        // pool does not know that owner, so it is unknown to the model.
+        let &i = self.scenario.slots.get(index)?;
+        if matches!(self.scenario.pool[i].kind, Kind::Sysvar) {
+            return None;
+        }
+        Some(self.scenario.pool[i].owner)
     }
     fn lamports(&self, index: usize) -> Option<u64> {
         if self.live_only(index) {
@@ -283,7 +290,7 @@ fn reference_model(
         super::harness::CLOCK_SLOT,
         super::harness::CLOCK_TIMESTAMP,
     );
-    let (expected, _return_data) = match prediction {
+    let (expected, return_data) = match prediction {
         Prediction::Calls { cpis, return_data, .. } => (cpis, return_data),
         Prediction::Indeterminate(_) => return,
         Prediction::Fails(reason) => {
@@ -321,7 +328,90 @@ fn reference_model(
             }
         }
     }
+    // The run's return data, when the template sets it and no later instruction (or a wrapping
+    // probe) replaces it, is exactly what the model encoded.
+    if plan.sets_return_data && scenario.after.is_empty() && scenario.wrap.is_none() {
+        if let CpiData::Concrete(bytes) = return_data {
+            if bytes != outcome.result.return_data {
+                report.soft(format!(
+                    "return data: model {:02x?} vs run {:02x?}",
+                    bytes, outcome.result.return_data
+                ));
+            }
+        }
+    }
     let _ = world;
+}
+
+/// The output rules (reference/language.md, Output; wire-format.md, Run event), checked against
+/// the run's own `Program data:` lines — those logged while the run's invocation is innermost, not
+/// a nested run's. Every `EMIT` line starts with one of the template's literal tags, never `BEV`;
+/// a template that sets `PROGRAM_FLAG_EMIT_EVENT` logs exactly one 47-byte `BEV1` event, last,
+/// naming this template and the row count; one that does not, logs none. Every line is at most
+/// 1,024 bytes, and the run's return data too.
+fn output_rules(plan: &TemplatePlan, scenario: &Scenario, template: &Pubkey, outcome: &RunOutcome, report: &mut Report) {
+    use base64::Engine as _;
+    let run_height = outcome.ballista_cpi_height - 1;
+    let ballista = super::harness::BALLISTA_ID.to_string();
+    let mut stack: Vec<(String, u32)> = Vec::new();
+    let mut lines: Vec<Vec<u8>> = Vec::new();
+    for line in &outcome.logs {
+        if let Some(fields) = line.strip_prefix("Program data: ") {
+            let innermost_is_run = stack.last().is_some_and(|(id, height)| *id == ballista && *height == run_height);
+            if innermost_is_run {
+                let parts: Vec<&str> = fields.split(' ').collect();
+                if parts.len() != 1 {
+                    report.hard(format!("a run's Program data line holds {} fields, not one", parts.len()));
+                }
+                match base64::engine::general_purpose::STANDARD.decode(parts[0]) {
+                    Ok(bytes) => lines.push(bytes),
+                    Err(_) => report.hard("a run's Program data line is not base64".to_string()),
+                }
+            }
+            continue;
+        }
+        let Some(rest) = line.strip_prefix("Program ") else { continue };
+        let Some((id, tail)) = rest.split_once(' ') else { continue };
+        if let Some(height) = tail.strip_prefix("invoke [").and_then(|t| t.strip_suffix(']')) {
+            stack.push((id.to_string(), height.parse().unwrap_or(0)));
+        } else if tail == "success" || tail.starts_with("failed") {
+            stack.pop();
+        }
+    }
+
+    let events: Vec<&Vec<u8>> = lines.iter().filter(|bytes| bytes.starts_with(b"BEV")).collect();
+    if plan.emits_event {
+        if events.len() != 1 {
+            report.hard(format!("a successful run of an event template logged {} run events", events.len()));
+        } else {
+            let event = events[0];
+            if lines.last() != Some(event) {
+                report.hard("the run event is not the run's last Program data line".to_string());
+            }
+            let iterations = u8::try_from(scenario.iterations).unwrap_or(u8::MAX);
+            if event.len() != 47
+                || &event[..4] != b"BEV1"
+                || event[4] != ballista_common::template::TEMPLATE_PROGRAM_VERSION
+                || event[5] != iterations
+                || event[15..] != template.to_bytes()
+            {
+                report.hard(format!("malformed run event {:02x?}", event));
+            }
+        }
+    } else if !events.is_empty() {
+        report.hard(format!("a template without the event flag logged {} BEV lines", events.len()));
+    }
+    for bytes in lines.iter().filter(|bytes| !bytes.starts_with(b"BEV")) {
+        if bytes.len() > ballista_common::template::MAX_RETURN_DATA_LEN {
+            report.hard(format!("an emit of {} bytes exceeds 1,024", bytes.len()));
+        }
+        if !plan.emit_tags.iter().any(|tag| bytes.starts_with(tag)) {
+            report.hard(format!("an emit {:02x?} starts with none of the template's tags", &bytes[..bytes.len().min(8)]));
+        }
+    }
+    if outcome.result.return_data.len() > ballista_common::template::MAX_RETURN_DATA_LEN {
+        report.hard(format!("return data of {} bytes exceeds 1,024", outcome.result.return_data.len()));
+    }
 }
 
 /// Decodes a scenario's run inputs into the model's input values, mirroring the executor's

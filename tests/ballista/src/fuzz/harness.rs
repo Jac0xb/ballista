@@ -32,6 +32,8 @@ pub fn world() -> World {
 pub struct Harness {
     pub context: MolluskContext<HashMap<Pubkey, Account>>,
     pub has_probe: bool,
+    /// Every log line of the current run, unlimited so no `Program data:` line is truncated.
+    logger: std::rc::Rc<std::cell::RefCell<solana_svm_log_collector::LogCollector>>,
 }
 
 /// One run's result and where to find the run's own cross-program invocations in it.
@@ -45,6 +47,8 @@ pub struct RunOutcome {
     /// Lamports of every stored account just before the run, so conservation can be checked
     /// against their true pre-run balances (the template's rent is not in the generated pool).
     pub before_lamports: HashMap<Pubkey, u64>,
+    /// The run transaction's log lines.
+    pub logs: Vec<String>,
 }
 
 /// One cross-program invocation the run made, decoded from the transaction's inner instructions.
@@ -72,8 +76,10 @@ impl Harness {
             }
             None => false,
         };
+        let logger = solana_svm_log_collector::LogCollector::new_ref_with_limit(None);
+        mollusk.logger = Some(logger.clone());
         let context = mollusk.with_context(HashMap::new());
-        Self { context, has_probe }
+        Self { context, has_probe, logger }
     }
 
     pub fn rent_minimum(&self, len: usize) -> u64 {
@@ -83,6 +89,14 @@ impl Harness {
     /// Empties the account store, so each seed runs against fresh state.
     pub fn reset(&self) {
         self.context.account_store.borrow_mut().clear();
+        self.clear_logs();
+    }
+
+    fn clear_logs(&self) {
+        let mut logger = self.logger.borrow_mut();
+        logger.messages.clear();
+        logger.bytes_written = 0;
+        logger.limit_warning = false;
     }
 
     /// Uploads and finalizes `payload` in one `CreateTemplate`, returning the template address and
@@ -154,8 +168,10 @@ impl Harness {
             .iter()
             .map(|(key, account)| (*key, account.lamports))
             .collect();
+        self.clear_logs();
         let result = self.context.process_transaction_instructions(&instructions);
-        RunOutcome { result, top_index, ballista_cpi_height, before_lamports }
+        let logs = self.logger.borrow().messages.clone();
+        RunOutcome { result, top_index, ballista_cpi_height, before_lamports, logs }
     }
 
     /// Seeds the store with the scenario's accounts. Programs and the Instructions sysvar are left

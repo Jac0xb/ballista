@@ -36,6 +36,7 @@ pub fn breaks(program: &Program) -> Vec<Break> {
     record_flags(program, &mut out);
     undeclared_account(program, &mut out);
     undeclared_program(program, &mut out);
+    undeclared_group(program, &mut out);
     cpi_count(program, &mut out);
     read_before_write(program, &mut out);
     type_mismatch(program, &mut out);
@@ -156,6 +157,20 @@ fn undeclared_program(program: &Program, out: &mut Vec<Break>) {
         let mut broken = program.clone();
         broken.cpis[descriptor].program = fixed;
         out.push(Break { rule: "undeclared-program", program: broken, expected: TemplateError::InvalidCpi(descriptor) });
+    }
+}
+
+/// An invoked descriptor forwarding the group one past the declared ones.
+fn undeclared_group(program: &Program, out: &mut Vec<Break>) {
+    let groups = program.header.account_groups;
+    if groups >= NONE {
+        return;
+    }
+    if let Some((pc, _)) = ceiling::invoke_sites(program).first() {
+        let descriptor = program.instrs[*pc].a as usize;
+        let mut broken = program.clone();
+        broken.cpis[descriptor].group = groups;
+        out.push(Break { rule: "undeclared-group", program: broken, expected: TemplateError::InvalidCpi(descriptor) });
     }
 }
 

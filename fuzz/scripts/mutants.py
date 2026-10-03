@@ -45,6 +45,11 @@ MUTANTS = {
         "                .account_constraint(cpi_account.account, in_row_loop)\n                .ok_or(TemplateError::InvalidCpi(index))?;",
         "                .account_constraint(cpi_account.account, in_row_loop)\n                .unwrap_or(&AccountConstraint { flags: 3, address_index: 255, owner_index: 255, reserved: 0, min_data_len_le: [0; 4] });",
     ),
+    # A CPI forwards a declared account group, if any.
+    "verify-cpi-group": (
+        "            if group >= self.header.account_group_count() {",
+        "            if false && group >= self.header.account_group_count() {",
+    ),
     # The program a CPI calls is declared executable.
     "verify-cpi-program-executable": (
         "        if program.flags & ACCOUNT_EXECUTABLE == 0 {\n            return Err(TemplateError::InvalidCpi(index));",

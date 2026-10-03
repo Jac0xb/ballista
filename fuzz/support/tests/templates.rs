@@ -85,6 +85,7 @@ fn every_break_of_every_template_is_refused_with_its_error() {
         "record-flags",
         "undeclared-account",
         "undeclared-program",
+        "undeclared-group",
         "cpi-count-repeat",
         "cpi-count-foreach",
         "read-before-write",

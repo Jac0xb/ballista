@@ -58,8 +58,7 @@ which also counts the run itself and every nested call, binds first.
 | Return-data steps per template | 1 |
 | One byte read from account or instruction data | 1,024 bytes (minimum 1) |
 
-An `emit` starts with a literal tag of at least 4 bytes. The
-[output rules](/reference/language#output) say which tags are refused.
+An `emit` tag is at least 4 bytes. The tag rule is under [Output](/reference/language#output).
 
 ### Registries
 
@@ -71,10 +70,10 @@ An `emit` starts with a literal tag of at least 4 bytes. The
 | Entry account: 72-byte header plus fields | 584 bytes |
 | CPIs each open counts toward the 64 per run | 3 |
 
-Fields take `bool` 1 byte, `u64` and `i64` 8, `u128` 16 and `pubkey` 32. Creating an entry costs
-rent, paid once and never returned: (128 + the entry's bytes) × 5,080 lamports on mainnet, so
-1,097,280 for 16 bytes of fields, 88 bytes in all. See [what it costs](/guide/why-ballista#cost).
-The rules are under [Registries](/reference/language#registries).
+Fields take `bool` 1 byte, `u64` and `i64` 8, `u128` 16 and `pubkey` 32. An entry's rent on
+mainnet is (128 + the entry's bytes) × 5,080 lamports: 1,097,280 for 16 bytes of fields, 88 bytes
+in all. See [what it costs](/guide/why-ballista#cost). The rules are under
+[Registries](/reference/language#registries).
 
 ### Sizes and bytecode
 

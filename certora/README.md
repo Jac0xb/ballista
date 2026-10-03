@@ -1,15 +1,18 @@
 # Formal verification with the Certora Solana Prover
 
 **Prover jobs ran at cb2fb2d on 2026-10-03. "Prover results at cb2fb2d" lists the 19 rules they
-proved, and supersedes the statuses below where they differ.** CI runs the prover only when the
-repository has a `CERTORAKEY` secret, and then only `run.conf`. Every other status is an expectation
-until a prover job at a named commit confirms it.
+proved, and supersedes the statuses below where they differ.** Those results hold for the program
+code at cb2fb2d. The verifier and executor have changed since (a registry open after an invoke is
+refused, non-canonical encodings are refused, and the account-group opcodes are new), so every
+rule needs a new job before it counts for today's code. Every other status is an expectation until
+a prover job at a named commit confirms it.
 
 CI (`.github/workflows/certora.yml`) always runs `cargo test --features rt`, `./build-sbf.sh` and the
-typing enumeration. With the secret it runs each conf in its own job, with the commit in `--msg`, and
-`check-results.py` reads every rule's verdict from the log: `run.conf` and the candidate confs must
-verify every rule and its sanity check, every twin must be violated with a counterexample, and
-`run-blocked.conf` only reports.
+typing enumeration. With a `CERTORAKEY` secret it runs each conf in its own job, with the commit in
+`--msg`, and `check-results.py` reads every rule's verdict from the log: `run.conf` and the
+candidate confs must verify every rule and its sanity check, every twin must be violated with a
+counterexample, and `run-blocked.conf` only reports. The two rules that fail on the prover's own
+model (below) are in `run-blocked.conf`, and `tests/confs.rs` keeps them out of the gating confs.
 
 This directory is its own Cargo workspace, so nothing here touches the release build, its lock
 file, or its dependency policy.
@@ -84,6 +87,9 @@ are 9 twins and 4 diagnostics, as expected, and the 2 triaged below. Its 13 rule
 
 `u128` add verified but is not proved: its overflow branch is unreachable in the prover's model.
 
+All of these are results for the code at cb2fb2d, not for this branch's: rerun before relying on
+them.
+
 ### The four violations
 
 Traces from triage jobs
@@ -120,8 +126,10 @@ Fixes in this commit:
 
 - The two fixed rules, with their reachability rules and twins: the eight `rule_cpi_requests_*`
   and `rule_writable_and_executable_*` rules in `run-blocked.conf`.
-- `rule_u128_add_reaches_overflow` with `-solanaTACSoundSignedMath true` added to the conf's
-  `prover_args`. The flag masks every 64-bit operation, and is experimental.
+- `rule_u128_add_reaches_overflow`, now in `run-blocked.conf`, in a conf of its own with
+  `-solanaTACSoundSignedMath true` added to `prover_args`. The flag masks every 64-bit operation,
+  and is experimental.
+- Every gating conf at this branch's commit: the verifier and executor changed after cb2fb2d.
 - Overflow reachability rules for `run.conf`'s `u64` and `i64` arithmetic.
 - The blocked conf's 13 rules without a result, saving the job's report URL and key.
 
@@ -144,7 +152,7 @@ today's do.
 The section rule was wrong and vacuous until this branch: it counted only the fixed inputs, and a
 `cvlr_satisfy!(true)` turned its asserts into assumptions. Its twin is the old statement.
 
-### Expected to prove, never run (`run-candidates*.conf`, 15 rules)
+### Expected to prove, verified at cb2fb2d (`run-candidates*.conf`, 14 rules)
 
 - **`u128` arithmetic:** one rule per opcode, where one rule over all six blocked. Add, sub, mul
   and div are at risk like the `u64` rule.
@@ -156,10 +164,11 @@ The section rule was wrong and vacuous until this branch: it counted only the fi
     `-solanaOptimisticMemcmp`, and says nothing about the header's first word.
 - **Return data:** a read returns the invoked program's data or nothing, and nothing without an
   invoke.
-- **Memory controls:** two diagnostics expected to prove. The `run-candidates.conf` job at cb2fb2d
-  found one, `rule_stack_word_copy_keeps_both_halves`, violated (see "Error kinds in stack copies").
+- **Memory control:** `rule_heap_word_stores_read_back_as_words`, verified at cb2fb2d. Its partner,
+  `rule_stack_word_copy_keeps_both_halves`, came back violated on the prover's model and moved to
+  `run-blocked.conf` (see "Error kinds in stack copies"), with `rule_u128_add_reaches_overflow`.
 
-### Blocked (`run-blocked.conf`, 20 rules)
+### Blocked (`run-blocked.conf`, 21 rules and one reachability rule)
 
 | Rules | Reason |
 | --- | --- |
@@ -170,7 +179,8 @@ The section rule was wrong and vacuous until this branch: it counted only the fi
 | Privilege ceiling, finalization's half | Suspected: `verify_cpi`'s refusals are copied the same way, so one can read as acceptance |
 | Typing preservation (2) | Suspected: the same, for registers and verifier results; the host enumeration passes |
 | Lifecycle (4) | Byte-stored payload and instruction data; the run rule also hits the model limits below |
-| Diagnostics (5) | Expected to fail, or probes: they isolate the limits |
+| Diagnostics (6) | Expected to fail, or probes: they isolate the limits. Includes the both-halves copy, violated at cb2fb2d |
+| `u128` add's overflow reachability | Model: no 64-bit wraparound, so the branch is unreachable (violated at cb2fb2d) |
 
 "Suspected" means the rule reads a value through a copy the scanner flags, and a prover job has
 to settle it. A rule in this conf that passes counts only if its twin fails and its reachability

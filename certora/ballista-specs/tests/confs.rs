@@ -83,3 +83,53 @@ fn every_rule_runs_in_exactly_one_configuration() {
         assert!(defined.contains(rule), "a configuration names {rule}, which no source defines");
     }
 }
+
+/// Rules the prover is known to fail on its own model, not on the program (certora/README.md,
+/// "Prover results at cb2fb2d"). Each must sit only in a conf the workflow runs `--report-only`,
+/// so the gating jobs never wait on a verdict that cannot come.
+const PROVER_ARTIFACTS: [&str; 2] = [
+    // A copied word is never rebuilt from two four-byte stores: violated by design.
+    "rule_stack_word_copy_keeps_both_halves",
+    // Limb adds have no 64-bit wraparound in the model, so the overflow branch is unreachable.
+    "rule_u128_add_reaches_overflow",
+];
+
+/// The confs `.github/workflows/certora.yml` checks with `--report-only`, read from its matrix.
+fn report_only_confs() -> Vec<String> {
+    let workflow = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/certora.yml");
+    let text = fs::read_to_string(workflow).expect("certora workflow");
+    let mut confs = Vec::new();
+    let mut conf: Option<&str> = None;
+    for line in text.lines().map(str::trim) {
+        if let Some(name) = line.strip_prefix("- conf: ") {
+            conf = Some(name);
+        } else if let (Some(name), Some(check)) = (conf, line.strip_prefix("check: ")) {
+            if check == "--report-only" {
+                confs.push(name.to_string());
+            }
+            conf = None;
+        }
+    }
+    confs
+}
+
+#[test]
+fn known_prover_artifacts_only_report() {
+    let report_only = report_only_confs();
+    assert!(report_only.contains(&"run-blocked.conf".to_string()), "report-only confs: {report_only:?}");
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for entry in fs::read_dir(directory).expect("crate directory") {
+        let path = entry.expect("entry").path();
+        if path.extension().is_none_or(|extension| extension != "conf") {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let text = fs::read_to_string(&path).expect("configuration");
+        let rules = rule_names(&text[text.find("\"rule\"").expect("a rule list")..]);
+        for artifact in PROVER_ARTIFACTS {
+            if rules.iter().any(|rule| rule == artifact) {
+                assert!(report_only.contains(&name), "{artifact} is in {name}, which gates");
+            }
+        }
+    }
+}

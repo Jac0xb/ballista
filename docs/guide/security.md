@@ -43,12 +43,17 @@ A formal verifier proves a rule for every possible input, not just the ones a te
 rules run on the Certora Solana Prover against the compiled program; they live in `certora/`, whose
 README covers setup.
 
-- **Set up to prove: 15 rules** (`certora/ballista-specs/run.conf`). `u64` and `i64` arithmetic
-  matches Rust's checked operations, comparisons and casts behave exactly, every error code decodes
-  back to what built it, and the template parser checks its header before anything else.
-- **Written but blocked: 14 rules** (`run-blocked.conf`), none proved, because of how the prover
-  models memory: `u128` arithmetic, `multiplyDivide`, account checks, the template lifecycle, and
-  type preservation, the rule that a finalized template never fails because of its structure.
+- **Set up to prove: 29 rules** (`run.conf` and the candidate confs in `certora/ballista-specs`).
+  `u64`, `i64` and `u128` arithmetic matches Rust's checked operations, comparisons and casts behave
+  exactly, every error code decodes back to what built it, the template parser checks its header
+  first, a registry entry opens only when writable and of its declared size, and return data comes
+  from the invoked program.
+- **Blocked: 21 rules** (`run-blocked.conf`), because of how the prover models memory:
+  `multiplyDivide`, account checks, the template lifecycle, type preservation (a finalized template
+  never fails because of its structure), and diagnostics.
+- **Last prover run:** at commit `cb2fb2d`, 19 rules met the bar in `certora/README.md`: verified,
+  not vacuous, reachable, and with a twin that fails. That was the code before account groups and
+  the latest verifier rules, so the results need a rerun.
 - **Not covered:** what called programs do, Solana's system calls, a whole template run end to
   end, and the libraries and runtime underneath, which are trusted.
 - **Found so far:** two stack overflows, in the CPI path and the return-data read, that the

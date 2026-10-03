@@ -24,6 +24,7 @@ pub use ballista_common::template::{
 };
 pub use logs::{
     decode_run_event, program_data, BallistaOutput, LogError, ProgramDataLine, RunEvent,
+    RUN_EVENT_LEN,
 };
 
 /// The address of the pre-release devnet build, which the functions without `_for_program`

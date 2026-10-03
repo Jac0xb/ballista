@@ -261,19 +261,21 @@ group by group.
 ## Reading a run's output {#reading-a-runs-output}
 
 A `Program data:` line doesn't name the program that logged it. `program_data(logs)` follows the
-`invoke`, `success`, and `failed` lines around each one, and returns it with its program and stack
-height: 1 for a run that is one of the transaction's instructions, more for a nested run.
-`ballista_output(&ballista_sdk::ID)` then tells a run event from an `EMIT` by the
-[tag rule](/reference/language#output). It gives `None` for another program's line, even one with
-the same bytes.
+`invoke`, `success`, and `failed` lines around each one, and returns it with its program, its stack
+height (1 for a run that is one of the transaction's instructions, more for a nested run), and its
+invocation number. Lines with the same `invocation` came from one call, so a template's `EMIT`
+lines pair with the run event that names it. `ballista_output(&ballista_sdk::ID)` then tells a run
+event from an `EMIT` by the [tag rule](/reference/language#output), and gives `None` for another
+program's line, even one with the same bytes.
 
 <<< @/../clients/rust/examples/docs_rust_reference.rs#run-output
 
-- `decode_run_event(bytes)` decodes the 47-byte run event: `version`, `iterations`, `expanded` (the
-  invokes reached), `executed` (a bit per invoke reached, set if it ran), and `template`.
-  [Wire format](/reference/wire-format#run-event) has the layout.
-- `program_data` fails with `LogError::Truncated` when the logs stop inside an invocation, as they
-  do past Solana's log limit, and with `LogError::Malformed(line)` when they don't nest.
+- `decode_run_event(bytes)` decodes exactly 47 bytes that start with `BEV1`: `version`,
+  `iterations`, `expanded` (the invokes reached), `executed` (a bit per invoke reached, set if it
+  ran), and `template_address`. [Wire format](/reference/wire-format#run-event) has the layout.
+- `program_data` returns a `LogError` naming the line when the logs don't nest. Logs cut off at
+  Solana's log limit parse up to the `Log truncated` line, so check for that line when you need
+  every event.
 - A failed transaction still logs what ran before the failure. Check that it succeeded first.
 - Return data names the program that set it, not the template. Read it from the return data that
   simulation or the transaction's metadata reports, as `returned_total` does. A `Program return:`
@@ -288,7 +290,7 @@ the same bytes.
 verifier), and its `context`. The low 16 bits of a code name the error, and the high 16 bits say
 where it happened: for most runtime errors the program counter, and
 `ProgramView::parse(&payload)?.instructions[pc]` is that instruction. The kinds matched above give
-an account index, an input index, or a count instead. [Errors and events](/guide/errors-and-events)
+an account index, an input index, or a count instead. [Error codes](/reference/errors#context)
 lists the context of every kind.
 
 Anchor programs number their errors from 6000 too, so a code in Ballista's ranges may come from a

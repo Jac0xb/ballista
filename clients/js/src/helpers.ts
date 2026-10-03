@@ -1,3 +1,6 @@
+import { sha256 } from '@noble/hashes/sha2.js';
+
+import { decodeBase58 } from './base58.js';
 import {
   data,
   expression,
@@ -34,6 +37,28 @@ export const ED25519_PROGRAM_ADDRESS_BYTES = Uint8Array.of(
   3, 125, 70, 214, 124, 147, 251, 190, 18, 249, 66, 143, 131, 141, 64, 255, 5, 112, 116, 73, 39, 244, 138,
   100, 252, 202, 112, 68, 128, 0, 0, 0,
 );
+
+/**
+ * An address as the 32 bytes a template pins, or a `pubkey` input takes: a Kit `Address` or any
+ * base58 string. Throws a `TypeError` for text that is not 32 bytes of base58.
+ *
+ * Kit's `getAddressEncoder().encode()` gives a `ReadonlyUint8Array`, which TypeScript refuses where
+ * a template expects a `Uint8Array`.
+ */
+export function addressBytes(address: string): Uint8Array<ArrayBuffer> {
+  const bytes = decodeBase58(address);
+  if (bytes.length !== 32) throw new TypeError(`${JSON.stringify(address)} is not a 32-byte address`);
+  return bytes;
+}
+
+/**
+ * An Anchor instruction discriminator: the first 8 bytes of `sha256("global:<name>")`, where `name`
+ * is the handler's snake_case name in the program's `#[program]` module. A call to an Anchor
+ * program starts its data with these bytes.
+ */
+export function anchorDiscriminator(name: string): Uint8Array<ArrayBuffer> {
+  return Uint8Array.from(sha256(new TextEncoder().encode(`global:${name}`)).slice(0, 8));
+}
 
 export function assertPda(input: {
   account: AccountReference;

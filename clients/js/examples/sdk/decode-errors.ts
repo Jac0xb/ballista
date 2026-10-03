@@ -17,7 +17,7 @@ import { decodeBallistaError, explainRunError } from '../../src/index.js';
 export const decoded = decodeBallistaError((7 << 16) | 6015);
 // { code: 464767, kind: 6015, name: 'RequirementFailed', context: 7, source: 'runtime' }
 
-// `compiled` is the compiled template that ran.
+// `compiled` is the template that ran, compiled: here the budgeted payroll from Batch execution.
 export const explained = explainRunError((7 << 16) | 6015, compiled)?.message;
 // 'RequirementFailed at steps[2] (withinBudget)'
 // #endregion decode

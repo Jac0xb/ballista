@@ -341,8 +341,8 @@ export interface CompileStats {
 }
 
 /**
- * Test-only options for `compileTemplate`; not part of the supported API, and no template needs
- * them.
+ * Test-only options for `compileTemplateWithOptions`; not part of the supported API, and no
+ * template needs them.
  * @internal
  */
 export interface CompileOptions {
@@ -1402,7 +1402,16 @@ class Compiler {
   }
 }
 
-export function compileTemplate(input: TemplateInput | Template, options?: CompileOptions): CompiledTemplate {
+export function compileTemplate(input: TemplateInput | Template): CompiledTemplate {
+  return new Compiler(TemplateSchema.parse(input)).compile();
+}
+
+/**
+ * `compileTemplate` with test-only options. Not part of the supported API: a separate function, so
+ * `compileTemplate` keeps one parameter and `templates.map(compileTemplate)` type-checks.
+ * @internal
+ */
+export function compileTemplateWithOptions(input: TemplateInput | Template, options: CompileOptions): CompiledTemplate {
   return new Compiler(TemplateSchema.parse(input), options).compile();
 }
 

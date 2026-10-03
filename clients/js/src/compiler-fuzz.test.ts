@@ -55,7 +55,6 @@ import {
   type AccountConstraintInput,
   type AccountReference,
   type CompiledTemplate,
-  type CompileOptions,
   type DataPart,
   type Expression,
   type InputDefinition,
@@ -65,6 +64,8 @@ import {
   type Step,
   type TemplateInput,
 } from './index.js';
+// Test-only: the register reuse options, outside the supported API.
+import { compileTemplateWithOptions, type CompileOptions } from './compiler.js';
 
 // ---------------------------------------------------------------------------------------------
 // Seeded randomness
@@ -1644,7 +1645,7 @@ type Outcome = { ok: CompiledTemplate } | { error: unknown };
 
 function compileOutcome(template: TemplateInput, options?: CompileOptions): Outcome {
   try {
-    return { ok: compileTemplate(template, options) };
+    return { ok: options ? compileTemplateWithOptions(template, options) : compileTemplate(template) };
   } catch (error) {
     return { error };
   }

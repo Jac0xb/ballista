@@ -72,7 +72,8 @@ An `emit` starts with a literal tag of at least 4 bytes. The
 | CPIs each open counts toward the 64 per run | 3 |
 
 Fields take `bool` 1 byte, `u64` and `i64` 8, `u128` 16 and `pubkey` 32. Creating an entry costs
-rent, paid once and never returned: 1,503,360 lamports for 16 bytes of fields, 88 bytes in all.
+rent, paid once and never returned: (128 + the entry's bytes) × 5,080 lamports on mainnet, so
+1,097,280 for 16 bytes of fields, 88 bytes in all. See [what it costs](/guide/why-ballista#cost).
 The rules are under [Registries](/reference/language#registries).
 
 ### Sizes and bytecode

@@ -2,21 +2,25 @@
 
 Ballista stores a sequence of Solana program calls, with checks between them, as a template on
 chain. Anyone can run the template later with new inputs, and either every step succeeds or the
-whole transaction fails. This page explains when that is worth doing, what a template can do that a
-plain transaction cannot, and when to write your own program instead.
+whole transaction fails. This page explains when that is worth doing, what it costs, and when to
+write your own program instead.
+
+**Status: pre-release.** The program hasn't been audited and isn't on mainnet. The current build
+runs only locally, in the test suite; the older devnet build rejects templates from this
+repository. [Details](/guide/security#audit-status)
 
 Most Solana automation starts as client code that builds transactions. As it grows, the same
 account ordering, checks, instruction encoding, and sequence of program calls get copied into bots,
 frontends, scripts, and backends. The usual next step is a custom program, even when the logic is
-short and keeps little or no state of its own. With Ballista, the sequence is stored on chain once, and every
-client runs the same checked version.
+short and keeps little or no state of its own. With Ballista, the sequence is stored on chain once,
+and every client runs the same checked version.
 
 ## What a transaction cannot say
 
 Putting many calls in one transaction is not the reason to use Ballista. Thirty plain SOL transfers
 fit in a single [version 1 transaction](/guide/transaction-v1) of 1,670 bytes, well inside its
 4,096-byte limit. Sent that way, they need no template, no rent for a template account, and none of
-the compute units (Solana's measure of execution cost) that a run uses.
+the [compute units](/reference/glossary#compute-units) that a run uses.
 
 The reason is what a transaction cannot express. Instruction data is fixed when the transaction is
 signed, so a transaction cannot move *whatever balance is there*, repay *exactly what is owed*,
@@ -40,53 +44,52 @@ chain, reads accounts as it goes, and decides:
 - Sending the workflow's logic with every run: a run carries only its inputs and accounts.
 - Client-side loops that add one top-level instruction per item until the transaction is too large.
 
-## What it deliberately does not replace
+## What it costs {#cost}
 
-Ballista is not a general smart-contract language. It makes CPIs (cross-program invocations: one
-program calling another) in a fixed order, with checks between them. Write your own program when you
-need to hold funds (custody), sign as a PDA (program-derived address: an address a program controls,
-with no private key), keep private state that changes between transactions, run your own accounting
-or permission rules, prevent replays, or loop in ways that cannot be bounded in advance.
+Ballista charges no fee. Besides Solana's usual transaction fees, you pay
+[rent](/reference/glossary#rent) once for each account Ballista creates, and compute units on every
+run. Rent is 5,080 lamports a byte at today's rate, counting 128 bytes of overhead per account;
+`getMinimumBalanceForRentExemption` returns the current figure.
 
-| Requirement | Ballista | Dedicated program |
-| --- | --- | --- |
-| Reusable, fixed sequence of CPIs | Excellent fit | Works, but more code |
-| Checks on accounts and the clock during execution | Built in | Custom implementation |
-| Bounded loops, over a list of rows or a counted number of passes | Built in | Custom implementation |
-| Small state between runs: counters, spending limits, allowlists | Built in, as [registry entries](/guide/registries) | Custom implementation |
-| Protocol-owned state machine | No | Yes |
-| Sign as a program PDA | No | Yes |
-| Unbounded loops | No | Possible, within compute limits |
+- **Upload.** The creator pays for the template account, an 80-byte header plus the compiled
+  template: (128 + 80 + template bytes) × 5,080 lamports. The 216-byte
+  [Getting started](/guide/getting-started) template locks 2,153,920 lamports, about 0.0022 SOL;
+  the [largest template allowed](/reference/limits) locks about 0.053 SOL. A [finalized](/reference/glossary#finalize)
+  template is never closed, so its rent stays locked.
+- **Registry entries.** The run that creates an [entry](/guide/registries) pays for it, a 72-byte
+  header plus the fields: (128 + 72 + field bytes) × 5,080 lamports. Entries are never closed
+  either.
+- **Each run.** Measured in the test suite, an empty run takes 581 compute units, one SOL transfer
+  2,390, and a 30-row SOL payroll 46,435. In a loop of Jupiter swaps, each pass adds about 3,400 to
+  Jupiter's own cost.
 
-## Where the boundary sits
+## When to write your own program {#boundary}
 
-- Every account a call touches must still be listed in the transaction. Only the template's bytes
-  stay on chain; each run supplies its own inputs and accounts.
-- A finalized template (one that has been checked and locked on chain) is public, and anyone can
-  run it. Authority comes from the transaction's signers and from the checks inside the programs the
-  template calls.
-- A template never runs on its own, signs as a PDA, or spends assets of its own. Automation that
-  runs without a user signing needs a delegate or authority model from another program.
-- A template has at most eight loops, never nested, each with a fixed maximum number of passes, so
-  the work a run can do is always bounded.
+Ballista makes [CPIs](/reference/glossary#cpi) in a fixed order, with checks between them; it is
+not a general smart-contract language. Write your own program for any of these:
+
+- **Custody.** A template can't hold funds: it has no authority of its own.
+- **PDA signing.** A template can't sign as a [PDA](/reference/glossary#pda); see
+  [when Ballista signs](/guide/trust-model#signing).
+- **Protocol-owned state.** [Registry entries](/guide/registries) hold small per-template state,
+  such as counters, spending limits, allowlists and nonces, so permission rules and replay
+  protection fit in a template. A state machine, or state other programs rely on, needs a program.
+- **More than about 61 accounts.** A run receives every account it touches from its transaction,
+  which caps them; see [Limits](/reference/limits#transaction-ceilings).
+- **Deep CPI routes.** A run takes one level of Solana's [call depth](/reference/limits#call-depth),
+  leaving one fewer for the programs it calls.
+- **Compute-critical or unbounded work.** Every run adds Ballista's own [cost](#cost), and every
+  loop has a fixed maximum number of passes.
+
+A finalized template is public, and anyone can run it, but it never runs by itself. Automation that
+runs without a user signing needs a delegate or authority model from another program.
 
 ## The security bargain
 
 The template language is kept small so that the Ballista program can check a whole template once,
-when it is finalized, before anyone runs it. Finalization proves that the template:
-
-- always finishes;
-- never reads a value before setting it;
-- refers only to accounts it declares;
-- never passes a declared account to a CPI as a signer (an account that signed the transaction) or
-  as writable (allowed to change) unless the account's declaration requires that privilege.
-  [Account group](/guide/account-groups) members, which have no declaration, are passed as writable
-  when the transaction marked them writable, and never as signers;
-- stays within fixed limits on the number of CPIs and the size of their data, even in the worst
-  case.
-
-Finalization does not check that a called program's address is pinned; only the TypeScript
-compiler requires that. See [Pins](/guide/trust-model#pins).
+when it is finalized, before anyone runs it. The trust model lists
+[what finalization checks](/guide/trust-model#finalization-checks). Pinning a called program's
+address is checked only by the TypeScript compiler; see [Pins](/guide/trust-model#pins).
 
 What finalization cannot decide is who may run the template. Every run still relies on the
 transaction's signers, and on the checks inside the programs it calls, for authorization.

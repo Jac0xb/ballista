@@ -200,6 +200,16 @@ the commit of the latest run in which the harness passed, or `never`.
   that passed. Within 12 bits per factor no product has a floor that fits and a ceiling that
   overflows, so no passing harness reaches that error path.
 
+### Account-group filters (`group.rs`, added after `bcb85f8`)
+
+These ran separately, after the table above was built. All passed, with every `kani::cover!` satisfied.
+
+- **`GroupFilter` encode and decode** round-trip in both directions: under 0.1 s each.
+- **`segment_range`** never overflows, even with a 32-bit `usize`: 0.11 s.
+- **`verify_group_filter`** never panics: 1,875 s. Bound: 10 symbolic segments, 6 registers, 2 pubkeys, and 0 up to the maximum number of groups.
+
+Mutants in `decode` and `segment_range` are caught. No mutant was run against `verify_group_filter`.
+
 ## How the bounds work
 
 - **None** means every value of every input the harness takes: all `u64`s, all 256 opcode values,

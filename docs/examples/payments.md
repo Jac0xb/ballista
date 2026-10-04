@@ -1,34 +1,13 @@
 # Payment patterns
 
-Templates that pay out SOL: a payroll, a revenue split, weighted rewards, a refund with a deadline
-and a capped sweep. Each shows the template and the code that runs it, in TypeScript and Rust.
+Templates that pay out SOL: a revenue split, weighted rewards, a refund with a deadline,
+a capped sweep and a payment agent with fixed limits. Each shows the template and the code that
+runs it, in TypeScript and Rust.
 
 ::: warning Batching alone is not a reason
-A plain transaction can already send many transfers. The payroll below is one of those cases: the
-template adds a single instruction and a sequence of calls that is stored on chain and was checked
-when it was uploaded, and nothing else. Templates earn their place when an amount or a decision
-only exists while the transaction runs; see [amounts read at run time](/guide/runtime-values) and
+A plain transaction can already send many transfers. Templates earn their place when an amount or a
+decision only exists while the transaction runs; see [amounts read at run time](/guide/runtime-values) and
 [loops that decide per row](/guide/loops).
-:::
-
-## Bounded SOL payroll
-
-Pay the same amount to up to 30 recipients with one Ballista instruction. The recipients form a
-[batch](/reference/glossary#batch): a list of accounts supplied when the template runs, where each
-entry is a [row](/reference/glossary#row). `step.forEach` runs the transfer once per row. The Rust
-tabs build the same template with the lower-level `ProgramBuilder`, introduced in
-[Author it in Rust](/guide/getting-started#author-it-in-rust).
-
-::: code-group
-
-<<< @/../clients/js/examples/docs/bounded-sol-payroll.ts#template [TypeScript · Template]
-
-<<< @/../clients/js/examples/docs/bounded-sol-payroll.ts#run [TypeScript · Run]
-
-<<< @/../clients/rust/examples/docs_templates.rs#bounded-sol-payroll [Rust · Template]
-
-<<< @/../clients/rust/examples/docs_runs.rs#bounded-sol-payroll [Rust · Run]
-
 :::
 
 ## Basis-point revenue split
@@ -110,4 +89,42 @@ of `cap` and the amount above the reserve, and checks that the balance is still 
 
 <<< @/../clients/rust/examples/docs_runs.rs#reserve-preserving-sweep [Rust · Run]
 
+:::
+
+## Payment agent
+
+An automated agent, such as an AI agent paying for API calls or invoices, sends SOL from its own
+wallet. The limits are constants in the template, so once it is uploaded the agent can't raise
+them.
+
+::: code-group
+
+<<< @/../clients/js/examples/docs/payment-agent.ts#template [TypeScript · Template]
+
+<<< @/../clients/js/examples/docs/payment-agent.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#payment-agent [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#payment-agent [Rust · Run]
+
+:::
+
+- `perPaymentCap` rejects any single payment above 100,000,000 lamports, 0.1 SOL.
+- `rateLimit` keeps a rolling daily cap of 1 SOL in the agent's own entry of `limits`, keyed by its
+  address. At 11,574 lamports a second, the full 1 SOL refills in 86,401 seconds, just over a day.
+  The check is labeled `withinDailyCap`, and
+  [A daily limit per caller](/guide/registries#a-daily-limit-per-caller) explains the math.
+- `keepsReserve` requires the wallet to hold at least 50,000,000 lamports, 0.05 SOL, after the
+  transfer, so the agent can't drain what it needs for fees.
+- The first run creates the agent's entry, and the agent pays its rent: 1,097,280 lamports.
+- A run that breaks a limit fails with `RequirementFailed` (6015) at the labeled step, and nothing
+  moves.
+- To restrict who the agent can pay, keep the recipients in a registry, as in
+  [An allowlist](/guide/registries#an-allowlist).
+
+::: warning The limits bind only this template
+A template has no authority of its own. The agent's key signs the run, and the same key can sign a
+plain transfer that skips every limit. The limits hold only if the agent can't do that: for
+example, its key lives in a signing service whose policy signs only runs of this one template
+address.
 :::

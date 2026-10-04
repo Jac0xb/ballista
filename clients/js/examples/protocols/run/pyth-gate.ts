@@ -1,6 +1,6 @@
 import type { Address, Instruction } from '@solana/kit';
 
-import { buildKitRunInstruction, type KitAccountBinding } from '../../../src/kit.js';
+import { buildKitRunInstruction, type KitAccountBinding } from '@jac0xb/ballista/kit';
 import { compiled } from '../pyth-fresh-price-gate.js';
 import { JUPITER_V6, splitJupiterRoute } from '../shared.js';
 import { TOKEN_PROGRAM, at, pinned } from './programs.js';
@@ -9,7 +9,10 @@ export function buildPythGateRun(input: {
   templateAddress: Address;
   /** The Pyth `PriceUpdateV2` account. */
   priceUpdate: Address;
-  /** The feed the price must be, as 32 bytes: SOL/USD's is `ef0d8b6f…c280b56d`. */
+  /**
+   * The feed the price must be, as 32 bytes: SOL/USD's is
+   * `ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d`.
+   */
   feedId: Uint8Array;
   /** The exponent the bounds below are in units of: SOL/USD's is -8. */
   exponent: bigint;

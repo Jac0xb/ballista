@@ -1,9 +1,13 @@
-# Repay what the swap produced
+# Repay what a swap produced
 
 <p class="protocol-line">Kamino · Jupiter</p>
 
-**Status:** Run as real transactions against Jupiter, a Meteora pool and Kamino, copied from
-mainnet at one slot into LiteSVM, a local Solana runtime. Not yet run on mainnet itself.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against Jupiter, Meteora
+and Kamino programs and accounts copied from mainnet; not yet run on devnet or mainnet.
+
+**Cost:** Ballista's own work took 8,345 of the tested transaction's 141,830
+[compute units](/reference/glossary#compute-units); the protocols took the rest. Ballista charges no
+fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -34,22 +38,26 @@ It does not read the debt. Kamino repays at most what is owed, and the rest stay
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/kamino-repay-swap-output.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/kamino-repay-swap-output.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#kamino-repay [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#kamino-repay [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/kamino-repay.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/kamino-repay.ts#run [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#kamino-repay [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#kamino-repay [Rust · Run]
 
 :::
+
+The Rust template takes its program addresses, `token_account()`, `balance_of()` and
+`jupiter_route_data()` from the [shared helpers](/examples/protocols/#rust-helpers).
 
 ## Run it
 
 `route` starts its account list with the token program, the signer, and the signer's source and
 destination token accounts: here `collateralAta` and `borrowedAssetAta`. The template passes those
 four itself; the rest of the route's accounts arrive as the `routeAccounts`
-[account group](/guide/account-groups).
+[account group](/guide/accounts-and-cpis#account-groups).
+[Getting a Jupiter route](/examples/protocols/#jupiter-routes) says how to request one.
 
 Kamino's v2 repayment takes 13 accounts: 9 the template passes, then a second group,
 `farmAccounts`, of four. They are the obligation's user state in the reserve's debt farm, that
@@ -59,39 +67,27 @@ as on the main market's SOL and USDC reserves, both farm slots hold the Kamino p
 
 The Run tabs pass the 12 declared accounts in order (`jupiter`, `kamino`, `tokenProgram`,
 `instructionsSysvar`, `borrower`, `collateralAta`, `borrowedAssetAta`, then Kamino's five from
-`obligation` to `reserveLiquiditySupply`), then the inputs `routePlan`, `inAmount`, `quotedOutAmount`, `slippageBps`, `platformFeeBps` and
-`minimumRepayment`, then `routeAccounts` and `farmAccounts`.
+`obligation` to `reserveLiquiditySupply`), then the inputs `routePlan`, `inAmount`,
+`quotedOutAmount`, `slippageBps`, `platformFeeBps` and `minimumRepayment`, then `routeAccounts` and
+`farmAccounts`.
 
-Before the run, **refresh Kamino in the same transaction:** `refresh_reserve` for each reserve the
-obligation holds, then `refresh_obligation`. A refresh brings a reserve's interest and price, or an
-obligation's values, up to date. Kamino repays only against a reserve and an obligation refreshed
-in the same slot, and the template doesn't refresh. `buildKaminoRefreshes` (TypeScript) and
-`kamino_refreshes` (Rust), next to the runs, build them.
-
-::: tip Requesting the route
-Ask Jupiter's Swap API for `useSharedAccounts: false`. The template always sends Jupiter's `route`
-instruction. The API's default, `shared_accounts_route`, is a different instruction whose accounts
-are in a different order.
-:::
+Before the run, **refresh Kamino in the same transaction.** Kamino repays only against a reserve
+and an obligation refreshed in the same slot, and the template doesn't refresh.
+[Refreshing Kamino](/examples/protocols/#kamino-refreshes) has the order and the helpers that build
+it.
 
 ## What has been tested
 
-- **Against the real programs.** `tests/protocols/tests/kamino_repay_swap_output.rs` sells 1 SOL
-  through Jupiter and a Meteora pool, behind Kamino's refreshes, for a borrower owing three times
-  the route's quote. The debt falls by exactly what the swap produced. The whole transaction took
-  141,280 compute units (Solana's measure of execution cost) and 993 bytes, using the route's
-  lookup table.
+- **In LiteSVM.** `tests/protocols/tests/kamino_repay_swap_output.rs` sells 1 SOL through Jupiter
+  and a Meteora pool, behind Kamino's refreshes, for a borrower owing three times the route's quote.
+  The debt falls by exactly what the swap produced. The whole transaction took 141,830 compute units
+  and 1,006 bytes, using the route's lookup table.
 - **Failures.** A `minimumRepayment` one unit above the output fails at `swapWorthRepaying`, swap
   included. An attacker's account, approved for the borrower, as `borrowedAssetAta` fails at
-  `swapPaysTheBorrower`, before Jupiter is called.
-- **Not tested.** Mainnet itself, a reserve with a debt farm, and Token-2022 tokens: the template
-  accepts SPL Token accounts only. Only `borrowedAssetAta` is tied to the borrower; the route's
-  accounts and the inputs are the run builder's choice.
-- A test reads the template and checks that it calls `route` with its accounts in `route`'s order,
-  and repays through Kamino's v2 handler exactly what the swap produced, with `farmAccounts` as its
-  group (`clients/js/src/protocol-semantics.test.ts`).
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares, right after Kamino's refreshes
-  (`clients/rust/tests/protocol_templates.rs`).
+  `swapPaysTheBorrower`, before Jupiter is called. A route that charges a platform fee fails at
+  `platformFeeWithinCap`, before Jupiter is called.
+- **Not tested.** Devnet and mainnet, a reserve with a debt farm, and Token-2022 tokens: the
+  template accepts SPL Token accounts only. Only `borrowedAssetAta` is tied to the borrower; the
+  route's accounts and the inputs are the run builder's choice, apart from the capped platform fee.
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

@@ -13,9 +13,10 @@ template makes is a CPI from the Ballista program.
 ### PDA
 
 Program-derived address: an address computed from a program ID and a list of seeds, the byte
-strings it is derived from. It has no private key, so only that program can sign for it. Ballista
-signs as its own PDAs only to create its accounts, a template's and a [registry entry](#entry)'s,
-and never in a template's calls. Templates only compare addresses with derived ones (`assertPda`).
+strings it is derived from. It has no private key, so only that program can sign for it. Deriving
+one takes a bump, one extra seed byte that makes the result a valid program address; the canonical
+bump is the highest that does. Templates only compare addresses with derived ones (`assertPda`);
+see [When Ballista signs](/guide/trust-model#signing).
 
 ### ATA
 
@@ -33,7 +34,19 @@ the account returns them. A [registry entry](#entry) is never closed, so its ren
 
 ### Compute units
 
-Solana's measure of how much work a transaction does. Each transaction has a compute-unit limit.
+Solana's measure of how much work a transaction does. Each transaction has a compute-unit limit,
+and fails if it uses more. [Compute](/reference/limits#compute) says how to set it.
+
+### Discriminator
+
+The leading bytes of an instruction's data that tell a program which instruction to run. Anchor
+programs use 8 bytes derived from the instruction's name.
+
+### Instructions sysvar
+
+A read-only account, `Sysvar1nstructions1111111111111111111111111`, in which Solana lists the
+transaction's instructions. A template reads the other instructions through it; see
+[Introspection](/reference/language#introspection).
 
 ## Ballista terms
 
@@ -46,7 +59,7 @@ then anyone can run it. See [How it works](/guide/mental-model).
 
 One item in a template's step list: `let`, `require`, `invoke`, `assign`, `setRegistry`, a loop
 (`forEach` or `repeat`), or an output (`emit` or `setReturnData`). Steps run in order. See
-[Steps and control flow](/reference/language#steps-and-control-flow).
+[Steps](/reference/language#steps).
 
 ### Run input
 
@@ -77,19 +90,21 @@ marked as carried keep their result from one pass to the next.
 
 ### Account group
 
-A list of accounts, sized by the caller at run time, that one call passes along without the
-template reading them. See [Account groups](/guide/account-groups).
+A list of accounts, sized by the caller at run time, that one call passes along. The template
+can count them and test them against a filter, but not read them freely. See
+[Account groups](/guide/accounts-and-cpis#account-groups).
 
 ### Runtime accounts
 
 The accounts passed to a run after the template account: fixed accounts, then batch rows, then
-account group members. At most 120.
+account group members. At most 120, but about 61 fit in one transaction; see
+[accounts per transaction](/reference/limits#accounts-per-transaction).
 
 ### Register
 
 A numbered slot that holds one value during a run. A `let` binding names one. A template uses at
-most 64, and nothing in them survives the run. State that must outlive a run goes in a
-[registry](#registry).
+most 64 ([register budget](/reference/limits#registers)), and nothing in them survives the run.
+State that must outlive a run goes in a [registry](#registry).
 
 ### Registry
 

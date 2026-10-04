@@ -1,62 +1,5 @@
-/**
- * Collect an Orca Whirlpool position's fees and reinvest them in the position.
- *
- * A position's `fee_owed_a` and `fee_owed_b` hold what its last update recorded, not what it has
- * earned since. Swaps raise the pool's fee growth, and `update_fees_and_rewards` is what folds that
- * growth into the position. Orca's own SDK calls it before every collect, and so does this
- * template, before it reads the fees. The update needs no signature. It fails with `LiquidityZero`
- * (6012) on a position without liquidity, which earns nothing, so it is skipped for one.
- *
- * The reinvestment is `increase_liquidity_by_token_amounts_v2`, as in Orca's SDK. Given the two
- * fees as caps, the program works out the most liquidity they buy at the price when the block
- * runs, so nothing is topped up from the wallet and a price move within the bounds below does not
- * matter. One fee is used up and part of the other stays in the wallet. `increase_liquidity`, by
- * contrast, takes a liquidity chosen at signing and fails with `TokenMaxExceeded` (6017) once the
- * price has moved or the fees are in one token.
- *
- * While the price is inside the position's range, liquidity takes both tokens: with either cap at
- * zero the program works out none and fails with `LiquidityZero`. So fees in one token are
- * collected and not reinvested. Nor are the fees of a position emptied with `decrease_liquidity`:
- * they are collected, and the position stays empty.
- *
- * `minSqrtPrice` and `maxSqrtPrice` bound the pool price the deposit accepts. Orca's
- * `get_sqrt_price_slippage_bounds` computes them from a price and a tolerance. Outside them the
- * deposit fails with `PriceSlippageOutOfBounds` (6069), and the whole run reverts with it.
- *
- * `collect_fees` and the pinned token program are SPL Token's, so both of the pool's mints must be
- * SPL Token mints, as SOL and USDC are.
- *
- * With nothing above `dustFloor` in either token, the collect and the deposit are skipped and the
- * run lands: a scheduled compounder that finds nothing to do should not revert and burn the fee.
- *
- * `dustFloor` is not safe at 0. A fee just above the floor can still be too small to buy one unit
- * of liquidity over the position's range, and the deposit then fails with `LiquidityZero` (6012),
- * taking the whole run down with it, collect included
- * (`dust_that_buys_no_liquidity_fails_the_run_unless_the_floor_skips_it`). A few base units covers
- * a SOL/USDC position; a pool whose token A is worth less per base unit needs more, so a few
- * thousand base units is a safer default.
- *
- * `tokenOwnerAccountA` and `tokenOwnerAccountB` must belong to whoever holds the position's NFT,
- * read from `positionTokenAccount`'s own owner field, not to `positionAuthority`, which only has
- * to sign for the position. Whirlpools lets `positionAuthority` be a delegate approved on
- * `positionTokenAccount` rather than the NFT's real owner (`MissingOrInvalidDelegate`, 6019, is
- * what guards that), so binding the fee destination to the signer would pay a delegate keeper
- * instead of the position's real owner. Whirlpools' `collect_fees` checks only the fee accounts'
- * mint, never who owns them, so nothing else stops a run built by someone else from pointing them
- * anywhere; the template requires it itself (`feesGoToThePositionHolder`).
- *
- * A delegate keeper that reinvests, not merely collects, must also be approved on
- * `tokenOwnerAccountA` and `tokenOwnerAccountB` themselves, not only on the position's NFT:
- * `increase_liquidity_by_token_amounts_v2` debits them under `positionAuthority`'s signature, which
- * the NFT approval does not cover. With only the NFT approved, a run whose `dustFloor` is 0 still
- * reaches the deposit and fails with Token's `OwnerMismatch` (error 4); the collect before it
- * reverts too. Approve the keeper for a bounded amount there, not `u64::MAX`: an unlimited approval
- * lets it spend the account outside this template as well.
- *
- * Offsets come from `Position`, declared as `whirlpool, position_mint, liquidity,
- * tick_lower_index, tick_upper_index, fee_growth_checkpoint_a, fee_owed_a,
- * fee_growth_checkpoint_b, fee_owed_b, reward_infos` with `LEN = 8 + 136 + 72`.
- */
+/** Compound collected fees: docs/examples/protocols/orca-compound.md. */
+// #region template
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
@@ -65,7 +8,7 @@ import {
   defineTemplate,
   expression,
   step,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 import {
   MEMO_PROGRAM,
   OPTION_NONE,
@@ -86,7 +29,7 @@ export const orcaCompoundFees = defineTemplate({
   inputs: {
     /**
      * Fees at or below this, in either token's base units, are not worth collecting. Not safe at
-     * 0: see the header.
+     * 0: a fee too small to buy any liquidity fails the deposit, and the whole run with it.
      */
     dustFloor: { type: 'u64' },
     /** The lowest pool sqrt price (Q64.64) the deposit accepts. */
@@ -114,7 +57,7 @@ export const orcaCompoundFees = defineTemplate({
     positionTokenAccount: { unsafeUnpinned: true, minDataLength: TOKEN_ACCOUNT_LENGTH },
     tokenMintA: {},
     tokenMintB: {},
-    /** Must belong to the position's holder: see the header (`feesGoToThePositionHolder`). */
+    /** Must belong to the position's holder (`feesGoToThePositionHolder`). */
     tokenOwnerAccountA: {
       writable: true,
       owner: TOKEN_PROGRAM_ADDRESS_BYTES,
@@ -160,6 +103,8 @@ export const orcaCompoundFees = defineTemplate({
       ),
       'readLiquidity',
     ),
+    // Folds the pool's fee growth into the position, so the owed fees are current. Whirlpools
+    // refuses it for a position without liquidity, which earns nothing.
     step.invoke({
       program: account.fixed('whirlpoolProgram'),
       accounts: [
@@ -201,6 +146,8 @@ export const orcaCompoundFees = defineTemplate({
       when: expression.or(expression.variable('earnedA'), expression.variable('earnedB')),
       label: 'collectFees',
     }),
+    // By token amounts: with the fees as caps, Whirlpools works out the most liquidity they buy at
+    // the price when it runs. `increase_liquidity` would take a liquidity fixed at signing.
     step.invoke({
       program: account.fixed('whirlpoolProgram'),
       accounts: [
@@ -240,3 +187,4 @@ export const orcaCompoundFees = defineTemplate({
 });
 
 export const compiled = compileTemplate(orcaCompoundFees);
+// #endregion template

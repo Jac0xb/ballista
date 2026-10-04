@@ -1,0 +1,37 @@
+{
+  "description": "The pump.fun templates' tests: pumpFunBuyBasket and pumpFunSellAll against pump.fun's bonding-curve program (not PumpSwap). Three live curves of Token-2022 coins, all SOL-paired: hjxc and avyg are ordinary coins, and avj1 is a mayhem-mode coin, whose buys pay a reserved fee recipient instead of an ordinary one. bfx4's curve has graduated (`complete` is set) and moved to PumpSwap. Each live coin's mint, curve, curve token account (the curve's associated token account) and creator vault are listed. Each coin's `bonding-curve-v2` PDA, which buy and sell take as a remaining account, does not exist on chain, so it is not listed. pump.fun invokes the Pump Fees program for its fee rates on every trade, and itself for its event log. The fee recipients are one of each kind pump.fun's Global account allows: ordinary, reserved (mayhem) and buyback. The test wallet is unused by these tests, which sign with their own seeded keys; every snapshot names the same one because the loader checks it.",
+  "wallet": {
+    "seed": "ballista-protocol-tests-wallet-1"
+  },
+  "programs": {
+    "pump": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+    "pumpFees": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+    "token2022": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "associatedToken": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+  },
+  "accounts": {
+    "global": "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf",
+    "feeConfig": "8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt",
+    "globalVolumeAccumulator": "Hq2wp8uJ9jCPsYgNHex8RtqdvMPfVGoYwjvF1ATiwn2Y",
+    "eventAuthority": "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1",
+    "feeRecipient": "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV",
+    "reservedFeeRecipient": "GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS",
+    "buybackFeeRecipient": "9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7",
+    "hjxcMint": "HjXcr1A2k9mG2614UrCw5JnYnK7sAbe1y3EEeSmGmPUD",
+    "hjxcBondingCurve": "2Q8Y16chuZMc9Bq6sTaLWP6f6Uyr71dS9J5yyJU6bKDd",
+    "hjxcCurveTokenAccount": "CW8X4sQ5xwgkoVCVism4rqMfo4x9Rpg1Librhg4DU3UA",
+    "hjxcCreatorVault": "91m6UXduxMiyYCkhirCkT9RbRiqJvHasBf4FTNFLsiaT",
+    "avygMint": "AvygmeaEVDXFT8pUQdtr3pv6sUBf8CtMRsRtdzuPpump",
+    "avygBondingCurve": "EjzbVxXZLx3bE5Y3Jq9BkMVbtoSvaZvfb6wyrpHHRtBy",
+    "avygCurveTokenAccount": "5of8miFgjv5tbDcphRyyQgYqSGHCjDNnRwMp8bpum5Jz",
+    "avygCreatorVault": "7RQDH1Wa1wbdkgbQHaxefCcrcZmDDWUYUrGFmXp9U8AV",
+    "avj1Mint": "AVJ1akJaBGvMoCE7c39DhWGDL7Fb5eLtUgAw3Tfppump",
+    "avj1BondingCurve": "DsEZiYRUqwVi9MfTKM1hLnz2itBfT27JhSwW4BzYysUd",
+    "avj1CurveTokenAccount": "92ZzH74y5wrihjw1BPd9beMKqz3EM3dNHUZHCA7Hrq5U",
+    "avj1CreatorVault": "Hc8JKonaYAQJme6rjRo4n3F6cPbh17yRpNfnGyPY8XPQ",
+    "bfx4Mint": "BFX4LknRDLUiJvmAYNWWg8o6x5Wo21c2zXNxUDgipump",
+    "bfx4BondingCurve": "GmnzVDecLBtPFE5BrU1jm78N9bZzMFyVBFc2HozQxkrj",
+    "bfx4CurveTokenAccount": "2DxynL2rD7xZwSZ4Q1FgbQPutbKdKZ9JdSW6ULWiVvkZ",
+    "bfx4CreatorVault": "FBhnAqNuDuM2S4oiYk5mkHg8WNssEwRP9Mqpo8rVf6LB"
+  }
+}

@@ -3,7 +3,7 @@
 //!
 //! `decode_ballista_error` itself has no rule: it reads the name table in the binary's data
 //! section at a symbolic index, which the prover's pointer analysis does not follow. Its behaviour
-//! is covered by the host tests in `ballista-common`; the range facts it relies on are proved here.
+//! is covered by the host tests in `ballista-common`; the range facts it relies on are stated here.
 
 use ballista::error::{vm_error, BallistaError};
 use ballista_common::template::*;
@@ -105,7 +105,8 @@ pub fn rule_verifier_error_codes_are_distinct_and_in_range() {
         29 => TemplateError::InvalidLoop(nondet()),
         30 => TemplateError::InvalidOutput(nondet()),
         31 => TemplateError::InvalidIntrospection(nondet()),
-        _ => TemplateError::InvalidRegistry(nondet()),
+        32 => TemplateError::InvalidRegistry(nondet()),
+        _ => TemplateError::InvalidAccountGroup(nondet()),
     };
     let (code, _) = error.code();
     cvlr_assert!(code == VERIFIER_ERROR_BASE + index as u32);

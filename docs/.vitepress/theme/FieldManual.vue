@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AuditFund from './AuditFund.vue';
 import { withBase } from 'vitepress';
 import TemplateGallery from './TemplateGallery.vue';
 
@@ -23,6 +24,11 @@ const steps = [
           <a class="start-link" :href="withBase('/guide/getting-started')">Get started <span aria-hidden="true">↗</span></a>
           <a class="plain-link" :href="withBase('/guide/mental-model')">How it works</a>
         </div>
+        <p class="cover-status">
+          <strong>Not audited.</strong> Ballista is on mainnet, but no third party has audited the
+          program or the SDKs. <AuditFund />
+          <a :href="withBase('/guide/security#audit-status')">Details</a>
+        </p>
       </div>
     </section>
 

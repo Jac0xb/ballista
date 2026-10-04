@@ -11,6 +11,27 @@ transaction fee.
 **Recover:** read the error code to find the failing step, fix the inputs or accounts, and run
 again. See [Errors and events](/guide/errors-and-events).
 
+## The transaction runs too many instructions
+
+**What happens:** a transaction runs at most 64 instructions, counting every CPI at every depth.
+The call that would be the 65th fails the whole transaction with Solana's
+`MaxInstructionTraceLengthExceeded`, not a Ballista code. Ballista counts only the template's own
+calls, so a loop within its `max` can still overflow.
+
+**Recover:** count one pass's entries in a simulation (each `invoke` line in the logs is one), then
+lower the loop's count or split the work across transactions. See
+[Instruction trace](/reference/limits#instruction-trace).
+
+## A call nests too deep
+
+**What happens:** Solana nests calls at most 5 frames deep, and a run called by the transaction is
+the first. A call into frame 6 fails the whole transaction with Solana's `CallDepth` error, not a
+Ballista code. Each template that runs another template adds a frame.
+
+**Recover:** call the deep program from fewer frames: send the inner template's run as its own
+instruction instead of nesting it, or pick a route that nests less. See
+[Call depth](/reference/limits#call-depth).
+
 ## The template has a bug
 
 **What happens:** a finalized template can never be changed or closed. The bug stays, and so does

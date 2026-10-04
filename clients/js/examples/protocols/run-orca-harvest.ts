@@ -1,18 +1,5 @@
-/**
- * Build the Orca harvest run: the other run-side shape, batch rows.
- *
- * `orca-harvest-many-positions.ts` declares a row of four accounts and up to twelve iterations.
- * The caller passes one record per position and the iteration count follows from how many were
- * passed: there is no count in the instruction data to get wrong.
- *
- * Every row passed here must belong to the same holder: `accounts.tokenOwnerAccountA` and
- * `tokenOwnerAccountB` are fixed for the whole batch, and each row's fees reach them only when
- * that row's own position NFT is held by the same owner. Positions from another holder need a
- * separate run, built with that holder's own fee accounts.
- *
- * Every other example on this page binds accounts by name and needs nothing beyond
- * `buildKitRunInstruction`; this one and `run-jupiter-deposit.ts` are the two that do not.
- */
+/** Build a run of the Orca harvest, one batch row per position: docs/examples/protocols/orca-harvest.md. */
+// #region run
 import {
   address,
   getAddressEncoder,
@@ -21,8 +8,8 @@ import {
   type Instruction,
 } from '@solana/kit';
 
-import { explainRunError } from '../../src/index.js';
-import { BALLISTA_ADDRESS, buildKitRunInstruction, getTemplateAddress } from '../../src/kit.js';
+import { explainRunError, failedProgram } from '@jac0xb/ballista';
+import { BALLISTA_ADDRESS, buildKitRunInstruction, getTemplateAddress } from '@jac0xb/ballista/kit';
 import { compiled } from './orca-harvest-many-positions.js';
 import { ORCA_WHIRLPOOL } from './shared.js';
 
@@ -110,15 +97,7 @@ export async function buildOrcaHarvestRun(input: {
     })),
   });
 }
-
-/** The program named by the first `Program <id> failed: …` log line: the innermost that failed. */
-export function failedProgram(logs: readonly string[]): string | undefined {
-  for (const line of logs) {
-    const match = /^Program ([1-9A-HJ-NP-Za-km-z]{32,44}) failed: /.exec(line);
-    if (match) return match[1];
-  }
-  return undefined;
-}
+// #endregion run
 
 /**
  * Says which program refused a harvest, and where, from the failed transaction's code and logs.

@@ -6,7 +6,7 @@ import {
   expression,
   step,
   systemTransfer,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 
 /** Pay creditors in row order, each the smaller of what it is owed and what is left. */
 export const waterfallUntilTheMoneyRunsOut = defineTemplate({
@@ -47,8 +47,8 @@ export const waterfallUntilTheMoneyRunsOut = defineTemplate({
 // #region run
 import type { Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 /** `creditors` in priority order, each with what it is owed. */
 export function runWaterfallUntilTheMoneyRunsOut(run: {

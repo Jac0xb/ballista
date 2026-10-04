@@ -184,8 +184,10 @@ fn repays_exactly_what_the_swap_produced() {
     let run = run(&svm, &scene, produced);
     let outcome = send_run(&mut svm, &scene, run).unwrap_or_else(|failure| panic!("{failure:?}"));
     eprintln!(
-        "{NAME}: {} CU, {} bytes",
-        outcome.compute_units, outcome.size
+        "{NAME}: {} CU, {} of them Ballista's own, {} bytes",
+        outcome.compute_units,
+        outcome.own_compute_units_of(&ballista_sdk::ID).unwrap(),
+        outcome.size
     );
 
     assert_eq!(

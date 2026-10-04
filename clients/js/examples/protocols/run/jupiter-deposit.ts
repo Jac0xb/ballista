@@ -1,6 +1,6 @@
 import type { Address, Instruction } from '@solana/kit';
 
-import { buildKitRunInstruction, type KitAccountBinding } from '../../../src/kit.js';
+import { buildKitRunInstruction, type KitAccountBinding } from '@jac0xb/ballista/kit';
 import { compiled } from '../jupiter-deposit-exact-output.js';
 import { JUPITER_V6, KAMINO_LEND, SYSVAR_INSTRUCTIONS, splitJupiterRoute } from '../shared.js';
 import { KAMINO_FARMS_PROGRAM, kaminoFarmPair, type KaminoFarm } from './kamino.js';

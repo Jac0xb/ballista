@@ -1,7 +1,7 @@
 import type { Address, Instruction } from '@solana/kit';
 
-import { registryIndex } from '../../../src/index.js';
-import { buildKitRunInstruction, findRegistryEntryAddress, type KitAccountBinding } from '../../../src/kit.js';
+import { registryIndex } from '@jac0xb/ballista';
+import { buildKitRunInstruction, findRegistryEntryAddress, type KitAccountBinding } from '@jac0xb/ballista/kit';
 import { compiled } from '../jupiter-daily-cap-swap.js';
 import { JUPITER_V6, splitJupiterRoute } from '../shared.js';
 import { SYSTEM_PROGRAM, TOKEN_PROGRAM, at, pinned } from './programs.js';

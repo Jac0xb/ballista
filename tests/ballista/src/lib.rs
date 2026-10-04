@@ -7,8 +7,20 @@ mod pda_equivalence;
 mod phases;
 mod profile;
 
+// Fuzzing and stateful lifecycle testing of the on-chain program, plus targeted tests for the
+// registry-ordering design finding and the signer/writable mutation checks. See `fuzz/mod.rs`.
+#[cfg(test)]
+mod fuzz;
+
 #[cfg(test)]
 mod tests {
+    mod account_groups;
+    mod compiler_fuzz;
+    mod critic_loops;
+    mod group_scans;
+    mod property_findings;
+    mod register_reuse;
+
     use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
     use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -2622,9 +2634,12 @@ mod tests {
         for _ in 0..MAX_ROW_INPUTS {
             builder.row_input(VALUE_BOOL, 0);
         }
-        // Never invoked, but every descriptor sizes the invocation buffer: 4 KiB here.
+        // Every descriptor sizes the invocation buffer: 4 KiB here. Its one invoke is guarded by a
+        // false register, so it never runs.
         let padding = builder.blob(&[0; MAX_CPI_DATA_LEN]);
-        builder.cpi(program, &[], &[Segment::Literal(padding)]);
+        let cpi = builder.cpi(program, &[], &[Segment::Literal(padding)]);
+        let never = builder.const_bool(false);
+        builder.invoke(cpi, Some(never));
         let count = builder.const_u64(1);
         builder.for_each(0, |body| {
             body.loop_index();
@@ -2809,6 +2824,166 @@ mod tests {
         let result =
             context.process_instruction(&create_template_instruction(creator, 96, &payload));
         assert_eq!(custom_code(&result), Some(((at as u32) << 16) | 6130), "{result:#?}");
+    }
+
+    /// Real logs for the Rust SDK's log decoders, kept in `clients/rust/tests/fixtures/run-logs.json`
+    /// and rewritten with `UPDATE_FIXTURES=1`.
+    ///
+    /// `nested`: an outer run with the event flag logs `OUTR`, runs an inner template that logs
+    /// `INNR`, its event and returns 7, calls the Token program's `GetAccountDataSize`, which
+    /// returns 165, then logs `DONE` and its own event. It sets no return data, so its
+    /// `Program return:` line names Ballista but holds the Token program's bytes: the runtime
+    /// logs the program whose frame ended, not the one that set the data. `failed`: a run logs
+    /// `TRY1`, then fails a requirement.
+    ///
+    /// Every line but the compute-unit counts must match the fixture, so a change to what runs
+    /// log shows up here.
+    #[test]
+    fn run_logs_for_the_sdk_decoders() {
+        let creator = Pubkey::new_from_array([0x11; 32]);
+        let payer = Pubkey::new_from_array([0x22; 32]);
+        let mint = Pubkey::new_from_array([0x33; 32]);
+        let mut accounts = funded_accounts([creator, payer], 10_000_000_000);
+        accounts.insert(
+            mint,
+            token::create_account_for_mint(Mint {
+                mint_authority: COption::Some(payer),
+                supply: 0,
+                decimals: 6,
+                is_initialized: true,
+                freeze_authority: COption::None,
+            }),
+        );
+        let mut context = context(accounts);
+        let create =
+            |context: &MolluskContext<HashMap<Pubkey, Account>>, id: u16, payload: &[u8]| {
+                let result =
+                    context.process_instruction(&create_template_instruction(creator, id, payload));
+                assert!(result.program_result.is_ok(), "{result:#?}");
+                find_template_pda(&creator, id).0
+            };
+
+        let mut inner = ProgramBuilder::new();
+        inner.flags(ballista_common::template::PROGRAM_FLAG_EMIT_EVENT);
+        let seven = inner.const_u64(7);
+        let tag = inner.blob(b"INNR");
+        let part = Segment::Register(DATA_REG_U64, seven);
+        inner.emit_data(&[Segment::Literal(tag), part]);
+        inner.set_return_data(&[part]);
+        let inner = create(&context, 1, &inner.build().unwrap());
+
+        let mut outer = ProgramBuilder::new();
+        outer.flags(ballista_common::template::PROGRAM_FLAG_EMIT_EVENT);
+        let ballista = outer.account(ACCOUNT_EXECUTABLE, Some(ID.to_bytes()), None, 0);
+        let inner_account = outer.account(0, None, Some(ID.to_bytes()), 80);
+        let token_program = outer.account(ACCOUNT_EXECUTABLE, Some(token::ID.to_bytes()), None, 0);
+        let mint_account = outer.account(0, None, Some(token::ID.to_bytes()), 82);
+        let one = outer.const_u64(1);
+        let tag = outer.blob(b"OUTR");
+        outer.emit_data(&[Segment::Literal(tag), Segment::Register(DATA_REG_U64, one)]);
+        let run = outer.blob(&[IX_RUN]);
+        let nested = outer.cpi(ballista, &[(inner_account, 0)], &[Segment::Literal(run)]);
+        outer.invoke(nested, None);
+        let returned = outer.return_data(OP_READ_U64, 0);
+        let size_of = outer.blob(&[21]); // GetAccountDataSize
+        let size_cpi = outer.cpi(
+            token_program,
+            &[(mint_account, 0)],
+            &[Segment::Literal(size_of)],
+        );
+        outer.invoke(size_cpi, None);
+        let size = outer.return_data(OP_READ_U64, 0);
+        let tag = outer.blob(b"DONE");
+        outer.emit_data(&[
+            Segment::Literal(tag),
+            Segment::Register(DATA_REG_U64, returned),
+            Segment::Register(DATA_REG_U64, size),
+        ]);
+        let outer = create(&context, 2, &outer.build().unwrap());
+
+        let mut failing = ProgramBuilder::new();
+        let tag = failing.blob(b"TRY1");
+        let zero = failing.const_u64(0);
+        failing.emit_data(&[Segment::Literal(tag), Segment::Register(DATA_REG_U64, zero)]);
+        let never = failing.binary(OP_NE, zero, zero);
+        failing.require(never);
+        let failing = create(&context, 3, &failing.build().unwrap());
+
+        let mut logs = |instruction: Instruction, succeeds: bool| {
+            let logger = LogCollector::new_ref();
+            context.mollusk.logger = Some(logger.clone());
+            let result = context.process_instruction(&instruction);
+            assert_eq!(result.program_result.is_ok(), succeeds, "{result:#?}");
+            let lines = logger.borrow().get_recorded_content().to_vec();
+            (lines, result.return_data)
+        };
+        let (nested, returned) = logs(
+            run_instruction(
+                outer,
+                vec![
+                    AccountMeta::new_readonly(ID, false),
+                    AccountMeta::new_readonly(inner, false),
+                    AccountMeta::new_readonly(token::ID, false),
+                    AccountMeta::new_readonly(mint, false),
+                ],
+                &[],
+            ),
+            true,
+        );
+        assert_eq!(
+            returned,
+            165u64.to_le_bytes(),
+            "the Token program's return data"
+        );
+        let last_return = format!(
+            "Program return: {ID} {}",
+            STANDARD.encode(165u64.to_le_bytes())
+        );
+        assert!(nested.contains(&last_return), "{nested:#?}");
+        let (failed, _) = logs(run_instruction(failing, vec![], &[]), false);
+
+        let fixture = serde_json::json!({
+            "ballista": ID.to_string(),
+            "token": token::ID.to_string(),
+            "outer": outer.to_string(),
+            "inner": inner.to_string(),
+            "failing": failing.to_string(),
+            "nested": nested,
+            "failed": failed,
+        });
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../clients/rust/tests/fixtures/run-logs.json"
+        );
+        if std::env::var("UPDATE_FIXTURES").as_deref() == Ok("1") {
+            let text = format!("{}\n", serde_json::to_string_pretty(&fixture).unwrap());
+            std::fs::write(path, text).expect("write run-logs.json");
+            return;
+        }
+        let recorded: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(path).expect("run-logs.json: run with UPDATE_FIXTURES=1"),
+        )
+        .expect("run-logs.json");
+        // Compute-unit counts move with every change to the program; everything else must match.
+        let shape = |value: &serde_json::Value| -> Vec<String> {
+            value
+                .as_array()
+                .expect("an array of lines")
+                .iter()
+                .map(|line| line.as_str().expect("a line").to_owned())
+                .filter(|line| !line.contains(" compute units"))
+                .collect()
+        };
+        for key in ["nested", "failed"] {
+            assert_eq!(
+                shape(&recorded[key]),
+                shape(&fixture[key]),
+                "{key}: rerun with UPDATE_FIXTURES=1"
+            );
+        }
+        for key in ["ballista", "token", "outer", "inner", "failing"] {
+            assert_eq!(recorded[key], fixture[key], "{key}");
+        }
     }
 
     /// Run data for the output fixture: 1,000 lamports per row and the memo `hello`.
@@ -3042,26 +3217,26 @@ mod tests {
         let register_count = if assert_delta { 6 } else { input_count };
         let mut instructions = Vec::new();
         if require_guard {
-            instructions.push(record(OP_LOAD_INPUT, 0, 0, 0, 0, 0));
-            instructions.push(record(OP_REQUIRE, NO_INDEX, 0, 0, 0, 0));
-            instructions.push(record(OP_LOAD_INPUT, 1, 1, 0, 0, 0));
+            instructions.push(record(OP_LOAD_INPUT, 0, 0, NO_INDEX, NO_INDEX, 0));
+            instructions.push(record(OP_REQUIRE, NO_INDEX, 0, NO_INDEX, NO_INDEX, 0));
+            instructions.push(record(OP_LOAD_INPUT, 1, 1, NO_INDEX, NO_INDEX, 0));
         } else {
-            instructions.push(record(OP_LOAD_INPUT, 0, 0, 0, 0, 0));
+            instructions.push(record(OP_LOAD_INPUT, 0, 0, NO_INDEX, NO_INDEX, 0));
         }
         let amount_register = if require_guard { 1 } else { 0 };
         if assert_delta {
             // This register is the runtime representation of `step.snapshot("before", ...)`.
-            instructions.push(record(OP_ACCOUNT_LAMPORTS, 2, 1, 0, 0, 0));
+            instructions.push(record(OP_ACCOUNT_LAMPORTS, 2, 1, NO_INDEX, NO_INDEX, 0));
         }
         if batch {
-            instructions.push(record(OP_FOREACH, NO_INDEX, 1, 0, 0, 0));
+            instructions.push(record(OP_FOREACH, NO_INDEX, 1, NO_INDEX, NO_INDEX, 0));
         }
-        instructions.push(record(OP_INVOKE, NO_INDEX, 0, NO_INDEX, 0, 0));
+        instructions.push(record(OP_INVOKE, NO_INDEX, 0, NO_INDEX, NO_INDEX, 0));
         if assert_delta {
-            instructions.push(record(OP_ACCOUNT_LAMPORTS, 3, 1, 0, 0, 0));
-            instructions.push(record(OP_SUB, 4, 2, amount_register, 0, 0));
-            instructions.push(record(OP_EQ, 5, 3, 4, 0, 0));
-            instructions.push(record(OP_REQUIRE, NO_INDEX, 5, 0, 0, 0));
+            instructions.push(record(OP_ACCOUNT_LAMPORTS, 3, 1, NO_INDEX, NO_INDEX, 0));
+            instructions.push(record(OP_SUB, 4, 2, amount_register, NO_INDEX, 0));
+            instructions.push(record(OP_EQ, 5, 3, 4, NO_INDEX, 0));
+            instructions.push(record(OP_REQUIRE, NO_INDEX, 5, NO_INDEX, NO_INDEX, 0));
         }
 
         let header = ProgramHeader::new(
@@ -3169,9 +3344,9 @@ mod tests {
             max_len_le: [0; 2],
         }];
         let instructions = [
-            record(OP_LOAD_INPUT, 0, 0, 0, 0, 0),
-            record(OP_FOREACH, NO_INDEX, 1, 0, 0, 0),
-            record(OP_INVOKE, NO_INDEX, 0, NO_INDEX, 0, 0),
+            record(OP_LOAD_INPUT, 0, 0, NO_INDEX, NO_INDEX, 0),
+            record(OP_FOREACH, NO_INDEX, 1, NO_INDEX, NO_INDEX, 0),
+            record(OP_INVOKE, NO_INDEX, 0, NO_INDEX, NO_INDEX, 0),
         ];
         let cpis = [CpiDescriptor {
             program_account: 0,
@@ -3253,18 +3428,18 @@ mod tests {
             max_len_le: [0; 2],
         }];
         let instructions = [
-            record(OP_LOAD_INPUT, 0, 0, 0, 0, 0),
-            record(OP_FOREACH, NO_INDEX, 10, 0, 0, 0),
-            record(OP_ACCOUNT_KEY, 1, 0x80, 0, 0, 0),
-            record(OP_ACCOUNT_KEY, 2, 1, 0, 0, 0),
-            record(OP_ACCOUNT_KEY, 3, 6, 0, 0, 0),
-            record(OP_DERIVE_PDA, 4, 0, 0, 0, 3u64 << 32),
-            record(OP_ACCOUNT_KEY, 5, 0x81, 0, 0, 0),
-            record(OP_EQ, 6, 4, 5, 0, 0),
-            record(OP_REQUIRE, NO_INDEX, 6, 0, 0, 0),
-            record(OP_ACCOUNT_IS_EMPTY, 7, 0x81, 0, 0, 0),
-            record(OP_INVOKE, NO_INDEX, 0, 7, 0, 0),
-            record(OP_INVOKE, NO_INDEX, 1, NO_INDEX, 0, 0),
+            record(OP_LOAD_INPUT, 0, 0, NO_INDEX, NO_INDEX, 0),
+            record(OP_FOREACH, NO_INDEX, 10, NO_INDEX, NO_INDEX, 0),
+            record(OP_ACCOUNT_KEY, 1, 0x80, NO_INDEX, NO_INDEX, 0),
+            record(OP_ACCOUNT_KEY, 2, 1, NO_INDEX, NO_INDEX, 0),
+            record(OP_ACCOUNT_KEY, 3, 6, NO_INDEX, NO_INDEX, 0),
+            record(OP_DERIVE_PDA, 4, 0, NO_INDEX, NO_INDEX, 3u64 << 32),
+            record(OP_ACCOUNT_KEY, 5, 0x81, NO_INDEX, NO_INDEX, 0),
+            record(OP_EQ, 6, 4, 5, NO_INDEX, 0),
+            record(OP_REQUIRE, NO_INDEX, 6, NO_INDEX, NO_INDEX, 0),
+            record(OP_ACCOUNT_IS_EMPTY, 7, 0x81, NO_INDEX, NO_INDEX, 0),
+            record(OP_INVOKE, NO_INDEX, 0, 7, NO_INDEX, 0),
+            record(OP_INVOKE, NO_INDEX, 1, NO_INDEX, NO_INDEX, 0),
         ];
         let cpis = [
             CpiDescriptor {
@@ -3770,6 +3945,100 @@ mod tests {
             context.account_store.borrow_mut().insert(entry, seeded);
             let result = run(&context, template, payer, AccountMeta::new(entry, false), 1);
             assert!(result.program_result.is_ok(), "{result:#?}");
+        }
+
+        /// A ledger in registry 0, one `u64` balance per entry, keyed by its holder. Moves the
+        /// `u64` input from the payer's entry to the entry keyed by the `pubkey` input: reads both
+        /// balances, then writes both. Returns the payload and the second open's pc.
+        fn ledger() -> (Vec<u8>, usize) {
+            let mut builder = ProgramBuilder::new();
+            let accounts = declare(&mut builder);
+            let to_entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+            let amount = builder.input(VALUE_U64, 0);
+            let receiver = builder.input(VALUE_PUBKEY, 0);
+            let amount = builder.load_input(amount);
+            let receiver = builder.load_input(receiver);
+            let sender = builder.account_key(accounts.payer);
+            builder.open_registry(
+                accounts.entry,
+                Some(sender),
+                accounts.payer,
+                0,
+                8,
+                accounts.system,
+            );
+            let second_open = builder.open_registry(
+                to_entry,
+                Some(receiver),
+                accounts.payer,
+                0,
+                8,
+                accounts.system,
+            );
+            let from_balance = builder.read_registry(accounts.entry, 0, OP_READ_U64);
+            let to_balance = builder.read_registry(to_entry, 0, OP_READ_U64);
+            let debited = builder.binary(OP_SUB, from_balance, amount);
+            let credited = builder.binary(OP_ADD, to_balance, amount);
+            builder.write_registry(accounts.entry, 0, OP_READ_U64, debited);
+            builder.write_registry(to_entry, 0, OP_READ_U64, credited);
+            (builder.build().unwrap(), second_open)
+        }
+
+        /// Two entries of one registry whose keys come out equal are one account, passed in two
+        /// slots. A transfer that read both balances and then wrote both would credit the sender
+        /// with what it sent, so the second open refuses the entry the first has open.
+        #[test]
+        fn a_second_open_of_an_open_entry_fails() {
+            let sender = Pubkey::new_unique();
+            let receiver = Pubkey::new_unique();
+            let newcomer = Pubkey::new_unique();
+            let (payload, second_open) = ledger();
+            let (context, template) = setup(&payload, 11, &[sender, newcomer]);
+            let from = entry_address(&template, 0, &sender);
+            let to = entry_address(&template, 0, &receiver);
+            let mut seeded = seeded_entry(&context, &template, 0, &sender, 72 + 8);
+            seeded.data[72..].copy_from_slice(&100u64.to_le_bytes());
+            context.account_store.borrow_mut().insert(from, seeded);
+            let transfer = |payer: Pubkey, receiver: Pubkey, from: Pubkey, to: Pubkey| {
+                let metas = vec![
+                    AccountMeta::new_readonly(system_program::id(), false),
+                    AccountMeta::new(payer, true),
+                    AccountMeta::new(from, false),
+                    AccountMeta::new(to, false),
+                ];
+                let mut inputs = 30u64.to_le_bytes().to_vec();
+                inputs.extend_from_slice(receiver.as_ref());
+                context.process_instruction(&run_instruction(template, metas, &inputs))
+            };
+            let balance = |entry: Pubkey| {
+                u64::from_le_bytes(account(&context, entry).data[72..80].try_into().unwrap())
+            };
+
+            // Distinct keys: 30 moves, and the receiver's entry is created.
+            let result = transfer(sender, receiver, from, to);
+            assert!(result.program_result.is_ok(), "{result:#?}");
+            assert_eq!((balance(from), balance(to)), (70, 30));
+
+            // Equal keys: the sender's entry in both slots. Both reads would see 70, and the
+            // credit, 70 + 30, would overwrite the debit, 70 - 30.
+            let result = transfer(sender, sender, from, from);
+            assert_eq!(balance(from), 70, "an aliased transfer credits the sender");
+            assert_eq!(
+                failure(&result),
+                (INVALID_REGISTRY_ENTRY, second_open as u32)
+            );
+
+            // Before the entry exists: the first open creates it, and the second finds it open.
+            let fresh = entry_address(&template, 0, &newcomer);
+            let result = transfer(newcomer, newcomer, fresh, fresh);
+            assert_eq!(
+                failure(&result),
+                (INVALID_REGISTRY_ENTRY, second_open as u32)
+            );
+            assert!(
+                !context.account_store.borrow().contains_key(&fresh),
+                "nothing is created"
+            );
         }
 
         #[test]

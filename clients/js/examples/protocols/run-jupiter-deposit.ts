@@ -16,8 +16,8 @@
  */
 import { address, getAddressDecoder, type Address, type Instruction } from '@solana/kit';
 
-import { explainRunError } from '../../src/index.js';
-import { BALLISTA_ADDRESS, buildKitRunInstruction, getTemplateAddress } from '../../src/kit.js';
+import { explainRunError, failedProgram } from '@jac0xb/ballista';
+import { BALLISTA_ADDRESS, buildKitRunInstruction, getTemplateAddress } from '@jac0xb/ballista/kit';
 import { compiled } from './jupiter-deposit-exact-output.js';
 import {
   JUPITER_ROUTE,
@@ -27,16 +27,10 @@ import {
   KAMINO_LEND,
   SYSVAR_INSTRUCTIONS,
   splitJupiterRoute,
+  type JupiterSwapInstruction,
 } from './shared.js';
 
 const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
-
-/** The shape the Jupiter Swap API returns for `swapInstruction`. */
-export interface JupiterSwapInstruction {
-  programId: string;
-  accounts: { pubkey: string; isSigner: boolean; isWritable: boolean }[];
-  data: string;
-}
 
 const decoder = getAddressDecoder();
 const placeholder = (byte: number): Address => decoder.decode(new Uint8Array(32).fill(byte));
@@ -140,13 +134,25 @@ export async function buildJupiterDepositRun(input: {
   });
 }
 
+const PROGRAM_NAMES: Readonly<Record<string, string>> = {
+  [BALLISTA_ADDRESS]: 'Ballista',
+  [JUPITER_V6]: 'Jupiter',
+  [KAMINO_LEND]: 'Kamino',
+};
+
 /**
- * Turn a failed run's custom error code into the step that raised it. `swapMetItsFloor` means the
- * route came in under the floor and nothing was deposited; the whole transaction rolled back.
+ * Turn a failed run's custom error code and logs into the step that raised it. `swapMetItsFloor`
+ * means the route came in under the floor and nothing was deposited; the whole transaction rolled
+ * back. Jupiter and Kamino number their errors from 6000 too, so the code is read as Ballista's
+ * only when the logs show Ballista failed: Jupiter's slippage error, 6001, is not Ballista's
+ * `InvalidTemplateAccount`.
  */
-export function describeFailure(code: number): string {
-  const explanation = explainRunError(code, compiled);
-  return explanation ? explanation.message : `code ${code} came from Jupiter or Kamino, not Ballista`;
+export function describeFailure(code: number | bigint, logs: readonly string[]): string {
+  const explanation = explainRunError(code, compiled, { logs });
+  if (explanation) return explanation.message;
+  const program = failedProgram(logs);
+  if (program === undefined) return `code ${code}; the logs name no program that failed`;
+  return `code ${code} came from ${PROGRAM_NAMES[program] ?? program}`;
 }
 
 if (process.argv[1]?.endsWith('run-jupiter-deposit.ts')) {

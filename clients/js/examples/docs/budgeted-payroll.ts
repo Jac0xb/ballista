@@ -6,7 +6,7 @@ import {
   expression,
   step,
   systemTransfer,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 
 /** Pay `amount` to every recipient, then require the total stays within `budget`. */
 export const budgetedPayroll = defineTemplate({
@@ -38,8 +38,8 @@ export const budgetedPayroll = defineTemplate({
 // #region run
 import type { Address } from '@solana/kit';
 
-import { compileTemplate, explainRunError } from '../../src/index.js';
-import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate, explainRunError } from '@jac0xb/ballista';
+import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 const compiled = compileTemplate(budgetedPayroll);
 

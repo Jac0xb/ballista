@@ -165,17 +165,6 @@ numbers sent as 32 bytes of inputs where `routeArgs` packed them in 19. See
 
 Line numbers are as of this branch (`claude/protocol-lending`).
 
-### The build is broken until these two pages go
-
-`pnpm check:docs` fails: VitePress 1.6.4 stats a `<<<` snippet's path before checking it exists,
-so a deleted source throws `ENOENT`.
-
-- `docs/examples/protocols/drift-rebalance.md` embeds the deleted
-  `clients/js/examples/protocols/drift-rebalance-exact.ts` (line 18). Replace it with a page for
-  `clients/js/examples/protocols/marginfi-to-kamino-rebalance.ts` (below).
-- `docs/examples/protocols/drift-settle.md` embeds the deleted
-  `clients/js/examples/protocols/drift-settle-when-profitable.ts` (line 17). Delete it.
-
 ### Where Drift is still mentioned
 
 - `docs/.vitepress/config.mts` lines 143 and 144: the sidebar entries "Drift · rebalance" and

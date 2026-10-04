@@ -26,14 +26,14 @@ import {
   compileTemplate,
   defineTemplate,
   ensureAssociatedTokenAccount,
-} from '../src/index.js';
+} from '@jac0xb/ballista';
 import {
   BALLISTA_ADDRESS,
   buildKitRunInstruction,
   buildKitTemplateUploadPlan,
   createComputeUnitProvider,
   getTemplateAddress,
-} from '../src/kit.js';
+} from '@jac0xb/ballista/kit';
 
 export const SYSTEM_PROGRAM = address('11111111111111111111111111111111');
 export const TOKEN_PROGRAM = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');

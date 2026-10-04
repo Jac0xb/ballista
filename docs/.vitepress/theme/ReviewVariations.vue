@@ -494,11 +494,11 @@ watch(
   color: var(--paper);
 }
 .variation-options button:not([aria-pressed='true']):hover {
-  background: #eae9e2;
+  background: var(--vp-c-bg-soft);
 }
 .variation-drafting {
   width: 34px;
-  background: linear-gradient(90deg, #eae9e2 0%, #fbfaf7 50%, #eae9e2 100%);
+  background: linear-gradient(90deg, var(--vp-c-bg-soft) 0%, var(--vp-c-bg-alt) 50%, var(--vp-c-bg-soft) 100%);
   background-size: 200% 100%;
   animation: variation-shimmer 1.1s linear infinite;
 }

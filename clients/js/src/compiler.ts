@@ -140,6 +140,9 @@ export const opcode = {
   openRegistry: 75,
   readRegistry: 76,
   writeRegistry: 77,
+  groupLength: 78,
+  groupAny: 79,
+  groupCount: 80,
 } as const;
 
 /** The conjuncts of a requirement: `and(and(a, b), c)` is three separate assertions. */
@@ -326,6 +329,10 @@ export interface CompileStats {
   batchMaxIterations: number;
   batchMinIterations: number;
   inputs: number;
+  /**
+   * The registers the header declares. A template whose values fit in 64 takes one per value, in
+   * order; one that does not is renumbered to reuse registers, and this counts them after reuse.
+   */
   registers: number;
   instructions: number;
   cpis: number;
@@ -334,6 +341,22 @@ export interface CompileStats {
   emitEvent: boolean;
   rowInputs: number;
   accountGroups: number;
+}
+
+/**
+ * Test-only options for `compileTemplateWithOptions`; not part of the supported API, and no
+ * template needs them.
+ * @internal
+ */
+export interface CompileOptions {
+  /**
+   * `'always'` renumbers registers for reuse even when every value fits in 64 registers, one each,
+   * so a differential test can run the renumbered program against the one-register-per-value
+   * program. `'never'` keeps one register per value past 64, which no verifier accepts, so a test
+   * can compare a renumbered program with the numbering it came from. Unset, reuse happens only
+   * past 64, as always.
+   */
+  registerReuse?: 'always' | 'never';
 }
 
 export interface CompiledTemplate {
@@ -380,6 +403,11 @@ class Compiler {
   /** Highest byte any fixed-offset read touches per account, used to infer `minDataLength`. */
   readonly requiredDataLength = new Map<string, number>();
   readonly sourceMap: SourceMapEntry[] = [];
+  /**
+   * The registers each loop carries, by the loop's program counter. Register reuse renumbers them,
+   * and the carry mask in the loop's record cannot name a register numbered 64 or above.
+   */
+  readonly loopCarries = new Map<number, number[]>();
   /** Each registry's index, size and fields, in declaration order. */
   readonly registries = new Map<string, RegistryLayout>();
   /** The registry accounts whose open has compiled; a field read names one of them. */
@@ -393,9 +421,12 @@ class Compiler {
   maxCpiDataLength = 0;
   /** Whether a `setReturnData` step has compiled; no invoke may follow it. */
   returnDataSet = false;
+  /** Test-only: see `CompileOptions.registerReuse`. */
+  readonly registerReuse: CompileOptions['registerReuse'];
 
-  constructor(template: Template) {
+  constructor(template: Template, options: CompileOptions = {}) {
     this.template = template;
+    this.registerReuse = options.registerReuse === 'always' || options.registerReuse === 'never' ? options.registerReuse : undefined;
     this.inputEntries = Object.entries(template.inputs);
     this.rowInputEntries = Object.entries(template.batch?.rowInputs ?? {});
     this.fixedEntries = Object.entries(template.accounts);
@@ -455,7 +486,13 @@ class Compiler {
     for (const [, input] of this.inputEntries) this.inputRecords.push(this.compileInput(input));
     for (const [, input] of this.rowInputEntries) this.inputRecords.push(this.compileInput(input));
 
-    if (this.nextRegister > MAX_REGISTERS) throw new RangeError('Template uses more than 64 registers');
+    // Values take registers in order, one each. A template that fits in 64 keeps that numbering;
+    // only one that does not is renumbered to reuse registers (or, in a test, one that forces it).
+    const reuse =
+      this.registerReuse === 'never'
+        ? false
+        : this.nextRegister > MAX_REGISTERS || (this.registerReuse === 'always' && this.nextRegister > 0);
+    const registers = reuse ? this.reuseRegisters() : this.nextRegister;
     if (this.instructions.length > MAX_VM_INSTRUCTIONS) {
       throw new RangeError('Template uses more than 128 VM instructions');
     }
@@ -480,7 +517,7 @@ class Compiler {
     header.u8(this.batchEntries.length);
     header.u8(this.template.batch?.maxIterations ?? 0);
     header.u8(this.inputEntries.length);
-    header.u8(this.nextRegister);
+    header.u8(registers);
     header.u8(this.instructions.length);
     header.u8(this.cpis.length);
     header.u16(this.cpiAccounts.length);
@@ -529,7 +566,7 @@ class Compiler {
         batchMaxIterations: this.template.batch?.maxIterations ?? 0,
         batchMinIterations: this.template.batch?.minIterations ?? 0,
         inputs: this.inputEntries.length,
-        registers: this.nextRegister,
+        registers,
         instructions: this.instructions.length,
         cpis: this.cpis.length,
         maxExpandedCpis,
@@ -636,6 +673,7 @@ class Compiler {
         if (loop) throw new TypeError('Nested loops are not supported');
         let carry = 0n;
         const carriedNames = new Set<string>();
+        const carriedRegisters: number[] = [];
         for (const name of current.carry ?? []) {
           let binding = bindings.get(name);
           if (!binding) throw new TypeError(`Carried variable must be defined before the loop: ${name}`);
@@ -647,6 +685,7 @@ class Compiler {
             bindings.set(name, binding);
           }
           carriedNames.add(name);
+          carriedRegisters.push(binding.register);
           carry |= 1n << BigInt(binding.register);
         }
         // A REPEAT reads its count once, as the loop starts, so the count compiles at the root.
@@ -661,6 +700,7 @@ class Compiler {
         }
         const operation = current.kind === 'repeat' ? opcode.repeat : opcode.forEach;
         const loopPc = this.pushInstruction(instructionRecord(operation, NO_INDEX, 0, count, max, carry));
+        this.loopCarries.set(loopPc, carriedRegisters);
         const bodyStart = this.instructions.length;
         const kind = current.kind === 'repeat' ? 'count' : 'rows';
         this.compileSteps(current.steps, kind, new Map(bindings), carriedNames, `${stepPath}.steps`);
@@ -669,10 +709,16 @@ class Compiler {
         this.instructions[loopPc] = instructionRecord(operation, NO_INDEX, bodyLength, count, max, carry);
       } else if (current.kind === 'let') {
         if (bindings.has(current.name)) throw new TypeError(`Variable already defined: ${current.name}`);
-        const value =
+        let value =
           current.value.kind === 'returnData'
             ? this.compileReturnData(current.value, previous)
             : this.compileExpression(current.value, loop, bindings);
+        // A binding keeps the value it was made with, but `assign` rewrites a carried variable's
+        // register in place. A binding in the body that would share that register (a `let` or
+        // `snapshot` of the variable) takes a copy in one of its own instead.
+        if (loop && [...carried].some((name) => bindings.get(name)?.register === value.register)) {
+          value = this.emit(opcode.move, value.type, value.maxLength, value.register);
+        }
         bindings.set(current.name, value);
       } else if (current.kind === 'assign') {
         if (!loop) throw new TypeError('assign is only valid inside a loop');
@@ -1128,6 +1174,12 @@ class Compiler {
         registryFieldImmediate(field),
       );
     }
+    if (current.kind === 'groupLength') {
+      return this.emit(opcode.groupLength, 'u64', 0, this.groupIndex(current.group));
+    }
+    if (current.kind === 'groupAny' || current.kind === 'groupCount') {
+      return this.compileGroupFilter(current, loop, bindings);
+    }
     if (current.kind === 'select') {
       const condition = this.compileExpression(current.condition, loop, bindings);
       const ifTrue = this.compileExpression(current.ifTrue, loop, bindings);
@@ -1169,7 +1221,57 @@ class Compiler {
     return this.emit(operation, 'bool', 0, left.register, right.register);
   }
 
-  compileSeedSegment(value: ExpressionResult): Uint8Array {
+  groupIndex(group: string): number {
+    const index = this.accountGroupIndices.get(group);
+    if (index === undefined) throw new TypeError(`Unknown account group: ${group}`);
+    return index;
+  }
+
+  /**
+   * `GROUP_ANY` or `GROUP_COUNT`. Every match value and except key compiles before any of the
+   * filter's segments is appended, as a step's data parts do (see `compileDataParts`): the match
+   * segments, then the except segments, one contiguous run the immediate names.
+   */
+  compileGroupFilter(
+    current: Extract<Expression, { kind: 'groupAny' | 'groupCount' }>,
+    loop: LoopKind | undefined,
+    bindings: Bindings,
+  ): ExpressionResult {
+    const group = this.groupIndex(current.group);
+    const { filter } = current;
+    const matches = filter.match.map(({ offset, equals }) => {
+      const value = this.compileExpression(equals, loop, bindings);
+      if (value.type === 'bytes') {
+        throw new TypeError(`${current.kind} match at offset ${offset}: a match value is a bool, u64, i64, u128 or pubkey, not bytes`);
+      }
+      return { offset, value, end: offset + fixedValueLength(value.type) };
+    });
+    const excepts = (filter.exceptKeys ?? []).map((key) => {
+      const value = this.compileExpression(key, loop, bindings);
+      requireType(value, 'pubkey', `${current.kind} exceptKeys`);
+      return value;
+    });
+    const floor = Math.max(...matches.map(({ end }) => end));
+    const minDataLength = filter.minDataLength ?? floor;
+    if (minDataLength < floor) {
+      throw new RangeError(`${current.kind}: minDataLength ${minDataLength} is shorter than the matches, which read to byte ${floor}`);
+    }
+    const segmentStart = this.dataSegments.length;
+    for (const { offset, value } of matches) this.dataSegments.push(this.compileSeedSegment(value, offset));
+    for (const value of excepts) this.dataSegments.push(this.compileSeedSegment(value));
+    const first = this.addPubkey(filter.programs[0]!);
+    const second = filter.programs[1] === undefined ? NO_INDEX : this.addPubkey(filter.programs[1]);
+    const immediate =
+      BigInt(segmentStart) |
+      (BigInt(matches.length) << 16n) |
+      (BigInt(excepts.length) << 24n) |
+      (BigInt(minDataLength) << 32n);
+    const [operation, type] = current.kind === 'groupAny' ? [opcode.groupAny, 'bool' as const] : [opcode.groupCount, 'u64' as const];
+    return this.emit(operation, type, 0, group, first, second, immediate);
+  }
+
+  /** A register segment of `value`'s own kind; a group filter's match puts its data offset in `offset`. */
+  compileSeedSegment(value: ExpressionResult, offset = 0): Uint8Array {
     const kind: Record<ValueType, number> = {
       bool: dataKind.bool,
       u64: dataKind.u64,
@@ -1181,7 +1283,7 @@ class Compiler {
     const writer = new Writer();
     writer.u8(kind[value.type]);
     writer.u8(value.register);
-    writer.u16(0);
+    writer.u16(offset);
     writer.u16(0);
     writer.raw([0, 0]);
     return writer.finish();
@@ -1241,6 +1343,45 @@ class Compiler {
     return pc;
   }
 
+  /**
+   * Renumbers the registers of a template whose values need more than 64, one register each, and
+   * returns how many it needs after reuse. A value takes the lowest register free when it is
+   * written: one whose earlier values have all been read for the last time (`liveRanges`).
+   * Nothing else changes: not an instruction, a data segment or a program counter.
+   *
+   * The renumbered program is then replayed against the original on every path through its loops
+   * (`valuesRead`), and every read must see the value it saw before. A template that fails that
+   * check is refused, not emitted.
+   */
+  reuseRegisters(): number {
+    const original: RegisterProgram = {
+      instructions: this.instructions,
+      cpis: this.cpis,
+      segments: this.dataSegments,
+      loops: loopSpans(this.instructions, this.loopCarries),
+    };
+    const { first, last } = liveRanges(original, this.nextRegister);
+    const assigned = assignRegisters(first, last);
+    const count = Math.max(...assigned) + 1;
+    if (count > MAX_REGISTERS) {
+      const { path, label } = this.sourceMap[busiestInstruction(first, last, this.sourceMap)]!;
+      throw new RangeError(
+        `Template uses more than 64 registers: ${count} values are in use at once at ${path}${label ? ` (${label})` : ''}`,
+      );
+    }
+    const renamed = renameRegisters(original, assigned);
+    for (let runs = 0; runs < 1 << original.loops.length; runs += 1) {
+      const before = valuesRead(original, runs);
+      const after = valuesRead(renamed, runs);
+      if (before.length !== after.length || before.some((value, index) => value !== after[index])) {
+        throw new Error('Register reuse changed what a read sees. This is a compiler bug: please report the template.');
+      }
+    }
+    this.instructions.splice(0, this.instructions.length, ...renamed.instructions);
+    this.dataSegments.splice(0, this.dataSegments.length, ...renamed.segments);
+    return count;
+  }
+
   emit(
     operation: number,
     type: ValueType,
@@ -1251,9 +1392,12 @@ class Compiler {
     immediate = 0n,
     flags = 0,
   ): ExpressionResult {
+    // One register per value, in order, past 64 if need be: `reuseRegisters` renumbers a template
+    // that needs more. Each value is an instruction, so more than 128 is past the instruction
+    // limit, and the number never reaches `NO_INDEX`.
     const register = this.nextRegister;
     this.nextRegister += 1;
-    if (register >= MAX_REGISTERS) throw new RangeError('Template uses more than 64 registers');
+    if (register >= MAX_VM_INSTRUCTIONS) throw new RangeError('Template uses more than 128 VM instructions');
     this.pushInstruction(instructionRecord(operation, register, a, b, c, immediate, flags));
     return { register, type, maxLength };
   }
@@ -1328,6 +1472,15 @@ export function compileTemplate(input: TemplateInput | Template): CompiledTempla
 }
 
 /**
+ * `compileTemplate` with test-only options. Not part of the supported API: a separate function, so
+ * `compileTemplate` keeps one parameter and `templates.map(compileTemplate)` type-checks.
+ * @internal
+ */
+export function compileTemplateWithOptions(input: TemplateInput | Template, options: CompileOptions): CompiledTemplate {
+  return new Compiler(TemplateSchema.parse(input), options).compile();
+}
+
+/**
  * The index of the registry named `name` in a compiled template, for `findRegistryEntryAddress`:
  * its position among the registries the template declares.
  */
@@ -1380,6 +1533,340 @@ function instructionRecord(
   writer.bigint(immediate, 8);
   writer.raw([0, 0]);
   return writer.finish();
+}
+
+/**
+ * A compiled program, as register reuse reads it: the records, the CPI descriptors an invoke
+ * names, the data segments, and each loop's span and the registers it carries.
+ */
+interface RegisterProgram {
+  instructions: readonly Uint8Array[];
+  cpis: readonly Uint8Array[];
+  segments: readonly Uint8Array[];
+  loops: readonly LoopSpan[];
+}
+
+/** A loop: its record's program counter, the last instruction of its body, and what it carries. */
+interface LoopSpan {
+  pc: number;
+  last: number;
+  carried: readonly number[];
+}
+
+/** Where the `a`, `b` and `c` operands sit in an instruction record. */
+const OPERAND_OFFSET = { a: 2, b: 3, c: 4 } as const;
+type Operand = keyof typeof OPERAND_OFFSET;
+
+/**
+ * The operands among `a`, `b` and `c` that each opcode reads as registers, as `verify.rs` reads
+ * them. An account, input, constant, CPI, body length, maximum or selector operand is not a
+ * register. Keyed by `opcode`'s names, so a new opcode does not compile until it is listed here.
+ */
+const REGISTER_OPERANDS: Record<keyof typeof opcode, readonly Operand[]> = {
+  loadInput: [],
+  constBool: [],
+  constU64: [],
+  constI64: [],
+  constU128: [],
+  constPubkey: [],
+  constBytes: [],
+  accountKey: [],
+  accountOwner: [],
+  accountLamports: [],
+  accountDataLength: [],
+  accountIsEmpty: [],
+  // A data read's `b` is its offset, and a register only under `INSTRUCTION_FLAG_DYNAMIC_OFFSET`.
+  readU64: ['b'],
+  readI64: ['b'],
+  readU128: ['b'],
+  readPubkey: ['b'],
+  clockSlot: [],
+  clockTimestamp: [],
+  add: ['a', 'b'],
+  subtract: ['a', 'b'],
+  multiply: ['a', 'b'],
+  divide: ['a', 'b'],
+  equal: ['a', 'b'],
+  notEqual: ['a', 'b'],
+  lessThan: ['a', 'b'],
+  lessThanOrEqual: ['a', 'b'],
+  greaterThan: ['a', 'b'],
+  greaterThanOrEqual: ['a', 'b'],
+  and: ['a', 'b'],
+  or: ['a', 'b'],
+  not: ['a'],
+  min: ['a', 'b'],
+  max: ['a', 'b'],
+  select: ['a', 'b', 'c'],
+  castU64: ['a'],
+  castI64: ['a'],
+  castU128: ['a'],
+  loopIndex: [],
+  require: ['a'],
+  // The guard, when there is one. The data segments are read too: see `segmentRange`.
+  invoke: ['b'],
+  forEach: [],
+  readU8: ['b'],
+  readU16: ['b'],
+  readU32: ['b'],
+  readBool: ['b'],
+  derivePda: [],
+  returnData: [],
+  move: ['a'],
+  // The bump.
+  createPda: ['b'],
+  mulDiv: ['a', 'b', 'c'],
+  mulDivCeil: ['a', 'b', 'c'],
+  remainder: ['a', 'b'],
+  shiftLeft: ['a', 'b'],
+  shiftRight: ['a', 'b'],
+  bitAnd: ['a', 'b'],
+  bitOr: ['a', 'b'],
+  bitXor: ['a', 'b'],
+  powerOfTen: ['a'],
+  readI32: ['b'],
+  // The count, read once as the loop starts.
+  repeat: ['b'],
+  emit: [],
+  setReturnData: [],
+  instructionCount: [],
+  instructionIndex: [],
+  instructionProgram: ['b'],
+  instructionAccountCount: ['b'],
+  instructionAccount: ['b', 'c'],
+  instructionAccountFlags: ['b', 'c'],
+  instructionDataLength: ['b'],
+  readInstructionData: ['b', 'c'],
+  readInstructionBytes: ['b', 'c'],
+  readAccountBytes: ['b'],
+  bytesLength: ['a'],
+  // The key, when there is one.
+  openRegistry: ['b'],
+  readRegistry: [],
+  // The value written.
+  writeRegistry: ['a'],
+  // `a` is the group, `b` and `c` pubkey-table indices. A filter's values are its data segments:
+  // see `segmentRange`.
+  groupLength: [],
+  groupAny: [],
+  groupCount: [],
+};
+
+const OPERANDS_BY_OPCODE = new Map<number, readonly Operand[]>(
+  Object.entries(REGISTER_OPERANDS).map(([name, operands]) => [opcode[name as keyof typeof opcode], operands]),
+);
+
+const READ_OPCODES: ReadonlySet<number> = new Set(Object.values(readOpcode));
+
+/**
+ * The operands of `record` that name registers it reads. An operand set to `NO_INDEX`, such as an
+ * invoke with no guard, reads nothing.
+ */
+function readOperands(record: Uint8Array): readonly Operand[] {
+  const code = record[0]!;
+  const operands = OPERANDS_BY_OPCODE.get(code);
+  if (operands === undefined) throw new Error(`Register reuse does not know opcode ${code}`);
+  if (READ_OPCODES.has(code) && (record[5]! & INSTRUCTION_FLAG_DYNAMIC_OFFSET) === 0) return [];
+  return operands;
+}
+
+/**
+ * The data segments `record` reads when it runs, as `[start, end)`: a derivation's seeds and an
+ * output's parts from its range immediate, a group filter's values from its filter immediate, and
+ * an invoke's data from its descriptor.
+ */
+function segmentRange(program: RegisterProgram, record: Uint8Array): [number, number] | undefined {
+  const code = record[0]!;
+  if (code === opcode.invoke) {
+    const descriptor = program.cpis[record[OPERAND_OFFSET.a]!]!;
+    const start = descriptor[6]! | (descriptor[7]! << 8);
+    return [start, start + descriptor[5]!];
+  }
+  if (code === opcode.groupAny || code === opcode.groupCount) {
+    // The segment start in bytes 0 and 1, the match count in byte 2, the except count in byte 3.
+    const immediate = Number(recordImmediate(record) & 0xffff_ffffn);
+    const start = immediate & 0xffff;
+    return [start, start + ((immediate >>> 16) & 0xff) + ((immediate >>> 24) & 0xff)];
+  }
+  if (code === opcode.derivePda || code === opcode.createPda || code === opcode.emit || code === opcode.setReturnData) {
+    const immediate = recordImmediate(record);
+    const start = Number(immediate & 0xffff_ffffn);
+    return [start, start + Number(immediate >> 32n)];
+  }
+  return undefined;
+}
+
+/** The registers `record` reads, through its operands and its data segments, and the one it writes. */
+function registerTraffic(program: RegisterProgram, record: Uint8Array): { reads: number[]; write: number | undefined } {
+  const reads = readOperands(record)
+    .map((operand) => record[OPERAND_OFFSET[operand]]!)
+    .filter((register) => register !== NO_INDEX);
+  const range = segmentRange(program, record);
+  if (range !== undefined) {
+    for (const segment of program.segments.slice(range[0], range[1])) {
+      if (segment[0] !== dataKind.literal) reads.push(segment[1]!);
+    }
+  }
+  return { reads, write: record[1] === NO_INDEX ? undefined : record[1] };
+}
+
+/** Each loop in `instructions`, with the registers `carries` says it carries. Loops never nest. */
+function loopSpans(instructions: readonly Uint8Array[], carries: ReadonlyMap<number, readonly number[]>): LoopSpan[] {
+  const loops: LoopSpan[] = [];
+  for (let pc = 0; pc < instructions.length; pc += 1) {
+    const record = instructions[pc]!;
+    if (record[0] !== opcode.forEach && record[0] !== opcode.repeat) continue;
+    const bodyLength = record[OPERAND_OFFSET.a]!;
+    loops.push({ pc, last: pc + bodyLength, carried: carries.get(pc) ?? [] });
+    pc += bodyLength;
+  }
+  return loops;
+}
+
+/**
+ * Each register's live range: the first and last program counter that writes or reads it, both
+ * inclusive. A loop is treated conservatively. A value from before it that the loop reads or
+ * carries, or that code after it reads, keeps its register through the whole loop, so no pass
+ * writes over it: the run would restore a register the loop does not carry, but reuse does not
+ * rely on that. A value written in the body lives within one pass, since the body writes it
+ * before any read on every pass.
+ */
+function liveRanges(program: RegisterProgram, count: number): { first: number[]; last: number[] } {
+  const first = new Array<number>(count).fill(Number.POSITIVE_INFINITY);
+  const last = new Array<number>(count).fill(-1);
+  const touch = (register: number, pc: number) => {
+    first[register] = Math.min(first[register]!, pc);
+    last[register] = Math.max(last[register]!, pc);
+  };
+  program.instructions.forEach((record, pc) => {
+    const { reads, write } = registerTraffic(program, record);
+    for (const register of reads) touch(register, pc);
+    if (write !== undefined) touch(write, pc);
+  });
+  for (const loop of program.loops) {
+    for (const register of loop.carried) {
+      touch(register, loop.pc);
+      touch(register, loop.last);
+    }
+    for (let register = 0; register < count; register += 1) {
+      if (first[register]! < loop.pc && last[register]! > loop.pc) {
+        last[register] = Math.max(last[register]!, loop.last);
+      }
+    }
+  }
+  return { first, last };
+}
+
+/**
+ * The register each value takes, in the order the values are first written: the lowest one whose
+ * earlier values were all last read before this value is written. An instruction never writes
+ * the register of a value it reads. For ranges like these, that uses the fewest registers there
+ * can be: as many as the most values in use at one program counter.
+ */
+function assignRegisters(first: readonly number[], last: readonly number[]): number[] {
+  const order = first.map((_, register) => register).sort((x, y) => first[x]! - first[y]! || x - y);
+  const busyUntil: number[] = [];
+  const assigned = new Array<number>(first.length).fill(NO_INDEX);
+  for (const register of order) {
+    let target = busyUntil.findIndex((end) => end < first[register]!);
+    if (target < 0) target = busyUntil.length;
+    busyUntil[target] = last[register]!;
+    assigned[register] = target;
+  }
+  return assigned;
+}
+
+/**
+ * The program counter where the most values are in use at once, preferring the first in a step
+ * over one where inputs and constants load, so the error names a step the author can change.
+ */
+function busiestInstruction(first: readonly number[], last: readonly number[], sourceMap: readonly SourceMapEntry[]): number {
+  const inUse = new Array<number>(sourceMap.length).fill(0);
+  first.forEach((start, register) => {
+    for (let pc = start; pc <= last[register]!; pc += 1) inUse[pc] = inUse[pc]! + 1;
+  });
+  const most = Math.max(...inUse);
+  const peaks = inUse.flatMap((count, pc) => (count === most ? [pc] : []));
+  return peaks.find((pc) => sourceMap[pc]!.path.startsWith('steps')) ?? peaks[0]!;
+}
+
+/** `program` with every register renamed as `assigned` says, carry masks included. */
+function renameRegisters(program: RegisterProgram, assigned: readonly number[]): RegisterProgram {
+  const rename = (register: number): number => {
+    const target = assigned[register];
+    if (target === undefined || target === NO_INDEX) throw new Error(`Register reuse has no register for ${register}`);
+    return target;
+  };
+  const instructions = program.instructions.map((record) => {
+    const renamed = record.slice();
+    if (renamed[1] !== NO_INDEX) renamed[1] = rename(renamed[1]!);
+    for (const operand of readOperands(record)) {
+      const offset = OPERAND_OFFSET[operand];
+      if (renamed[offset] !== NO_INDEX) renamed[offset] = rename(renamed[offset]!);
+    }
+    return renamed;
+  });
+  const loops = program.loops.map((loop) => {
+    const carried = loop.carried.map(rename);
+    const carry = carried.reduce((mask, register) => mask | (1n << BigInt(register)), 0n);
+    const record = instructions[loop.pc]!;
+    new DataView(record.buffer, record.byteOffset).setBigUint64(6, carry, true);
+    return { ...loop, carried };
+  });
+  const segments = program.segments.map((segment) => {
+    if (segment[0] === dataKind.literal) return segment;
+    const renamed = segment.slice();
+    renamed[1] = rename(renamed[1]!);
+    return renamed;
+  });
+  return { instructions, cpis: program.cpis, segments, loops };
+}
+
+/**
+ * What every register read sees, in order, on one path through the loops: bit `n` of `runs` set
+ * makes loop `n` run, clear makes it run no passes. A value is named by the program counter of
+ * the instruction that wrote it, or -1 before any write.
+ *
+ * This follows the run's register file. A pass starts from the registers as the loop found them,
+ * except the carried ones, which flow from pass to pass and out of the loop; the code after the
+ * loop sees the same. Two passes stand for any number: from the second on, each pass starts from
+ * the same writes. A carried register counts as read where its loop starts and where each pass
+ * ends, as the verifier checks its type there.
+ */
+function valuesRead(program: RegisterProgram, runs: number): number[] {
+  const seen: number[] = [];
+  let values = new Array<number>(NO_INDEX).fill(-1);
+  const run = (pc: number) => {
+    const { reads, write } = registerTraffic(program, program.instructions[pc]!);
+    for (const register of reads) seen.push(values[register]!);
+    if (write !== undefined) values[write] = pc;
+  };
+  let pc = 0;
+  for (const [index, loop] of program.loops.entries()) {
+    for (; pc < loop.pc; pc += 1) run(pc);
+    // A REPEAT reads its count as the loop starts.
+    run(loop.pc);
+    for (const register of loop.carried) seen.push(values[register]!);
+    if (((runs >> index) & 1) === 1) {
+      const snapshot = values.slice();
+      for (let pass = 0; pass < 2; pass += 1) {
+        for (let body = loop.pc + 1; body <= loop.last; body += 1) run(body);
+        for (const register of loop.carried) {
+          seen.push(values[register]!);
+          snapshot[register] = values[register]!;
+        }
+        values = snapshot.slice();
+      }
+    }
+    pc = loop.last + 1;
+  }
+  for (; pc < program.instructions.length; pc += 1) run(pc);
+  return seen;
+}
+
+/** A record's 8-byte immediate, after its opcode, four operands and flags. */
+function recordImmediate(record: Uint8Array): bigint {
+  return new DataView(record.buffer, record.byteOffset).getBigUint64(6, true);
 }
 
 function requireType(value: ExpressionResult, expected: ValueType, context: string): void {

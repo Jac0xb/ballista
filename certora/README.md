@@ -1,72 +1,305 @@
 # Formal verification with the Certora Solana Prover
 
-This directory is its own Cargo workspace so nothing here touches the release build, its lock
+**Prover jobs ran at cb2fb2d on 2026-10-03. "Prover results at cb2fb2d" lists the 19 rules they
+proved, and supersedes the statuses below where they differ.** Those results hold for the program
+code at cb2fb2d. The verifier and executor have changed since (a registry open after an invoke is
+refused, non-canonical encodings are refused, and the account-group opcodes are new), so every
+rule needs a new job before it counts for today's code. Every other status is an expectation until
+a prover job at a named commit confirms it.
+
+CI (`.github/workflows/certora.yml`) always runs `cargo test --features rt`, `./build-sbf.sh` and the
+typing enumeration. With a `CERTORAKEY` secret it runs each conf in its own job, with the commit in
+`--msg`, and `check-results.py` reads every rule's verdict from the log: `run.conf` and the
+candidate confs must verify every rule and its sanity check, every twin must be violated with a
+counterexample, and `run-blocked.conf` only reports. The two rules that fail on the prover's own
+model (below) are in `run-blocked.conf`, and `tests/confs.rs` keeps them out of the gating confs.
+
+This directory is its own Cargo workspace, so nothing here touches the release build, its lock
 file, or its dependency policy.
 
 | Crate | Purpose |
 | --- | --- |
-| `cvlr-pinocchio` | Nondeterministic `AccountView` construction for pinocchio programs; the counterpart of `cvlr-solana` for `AccountInfo`. Program-agnostic. |
-| `ballista-specs` | The `#[rule]` specifications. Builds to an SBF binary that contains the program (with `no-entrypoint`) plus the rules. |
+| `cvlr-pinocchio` | Nondeterministic pinocchio accounts, laid out as the runtime lays them out. Program-agnostic. |
+| `ballista-specs` | The rules. Builds to an SBF binary holding the program (`no-entrypoint`, `spec-api`) and the rules. |
 
-The program crate itself changes in one way: the `spec-api` feature makes the executor module
-public so rules can call its pure functions. The module stays private in every other build, and
-`cargo build-sbf` never enables the feature.
-
-## Install
-
-```bash
-pipx install certora-cli                 # certoraSolanaProver
-cargo install cargo-certora-sbf          # builds SBF with Certora's platform tools
-export CERTORAKEY=...                    # from https://www.certora.com
-```
-
-## Build and run
+## Run
 
 ```bash
 cd certora
-cargo check --features rt                # host typecheck of the adapter and rules
-cargo test -p cvlr-pinocchio --features rt
+cargo check --features rt                         # typecheck the rules on the host
+cargo test --features rt                          # host tests: layouts, the error split, conf coverage
+cargo test --release -p ballista-specs --features rt --test typing_enumeration -- --ignored
+                                                  # the typing property, enumerated on the host
+./build-sbf.sh                                    # SBF build; fails on a frame over 4 KiB
 
-cd ballista-specs
-cargo certora-sbf --tools-version v1.53  # SBF binary for the prover
-certoraSolanaProver run.conf             # the 14 rules that prove
-certoraSolanaProver run.conf --rule rule_u64_arithmetic_is_checked
-certoraSolanaProver run-blocked.conf     # the 16 rules expected to fail; see below
+cd ballista-specs                                 # needs CERTORAKEY
+certoraSolanaProver run.conf                      # expected to prove
+certoraSolanaProver run-candidates.conf           # expected to prove, never run
+certoraSolanaProver run-candidates-memcmp.conf
+certoraSolanaProver run-twins.conf                # every rule must FAIL
+certoraSolanaProver run-twins-memcmp.conf
+certoraSolanaProver run-blocked.conf              # known or suspected blockers
 ```
 
-Results appear at `https://prover.certora.com/output/<job>/<key>`. Platform tools v1.53 ship the
-Rust 1.89 compiler that pinocchio 0.11 requires; older versions will not build the program.
+Install with `pipx install certora-cli` and `cargo install cargo-certora-sbf`. Certora publishes
+platform tools up to v1.53; the program builds with v1.54. Both ship rustc 1.89.
 
-## A build-time check in its own right
+## How the rules are kept honest
 
-`cargo certora-sbf` compiles for SBPF version 0 and reports any function whose stack frame exceeds
-4 KiB, which the regular `cargo build-sbf` does not. That report found two real frame overflows in
-the program on first use. Run it after changes to the executor even when no prover job follows.
+- **Twins.** Each rule edited since the last prover run has a twin that states the property with
+  one deliberate error and must fail. A twin that passes means its rule passes for some reason
+  other than the program.
+- **Reachability.** Those rules also have a `cvlr_satisfy!` rule for each branch that asserts.
+  Satisfy rules stay separate: in a rule that contains one, Certora treats every assert as an
+  assumption.
+- **Vacuity.** Every conf sets `rule_sanity: basic`.
+- **Coverage.** A host test checks that each of the 112 rules sits in exactly one conf.
 
-## What the rules state
+## Prover results at f1acfa1
 
-`run.conf` holds the rules that prove today: arithmetic, comparisons, casts, error codes, and the
-parser. The typing, account-constraint, lifecycle, and `u128` arithmetic rules are written but
-blocked on the prover's model of heap memory, so they live in `run-blocked.conf` and are expected
-to fail. That file also holds three diagnostic rules that isolate the problem: byte stores read
-back as words, and the constant program parsed from byte stores or from `memcpy`.
+certora-cli 8.19.2, 2026-10-03, on the merge of PR #8. **Proved** has the same meaning as at
+cb2fb2d (below).
 
-- **Typing preservation** (blocked). For any register typing, any register values consistent with
-  it, and any instruction the verifier accepts against it, the executor returns success or a
-  value-dependent error and leaves the destination holding the recorded type. This is the
-  per-instruction step of the argument that finalize-time verification is sound.
-- **Arithmetic, comparisons, casts.** Match Rust's checked semantics for every `u64` and `i64`
-  input and reject mixed or non-numeric operands. For signed division only the error cases are
-  proved, and the `u128` rule is blocked.
-- **Parser.** Checks magic and version first, reports truncation rather than misparsing, and
-  returns sections that exactly consume the payload.
-- **Account constraints** (blocked). Signer, writable, executable, address, owner, minimum length,
-  and count are enforced exactly, and header reads return the account's real fields.
-- **Lifecycle** (blocked). Finalized templates reject chunk writes and cancellation, uploading
-  templates never run, and a run never writes the template account.
-- **Error codes.** Encoding round-trips and every code decodes into exactly one of runtime,
-  verifier, or foreign.
+| Conf | Job | Rules | Result |
+| --- | --- | --- | --- |
+| `run.conf` | [c923c129](https://prover.certora.com/output/5644982/c923c1299f234fcb873180bdd92e203d) | 17 | All verified |
+| `run-candidates.conf` | [72932216](https://prover.certora.com/output/5644982/72932216439d43178531c49fc0411617) | 27 | All verified |
+| `run-candidates-memcmp.conf` | [25c562c5](https://prover.certora.com/output/5644982/25c562c5ae484bf0bdb7e0891359788a) | 2 | All verified |
+| `run-twins.conf` | [c46e4f53](https://prover.certora.com/output/5644982/c46e4f538fac4c18804dc60599da2b07) | 13 | All violated, as required |
+| `run-twins-memcmp.conf` | [8c814058](https://prover.certora.com/output/5644982/8c8140582e8141e88c934001147a046d) | 1 | Violated, as required |
+| `run-blocked.conf` | [3c3d8186](https://prover.certora.com/output/5644982/3c3d81863565421ab2abeb7e6db4827e) | 52 | 23 verified, 17 violated, 12 errors |
 
-Syscalls (`sol_sha256`, PDA search, sysvars, CPI) are modelled by the prover; the summaries file
-types the PDA search result. Rules that go through a CPI are deliberately absent: the value of a
-CPI depends on the invoked program, which is outside the property.
+The blocked conf's 17 violations break down as follows:
+- 8 twins;
+- 5 diagnostics;
+- `u128` add's overflow reachability, unchanged because the conf still lacks
+  `-solanaTACSoundSignedMath`;
+- the 3 rules triaged below.
+
+The 12 errors are the typing (8) and lifecycle (4) rules. The prover could not encode them:
+`[3001] access to an indeterminate stack location`.
+
+**Proved (20):** the 19 from cb2fb2d, plus the writable and executable constraints. Their split
+asserts verified, both reachability rules passed, and the twin failed.
+
+**Not proved: the CPI privilege ceiling.** It and its twin verified, but vacuously: the slicer
+found no assertions to check. `rule_sanity: basic` passed anyway; only the reachability rules
+caught it.
+
+### Triage
+
+| Rule | Cause | Evidence |
+| --- | --- | --- |
+| `rule_u64_mul_div_is_exact` | Prover: an OR of two unknowns. Not a program bug. | The counterexample is a = 2^32 + 1, b = 2^32 − 1, c = `0xffff_ffff_0000_0001`, rounding up. The product is `u64::MAX`, and `mul64` builds its low word as `0xffff_ffff_0000_0000 \| 0xffff_ffff`. The trace says `Imprecision detected: BWOr(18446744069414584320, 4294967295) = 18446744073709551615, but is 18446744069414584320`. On the host, `mul_div` returns 2, the exact ceiling (`mul_div_matches_the_prover_counterexample`). |
+| `rule_cpi_requests_reach_an_accepted_listed_account`, `rule_cpi_requests_reach_a_signer_request` | Prover: its front end drops the verifier's accepting path. Every `INVOKE` is refused in the model. | `verify_record_header` gained an operand check in 4f8aebe, after cb2fb2d. In the SBF the prover translates, the branch where that check passes is replaced by `assume(r5 != r0)`. So `accepted` is the constant 0, and the satisfy condition becomes `BWAnd(0x0, listed)`. The inputs pass the check: the record is opcode 41 with operand bytes `ff 00 ff ff`, and the binary's tables give `OPERAND_FIELDS[41] = 6` and `UNUSED_OPERAND_BYTES[6] = 0xff0000ff`. `the_rules_invoke_record_is_accepted` shows the host accepts that record. |
+
+The ceiling's accepting path is feasible, so dropping it is an unsound prune, not an
+over-approximation. A likely mechanism, unconfirmed: the address of `OPERAND_FIELDS` is not marked
+as a global (`r6 = 414880`, where `UNUSED_OPERAND_BYTES` gets `415136 /*set_global*/`). If the
+prover reads that byte as 0, the mask becomes `UNUSED_OPERAND_BYTES[0] = 0xffffffff`, which
+`a = 0` fails.
+
+No spec fix is possible. The table lookup is program code, and an `INVOKE` must name descriptor 0.
+This commit adds only the two host tests.
+
+### Run next
+
+- Report the prune to Certora, citing job 3c3d8186 and `rule_cpi_requests_reach_an_accepted_listed_account`.
+- Or compute the operand mask without the byte table in the program, then rerun the four
+  `rule_cpi_requests_*` rules.
+- Any rule that reaches `verify_record_header` with a used operand can pass vacuously the same
+  way. Trust it only with a passing reachability rule.
+
+## Prover results at cb2fb2d
+
+certora-cli 8.19.2, 2026-10-03. **Proved** means the rule verified, its sanity check passed, every
+reachability rule it has passed, and its twin failed.
+
+| Conf | Job | Rules | Result |
+| --- | --- | --- | --- |
+| `run.conf` | [48efedc3](https://prover.certora.com/output/5644982/48efedc37e174aef8dfa7a46c9e70db8) | 17 | All verified |
+| `run-candidates.conf` | [88f0a104](https://prover.certora.com/output/5644982/88f0a104b1624caf821dc961242d6bec) | 29 | 27 verified, 2 violated |
+| `run-candidates-memcmp.conf` | [7225c27f](https://prover.certora.com/output/5644982/7225c27f21dd44c48e719fe3e14ac65f) | 2 | All verified |
+| `run-twins.conf` | [705ecbe0](https://prover.certora.com/output/5644982/705ecbe0edc7474db6773d7005171d35) | 13 | All violated, as required |
+| `run-twins-memcmp.conf` | [d142c280](https://prover.certora.com/output/5644982/d142c280baa7435593750520e6b46d20) | 1 | Violated, as required |
+| `run-blocked.conf` | [8da461a1](https://prover.certora.com/output/5644982/8da461a1c1194ba4bec337139d7c5cba) | 50 | 22 verified, 15 violated, 13 no result |
+
+Every verified rule with asserts also passed its sanity check. The blocked conf's 15 violations
+are 9 twins and 4 diagnostics, as expected, and the 2 triaged below. Its 13 rules without a result
+(`mul_div`, typing and lifecycle) were still running when the saved log ended at 38 minutes.
+
+**Proved (19):**
+
+- `run.conf`: sections tile the payload. The other 14 verified but have no twin or reachability
+  rules.
+- Candidates: `u128` sub, mul, div, min and max; `u128` to `i64`; a registry entry opens only if
+  writable and of the declared size; fields need an open entry; return data comes from the
+  invoked program, and is empty without an invoke; an open binds the template and key (under
+  `-solanaOptimisticMemcmp`).
+- Blocked conf: signers, pinned address and owner, minimum data length, account count, account
+  header reads, and an open of an open entry fails. The suspected stack-copy blocker did not bite
+  them.
+
+`u128` add verified but is not proved: its overflow branch is unreachable in the prover's model.
+
+All of these are results for the code at cb2fb2d, not for this branch's: rerun before relying on
+them.
+
+### The four violations
+
+Traces from triage jobs
+[aac2bacd](https://prover.certora.com/output/5644982/aac2bacd98254d8bae289bcc83067eef) (ceiling,
+writable) and [a83bc7fc](https://prover.certora.com/output/5644982/a83bc7fc09084b30ac2d1ab974763c62)
+(the other two). None is a program bug.
+
+| Rule | Cause | Evidence |
+| --- | --- | --- |
+| Writable and executable constraints | Prover: an AND of two unknowns | The program refused correctly, at index 0. LLVM compiled `!satisfied && index == 0` to `~satisfied & (index == 0)`, and the trace says `Imprecision detected: BWAnd(18446744073709551615, 1) = 1, but is 0`. |
+| CPI privilege ceiling | Prover: an OR in the rule's own return value | The verifier refused (tag 0xf, `InvalidCpi`: descriptor `reserved1[0]` was 1), and the rule logged `accepted: 0`. `Invoke` came back packed in one register, built with ORs, and the solver set its `accepted` byte (`Imprecision detected: BWOr(...)`). No error copy was lost, and the verifier accepted nothing it should refuse. |
+| `u128` add reaches overflow | Model: no 64-bit wraparound | Each limb add is a 256-bit `Add` with no mod 2^64, so LLVM's carry tests (`sum >= operand`) always hold. The prover wraps only the adds it matches as `checked_add` patterns within one block. No rule input reaches the branch. |
+| Stack word copy keeps both halves | Model: a copied word is never rebuilt | The front end turned the copy into a `memcpy`, which moved two cells (7 and 6012). The eight-byte load read 7, and the presolver folded the assert to `false`. |
+
+Fixes in this commit:
+
+- The writable rule asserts its two facts separately.
+- `Invoke` is whole words returned through memory.
+- The ceiling rule checks each privilege against a constant bit.
+- `the_counterexample_descriptor_is_refused` rebuilds the ceiling trace's input on the host.
+- `scan-stack-copies.py` no longer exempts two four-byte halves.
+
+### What the results change
+
+- A copied word keeps only its first store. The one-byte tag at offset 0 survives
+  (`rule_stack_word_copy_keeps_a_short_tag` verified); everything at other offsets is lost, two
+  four-byte halves included. So `#[repr(C, u32)]` on `RunError` would not have helped.
+- Outside matched `checked_add` patterns, an overflow branch is vacuous unless a reachability rule
+  for it passes. `run.conf`'s `u64` and `i64` arithmetic rules have none.
+- Bitwise operations on two unknowns are imprecise. They produce spurious counterexamples, and
+  could produce spurious witnesses: check a passing satisfy rule's trace for "Imprecision detected".
+
+### Run next
+
+- The two fixed rules, with their reachability rules and twins: the eight `rule_cpi_requests_*`
+  and `rule_writable_and_executable_*` rules in `run-blocked.conf`.
+- `rule_u128_add_reaches_overflow`, now in `run-blocked.conf`, in a conf of its own with
+  `-solanaTACSoundSignedMath true` added to `prover_args`. The flag masks every 64-bit operation,
+  and is experimental.
+- Every gating conf at this branch's commit: the verifier and executor changed after cb2fb2d.
+- Overflow reachability rules for `run.conf`'s `u64` and `i64` arithmetic.
+- The blocked conf's 13 rules without a result, saving the job's report URL and key.
+
+## Status
+
+### Expected to prove, unconfirmed (`run.conf`, 15 rules)
+
+- **Arithmetic, comparisons and casts:** `u64` and `i64` checked arithmetic, signed division's
+  errors, mixed operands, comparisons, ordering, five of the six casts, and `u64` remainder, shifts
+  and bitwise operations.
+- **Error codes:** they round-trip, and runtime and verifier codes stay in their ranges.
+- **Parser:** magic and version come first; short payloads are truncated; sections tile the
+  payload. This covers payloads up to 96 bytes; Kani (track FV5) checked the full 10,240 in 159 s.
+
+At risk: six of these (`u64` and `i64` arithmetic, signed division, mixed operands, casts, `u64`
+integer operations) read an error's kind back from a stack copy the prover may not follow ("Error
+kinds in stack copies" below). The 2026-09-20 binaries had no such copy in the arithmetic rules;
+today's do.
+
+The section rule was wrong and vacuous until this branch: it counted only the fixed inputs, and a
+`cvlr_satisfy!(true)` turned its asserts into assumptions. Its twin is the old statement.
+
+### Expected to prove, verified at cb2fb2d (`run-candidates*.conf`, 14 rules)
+
+- **`u128` arithmetic:** one rule per opcode, where one rule over all six blocked. Add, sub, mul
+  and div are at risk like the `u64` rule.
+- **Casts:** `u128` to `i64`, the sixth pair. At risk the same way.
+- **Registry:**
+  - an entry opens only if it is writable and of the declared size;
+  - field reads and writes need an open entry;
+  - an entry opens only if its header names the template and the key. This one needs
+    `-solanaOptimisticMemcmp`, and says nothing about the header's first word.
+- **Return data:** a read returns the invoked program's data or nothing, and nothing without an
+  invoke.
+- **Memory control:** `rule_heap_word_stores_read_back_as_words`, verified at cb2fb2d. Its partner,
+  `rule_stack_word_copy_keeps_both_halves`, came back violated on the prover's model and moved to
+  `run-blocked.conf` (see "Error kinds in stack copies"), with `rule_u128_add_reaches_overflow`.
+
+### Blocked (`run-blocked.conf`, 21 rules and one reachability rule)
+
+| Rules | Reason |
+| --- | --- |
+| Account constraints (5) | Suspected: `validate_account`'s error kinds travel in stack copies |
+| Account header reads | Suspected: the executor's register write copies one-byte-tagged values by words |
+| Registry: an open of an open entry fails | Suspected: the outcomes differ only in the result, copied the same way |
+| `mul_div` | Suspected: its result is copied the same way |
+| Privilege ceiling, finalization's half | Suspected: `verify_cpi`'s refusals are copied the same way, so one can read as acceptance |
+| Typing preservation (2) | Suspected: the same, for registers and verifier results; the host enumeration passes |
+| Lifecycle (4) | Byte-stored payload and instruction data; the run rule also hits the model limits below |
+| Diagnostics (6) | Expected to fail, or probes: they isolate the limits. Includes the both-halves copy, violated at cb2fb2d |
+| `u128` add's overflow reachability | Model: no 64-bit wraparound, so the branch is unreachable (violated at cb2fb2d) |
+
+"Suspected" means the rule reads a value through a copy the scanner flags, and a prover job has
+to settle it. A rule in this conf that passes counts only if its twin fails and its reachability
+rules pass.
+
+## Why the blocked rules are blocked
+
+Everything below was checked against the compiled code (`llvm-objdump`) and the prover's source
+(Certora/CertoraProver, release of 2026-09-07). Only a prover job confirms it.
+
+- **Heap cells have a width.** The prover keys each heap cell by its address and the width it was
+  written at. It rebuilds nothing when a load reads at another width. LLVM merges adjacent byte
+  reads into wide loads on SBF, so constants written a byte at a time and then parsed reach the
+  parser as unrelated values. The rules now build inputs over havoced memory instead
+  (`rules::symbolic`), constrained through the program's own accessors.
+- **Error kinds in stack copies.** The stack keeps values by offset. Executor errors are built as
+  a two-byte tag, two bytes never written, and a four-byte kind, then copied as one word. The copy
+  carries at most the tag, so a rule that reads the kind afterwards sees an unknown value. The
+  prover was thought to rebuild a word from two four-byte halves, but the control for that,
+  `rule_stack_word_copy_keeps_both_halves`, came back violated at cb2fb2d
+  ([job](https://prover.certora.com/output/5644982/88f0a104b1624caf821dc961242d6bec)): no shape of
+  narrower stores is known to survive the copy.
+  - `scan-stack-copies.py` lists these copies in every rule.
+  - The `rule_stack_word_copy_*` diagnostics test the mechanism directly.
+  - One-byte `RuntimeValue` tags copied the same way may survive: the ordering rule had them when
+    it proved on 2026-09-20.
+  - The rules' own types are copied the same way. Keep them in whole words: `u64` tags and fields,
+    as `rules::accounts::Validation` has.
+- **Some calls have no model.**
+  - `sol_get_return_data` writes nothing, not even `r0`. A link-time `--wrap` sends the program's
+    calls to a stand-in in `src/mocks.rs`.
+  - The bump search loops over `sol_sha256` and `sol_curve_validate_point`, which have no model;
+    `derive_pda` and `get_template_address` are external.
+  - `__umodti3` has no summary.
+  - A global copied by `memcpy` is never initialized.
+
+## Model limits
+
+- **External calls.** CPIs, entry creation, PDA derivation, `invoke_cpi` and whole-program `verify`
+  are external calls with nondeterministic results that touch no memory.
+- **No aliasing.** Each account slot is its own allocation, so the lifecycle run rule cannot see
+  `bounded_invoke`'s borrow check, and would pass a mutant without it.
+- **Test-only hook.** `Scratch::set_last_invoked_for_spec`, compiled only with `spec-api`, stands in
+  for a successful invoke in the return-data rules.
+
+## The binary the prover sees
+
+The prover analyzes the spec build, not the deployed one. The spec build differs in:
+
+- platform tools: v1.53 against v1.54;
+- crate type: an `rlib` against the program's `cdylib`;
+- features: `spec-api` and `no-entrypoint`.
+
+Compiled sizes differ too: `ProgramView::parse` is 290 SBF instructions against 118 deployed,
+`read_return_data` 257 against 222, and `registry::open` 84 against 71. The dependencies match;
+`solana-account-view` is pinned to the program's 2.0.0.
+
+`build-sbf.sh` fails on any frame over SBPF v0's 4 KiB, which `cargo certora-sbf` reports but exits
+0 on. The confs set `-solanaStackSize 4096` to match.
+
+## What would unblock the rest
+
+- **Program: `#[repr(C, u32)]` on `RunError`, dropped.** It would turn the tag and the kind into
+  two four-byte halves, for about +0.74% compute. The prover does not rebuild a value from two
+  halves in that shape either (the violated control above), so it would not unblock the rules.
+- **Prover:** let a stack word rebuild from narrower stores, halves or not, keeping the written
+  bytes exact.

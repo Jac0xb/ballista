@@ -9,9 +9,9 @@ is a bounded sequence of Solana program calls with checks between them, and a ru
 every step or changes nothing. Ballista is not an automation network, a custody service that holds
 funds, or a general-purpose programming language.
 
-What it offers: callers stop rebuilding the same instructions for every transaction, every run
-applies the same checks, and the program that runs templates is small enough to measure its cost in
-compute units (Solana's measure of execution cost).
+What it offers: callers stop rebuilding the same instructions for every transaction, and every run
+applies the same checks. [What it costs](/guide/why-ballista#cost) gives the rent and the
+[compute units](/reference/glossary#compute-units) it adds.
 
 Every maximum on a template and a run is listed on [Limits](/reference/limits).
 
@@ -25,7 +25,7 @@ Terms such as register, CPI and PDA are defined in the [Glossary](/reference/glo
 | Up to eight loops, over the rows the caller supplies or a counted number of passes, each with a maximum set by the template | Nested or unbounded loops | Batches and repeated steps stay possible, and every run is known to finish |
 | Registers that exist only during one run, plus the registry entries a template declares | Arbitrary state, or storage shared between templates | Templates stay immutable, and state that outlives a run is limited to entries only its own template can change |
 | SDK helpers that compile to ordinary CPIs | Protocol-specific logic in the program | The program does not depend on any particular protocol |
-| Only the signatures the transaction already carries | Ballista signing a template's calls as its own PDA | Ballista holds no authority of its own, and no funds beyond the lamports locked in registry entries. It signs only to create its own accounts: a template's account at upload, and registry entries during runs |
+| Only the signatures the transaction already carries | Ballista signing a template's calls as its own PDA | Ballista holds no authority of its own; see [when it signs](/guide/trust-model#signing) |
 | No scheduler or keeper rules | Built-in automation | Deciding who may run a template, and preventing repeat runs, are left to the programs it calls, or to the template itself through a registry: an allowlist, a counter or a nonce |
 | Templates checked by the SDK as you write them, plus shared encoders and decoders | Generated clients as the main API | Named inputs and accounts, and clear errors before a transaction is built |
 
@@ -34,10 +34,10 @@ before-and-after checks around a CPI readable without adding state. A carried bi
 value from one pass of a loop to the next, so a batch can enforce a total, but it never outlives
 the transaction.
 
-`assertPda` and `assertAta` derive addresses on chain from at most 15 seeds of up to 32 bytes each.
-Without a bump, the derivation searches for the canonical bump, so its compute cost varies. With a
-bump supplied, it derives once. Either way these checks only compare addresses; they never let a
-template sign as a PDA.
+`assertPda` and `assertAta` derive a [PDA](/reference/glossary#pda) on chain, within the seed
+limits on [Limits](/reference/limits). Without a bump, the derivation searches for the canonical
+bump, so its compute cost varies. With a bump supplied, it derives once. Either way these checks
+only compare addresses; see [when Ballista signs](/guide/trust-model#signing).
 
 ## Dependency policy
 
@@ -47,8 +47,9 @@ template sign as a PDA.
 - A change to the wire format regenerates the shared example payloads in `fixtures/` with
   `pnpm fixtures`. The Rust verifier tests, the Mollusk tests (which run the program in a simulated
   Solana runtime), and the TypeScript tests all read the same files.
-- Each program version is deployed immutably at its own address. Stored templates cannot be
-  upgraded; moving to a new version means creating them again under the new deployment.
+- Each release will be deployed at its own address with no upgrade authority; see
+  [Deployments](/guide/trust-model#deployments). Stored templates cannot be upgraded; moving to a
+  new version means uploading them again under the new deployment.
 - The program's Rust dependencies are pinned to exact versions, built on Pinocchio 0.11 (a
   lightweight library for Solana programs), and checked with `cargo build-sbf`, the Solana program
   build tool.

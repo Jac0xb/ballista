@@ -13,18 +13,17 @@
 //! - [`tx`] signs and sends, checks the wire size, names the program that failed, and reads the
 //!   return data and the `Program data:` lines a transaction left.
 //! - [`kamino`] builds Kamino Lend's instructions and reads its reserves and obligations.
-//! - [`marginfi`] builds marginfi's instructions and reads its banks and accounts.
-//! - [`lending`] loads the lending snapshot and holds the setup the Kamino and marginfi scenarios
-//!   share.
+//! - [`lending`] loads the lending snapshot and holds the setup the Kamino scenarios share.
+//! - [`pump`] builds pump.fun's own `buy` and `sell` and reads its bonding curves.
 //!
 //! Tests may write only three kinds of state directly: test wallets' SOL and token balances,
 //! oracle prices, and the clock. Every other change goes through the protocols' own instructions.
 
 pub mod kamino;
 pub mod lending;
-pub mod marginfi;
 pub mod oracle;
 pub mod orca;
+pub mod pump;
 pub mod snapshot;
 pub mod template;
 pub mod tx;
@@ -51,7 +50,7 @@ pub fn decode_hex(text: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use {
-        super::{decode_hex, kamino, marginfi, oracle},
+        super::{decode_hex, kamino, oracle},
         sha2::{Digest, Sha256},
     };
 
@@ -60,9 +59,6 @@ mod tests {
     #[test]
     fn every_hand_written_discriminator_is_anchors() {
         for (preimage, written) in [
-            ("global:marginfi_account_initialize", marginfi::INITIALIZE),
-            ("global:lending_account_deposit", marginfi::DEPOSIT),
-            ("global:lending_account_withdraw", marginfi::WITHDRAW),
             (
                 "global:deposit_reserve_liquidity_and_obligation_collateral",
                 kamino::DEPOSIT_V1,

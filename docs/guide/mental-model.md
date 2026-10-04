@@ -66,23 +66,22 @@ Steps name accounts in two ways:
 | `account.fixed('treasury')` | An account from `accounts`, the same for the whole run |
 | `account.iteration('recipient')` | The current row's account, inside `forEach` only |
 
-Some templates also take an [account group](/guide/account-groups): a list of accounts, sized by
-the caller, passed along to one call without being read.
+Some templates also take an [account group](/guide/accounts-and-cpis#account-groups): a list of
+accounts, sized by the caller, passed along to one call without being read.
 
 ## Steps
 
-| Step | Does |
-| --- | --- |
-| `step.let(name, value)` | Computes a value once and names it. `step.snapshot` is the same, for before-and-after checks |
-| `step.require(condition)` | Fails the whole run if the condition is false |
-| `step.invoke({ ... })` | Calls another program (a CPI). Helpers such as `systemTransfer` build one for you |
-| `when: condition` on an invoke | Skips that one call when the condition is false, and carries on |
-| `step.forEach(steps)` | Runs its steps once per batch row |
-| `step.repeat(count, steps, { max })` | Runs its steps `count` times, never more than `max` (at most 255). A template can have up to eight loops of either kind, and loops never nest. [Example](/guide/loops#crank-once-per-waiting-entry) |
-| `step.assign(name, value)` | Updates a value a loop carries from one pass to the next, inside `forEach` or `repeat` only |
-| `step.emit(parts)` | Logs event data for indexers. It must start with a tag of at least four bytes. [Logs and return data](/guide/errors-and-events#logs-and-return-data) |
-| `step.setReturnData(parts)` | Sets the run's return data: once, outside every loop, with no call after it. [Logs and return data](/guide/errors-and-events#logs-and-return-data) |
-| `step.setRegistry(entry, field, value)` | Writes a field of a [registry entry](/guide/registries), state that outlives the run. Only this template's runs can write it |
+Steps run in order, top to bottom:
+
+- `step.let` computes a value and names it, and `step.require` fails the whole run unless a
+  condition holds.
+- `step.invoke` calls another program, and a `when` condition on it skips just that call. Helpers
+  such as `systemTransfer` build one for you.
+- `step.forEach` runs its steps once per batch row, and `step.repeat` a counted number of times. A
+  count above the loop's `max` fails the run with `LoopCountExceeded`; it isn't cut down to `max`.
+- Other steps log events, set return data, and write [registry](/guide/registries) fields.
+
+The [template language](/reference/language#steps) lists every step and its rules.
 
 ## Expressions
 
@@ -103,18 +102,15 @@ It can combine them with checked arithmetic (`add`, `subtract`, `multiply`, `div
 operations, comparisons, `and`/`or`/`not`, and `select`. Overflow fails the run instead of wrapping.
 [Inputs and expressions](/guide/expressions) covers the math, including
 [prices and decimals](/guide/expressions#prices-and-decimals). The
-[language reference](/reference/language#other-instructions-in-the-transaction) covers reading
-other instructions and byte ranges, and lists every source.
+[language reference](/reference/language#introspection) covers reading other instructions and byte
+ranges, and lists every source.
 
 ## Upload: checked, then locked
 
-When you upload a template, the Ballista program checks all of it once. It confirms that every
-value is set before it is read and has the right type, every account reference is declared, no
-call asks for more privilege than the account declares, and even the worst case stays within the
-[limits](/reference/limits), such as 64 calls per run.
-
-A template that passes is **finalized**: locked for good. It cannot be changed or closed. A new
-version gets a new template ID. See [Template lifecycle](/guide/template-lifecycle).
+When you upload a template, the Ballista program checks all of it once;
+[Trust model](/guide/trust-model#finalization-checks) lists what it checks. A template that passes
+is **finalized**: locked for good. It cannot be changed or closed, and a new version gets a new
+template ID. See [Template lifecycle](/guide/template-lifecycle).
 
 ## Run: all or nothing
 
@@ -122,8 +118,7 @@ A run checks the caller's accounts and inputs against the declarations, then wor
 steps in order. If any check or call fails, the whole Solana transaction is undone, including calls
 that had already succeeded.
 
-A template has no authority of its own. It passes on only the signatures the transaction already
-carries, and keeps nothing between runs except in the [registry entries](/guide/registries) it
-declares. See [Trust model](/guide/trust-model).
+A template has no authority of its own: see [when Ballista signs](/guide/trust-model#signing). It
+keeps nothing between runs except in the [registry entries](/guide/registries) it declares.
 
 For how a template is stored as bytes, see [Wire format](/reference/wire-format).

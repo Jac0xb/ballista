@@ -1,22 +1,5 @@
-/**
- * A per-caller daily cap on a Jupiter swap.
- *
- * Each caller may sell at most `DAILY_CAP` lamports of its wrapped SOL through the template,
- * refilling at `REFILL_PER_SECOND`, which is the cap over a day. What a caller has sold and when lives in a registry entry keyed by
- * the caller's address: the first run creates it, at the caller's expense, and only this
- * template's runs can change it.
- *
- * The caller hands over the route in parts, as `splitJupiterRoute` splits the Swap API's data,
- * and the template reassembles Jupiter's `route` data from them, so the `inAmount` it charges is
- * the `inAmount` Jupiter sells. It passes the route its token program, the actor and the source
- * token account itself, and forwards the rest of the route's accounts as its group. The cap and
- * the rate are constants: a cap the caller could set would limit nothing.
- *
- * The cap counts lamports, so the source must be the actor's own wrapped SOL: `inAmount` is in
- * base units of whatever the route sells, and 1.728 USDC counted as 1.728 SOL is no cap. Jupiter
- * asks of the source only that it hold `inAmount`, and moves the accounts its steps name, so the
- * template also requires exactly `inAmount` to have left the source once the route has run.
- */
+/** Cap each caller's Jupiter sales of wrapped SOL: docs/examples/protocols/daily-cap.md. */
+// #region template
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
@@ -26,7 +9,7 @@ import {
   expression,
   rateLimit,
   step,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 import {
   JUPITER_ROUTE,
   JUPITER_V6,
@@ -40,9 +23,9 @@ import {
 
 const sourceBalance = expression.accountData(account.fixed('sourceAta'), TOKEN_ACCOUNT_AMOUNT_OFFSET, 'u64');
 
-/** 1.728 SOL, in lamports. */
+/** 1.728 SOL, in lamports: the most a caller can sell at once. */
 export const DAILY_CAP = 1_728_000_000n;
-/** The cap over 86,400 seconds. */
+/** The cap over 86,400 seconds, so a caller can sell about twice the cap in any 24 hours. */
 export const REFILL_PER_SECOND = 20_000n;
 
 /** The route's platform fee account and rate are chosen by whoever builds the run: cap the rate. */
@@ -135,5 +118,6 @@ export const jupiterDailyCapSwap = defineTemplate({
     ),
   ],
 });
+// #endregion template
 
 export const compiled = compileTemplate(jupiterDailyCapSwap);

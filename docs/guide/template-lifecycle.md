@@ -1,46 +1,19 @@
 # Template lifecycle
 
-How to upload a template, in one instruction or in several, and what you can and cannot do with it
-afterwards.
+How to upload a template in one instruction or in several, resume an upload that stopped, and what
+you can and cannot do with a template afterwards. The code continues
+[Getting started](/guide/getting-started), and uses its `send`, `creator` and imports: in
+TypeScript also `emptyMessage` and a `compiled` template, and in Rust a `payload`.
 
-A template is stored in its own account. The account's address is a PDA (program-derived address:
-an address owned by a program, with no private key) derived from the seeds
+A template is stored in its own account, at a [PDA](/reference/glossary#pda) derived from the seeds
 `['template', creator, templateId]`. `creator` is the uploader's address, and `templateId` is a
-number from 0 to 65,535 that the creator picks. Once a template is finalized (checked and locked),
-its account can never change.
+number from 0 to 65,535 that the creator picks. Once a template is
+[finalized](/reference/glossary#finalize), checked and locked, its account can never change.
 
-## One-shot creation
+## Upload
 
-When the whole template fits in one instruction, `CreateTemplate` uploads it, checks it, and
-finalizes it in a single step. `planTemplateUpload` chooses this mode when the instruction's data is
-at most 3,500 bytes; its `maxInstructionDataBytes` option changes that limit.
-
-::: code-group
-
-```ts [TypeScript]
-const compiled = compileTemplate(template);
-const plan = planTemplateUpload(compiled, 42);
-
-if (plan.mode === 'oneShot') {
-  await send(plan.instructions[0]);
-}
-```
-
-```rust [Rust]
-let payload = builder.build()?; // the template's bytes, from ProgramBuilder
-let instruction = ballista_sdk::create_template_instruction(
-    creator,
-    42,
-    &payload,
-);
-send(instruction).await?;
-```
-
-:::
-
-## Chunked and resumable upload
-
-A larger template is uploaded in pieces:
+`CreateTemplate` uploads a template, checks it, and finalizes it in one instruction, when the
+template fits in one transaction. A larger template is uploaded in pieces:
 
 1. `BeginTemplate` creates the account and records the template's total length and its SHA-256
    hash.
@@ -49,49 +22,37 @@ A larger template is uploaded in pieces:
 3. `FinalizeTemplate` checks that every byte arrived, that the bytes match the recorded hash, and
    that the template passes the program's checks. Then it locks the account.
 
-`buildKitTemplateUploadPlan` sizes each write to fit the transaction message you pass it. If an
-upload is interrupted, `resumeTemplateUpload` reads the account and plans only the remaining
-writes.
+Each instruction goes in a transaction of its own, which holds at most 1,232 bytes. In TypeScript,
+pass `buildKitTemplateUploadPlan` the transaction you send them in; it picks one instruction or
+pieces, and sizes each write to fit. In Rust you choose: a legacy transaction fits a
+`CreateTemplate` for a template of up to 960 bytes, and a write of up to 1,023 bytes.
+[Limits](/reference/limits#transaction-ceilings) has the sizes.
 
 ::: code-group
 
-```ts [TypeScript]
-const plan = await buildKitTemplateUploadPlan({
-  compiled,
-  creator,
-  templateId: 42,
-  transactionMessage: baseV1Message,
-});
+<<< @/../clients/js/examples/start/template-lifecycle.ts#upload [TypeScript]
 
-for (const item of plan.instructions) await send(item.instruction);
-
-// After an interrupted upload:
-const resumed = resumeTemplateUpload(compiled, templateAccountBytes);
-```
-
-```rust [Rust]
-let hash = ballista_sdk::template_hash(&payload);
-send(ballista_sdk::begin_template_instruction(
-    creator,
-    42,
-    payload.len() as u32,
-    hash,
-)).await?;
-
-for (offset, chunk) in payload.chunks(3_000).enumerate() {
-    send(ballista_sdk::write_template_chunk_instruction(
-        creator,
-        template,
-        (offset * 3_000) as u32,
-        chunk,
-    )).await?;
-}
-send(ballista_sdk::finalize_template_instruction(creator, template)).await?;
-```
+<<< @/../clients/rust/examples/docs_start.rs#chunked [Rust]
 
 :::
 
-An upload that has not been finalized can be cancelled with `CancelTemplate`. That closes the
-account and returns its rent deposit, in lamports (the smallest unit of SOL), to the creator. A
-finalized template can never be changed or closed, and its rent deposit stays locked. To publish a
-revision, upload it under a new template ID; see [Failure modes and recovery](/guide/failure-modes).
+## Resume an interrupted upload
+
+If an upload stops partway, the account keeps the bytes written so far and records how many. Send
+only the missing writes, then the finalize:
+
+::: code-group
+
+<<< @/../clients/js/examples/start/template-lifecycle.ts#resume [TypeScript]
+
+<<< @/../clients/rust/examples/docs_start.rs#resume [Rust]
+
+:::
+
+## Cancel or replace
+
+An upload that has not been finalized can be cancelled with `CancelTemplate`
+(`buildKitCancelTemplateInstruction` in TypeScript, `cancel_template_instruction` in Rust). That
+closes the account and returns its rent deposit to the creator. A finalized template can never be
+changed or closed, and its rent deposit stays locked. To publish a revision, upload it under a new
+template ID; see [Failure modes and recovery](/guide/failure-modes).

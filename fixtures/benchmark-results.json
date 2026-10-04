@@ -143,12 +143,6 @@
     "baselineSucceeded": true,
     "uploadComputeUnits": 3726
   },
-  "repay-exactly-what-is-owed": {
-    "ballistaComputeUnits": 2578,
-    "baselineComputeUnits": 150,
-    "baselineSucceeded": true,
-    "uploadComputeUnits": 3226
-  },
   "reserve-preserving-sweep": {
     "ballistaComputeUnits": 2929,
     "baselineComputeUnits": 150,
@@ -179,11 +173,11 @@
     "baselineSucceeded": true,
     "uploadComputeUnits": 4268
   },
-  "top-up-only-when-low": {
-    "ballistaComputeUnits": 2610,
+  "top-up-to-a-target": {
+    "ballistaComputeUnits": 2626,
     "baselineComputeUnits": 150,
     "baselineSucceeded": true,
-    "uploadComputeUnits": 3991
+    "uploadComputeUnits": 4521
   },
   "waterfall-until-the-money-runs-out": {
     "ballistaComputeUnits": 17644,

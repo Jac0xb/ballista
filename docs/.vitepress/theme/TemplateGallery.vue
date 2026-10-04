@@ -130,59 +130,65 @@ const examples: Example[] = [
     },
   },
   {
-    name: 'Send everything above a minimum balance',
+    name: 'Send whatever a token account holds',
     title: 'The amount is read when the transaction runs',
-    href: '/guide/runtime-values#sweep-above-a-reserve',
+    href: '/guide/runtime-values#forward-the-whole-token-balance',
     code: source(`
       import {
-        SYSTEM_PROGRAM_ADDRESS_BYTES,
+        TOKEN_PROGRAM_ADDRESS_BYTES,
         account,
         defineTemplate,
         expression,
         step,
-        systemTransfer,
+        tokenTransfer,
       } from '@jac0xb/ballista';
 
-      const sweep = defineTemplate({
-        // The caller sets the minimum, never the amount.
-        inputs: { reserve: { type: 'u64' } },
+      const forwardAll = defineTemplate({
         accounts: {
-          systemProgram: {
+          tokenProgram: {
             executable: true,
-            address: SYSTEM_PROGRAM_ADDRESS_BYTES,
+            address: TOKEN_PROGRAM_ADDRESS_BYTES,
           },
-          vault: { signer: true, writable: true },
-          destination: { writable: true },
+          // Owner and size pins make the read at byte 64 a token balance.
+          source: {
+            writable: true,
+            owner: TOKEN_PROGRAM_ADDRESS_BYTES,
+            minDataLength: 165,
+          },
+          destination: {
+            writable: true,
+            owner: TOKEN_PROGRAM_ADDRESS_BYTES,
+            minDataLength: 165,
+          },
+          authority: { signer: true },
         },
         steps: [
-          // Read the vault's balance while the transaction runs.
+          // Read the token balance while the transaction runs.
           step.let(
             'balance',
-            expression.accountField(account.fixed('vault'), 'lamports'),
+            expression.accountData(account.fixed('source'), 64, 'u64'),
           ),
-          // Fail the whole run unless it is above the minimum.
+          // Fail the whole run if there is nothing to send.
           step.require(
             expression.greaterThan(
               expression.variable('balance'),
-              expression.input('reserve'),
+              expression.u64(0),
             ),
           ),
-          // Send everything above the minimum.
-          systemTransfer({
-            systemProgram: account.fixed('systemProgram'),
-            from: account.fixed('vault'),
-            to: account.fixed('destination'),
-            lamports: expression.subtract(
-              expression.variable('balance'),
-              expression.input('reserve'),
-            ),
+          // Send all of it.
+          tokenTransfer({
+            tokenProgram: account.fixed('tokenProgram'),
+            source: account.fixed('source'),
+            destination: account.fixed('destination'),
+            authority: account.fixed('authority'),
+            amount: expression.variable('balance'),
           }),
         ],
       });
     `),
     cases: [
-      { label: 'Above the minimum', branch: 'left', outcome: 'The balance is above the minimum, so everything over it is sent.', result: '1 call' },
-      { label: 'At or below', branch: 'right', outcome: 'The balance is at or below the minimum. The check fails and nothing changes.', result: 'Fails' },
+      { label: 'Holds tokens', branch: 'left', outcome: 'The account holds tokens, so all of them are sent.', result: '1 call' },
+      { label: 'Empty', branch: 'right', outcome: 'The account is empty. The check fails and nothing changes.', result: 'Fails' },
     ],
     route: (branch) => {
       const left = branch === 'left';
@@ -714,23 +720,23 @@ async function move(step: number) {
               <text x="254" y="296" class="small-label">DONE</text>
             </g>
 
-            <!-- 2: read a balance, check it is above the minimum, send the rest. -->
+            <!-- 2: read a token balance, check it is not zero, send all of it. -->
             <g v-else-if="selected === 1">
               <circle cx="240" cy="36" r="3" fill="#22231f" />
               <text x="254" y="39" class="small-label">START</text>
               <path d="M240 39v17" stroke="#22231f" />
               <rect x="138" y="56" width="204" height="30" fill="#f7f6f2" stroke="#22231f" />
-              <text x="240" y="75" text-anchor="middle">read the vault balance</text>
+              <text x="240" y="75" text-anchor="middle">read the token balance</text>
               <path d="M240 86v18" stroke="#22231f" />
               <path d="M240 104l74 38-74 38-74-38z" stroke="#22231f" fill="#f7f6f2" />
-              <text x="240" y="146" text-anchor="middle">above the minimum?</text>
+              <text x="240" y="146" text-anchor="middle">more than zero?</text>
               <g class="branch" :class="{ 'is-active': branch === 'left' }">
                 <path d="M166 142h-54v70" stroke="currentColor" fill="none" :stroke-dasharray="dash('left')" />
                 <path d="m108 207 4 5 4-5" stroke="currentColor" fill="none" />
                 <text x="132" y="133" class="small-label">YES</text>
                 <rect x="32" y="213" width="160" height="40" />
-                <text x="112" y="230" text-anchor="middle">send the rest</text>
-                <text x="112" y="245" text-anchor="middle" class="small-label">BALANCE − MINIMUM</text>
+                <text x="112" y="230" text-anchor="middle">send all of it</text>
+                <text x="112" y="245" text-anchor="middle" class="small-label">TOKEN PROGRAM</text>
                 <path d="M112 253v27h128" stroke="currentColor" fill="none" :stroke-dasharray="dash('left')" />
               </g>
               <g class="branch" :class="{ 'is-active': branch === 'right' }">

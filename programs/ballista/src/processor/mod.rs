@@ -4,6 +4,11 @@ mod execute;
 pub mod execute;
 
 #[cfg(not(feature = "spec-api"))]
+mod group;
+#[cfg(feature = "spec-api")]
+pub mod group;
+
+#[cfg(not(feature = "spec-api"))]
 mod introspect;
 #[cfg(feature = "spec-api")]
 pub mod introspect;

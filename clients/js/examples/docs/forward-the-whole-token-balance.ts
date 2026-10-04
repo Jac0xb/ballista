@@ -6,7 +6,7 @@ import {
   expression,
   step,
   tokenTransfer,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 
 /** SPL Token account layout: the balance is the u64 at byte 64 of a 165-byte account. */
 const TOKEN_ACCOUNT_AMOUNT_OFFSET = 64;
@@ -16,7 +16,7 @@ const TOKEN_ACCOUNT_LENGTH = 165;
 export const forwardTheWholeTokenBalance = defineTemplate({
   accounts: {
     tokenProgram: { executable: true, address: TOKEN_PROGRAM_ADDRESS_BYTES },
-    // Owner and size pins make the read at offset 64 mean "token balance".
+    // Token-owned and 165 bytes or more: a token account, or a multisig the transfer refuses.
     source: { writable: true, owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: TOKEN_ACCOUNT_LENGTH },
     destination: { writable: true, owner: TOKEN_PROGRAM_ADDRESS_BYTES, minDataLength: TOKEN_ACCOUNT_LENGTH },
     authority: { signer: true },
@@ -38,8 +38,8 @@ export const forwardTheWholeTokenBalance = defineTemplate({
 // #region run
 import { address, type Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 const TOKEN_PROGRAM = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 

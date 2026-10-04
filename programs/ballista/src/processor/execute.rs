@@ -10,7 +10,7 @@ use pinocchio::{
 };
 use solana_address::Address;
 
-use super::{introspect, math, registry};
+use super::{group, introspect, math, registry};
 use crate::error::{vm_error, BallistaError};
 use crate::utils::pda;
 
@@ -1143,6 +1143,9 @@ fn extended_instruction<'data>(
         OP_OPEN_REGISTRY | OP_READ_REGISTRY | OP_WRITE_REGISTRY => {
             registry_instruction(machine, instruction)
         }
+        // A group opcode names its group by index, and its work runs in one cold helper, as the
+        // registry's does.
+        OP_GROUP_LENGTH | OP_GROUP_ANY | OP_GROUP_COUNT => group_instruction(machine, instruction),
         _ => write_output(machine, instruction),
     }
 }
@@ -1253,6 +1256,40 @@ fn registry_instruction(
     }
     let value = operand(machine.registers, instruction.a)?;
     registry::write_field(entry, offset, selector, value)
+}
+
+/// `GROUP_LENGTH`, `GROUP_ANY` and `GROUP_COUNT`, reached through `extended_instruction`. Cold and
+/// out of line, as `registry_instruction` is. The group's range comes from the run layout, which
+/// placed it inside the runtime accounts; the filter's work is in `group::count_matches`.
+#[cold]
+#[inline(never)]
+fn group_instruction(machine: &mut Machine<'_, '_>, instruction: &InstructionRecord) -> RunResult<()> {
+    let group = instruction.a as usize;
+    if group >= machine.program.header.account_group_count() {
+        return Err(BallistaError::InvalidTemplateProgram.into());
+    }
+    let (start, len) = *machine
+        .scratch
+        .groups
+        .get(group)
+        .ok_or(BallistaError::InvalidTemplateProgram)?;
+    let value = if instruction.opcode == OP_GROUP_LENGTH {
+        RuntimeValue::U64(len.into())
+    } else {
+        let start = start as usize;
+        let members = machine
+            .accounts
+            .get(start..start + len as usize)
+            .ok_or(BallistaError::InvalidRuntimeAccount)?;
+        let any = instruction.opcode == OP_GROUP_ANY;
+        let count = group::count_matches(machine.program, machine.registers, instruction, members, any)?;
+        if any {
+            RuntimeValue::Bool(count != 0)
+        } else {
+            RuntimeValue::U64(count)
+        }
+    };
+    set(machine.registers, instruction.dst as usize, value)
 }
 
 /// `MUL_DIV` and `MUL_DIV_CEIL`, out of line from `extended_instruction`. Inside it, their three
@@ -2764,6 +2801,46 @@ mod tests {
         assert_eq!(registers[1], U64(7), "no failed instruction wrote its destination");
     }
 
+    /// The group opcodes read the run layout's group ranges; without a run, every declared group
+    /// is empty. An undeclared group, or a filter the verifier would refuse, fails as an invalid
+    /// program and writes nothing.
+    #[test]
+    fn group_opcodes_read_the_layout_and_refuse_an_unverified_shape() {
+        let mut builder = ProgramBuilder::new();
+        builder.account_groups(1);
+        let key = builder.const_pubkey([1; 32]);
+        builder.group_filter(true, 0, &[[6; 32]], &[(32, DATA_REG_PUBKEY, key)], &[], 64);
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let filter = program.instructions[1];
+        let mut scratch = Scratch::new(&program);
+        let mut registers = vec![Pubkey([1; 32]), Unset, Unset];
+        let mut run = |instruction: InstructionRecord| {
+            execute_instruction(&program, &[], &[], &mut registers, &mut scratch, &instruction, None)
+        };
+        assert_eq!(run(record(OP_GROUP_LENGTH, 2, 0, NO_INDEX, NO_INDEX, 0, 0)), Ok(()));
+        assert_eq!(run(filter), Ok(()));
+        let mut any = filter;
+        any.opcode = OP_GROUP_ANY;
+        any.dst = 2;
+        assert_eq!(run(any), Ok(()));
+        let invalid = Err(err(BallistaError::InvalidTemplateProgram));
+        assert_eq!(run(record(OP_GROUP_LENGTH, 2, 1, NO_INDEX, NO_INDEX, 0, 0)), invalid);
+        let mut unknown_program = filter;
+        unknown_program.b = 9;
+        assert_eq!(run(unknown_program), invalid);
+        let mut no_match = filter;
+        no_match.immediate_le = GroupScan { segment_start: 0, matches: 0, excepts: 0, min_data_len: 64 }
+            .encode()
+            .to_le_bytes();
+        assert_eq!(run(no_match), invalid);
+        let mut past_the_segments = filter;
+        past_the_segments.immediate_le[0] = 1;
+        assert_eq!(run(past_the_segments), invalid);
+        assert_eq!(registers[1], U64(0));
+        assert_eq!(registers[2], Bool(false));
+    }
+
     /// An opcode the executor does not run reaches `extended_instruction` through the fallback
     /// arm, as every opcode from `OP_MUL_DIV` up does. It must still fail as an invalid program
     /// before anything else is checked: an operand or destination out of range must not turn the
@@ -2777,10 +2854,10 @@ mod tests {
         let program = ProgramView::parse(&bytes).unwrap();
         let mut scratch = Scratch::new(&program);
         let mut registers = vec![U64(7)];
-        // 39 is unassigned, and so is every number after `OP_WRITE_REGISTRY`, 77, the last opcode
-        // the registry takes. FOREACH and REPEAT fail here too: at the root, the dispatch loop
-        // starts a loop from that failure, and inside a body the failure stands.
-        for opcode in [0, 39, OP_FOREACH, OP_REPEAT, OP_WRITE_REGISTRY + 1, 0xfe, u8::MAX] {
+        // 39 is unassigned, and so is every number after `OP_GROUP_COUNT`, 80, the last opcode
+        // the account groups take. FOREACH and REPEAT fail here too: at the root, the dispatch
+        // loop starts a loop from that failure, and inside a body the failure stands.
+        for opcode in [0, 39, OP_FOREACH, OP_REPEAT, OP_GROUP_COUNT + 1, 0xfe, u8::MAX] {
             for dst in [0, 9] {
                 assert_eq!(
                     execute_instruction(
@@ -3136,4 +3213,33 @@ mod tests {
         assert_eq!(read_value(OP_READ_I32, &data, 4), Ok(RuntimeValue::I64(42)));
         assert!(read_value(OP_READ_I32, &data, 5).is_err());
     }
+}
+
+/// Formal specifications only: the `spec-api` feature compiles this, and the program never does.
+/// It sits at the end of the file so it moves no line the release binary's panic locations record.
+#[cfg(feature = "spec-api")]
+impl<'data> Scratch<'data> {
+    /// Records `program` as the program the most recent CPI invoked, as a successful `INVOKE`
+    /// does, so a specification can check `RETURN_DATA` without modelling a CPI.
+    pub fn set_last_invoked_for_spec(&mut self, program: &'data Address) {
+        self.last_invoked = Some(program);
+    }
+}
+
+/// Runs a whole program, loops included, against a register file the caller owns, for the formal
+/// specifications (see `kani/`): `run` without its account checks, input decoding and run event, so
+/// a proof can read every register afterwards. The dispatch loop is the one `run` uses.
+///
+/// Kept at the end of the file: panic locations carry line numbers into the binary, so code added
+/// above would change the release build even when this function is compiled out.
+#[cfg(feature = "spec-api")]
+pub fn execute_program<'data>(
+    program: &ProgramView<'data>,
+    inputs: &[RuntimeValue<'data>],
+    accounts: &'data [AccountView],
+    iterations: usize,
+    registers: &mut [RuntimeValue<'data>],
+    scratch: &mut Scratch<'data>,
+) -> ProgramResult {
+    execute_root(program, inputs, accounts, iterations, registers, scratch, None)
 }

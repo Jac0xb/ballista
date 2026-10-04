@@ -1,0 +1,32 @@
+# A library view of the on-chain program for the native fuzzer, exactly as `certora/ballista-lib`
+# does: the program's own crate is a `cdylib`, so this package compiles the same source as an
+# `rlib` with `no-entrypoint` and `spec-api` (which exposes the executor's pure functions). The
+# dependencies must match programs/ballista/Cargo.toml.
+[package]
+name = "ballista"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+name = "ballista"
+path = "../../programs/ballista/src/lib.rs"
+crate-type = ["lib"]
+
+[features]
+default = []
+no-entrypoint = []
+spec-api = []
+cu-profile = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
+
+[dependencies]
+thiserror = "=1.0.69"
+ballista-common = { path = "../../common" }
+pinocchio = { version = "=0.11.2", features = ["cpi"] }
+pinocchio-system = "=0.6.1"
+solana-address = { version = "=2.7.0", features = ["curve25519", "decode"] }
+solana-sha256-hasher = { version = "=3.1.0", features = ["sha2"] }

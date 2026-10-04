@@ -1,9 +1,9 @@
 //! Build a run of each live-protocol template from Rust.
 //!
-//! A run needs the template's address, one account per declared account in declaration order,
-//! and the inputs in declaration order. A template that declares account groups takes one length
-//! byte per group first, and each group's members after the declared accounts, group after group.
-//! `tests/protocol_templates.rs` checks each run below against the template it runs.
+//! Each run compiles its template from `protocol_templates.rs` and names every input and every
+//! account the template declares. The run builder puts them in declaration order and takes each
+//! account's signer and writable flags from its declaration. `tests/protocol_templates.rs` checks
+//! each run below against the template it runs.
 //!
 //! No template refreshes Kamino: a run that deposits into, repays or liquidates an obligation goes
 //! behind [`kamino_refreshes`], in the same transaction.
@@ -12,8 +12,15 @@
 //! cargo run -p ballista-sdk --example protocol_templates_run
 //! ```
 
+#[path = "protocol_templates.rs"]
+pub mod templates;
+
+use std::error::Error;
+
+use ballista_sdk::template::Row;
 use ballista_sdk::{
-    find_registry_entry_address, run_instruction, RunInputs, ED25519_PROGRAM_ID, SYSTEM_PROGRAM_ID,
+    anchor_discriminator, find_registry_entry_address, ASSOCIATED_TOKEN_PROGRAM_ID,
+    ED25519_PROGRAM_ID, INSTRUCTIONS_SYSVAR_ID, SYSTEM_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
     TOKEN_PROGRAM_ID,
 };
 use solana_program::{
@@ -26,23 +33,15 @@ const JUPITER_V6: Pubkey = pubkey!("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
 const KAMINO_LEND: Pubkey = pubkey!("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");
 const KAMINO_FARMS: Pubkey = pubkey!("FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr");
 const ORCA_WHIRLPOOL: Pubkey = pubkey!("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc");
-const MARGINFI_V2: Pubkey = pubkey!("MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA");
-const SYSVAR_INSTRUCTIONS: Pubkey = pubkey!("Sysvar1nstructions1111111111111111111111111");
 const MEMO_PROGRAM: Pubkey = pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+const PUMP_FUN: Pubkey = pubkey!("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
+const PUMP_FEES: Pubkey = pubkey!("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ");
+const WRAPPED_SOL_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
+const USDC_MINT: Pubkey = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
 
 /// `in_amount`, `quoted_out_amount`, `slippage_bps` and `platform_fee_bps`: `route`'s data after
 /// its plan.
 const ROUTE_TAIL_LEN: usize = 8 + 8 + 2 + 1;
-
-/// An account the template pins, such as a program: read-only, at exactly this address.
-fn pinned(address: Pubkey) -> AccountMeta {
-    AccountMeta::new_readonly(address, false)
-}
-
-/// An Anchor instruction discriminator: the first eight bytes of `sha256("global:<handler>")`.
-fn anchor(handler: &str) -> Vec<u8> {
-    solana_sha256_hasher::hash(format!("global:{handler}").as_bytes()).to_bytes()[..8].to_vec()
-}
 
 // #region jupiter-route
 /// Jupiter `route` data as the Swap API returns it with `useSharedAccounts: false`, split into
@@ -61,7 +60,8 @@ pub struct RouteQuote<'a> {
 impl<'a> RouteQuote<'a> {
     pub fn split(route_data: &'a [u8]) -> Self {
         assert!(
-            route_data.len() >= 8 + 4 + ROUTE_TAIL_LEN && route_data[..8] == anchor("route")[..],
+            route_data.len() >= 8 + 4 + ROUTE_TAIL_LEN
+                && route_data[..8] == anchor_discriminator("route"),
             "not Jupiter `route` data; ask the Swap API for useSharedAccounts: false"
         );
         let (route_plan, tail) = route_data[8..].split_at(route_data.len() - 8 - ROUTE_TAIL_LEN);
@@ -96,6 +96,7 @@ pub fn kamino_refreshes(
     touched: &[(Pubkey, Pubkey)],
     referrer_token_states: &[Pubkey],
 ) -> Vec<Instruction> {
+    let none = AccountMeta::new_readonly(KAMINO_LEND, false);
     let mut refreshed: Vec<Pubkey> = Vec::new();
     let mut instructions = Vec::new();
     for &(reserve, scope_prices) in held.iter().chain(touched) {
@@ -108,24 +109,31 @@ pub fn kamino_refreshes(
             accounts: vec![
                 AccountMeta::new(reserve, false),
                 AccountMeta::new_readonly(lending_market, false),
-                pinned(KAMINO_LEND), // Pyth
-                pinned(KAMINO_LEND), // Switchboard price
-                pinned(KAMINO_LEND), // Switchboard TWAP
+                none.clone(), // Pyth
+                none.clone(), // Switchboard price
+                none.clone(), // Switchboard TWAP
                 AccountMeta::new_readonly(scope_prices, false),
             ],
-            data: anchor("refresh_reserve"),
+            data: anchor_discriminator("refresh_reserve").to_vec(),
         });
     }
     let mut accounts = vec![
         AccountMeta::new_readonly(lending_market, false),
         AccountMeta::new(obligation, false),
     ];
-    accounts.extend(held.iter().map(|&(reserve, _)| AccountMeta::new(reserve, false)));
-    accounts.extend(referrer_token_states.iter().map(|&state| AccountMeta::new(state, false)));
+    accounts.extend(
+        held.iter()
+            .map(|&(reserve, _)| AccountMeta::new(reserve, false)),
+    );
+    accounts.extend(
+        referrer_token_states
+            .iter()
+            .map(|&state| AccountMeta::new(state, false)),
+    );
     instructions.push(Instruction {
         program_id: KAMINO_LEND,
         accounts,
-        data: anchor("refresh_obligation"),
+        data: anchor_discriminator("refresh_obligation").to_vec(),
     });
     instructions
 }
@@ -135,30 +143,17 @@ pub fn kamino_refreshes(
 /// read-only, as "none".
 pub fn kamino_farm_pair(farm: Option<(Pubkey, Pubkey)>) -> [AccountMeta; 2] {
     match farm {
-        Some((user_state, farm_state)) => {
-            [AccountMeta::new(user_state, false), AccountMeta::new(farm_state, false)]
-        }
-        None => [pinned(KAMINO_LEND), pinned(KAMINO_LEND)],
+        Some((user_state, farm_state)) => [
+            AccountMeta::new(user_state, false),
+            AccountMeta::new(farm_state, false),
+        ],
+        None => [
+            AccountMeta::new_readonly(KAMINO_LEND, false),
+            AccountMeta::new_readonly(KAMINO_LEND, false),
+        ],
     }
 }
 // #endregion kamino-refreshes
-
-// #region marginfi-health
-/// marginfi's `healthAccounts`: for every balance the account still holds after the withdrawal,
-/// `(bank, oracle)`, passed read-only, bank then oracle, by bank address from highest to lowest.
-/// Empty when the withdrawn balance was the only one. A bank priced by more than one account
-/// (staked, Kamino) takes more than this passes.
-pub fn marginfi_health_accounts(remaining_balances: &[(Pubkey, Pubkey)]) -> Vec<AccountMeta> {
-    let mut balances = remaining_balances.to_vec();
-    balances.sort_by(|left, right| right.0.cmp(&left.0));
-    balances
-        .iter()
-        .flat_map(|&(bank, oracle)| {
-            [AccountMeta::new_readonly(bank, false), AccountMeta::new_readonly(oracle, false)]
-        })
-        .collect()
-}
-// #endregion marginfi-health
 
 // #region jupiter-deposit
 pub struct JupiterDepositAccounts {
@@ -188,88 +183,82 @@ pub fn run_jupiter_deposit(
     route: &RouteQuote,
     minimum_out: u64,
     route_accounts: Vec<AccountMeta>,
-) -> Instruction {
+) -> Result<Instruction, Box<dyn Error>> {
     // Kamino's v2 deposit ends in the farm pair and the Farms program.
     let mut farm_accounts = kamino_farm_pair(a.collateral_farm).to_vec();
-    farm_accounts.push(pinned(KAMINO_FARMS));
-    let inputs = RunInputs::new()
-        // One length per group, in declaration order: routeAccounts, farmAccounts.
-        .groups(&[route_accounts.len() as u8, farm_accounts.len() as u8])
-        .bytes(route.route_plan)
-        .u64(route.in_amount)
-        .u64(route.quoted_out_amount)
-        .u64(route.slippage_bps.into())
-        .u64(route.platform_fee_bps.into())
-        .u64(minimum_out)
-        .finish();
-    let mut accounts = vec![
-        pinned(JUPITER_V6),
-        pinned(KAMINO_LEND),
-        pinned(TOKEN_PROGRAM_ID),
-        pinned(SYSVAR_INSTRUCTIONS),
-        AccountMeta::new(a.owner, true),
-        AccountMeta::new(a.source_ata, false),
-        AccountMeta::new(a.destination_ata, false),
-        AccountMeta::new(a.obligation, false),
-        AccountMeta::new_readonly(a.lending_market, false),
-        AccountMeta::new_readonly(a.lending_market_authority, false),
-        AccountMeta::new(a.reserve, false),
-        AccountMeta::new_readonly(a.reserve_liquidity_mint, false),
-        AccountMeta::new(a.reserve_liquidity_supply, false),
-        AccountMeta::new(a.reserve_collateral_mint, false),
-        AccountMeta::new(a.reserve_destination_deposit_collateral, false),
-    ];
-    accounts.extend(route_accounts);
-    accounts.extend(farm_accounts);
-    run_instruction(template, accounts, &inputs)
+    farm_accounts.push(AccountMeta::new_readonly(KAMINO_FARMS, false));
+    let instruction = templates::jupiter_deposit_exact_output()
+        .compile()?
+        .run(template)
+        .input("routePlan", route.route_plan)
+        .input("inAmount", route.in_amount)
+        .input("quotedOutAmount", route.quoted_out_amount)
+        .input("slippageBps", route.slippage_bps)
+        .input("platformFeeBps", route.platform_fee_bps)
+        .input("minimumOut", minimum_out)
+        .account("jupiter", JUPITER_V6)
+        .account("kamino", KAMINO_LEND)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("instructionsSysvar", INSTRUCTIONS_SYSVAR_ID)
+        .account("owner", a.owner)
+        .account("sourceAta", a.source_ata)
+        .account("destinationAta", a.destination_ata)
+        .account("obligation", a.obligation)
+        .account("lendingMarket", a.lending_market)
+        .account("lendingMarketAuthority", a.lending_market_authority)
+        .account("reserve", a.reserve)
+        .account("reserveLiquidityMint", a.reserve_liquidity_mint)
+        .account("reserveLiquiditySupply", a.reserve_liquidity_supply)
+        .account("reserveCollateralMint", a.reserve_collateral_mint)
+        .account(
+            "reserveDestinationDepositCollateral",
+            a.reserve_destination_deposit_collateral,
+        )
+        .group("routeAccounts", route_accounts)
+        .group("farmAccounts", farm_accounts)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion jupiter-deposit
 
 // #region jupiter-oracle-swap
 pub struct OracleSwapAccounts {
-    /// The Pyth `PriceUpdateV2` account that prices the token sold in the token bought.
+    /// A `PriceUpdateV2` for SOL/USD, the feed the template pins.
     pub price_update: Pubkey,
     pub trader: Pubkey,
-    /// The trader's own token accounts, holding the two mints below.
+    /// The trader's own wrapped SOL and USDC accounts.
     pub source_ata: Pubkey,
     pub destination_ata: Pubkey,
-    pub source_mint: Pubkey,
-    pub destination_mint: Pubkey,
 }
 
-/// `feed_id` is the price's Pyth feed id, as 32 bytes. The template reads the price's exponent
-/// and both mints' decimals itself. `route` is the Swap API's `route` data split by
-/// [`RouteQuote::split`], and `route_accounts` its account list from the fifth account on.
+/// `route` is the Swap API's `route` data split by [`RouteQuote::split`], and `route_accounts` its
+/// account list from the fifth account on. The feed, the two mints and the tolerance are the
+/// template's own constants, not run inputs.
 pub fn run_jupiter_oracle_swap(
     template: Pubkey,
     a: &OracleSwapAccounts,
-    feed_id: [u8; 32],
     route: &RouteQuote,
-    tolerance_bps: u64,
     route_accounts: Vec<AccountMeta>,
-) -> Instruction {
-    let inputs = RunInputs::new()
-        .groups(&[route_accounts.len() as u8]) // routeAccounts
-        .pubkey(&Pubkey::new_from_array(feed_id))
-        .bytes(route.route_plan)
-        .u64(route.in_amount)
-        .u64(route.quoted_out_amount)
-        .u64(route.slippage_bps.into())
-        .u64(route.platform_fee_bps.into())
-        .u64(tolerance_bps)
-        .finish();
-    let mut accounts = vec![
-        pinned(JUPITER_V6),
-        pinned(TOKEN_PROGRAM_ID),
-        AccountMeta::new_readonly(a.price_update, false),
-        AccountMeta::new(a.trader, true),
-        AccountMeta::new(a.source_ata, false),
-        AccountMeta::new(a.destination_ata, false),
-        AccountMeta::new_readonly(a.source_mint, false),
-        AccountMeta::new_readonly(a.destination_mint, false),
-    ];
-    accounts.extend(route_accounts);
-    run_instruction(template, accounts, &inputs)
+) -> Result<Instruction, Box<dyn Error>> {
+    let instruction = templates::jupiter_oracle_checked_swap()
+        .compile()?
+        .run(template)
+        .input("routePlan", route.route_plan)
+        .input("inAmount", route.in_amount)
+        .input("quotedOutAmount", route.quoted_out_amount)
+        .input("slippageBps", route.slippage_bps)
+        .input("platformFeeBps", route.platform_fee_bps)
+        .account("jupiter", JUPITER_V6)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("priceUpdate", a.price_update)
+        .account("trader", a.trader)
+        .account("sourceAta", a.source_ata)
+        .account("destinationAta", a.destination_ata)
+        .account("sourceMint", WRAPPED_SOL_MINT)
+        .account("destinationMint", USDC_MINT)
+        .group("routeAccounts", route_accounts)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion jupiter-oracle-swap
 
@@ -290,82 +279,33 @@ pub fn run_token_sweep(
     quote: &RouteQuote,
     dust_floor: u64,
     route_accounts: Vec<AccountMeta>,
-) -> Instruction {
-    let inputs = RunInputs::new()
-        .groups(&[route_accounts.len() as u8]) // routeAccounts
-        .bytes(quote.route_plan)
-        .u64(quote.in_amount)
-        .u64(quote.quoted_out_amount)
-        .u64(quote.slippage_bps.into())
-        .u64(quote.platform_fee_bps.into())
-        .u64(dust_floor)
-        .finish();
-    let mut accounts = vec![
-        pinned(JUPITER_V6),
-        pinned(TOKEN_PROGRAM_ID),
-        AccountMeta::new(a.seller, true),
-        AccountMeta::new(a.source_ata, false),
-        AccountMeta::new(a.destination_ata, false),
-    ];
-    accounts.extend(route_accounts);
-    run_instruction(template, accounts, &inputs)
+) -> Result<Instruction, Box<dyn Error>> {
+    let instruction = templates::token_sweep_into_swap()
+        .compile()?
+        .run(template)
+        .input("routePlan", quote.route_plan)
+        .input("quotedInAmount", quote.in_amount)
+        .input("quotedOutAmount", quote.quoted_out_amount)
+        .input("slippageBps", quote.slippage_bps)
+        .input("platformFeeBps", quote.platform_fee_bps)
+        .input("dustFloor", dust_floor)
+        .account("jupiter", JUPITER_V6)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("seller", a.seller)
+        .account("sourceAta", a.source_ata)
+        .account("destinationAta", a.destination_ata)
+        .group("routeAccounts", route_accounts)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion token-sweep
-
-// #region jito-tip
-pub struct JitoTipAccounts {
-    pub searcher: Pubkey,
-    /// The searcher's wrapped-SOL token account: the round trip's source and its destination.
-    pub wsol_account: Pubkey,
-    /// One of Jito's eight tip accounts.
-    pub jito_tip: Pubkey,
-}
-
-/// The strategy is one Jupiter `route` from the searcher's wrapped SOL back to it. The Swap API
-/// quotes the two legs separately, so they are joined: the second leg's step goes after the
-/// first's with its token indices moved up by one, and the joined list is the second leg's fixed
-/// accounts with the first leg's source, then both legs' step accounts. `round_trip` in
-/// `tests/protocols/tests/jito_tip.rs` joins single-step legs.
-///
-/// `route` is the joined data split by [`RouteQuote::split`], and `strategy_accounts` its account
-/// list from the fifth account on: the template passes the token program, the searcher, and the
-/// wrapped-SOL account twice.
-pub fn run_jito_tip(
-    template: Pubkey,
-    a: &JitoTipAccounts,
-    route: &RouteQuote,
-    tip_lamports: u64,
-    minimum_edge: u64,
-    strategy_accounts: Vec<AccountMeta>,
-) -> Instruction {
-    let inputs = RunInputs::new()
-        .groups(&[strategy_accounts.len() as u8]) // strategyAccounts
-        .bytes(route.route_plan)
-        .u64(route.in_amount)
-        .u64(route.quoted_out_amount)
-        .u64(route.slippage_bps.into())
-        .u64(route.platform_fee_bps.into())
-        .u64(tip_lamports)
-        .u64(minimum_edge)
-        .finish();
-    let mut accounts = vec![
-        pinned(SYSTEM_PROGRAM_ID),
-        pinned(JUPITER_V6),
-        pinned(TOKEN_PROGRAM_ID),
-        AccountMeta::new(a.searcher, true),
-        AccountMeta::new(a.wsol_account, false),
-        AccountMeta::new(a.jito_tip, false),
-    ];
-    accounts.extend(strategy_accounts);
-    run_instruction(template, accounts, &inputs)
-}
-// #endregion jito-tip
 
 // #region pyth-gate
 pub struct PriceGate {
     /// The Pyth `PriceUpdateV2` account.
     pub price_update: Pubkey,
-    /// The feed the price must be, as 32 bytes: SOL/USD's is `ef0d8b6f…c280b56d`.
+    /// The feed the price must be, as 32 bytes: SOL/USD's is
+    /// `ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d`.
     pub feed_id: [u8; 32],
     /// The exponent the bounds are in units of: SOL/USD's is −8.
     pub exponent: i32,
@@ -383,37 +323,33 @@ pub fn run_pyth_gate(
     (floor_price, ceiling_price): (i64, i64),
     route: &RouteQuote,
     action_accounts: Vec<AccountMeta>,
-) -> Instruction {
-    let inputs = RunInputs::new()
-        .groups(&[action_accounts.len() as u8]) // actionAccounts
-        .pubkey(&Pubkey::new_from_array(gate.feed_id))
+) -> Result<Instruction, Box<dyn Error>> {
+    let instruction = templates::pyth_fresh_price_gate()
+        .compile()?
+        .run(template)
+        .input("feedId", gate.feed_id)
         // Pyth stores the exponent as an i32; the template takes it as an i64.
-        .i64(gate.exponent.into())
-        .i64(maximum_age)
-        .u64(maximum_confidence)
-        .i64(floor_price)
-        .i64(ceiling_price)
-        .bytes(route.route_plan)
-        .u64(route.in_amount)
-        .u64(route.quoted_out_amount)
-        .u64(route.slippage_bps.into())
-        .u64(route.platform_fee_bps.into())
-        .finish();
-    let mut accounts = vec![
-        AccountMeta::new_readonly(gate.price_update, false),
-        pinned(JUPITER_V6),
-        pinned(TOKEN_PROGRAM_ID),
-        AccountMeta::new(gate.actor, true),
-    ];
-    accounts.extend(action_accounts);
-    run_instruction(template, accounts, &inputs)
+        .input("exponent", gate.exponent)
+        .input("maximumAge", maximum_age)
+        .input("maximumConfidence", maximum_confidence)
+        .input("floorPrice", floor_price)
+        .input("ceilingPrice", ceiling_price)
+        .input("routePlan", route.route_plan)
+        .input("inAmount", route.in_amount)
+        .input("quotedOutAmount", route.quoted_out_amount)
+        .input("slippageBps", route.slippage_bps)
+        .input("platformFeeBps", route.platform_fee_bps)
+        .account("priceUpdate", gate.price_update)
+        .account("actionProgram", JUPITER_V6)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("actor", gate.actor)
+        .group("actionAccounts", action_accounts)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion pyth-gate
 
 // #region jupiter-daily-cap
-/// `jupiterDailyCapSwap`'s one registry, `dailySpend`: the first it declares.
-const DAILY_SPEND: u8 = 0;
-
 pub struct DailyCapAccounts {
     /// Signs, keys the entry, and pays its rent on the first run.
     pub actor: Pubkey,
@@ -423,33 +359,35 @@ pub struct DailyCapAccounts {
 
 /// `route` is the Swap API's `route` data split by [`RouteQuote::split`], and `action_accounts`
 /// its account list from the fourth account on: the template passes the token program, the actor
-/// and the source itself. The actor's entry is at its registry address for the actor's own key;
-/// the actor's first run creates it, and pays its rent.
+/// and the source itself. The actor's entry is its `dailySpend` entry for its own address: the
+/// actor's first run creates it, and pays its rent.
 pub fn run_jupiter_daily_cap(
     template: Pubkey,
     a: &DailyCapAccounts,
     route: &RouteQuote,
     action_accounts: Vec<AccountMeta>,
-) -> Instruction {
-    let inputs = RunInputs::new()
-        .groups(&[action_accounts.len() as u8]) // actionAccounts
-        .bytes(route.route_plan)
-        .u64(route.in_amount)
-        .u64(route.quoted_out_amount)
-        .u64(route.slippage_bps.into())
-        .u64(route.platform_fee_bps.into())
-        .finish();
-    let (spend, _) = find_registry_entry_address(&template, DAILY_SPEND, &a.actor.to_bytes());
-    let mut accounts = vec![
-        pinned(JUPITER_V6),
-        pinned(TOKEN_PROGRAM_ID),
-        AccountMeta::new(a.actor, true),
-        AccountMeta::new(a.source_ata, false),
-        AccountMeta::new(spend, false),
-        pinned(SYSTEM_PROGRAM_ID),
-    ];
-    accounts.extend(action_accounts);
-    run_instruction(template, accounts, &inputs)
+) -> Result<Instruction, Box<dyn Error>> {
+    let compiled = templates::jupiter_daily_cap_swap().compile()?;
+    let daily_spend = compiled
+        .registry_index("dailySpend")
+        .ok_or("no dailySpend registry")?;
+    let (spend, _) = find_registry_entry_address(&template, daily_spend, &a.actor.to_bytes());
+    let instruction = compiled
+        .run(template)
+        .input("routePlan", route.route_plan)
+        .input("inAmount", route.in_amount)
+        .input("quotedOutAmount", route.quoted_out_amount)
+        .input("slippageBps", route.slippage_bps)
+        .input("platformFeeBps", route.platform_fee_bps)
+        .account("actionProgram", JUPITER_V6)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("actor", a.actor)
+        .account("sourceAta", a.source_ata)
+        .account("spend", spend)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .group("actionAccounts", action_accounts)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion jupiter-daily-cap
 
@@ -481,30 +419,30 @@ pub fn run_orca_compound(
     a: &OrcaCompoundAccounts,
     dust_floor: u64,
     (min_sqrt_price, max_sqrt_price): (u128, u128),
-) -> Instruction {
-    let inputs = RunInputs::new()
-        .u64(dust_floor)
-        .u128(min_sqrt_price)
-        .u128(max_sqrt_price)
-        .finish();
-    let accounts = vec![
-        pinned(ORCA_WHIRLPOOL),
-        pinned(TOKEN_PROGRAM_ID),
-        pinned(MEMO_PROGRAM),
-        AccountMeta::new_readonly(a.position_authority, true),
-        AccountMeta::new(a.whirlpool, false),
-        AccountMeta::new(a.position, false),
-        AccountMeta::new_readonly(a.position_token_account, false),
-        AccountMeta::new_readonly(a.token_mint_a, false),
-        AccountMeta::new_readonly(a.token_mint_b, false),
-        AccountMeta::new(a.token_owner_account_a, false),
-        AccountMeta::new(a.token_owner_account_b, false),
-        AccountMeta::new(a.token_vault_a, false),
-        AccountMeta::new(a.token_vault_b, false),
-        AccountMeta::new(a.tick_array_lower, false),
-        AccountMeta::new(a.tick_array_upper, false),
-    ];
-    run_instruction(template, accounts, &inputs)
+) -> Result<Instruction, Box<dyn Error>> {
+    let instruction = templates::orca_compound_fees()
+        .compile()?
+        .run(template)
+        .input("dustFloor", dust_floor)
+        .input("minSqrtPrice", min_sqrt_price)
+        .input("maxSqrtPrice", max_sqrt_price)
+        .account("whirlpoolProgram", ORCA_WHIRLPOOL)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("memoProgram", MEMO_PROGRAM)
+        .account("positionAuthority", a.position_authority)
+        .account("whirlpool", a.whirlpool)
+        .account("position", a.position)
+        .account("positionTokenAccount", a.position_token_account)
+        .account("tokenMintA", a.token_mint_a)
+        .account("tokenMintB", a.token_mint_b)
+        .account("tokenOwnerAccountA", a.token_owner_account_a)
+        .account("tokenOwnerAccountB", a.token_owner_account_b)
+        .account("tokenVaultA", a.token_vault_a)
+        .account("tokenVaultB", a.token_vault_b)
+        .account("tickArrayLower", a.tick_array_lower)
+        .account("tickArrayUpper", a.tick_array_upper)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion orca-compound
 
@@ -538,27 +476,28 @@ pub fn run_orca_harvest(
     a: &OrcaHarvestAccounts,
     rows: &[OrcaHarvestRow],
     dust_floor: u64,
-) -> Instruction {
-    assert!((1..=12).contains(&rows.len()), "the template takes 1 to 12 positions");
-    let inputs = RunInputs::new().u64(dust_floor).finish();
-    let mut accounts = vec![
-        pinned(ORCA_WHIRLPOOL),
-        pinned(TOKEN_PROGRAM_ID),
-        AccountMeta::new_readonly(a.position_authority, true),
-        AccountMeta::new(a.whirlpool, false),
-        AccountMeta::new(a.token_owner_account_a, false),
-        AccountMeta::new(a.token_owner_account_b, false),
-        AccountMeta::new(a.token_vault_a, false),
-        AccountMeta::new(a.token_vault_b, false),
-    ];
-    // One row after another, each in the order the row schema declares.
-    for row in rows {
-        accounts.push(AccountMeta::new(row.position, false));
-        accounts.push(AccountMeta::new_readonly(row.position_token_account, false));
-        accounts.push(AccountMeta::new_readonly(row.tick_array_lower, false));
-        accounts.push(AccountMeta::new_readonly(row.tick_array_upper, false));
-    }
-    run_instruction(template, accounts, &inputs)
+) -> Result<Instruction, Box<dyn Error>> {
+    let instruction = templates::orca_harvest_many_positions()
+        .compile()?
+        .run(template)
+        .input("dustFloor", dust_floor)
+        .account("whirlpoolProgram", ORCA_WHIRLPOOL)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("positionAuthority", a.position_authority)
+        .account("whirlpool", a.whirlpool)
+        .account("tokenOwnerAccountA", a.token_owner_account_a)
+        .account("tokenOwnerAccountB", a.token_owner_account_b)
+        .account("tokenVaultA", a.token_vault_a)
+        .account("tokenVaultB", a.token_vault_b)
+        .rows(rows.iter().map(|row| {
+            Row::new()
+                .account("position", row.position)
+                .account("positionTokenAccount", row.position_token_account)
+                .account("tickArrayLower", row.tick_array_lower)
+                .account("tickArrayUpper", row.tick_array_upper)
+        }))
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion orca-harvest
 
@@ -589,39 +528,36 @@ pub fn run_kamino_repay(
     route: &RouteQuote,
     minimum_repayment: u64,
     route_accounts: Vec<AccountMeta>,
-) -> Instruction {
+) -> Result<Instruction, Box<dyn Error>> {
     // Kamino's v2 repayment ends in the farm pair, the lending market authority and Farms.
     let mut farm_accounts = kamino_farm_pair(a.debt_farm).to_vec();
     farm_accounts.push(AccountMeta::new_readonly(a.lending_market_authority, false));
-    farm_accounts.push(pinned(KAMINO_FARMS));
-    let inputs = RunInputs::new()
-        // One length per group, in declaration order: routeAccounts, farmAccounts.
-        .groups(&[route_accounts.len() as u8, farm_accounts.len() as u8])
-        .bytes(route.route_plan)
-        .u64(route.in_amount)
-        .u64(route.quoted_out_amount)
-        .u64(route.slippage_bps.into())
-        .u64(route.platform_fee_bps.into())
-        .u64(minimum_repayment)
-        .finish();
-    let mut accounts = vec![
-        pinned(JUPITER_V6),
-        pinned(KAMINO_LEND),
-        pinned(TOKEN_PROGRAM_ID),
-        pinned(SYSVAR_INSTRUCTIONS),
-        // Kamino declares the borrower a bare signer, so it is read-only.
-        AccountMeta::new_readonly(a.borrower, true),
-        AccountMeta::new(a.collateral_ata, false),
-        AccountMeta::new(a.borrowed_asset_ata, false),
-        AccountMeta::new(a.obligation, false),
-        AccountMeta::new_readonly(a.lending_market, false),
-        AccountMeta::new(a.repay_reserve, false),
-        AccountMeta::new_readonly(a.reserve_liquidity_mint, false),
-        AccountMeta::new(a.reserve_liquidity_supply, false),
-    ];
-    accounts.extend(route_accounts);
-    accounts.extend(farm_accounts);
-    run_instruction(template, accounts, &inputs)
+    farm_accounts.push(AccountMeta::new_readonly(KAMINO_FARMS, false));
+    let instruction = templates::kamino_repay_swap_output()
+        .compile()?
+        .run(template)
+        .input("routePlan", route.route_plan)
+        .input("inAmount", route.in_amount)
+        .input("quotedOutAmount", route.quoted_out_amount)
+        .input("slippageBps", route.slippage_bps)
+        .input("platformFeeBps", route.platform_fee_bps)
+        .input("minimumRepayment", minimum_repayment)
+        .account("jupiter", JUPITER_V6)
+        .account("kamino", KAMINO_LEND)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("instructionsSysvar", INSTRUCTIONS_SYSVAR_ID)
+        .account("borrower", a.borrower)
+        .account("collateralAta", a.collateral_ata)
+        .account("borrowedAssetAta", a.borrowed_asset_ata)
+        .account("obligation", a.obligation)
+        .account("lendingMarket", a.lending_market)
+        .account("repayReserve", a.repay_reserve)
+        .account("reserveLiquidityMint", a.reserve_liquidity_mint)
+        .account("reserveLiquiditySupply", a.reserve_liquidity_supply)
+        .group("routeAccounts", route_accounts)
+        .group("farmAccounts", farm_accounts)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion kamino-repay
 
@@ -653,7 +589,10 @@ pub struct KaminoLiquidateAccounts {
     pub debt_farm: Option<(Pubkey, Pubkey)>,
 }
 
-/// `minimum_bounty` is in the seized collateral's own units (lamports for SOL collateral).
+/// `liquidity_amount` is the most debt to repay, in the repaid token's base units.
+/// `min_acceptable_received` is Kamino's own floor on its figure for the payout, net of its fee; 0
+/// for none. `minimum_bounty` is what `user_destination_liquidity` must gain, in the collateral's
+/// base units (lamports for SOL): what the liquidator receives, not its profit.
 ///
 /// Send it behind [`kamino_refreshes`], in the same transaction.
 pub fn run_kamino_liquidate(
@@ -662,155 +601,59 @@ pub fn run_kamino_liquidate(
     liquidity_amount: u64,
     min_acceptable_received: u64,
     minimum_bounty: u64,
-) -> Instruction {
+) -> Result<Instruction, Box<dyn Error>> {
     // Kamino's v2 liquidation ends in both farm pairs and Farms.
     let mut farm_accounts = kamino_farm_pair(a.collateral_farm).to_vec();
     farm_accounts.extend(kamino_farm_pair(a.debt_farm));
-    farm_accounts.push(pinned(KAMINO_FARMS));
-    let inputs = RunInputs::new()
-        .groups(&[farm_accounts.len() as u8]) // farmAccounts
-        .u64(liquidity_amount)
-        .u64(min_acceptable_received)
-        .u64(minimum_bounty)
-        .finish();
-    let mut accounts = vec![
-        pinned(KAMINO_LEND),
-        pinned(TOKEN_PROGRAM_ID),
-        pinned(SYSVAR_INSTRUCTIONS),
-        // Kamino declares the liquidator a bare signer, so it is read-only.
-        AccountMeta::new_readonly(a.liquidator, true),
-        AccountMeta::new(a.obligation, false),
-        AccountMeta::new_readonly(a.lending_market, false),
-        AccountMeta::new_readonly(a.lending_market_authority, false),
-        AccountMeta::new(a.repay_reserve, false),
-        AccountMeta::new_readonly(a.repay_reserve_liquidity_mint, false),
-        AccountMeta::new(a.repay_reserve_liquidity_supply, false),
-        AccountMeta::new(a.withdraw_reserve, false),
-        AccountMeta::new_readonly(a.withdraw_reserve_liquidity_mint, false),
-        AccountMeta::new(a.withdraw_reserve_collateral_mint, false),
-        AccountMeta::new(a.withdraw_reserve_collateral_supply, false),
-        AccountMeta::new(a.withdraw_reserve_liquidity_supply, false),
-        AccountMeta::new(a.withdraw_reserve_fee_receiver, false),
-        AccountMeta::new(a.user_source_liquidity, false),
-        AccountMeta::new(a.user_destination_collateral, false),
-        AccountMeta::new(a.user_destination_liquidity, false),
-    ];
-    accounts.extend(farm_accounts);
-    run_instruction(template, accounts, &inputs)
+    farm_accounts.push(AccountMeta::new_readonly(KAMINO_FARMS, false));
+    let instruction = templates::kamino_liquidate_with_proof()
+        .compile()?
+        .run(template)
+        .input("liquidityAmount", liquidity_amount)
+        .input("minAcceptableReceived", min_acceptable_received)
+        .input("minimumBounty", minimum_bounty)
+        .account("kamino", KAMINO_LEND)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("instructionsSysvar", INSTRUCTIONS_SYSVAR_ID)
+        .account("liquidator", a.liquidator)
+        .account("obligation", a.obligation)
+        .account("lendingMarket", a.lending_market)
+        .account("lendingMarketAuthority", a.lending_market_authority)
+        .account("repayReserve", a.repay_reserve)
+        .account("repayReserveLiquidityMint", a.repay_reserve_liquidity_mint)
+        .account(
+            "repayReserveLiquiditySupply",
+            a.repay_reserve_liquidity_supply,
+        )
+        .account("withdrawReserve", a.withdraw_reserve)
+        .account(
+            "withdrawReserveLiquidityMint",
+            a.withdraw_reserve_liquidity_mint,
+        )
+        .account(
+            "withdrawReserveCollateralMint",
+            a.withdraw_reserve_collateral_mint,
+        )
+        .account(
+            "withdrawReserveCollateralSupply",
+            a.withdraw_reserve_collateral_supply,
+        )
+        .account(
+            "withdrawReserveLiquiditySupply",
+            a.withdraw_reserve_liquidity_supply,
+        )
+        .account(
+            "withdrawReserveFeeReceiver",
+            a.withdraw_reserve_fee_receiver,
+        )
+        .account("userSourceLiquidity", a.user_source_liquidity)
+        .account("userDestinationCollateral", a.user_destination_collateral)
+        .account("userDestinationLiquidity", a.user_destination_liquidity)
+        .group("farmAccounts", farm_accounts)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion kamino-liquidate
-
-// #region marginfi-withdraw
-pub struct MarginfiWithdrawAccounts {
-    pub marginfi_group: Pubkey,
-    pub marginfi_account: Pubkey,
-    pub authority: Pubkey,
-    pub bank: Pubkey,
-    pub bank_liquidity_vault: Pubkey,
-    /// A PDA marginfi signs for, so it is passed read-only.
-    pub bank_liquidity_vault_authority: Pubkey,
-    /// Where marginfi pays the withdrawal, and the treasury it is swept to: both the authority's
-    /// own token accounts.
-    pub destination_ata: Pubkey,
-    pub treasury_ata: Pubkey,
-}
-
-/// `remaining_balances` is `(bank, oracle)` for every balance the marginfi account still holds
-/// after this one is emptied; see [`marginfi_health_accounts`].
-pub fn run_marginfi_withdraw(
-    template: Pubkey,
-    a: &MarginfiWithdrawAccounts,
-    minimum_withdrawn: u64,
-    remaining_balances: &[(Pubkey, Pubkey)],
-) -> Instruction {
-    let health_accounts = marginfi_health_accounts(remaining_balances);
-    let inputs = RunInputs::new()
-        .groups(&[health_accounts.len() as u8]) // healthAccounts
-        .u64(minimum_withdrawn)
-        .finish();
-    let mut accounts = vec![
-        pinned(MARGINFI_V2),
-        pinned(TOKEN_PROGRAM_ID),
-        AccountMeta::new_readonly(a.marginfi_group, false),
-        AccountMeta::new(a.marginfi_account, false),
-        AccountMeta::new_readonly(a.authority, true),
-        AccountMeta::new(a.bank, false),
-        AccountMeta::new(a.bank_liquidity_vault, false),
-        AccountMeta::new_readonly(a.bank_liquidity_vault_authority, false),
-        AccountMeta::new(a.destination_ata, false),
-        AccountMeta::new(a.treasury_ata, false),
-    ];
-    accounts.extend(health_accounts);
-    run_instruction(template, accounts, &inputs)
-}
-// #endregion marginfi-withdraw
-
-// #region marginfi-to-kamino
-pub struct MarginfiToKaminoAccounts {
-    pub owner: Pubkey,
-    /// The owner's token account the assets pass through.
-    pub wallet_ata: Pubkey,
-    pub marginfi_group: Pubkey,
-    pub marginfi_account: Pubkey,
-    pub marginfi_bank: Pubkey,
-    pub marginfi_vault: Pubkey,
-    pub marginfi_vault_authority: Pubkey,
-    pub obligation: Pubkey,
-    pub lending_market: Pubkey,
-    pub lending_market_authority: Pubkey,
-    pub reserve: Pubkey,
-    pub reserve_liquidity_mint: Pubkey,
-    pub reserve_liquidity_supply: Pubkey,
-    pub reserve_collateral_mint: Pubkey,
-    pub reserve_destination_deposit_collateral: Pubkey,
-    /// The reserve's collateral farm, if it has one; see [`kamino_farm_pair`].
-    pub collateral_farm: Option<(Pubkey, Pubkey)>,
-}
-
-/// `remaining_balances` is `(bank, oracle)` for every balance the marginfi account still holds
-/// after this one is emptied; see [`marginfi_health_accounts`].
-///
-/// Send it behind [`kamino_refreshes`], in the same transaction.
-pub fn run_marginfi_to_kamino(
-    template: Pubkey,
-    a: &MarginfiToKaminoAccounts,
-    minimum_moved: u64,
-    remaining_balances: &[(Pubkey, Pubkey)],
-) -> Instruction {
-    let health_accounts = marginfi_health_accounts(remaining_balances);
-    let mut farm_accounts = kamino_farm_pair(a.collateral_farm).to_vec();
-    farm_accounts.push(pinned(KAMINO_FARMS));
-    let inputs = RunInputs::new()
-        // One length per group, in declaration order: healthAccounts, farmAccounts.
-        .groups(&[health_accounts.len() as u8, farm_accounts.len() as u8])
-        .u64(minimum_moved)
-        .finish();
-    let mut accounts = vec![
-        pinned(MARGINFI_V2),
-        pinned(KAMINO_LEND),
-        pinned(TOKEN_PROGRAM_ID),
-        pinned(SYSVAR_INSTRUCTIONS),
-        AccountMeta::new(a.owner, true),
-        AccountMeta::new(a.wallet_ata, false),
-        AccountMeta::new_readonly(a.marginfi_group, false),
-        AccountMeta::new(a.marginfi_account, false),
-        AccountMeta::new(a.marginfi_bank, false),
-        AccountMeta::new(a.marginfi_vault, false),
-        AccountMeta::new_readonly(a.marginfi_vault_authority, false),
-        AccountMeta::new(a.obligation, false),
-        AccountMeta::new_readonly(a.lending_market, false),
-        AccountMeta::new_readonly(a.lending_market_authority, false),
-        AccountMeta::new(a.reserve, false),
-        AccountMeta::new_readonly(a.reserve_liquidity_mint, false),
-        AccountMeta::new(a.reserve_liquidity_supply, false),
-        AccountMeta::new(a.reserve_collateral_mint, false),
-        AccountMeta::new(a.reserve_destination_deposit_collateral, false),
-    ];
-    accounts.extend(health_accounts);
-    accounts.extend(farm_accounts);
-    run_instruction(template, accounts, &inputs)
-}
-// #endregion marginfi-to-kamino
 
 // #region signed-quote
 /// The quote a maker signs off chain, as `signed-quote-settlement.ts` reads it.
@@ -899,22 +742,198 @@ pub fn run_signed_quote(
     quote: &Quote,
     signature: &[u8; 64],
     amount: u64,
-) -> [Instruction; 2] {
+) -> Result<[Instruction; 2], Box<dyn Error>> {
     let verify = ed25519_instruction(&a.maker, signature, &quote.message());
-    let inputs = RunInputs::new().u64(amount).finish();
-    let accounts = vec![
-        pinned(SYSVAR_INSTRUCTIONS),
-        pinned(TOKEN_PROGRAM_ID),
-        AccountMeta::new_readonly(a.taker, true),
-        AccountMeta::new_readonly(a.maker, true),
-        AccountMeta::new(a.taker_quote_account, false),
-        AccountMeta::new(a.maker_quote_account, false),
-        AccountMeta::new(a.maker_base_account, false),
-        AccountMeta::new(a.taker_base_account, false),
-    ];
-    [verify, run_instruction(template, accounts, &inputs)]
+    let run = templates::signed_quote_settlement()
+        .compile()?
+        .run(template)
+        .input("amount", amount)
+        .account("instructions", INSTRUCTIONS_SYSVAR_ID)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("taker", a.taker)
+        .account("maker", a.maker)
+        .account("takerQuoteAccount", a.taker_quote_account)
+        .account("makerQuoteAccount", a.maker_quote_account)
+        .account("makerBaseAccount", a.maker_base_account)
+        .account("takerBaseAccount", a.taker_base_account)
+        .instruction()?;
+    Ok([verify, run])
 }
 // #endregion signed-quote
+
+// #region pump-accounts
+/// pump.fun's `Global`, `["global"]`.
+pub const PUMP_GLOBAL: Pubkey = pubkey!("4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf");
+/// Anchor's event authority, `["__event_authority"]`: pump.fun logs each trade by calling itself.
+pub const PUMP_EVENT_AUTHORITY: Pubkey = pubkey!("Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1");
+/// `["global_volume_accumulator"]`.
+pub const PUMP_GLOBAL_VOLUME_ACCUMULATOR: Pubkey =
+    pubkey!("Hq2wp8uJ9jCPsYgNHex8RtqdvMPfVGoYwjvF1ATiwn2Y");
+/// Pump Fees' `["fee_config", pump.fun]`.
+pub const PUMP_FEE_CONFIG: Pubkey = pubkey!("8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt");
+/// `Global.fee_recipient`, which an ordinary coin's trades may pay. `Global.fee_recipients` lists
+/// seven more.
+pub const PUMP_FEE_RECIPIENT: Pubkey = pubkey!("62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV");
+/// `Global.reserved_fee_recipient`, which a mayhem-mode coin's trades may pay instead.
+pub const PUMP_RESERVED_FEE_RECIPIENT: Pubkey =
+    pubkey!("GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS");
+/// One of `Global.buyback_fee_recipients`, which every trade pays.
+pub const PUMP_BUYBACK_FEE_RECIPIENT: Pubkey =
+    pubkey!("9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7");
+
+/// A pump.fun coin, as its bonding curve describes it.
+pub struct PumpCoin {
+    pub mint: Pubkey,
+    /// `BondingCurve.creator`: the 32 bytes at offset 49 of the curve's data.
+    pub creator: Pubkey,
+    /// `BondingCurve.is_mayhem_mode`: the byte at offset 81.
+    pub mayhem: bool,
+}
+
+fn pump_pda(seeds: &[&[u8]]) -> Pubkey {
+    Pubkey::find_program_address(seeds, &PUMP_FUN).0
+}
+
+/// `owner`'s associated token account for the Token-2022 mint `mint`.
+pub fn token_2022_ata(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(
+        &[
+            owner.as_ref(),
+            TOKEN_2022_PROGRAM_ID.as_ref(),
+            mint.as_ref(),
+        ],
+        &ASSOCIATED_TOKEN_PROGRAM_ID,
+    )
+    .0
+}
+
+/// `["user_volume_accumulator", user]`. pump.fun creates it on the user's first buy.
+pub fn pump_user_volume_accumulator(user: &Pubkey) -> Pubkey {
+    pump_pda(&[b"user_volume_accumulator", user.as_ref()])
+}
+
+impl PumpCoin {
+    /// `["bonding-curve", mint]`.
+    pub fn bonding_curve(&self) -> Pubkey {
+        pump_pda(&[b"bonding-curve", self.mint.as_ref()])
+    }
+
+    /// The curve's own token account, which coins are bought from and sold into.
+    pub fn curve_token_account(&self) -> Pubkey {
+        token_2022_ata(&self.bonding_curve(), &self.mint)
+    }
+
+    /// `["creator-vault", creator]`: the creator's fees accrue here.
+    pub fn creator_vault(&self) -> Pubkey {
+        pump_pda(&[b"creator-vault", self.creator.as_ref()])
+    }
+
+    /// `["bonding-curve-v2", mint]`, which `buy` and `sell` take since pump.fun's April 2026
+    /// upgrade, whether or not it exists.
+    pub fn bonding_curve_v2(&self) -> Pubkey {
+        pump_pda(&[b"bonding-curve-v2", self.mint.as_ref()])
+    }
+
+    /// A fee recipient of the kind the coin's mode needs.
+    pub fn fee_recipient(&self) -> Pubkey {
+        if self.mayhem {
+            PUMP_RESERVED_FEE_RECIPIENT
+        } else {
+            PUMP_FEE_RECIPIENT
+        }
+    }
+}
+// #endregion pump-accounts
+
+// #region pump-buy-basket
+/// One coin of the basket.
+pub struct PumpBuy {
+    pub coin: PumpCoin,
+    /// Base units to buy.
+    pub amount: u64,
+    /// The most this buy may cost, in lamports, fees included.
+    pub max_sol_cost: u64,
+}
+
+/// 1 to 7 rows, one per coin, bought into the buyer's own associated token accounts, which must
+/// exist. `budget` caps what the whole basket takes from the buyer. Put a compute-budget
+/// instruction first: a buy costs pump.fun about 75,000 compute units. Without a lookup table, two
+/// coins fit a transaction; see the page for more.
+pub fn run_pump_buy_basket(
+    template: Pubkey,
+    buyer: Pubkey,
+    buys: &[PumpBuy],
+    budget: u64,
+) -> Result<Instruction, Box<dyn Error>> {
+    let instruction = templates::pump_fun_buy_basket()
+        .compile()?
+        .run(template)
+        .input("budget", budget)
+        .account("pumpProgram", PUMP_FUN)
+        .account("global", PUMP_GLOBAL)
+        .account("buyer", buyer)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("tokenProgram", TOKEN_2022_PROGRAM_ID)
+        .account("eventAuthority", PUMP_EVENT_AUTHORITY)
+        .account("globalVolumeAccumulator", PUMP_GLOBAL_VOLUME_ACCUMULATOR)
+        .account(
+            "userVolumeAccumulator",
+            pump_user_volume_accumulator(&buyer),
+        )
+        .account("feeConfig", PUMP_FEE_CONFIG)
+        .account("feeProgram", PUMP_FEES)
+        .account("buybackFeeRecipient", PUMP_BUYBACK_FEE_RECIPIENT)
+        .rows(buys.iter().map(|buy| {
+            let coin = &buy.coin;
+            Row::new()
+                .account("mint", coin.mint)
+                .account("bondingCurve", coin.bonding_curve())
+                .account("curveTokenAccount", coin.curve_token_account())
+                .account("buyerTokenAccount", token_2022_ata(&buyer, &coin.mint))
+                .account("creatorVault", coin.creator_vault())
+                .account("bondingCurveV2", coin.bonding_curve_v2())
+                .account("feeRecipient", coin.fee_recipient())
+                .input("amount", buy.amount)
+                .input("maxSolCost", buy.max_sol_cost)
+        }))
+        .instruction()?;
+    Ok(instruction)
+}
+// #endregion pump-buy-basket
+
+// #region pump-sell-all
+/// Sells everything in the seller's associated token account for `coin`, and fails unless the
+/// seller receives at least `min_sol_out` lamports after fees.
+pub fn run_pump_sell_all(
+    template: Pubkey,
+    seller: Pubkey,
+    coin: &PumpCoin,
+    min_sol_out: u64,
+) -> Result<Instruction, Box<dyn Error>> {
+    let instruction = templates::pump_fun_sell_all()
+        .compile()?
+        .run(template)
+        .input("minSolOut", min_sol_out)
+        .account("pumpProgram", PUMP_FUN)
+        .account("global", PUMP_GLOBAL)
+        .account("feeRecipient", coin.fee_recipient())
+        .account("mint", coin.mint)
+        .account("bondingCurve", coin.bonding_curve())
+        .account("curveTokenAccount", coin.curve_token_account())
+        .account("sellerTokenAccount", token_2022_ata(&seller, &coin.mint))
+        .account("seller", seller)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("creatorVault", coin.creator_vault())
+        .account("tokenProgram", TOKEN_2022_PROGRAM_ID)
+        .account("eventAuthority", PUMP_EVENT_AUTHORITY)
+        .account("feeConfig", PUMP_FEE_CONFIG)
+        .account("feeProgram", PUMP_FEES)
+        .account("bondingCurveV2", coin.bonding_curve_v2())
+        .account("buybackFeeRecipient", PUMP_BUYBACK_FEE_RECIPIENT)
+        .instruction()?;
+    Ok(instruction)
+}
+// #endregion pump-sell-all
 
 // ------------------------------------------------------------- sample runs
 
@@ -932,12 +951,14 @@ fn key(seed: u8) -> Pubkey {
 }
 
 fn group(count: u8) -> Vec<AccountMeta> {
-    (0..count).map(|index| AccountMeta::new(key(200 + index), false)).collect()
+    (0..count)
+        .map(|index| AccountMeta::new(key(200 + index), false))
+        .collect()
 }
 
 /// Jupiter `route` data with a 60-byte plan, quoted at 1,000,000 in for 990,000 out.
 fn route_data() -> Vec<u8> {
-    let mut data = anchor("route");
+    let mut data = anchor_discriminator("route").to_vec();
     data.extend_from_slice(&[7; 60]);
     data.extend_from_slice(&1_000_000u64.to_le_bytes());
     data.extend_from_slice(&990_000u64.to_le_bytes());
@@ -948,18 +969,17 @@ fn route_data() -> Vec<u8> {
 
 /// A sample transaction for every template, under the name `fixtures/protocol-examples.json`
 /// records it by: its instructions, the run last.
-pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
-    ("jitoProfitGuardedTip", || {
-        let data = route_data();
-        let route = RouteQuote::split(&data);
-        let a = JitoTipAccounts { searcher: key(1), wsol_account: key(2), jito_tip: key(3) };
-        vec![run_jito_tip(TEMPLATE, &a, &route, 10_000, 100_000, group(40))]
-    }),
+pub type SampleRun = (&'static str, fn() -> Vec<Instruction>);
+
+pub const RUNS: [SampleRun; 12] = [
     ("jupiterDailyCapSwap", || {
         let data = route_data();
         let route = RouteQuote::split(&data);
-        let a = DailyCapAccounts { actor: key(1), source_ata: key(2) };
-        vec![run_jupiter_daily_cap(TEMPLATE, &a, &route, group(20))]
+        let a = DailyCapAccounts {
+            actor: key(1),
+            source_ata: key(2),
+        };
+        vec![run_jupiter_daily_cap(TEMPLATE, &a, &route, group(20)).unwrap()]
     }),
     ("jupiterDepositExactOutput", || {
         let a = JupiterDepositAccounts {
@@ -976,11 +996,16 @@ pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
             reserve_destination_deposit_collateral: key(11),
             collateral_farm: Some((key(12), key(13))),
         };
-        let mut transaction =
-            kamino_refreshes(a.lending_market, a.obligation, &[(a.reserve, key(14))], &[], &[]);
+        let mut transaction = kamino_refreshes(
+            a.lending_market,
+            a.obligation,
+            &[(a.reserve, key(14))],
+            &[],
+            &[],
+        );
         let data = route_data();
         let route = RouteQuote::split(&data);
-        transaction.push(run_jupiter_deposit(TEMPLATE, &a, &route, 1_000_000, group(20)));
+        transaction.push(run_jupiter_deposit(TEMPLATE, &a, &route, 1_000_000, group(20)).unwrap());
         transaction
     }),
     ("jupiterOracleCheckedSwap", || {
@@ -989,12 +1014,10 @@ pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
             trader: key(2),
             source_ata: key(3),
             destination_ata: key(4),
-            source_mint: key(5),
-            destination_mint: key(6),
         };
         let data = route_data();
         let route = RouteQuote::split(&data);
-        vec![run_jupiter_oracle_swap(TEMPLATE, &a, SOL_USD_FEED_ID, &route, 50, group(20))]
+        vec![run_jupiter_oracle_swap(TEMPLATE, &a, &route, group(20)).unwrap()]
     }),
     ("kaminoLiquidateWithProof", || {
         let a = KaminoLiquidateAccounts {
@@ -1020,7 +1043,8 @@ pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
         // The obligation holds the collateral and the debt.
         let held = [(a.withdraw_reserve, key(19)), (a.repay_reserve, key(19))];
         let mut transaction = kamino_refreshes(a.lending_market, a.obligation, &held, &[], &[]);
-        transaction.push(run_kamino_liquidate(TEMPLATE, &a, 5_000_000, 4_000_000, 100_000));
+        transaction
+            .push(run_kamino_liquidate(TEMPLATE, &a, 5_000_000, 4_000_000, 100_000).unwrap());
         transaction
     }),
     ("kaminoRepaySwapOutput", || {
@@ -1040,46 +1064,8 @@ pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
         let mut transaction = kamino_refreshes(a.lending_market, a.obligation, &held, &[], &[]);
         let data = route_data();
         let route = RouteQuote::split(&data);
-        transaction.push(run_kamino_repay(TEMPLATE, &a, &route, 1_000_000, group(20)));
+        transaction.push(run_kamino_repay(TEMPLATE, &a, &route, 1_000_000, group(20)).unwrap());
         transaction
-    }),
-    ("marginfiToKaminoRebalance", || {
-        let a = MarginfiToKaminoAccounts {
-            owner: key(1),
-            wallet_ata: key(2),
-            marginfi_group: key(3),
-            marginfi_account: key(4),
-            marginfi_bank: key(5),
-            marginfi_vault: key(6),
-            marginfi_vault_authority: key(7),
-            obligation: key(8),
-            lending_market: key(9),
-            lending_market_authority: key(10),
-            reserve: key(11),
-            reserve_liquidity_mint: key(12),
-            reserve_liquidity_supply: key(13),
-            reserve_collateral_mint: key(14),
-            reserve_destination_deposit_collateral: key(15),
-            collateral_farm: Some((key(16), key(17))),
-        };
-        let mut transaction =
-            kamino_refreshes(a.lending_market, a.obligation, &[(a.reserve, key(18))], &[], &[]);
-        transaction.push(run_marginfi_to_kamino(TEMPLATE, &a, 1_000_000, &[(key(19), key(20))]));
-        transaction
-    }),
-    ("marginfiWithdrawAllWithFloor", || {
-        let a = MarginfiWithdrawAccounts {
-            marginfi_group: key(1),
-            marginfi_account: key(2),
-            authority: key(3),
-            bank: key(4),
-            bank_liquidity_vault: key(5),
-            bank_liquidity_vault_authority: key(6),
-            destination_ata: key(7),
-            treasury_ata: key(8),
-        };
-        let remaining = [(key(9), key(10)), (key(11), key(12))];
-        vec![run_marginfi_withdraw(TEMPLATE, &a, 1_000_000, &remaining)]
     }),
     ("orcaCompoundFees", || {
         let a = OrcaCompoundAccounts {
@@ -1097,7 +1083,7 @@ pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
             tick_array_upper: key(12),
         };
         let sqrt_price_bounds = (6_400_000_000_000_000_000, 6_550_000_000_000_000_000);
-        vec![run_orca_compound(TEMPLATE, &a, 5_000, sqrt_price_bounds)]
+        vec![run_orca_compound(TEMPLATE, &a, 5_000, sqrt_price_bounds).unwrap()]
     }),
     ("orcaHarvestManyPositions", || {
         let a = OrcaHarvestAccounts {
@@ -1117,7 +1103,30 @@ pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
                 tick_array_upper: key(8),
             })
             .collect();
-        vec![run_orca_harvest(TEMPLATE, &a, &rows, 10_000)]
+        vec![run_orca_harvest(TEMPLATE, &a, &rows, 10_000).unwrap()]
+    }),
+    ("pumpFunBuyBasket", || {
+        // Two ordinary coins and one in mayhem mode.
+        let buys: Vec<_> = (0..3)
+            .map(|row| PumpBuy {
+                coin: PumpCoin {
+                    mint: key(30 + row),
+                    creator: key(40 + row),
+                    mayhem: row == 2,
+                },
+                amount: 1_000_000_000_000,
+                max_sol_cost: 100_000_000,
+            })
+            .collect();
+        vec![run_pump_buy_basket(TEMPLATE, key(1), &buys, 250_000_000).unwrap()]
+    }),
+    ("pumpFunSellAll", || {
+        let coin = PumpCoin {
+            mint: key(30),
+            creator: key(40),
+            mayhem: false,
+        };
+        vec![run_pump_sell_all(TEMPLATE, key(1), &coin, 50_000_000).unwrap()]
     }),
     ("pythFreshPriceGate", || {
         let gate = PriceGate {
@@ -1130,7 +1139,7 @@ pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
         let band = (100_00000000, 150_00000000);
         let data = route_data();
         let route = RouteQuote::split(&data);
-        vec![run_pyth_gate(TEMPLATE, &gate, 60, 10_000_000, band, &route, group(14))]
+        vec![run_pyth_gate(TEMPLATE, &gate, 60, 10_000_000, band, &route, group(14)).unwrap()]
     }),
     ("signedQuoteSettlement", || {
         let a = SignedQuoteAccounts {
@@ -1152,13 +1161,19 @@ pub const RUNS: [(&str, fn() -> Vec<Instruction>); 13] = [
         };
         // A stand-in for the signature the maker sends with the quote.
         let signature = [9; 64];
-        run_signed_quote(TEMPLATE, &a, &quote, &signature, 3_000_000).to_vec()
+        run_signed_quote(TEMPLATE, &a, &quote, &signature, 3_000_000)
+            .unwrap()
+            .to_vec()
     }),
     ("tokenSweepIntoSwap", || {
-        let a = TokenSweepAccounts { seller: key(1), source_ata: key(2), destination_ata: key(3) };
+        let a = TokenSweepAccounts {
+            seller: key(1),
+            source_ata: key(2),
+            destination_ata: key(3),
+        };
         let data = route_data();
         let quote = RouteQuote::split(&data);
-        vec![run_token_sweep(TEMPLATE, &a, &quote, 1_000, group(20))]
+        vec![run_token_sweep(TEMPLATE, &a, &quote, 1_000, group(20)).unwrap()]
     }),
 ];
 

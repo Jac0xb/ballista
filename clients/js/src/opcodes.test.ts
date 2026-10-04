@@ -16,7 +16,7 @@ import {
   REGISTRY_ENTRY_HEADER_LENGTH,
   RUN_EVENT_TAG_FAMILY,
 } from './compiler.js';
-import { MAX_REGISTRIES, MAX_REGISTRY_SIZE } from './schema.js';
+import { MAX_GROUP_EXCEPTS, MAX_GROUP_MATCHES, MAX_REGISTRIES, MAX_REGISTRY_SIZE } from './schema.js';
 
 const wire = readFileSync(
   fileURLToPath(new URL('../../../common/src/template/wire.rs', import.meta.url)),
@@ -106,6 +106,9 @@ const rustName: Record<keyof typeof opcode, string> = {
   openRegistry: 'OP_OPEN_REGISTRY',
   readRegistry: 'OP_READ_REGISTRY',
   writeRegistry: 'OP_WRITE_REGISTRY',
+  groupLength: 'OP_GROUP_LENGTH',
+  groupAny: 'OP_GROUP_ANY',
+  groupCount: 'OP_GROUP_COUNT',
 };
 
 test('every opcode has the same number in Rust and TypeScript', () => {
@@ -134,4 +137,10 @@ test('the registry limits are the same in Rust and TypeScript', () => {
   expect(MAX_REGISTRY_SIZE, 'MAX_REGISTRY_SIZE').toBe(of('MAX_REGISTRY_SIZE'));
   expect(MAX_REGISTRY_OPENS, 'MAX_REGISTRY_OPENS').toBe(of('MAX_REGISTRY_OPENS'));
   expect(REGISTRY_ENTRY_HEADER_LENGTH, 'REGISTRY_ENTRY_HEADER_LEN').toBe(of('REGISTRY_ENTRY_HEADER_LEN'));
+});
+
+test('the group filter limits are the same in Rust and TypeScript', () => {
+  const of = (name: string) => Number(new RegExp(`pub const ${name}: usize = (\\d+);`).exec(wire)?.[1]);
+  expect(MAX_GROUP_MATCHES, 'MAX_GROUP_MATCHES').toBe(of('MAX_GROUP_MATCHES'));
+  expect(MAX_GROUP_EXCEPTS, 'MAX_GROUP_EXCEPTS').toBe(of('MAX_GROUP_EXCEPTS'));
 });

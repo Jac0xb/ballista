@@ -1,7 +1,8 @@
 /** Kamino's refreshes, which go before a Kamino run, and the farm accounts its v2 tails end in. */
+// #region kamino-refreshes
 import { AccountRole, address, type Address, type Instruction } from '@solana/kit';
 
-import type { KitAccountBinding } from '../../../src/kit.js';
+import type { KitAccountBinding } from '@jac0xb/ballista/kit';
 import { KAMINO_FARMS, KAMINO_LEND, KAMINO_REFRESH_OBLIGATION, KAMINO_REFRESH_RESERVE } from '../shared.js';
 
 /** A reserve, and the Scope price account its config names. */
@@ -85,3 +86,4 @@ export function kaminoFarmPair(farm: KaminoFarm | undefined): KitAccountBinding[
 
 /** The Farms program, which ends every Kamino v2 tail. */
 export const KAMINO_FARMS_PROGRAM: KitAccountBinding = { address: address(KAMINO_FARMS) };
+// #endregion kamino-refreshes

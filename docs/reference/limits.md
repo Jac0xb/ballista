@@ -2,7 +2,8 @@
 
 Every maximum on a template and on a run, in one place. The values come from
 `common/src/template/wire.rs`. Terms such as CPI, row and account group are in the
-[Glossary](/reference/glossary).
+[Glossary](/reference/glossary), and the rules behind each limit in the
+[language reference](/reference/language).
 
 ## Program limits
 
@@ -17,6 +18,13 @@ The Ballista program enforces these, whichever SDK built the template.
 | Account groups per template | 8 |
 | Members per account group | 255 |
 | Accounts per CPI, including a forwarded account group | 64 |
+| Programs per group filter | 2 |
+| Matches per group filter | 4 (minimum 1) |
+| Except keys per group filter | 4 |
+| Group filter match offset | 65,535 |
+
+One transaction holds fewer: about 61 runtime accounts. See
+[accounts per transaction](#accounts-per-transaction).
 
 ### CPIs
 
@@ -26,9 +34,8 @@ The Ballista program enforces these, whichever SDK built the template.
 | Instruction data per CPI | 4,096 bytes |
 | Readable CPI return data | 1,024 bytes |
 
-This limit counts only Ballista's own calls. Solana separately caps a transaction's
-[instruction trace](#instruction-trace), which also counts the calls the called programs make, and
-it often binds first.
+This limit counts only Ballista's own calls. Solana's [instruction trace](#instruction-trace),
+which also counts the run itself and every nested call, binds first.
 
 ### Inputs
 
@@ -55,7 +62,7 @@ it often binds first.
 | Return-data steps per template | 1 |
 | One byte read from account or instruction data | 1,024 bytes (minimum 1) |
 
-An `emit` must also start with a literal tag of at least 4 bytes that does not start with `BEV`.
+An `emit` tag is at least 4 bytes. The tag rule is under [Output](/reference/language#output).
 
 ### Registries
 
@@ -67,35 +74,51 @@ An `emit` must also start with a literal tag of at least 4 bytes that does not s
 | Entry account: 72-byte header plus fields | 584 bytes |
 | CPIs each open counts toward the 64 per run | 3 |
 
-There is no separate limit on fields. Their widths (`bool` 1 byte, `u64` and `i64` 8, `u128` 16,
-`pubkey` 32) must total 1 to 512 bytes. Entries open only at the top level, never in a loop, so a
-template cannot open one per batch row.
-
-Creating an entry costs rent: the lamports Solana requires an account to hold for its size. The
-payer, a signing account the template names, pays it once, the first time a run opens the entry,
-and pays only the shortfall if the address already holds lamports. Later runs pay nothing. Entries
-are never closed, so the rent is never returned. An entry with 16 bytes of fields, 88 bytes in all,
-needs 1,503,360 lamports.
+Fields take `bool` 1 byte, `u64` and `i64` 8, `u128` 16 and `pubkey` 32. An entry's rent on
+mainnet is (128 + the entry's bytes) × 5,080 lamports: 1,097,280 for 16 bytes of fields, 88 bytes
+in all. See [what it costs](/guide/why-ballista#cost). The rules are under
+[Registries](/reference/language#registries).
 
 ### Sizes and bytecode
 
 | Limit | Maximum |
 | --- | ---: |
 | Compiled template | 10,240 bytes |
-| Registers | 64 |
+| [Registers](#registers) | 64 |
 | VM instructions | 128 (minimum 1) |
-| PDA seeds per derivation, not counting the bump | 15 |
+| [PDA](/reference/glossary#pda) seeds per derivation, not counting the bump | 15 |
 | Bytes per PDA seed | 32 |
 
-## TypeScript SDK limits
+### Registers {#registers}
 
-The TypeScript SDK adds its own maximums. A template built with the Rust `ProgramBuilder` is bound
+A template has 64 [registers](/reference/glossary#register), each holding one value during a run.
+Both SDK compilers give each value its own register:
+
+- each fixed input the steps read, and each distinct constant, loaded once before the first step;
+- each value an expression reads or computes: an account read, the clock, a row input, a sum, a
+  comparison, a cast.
+
+A `let` takes none of its own: it names its value's register. Writing the same read or sum twice
+computes it twice, so give a value used more than once a `let`. A loop body compiles once, so its
+registers count once, however many passes it makes.
+
+Past 64, the compiler reuses a register once its value has been read for the last time. Inputs
+and constants hold theirs from the start of the run, and a value read inside a loop holds its
+register for the whole loop. Compilation fails only when more than 64 values are in use at once:
+`Template uses more than 64 registers: N values are in use at once at steps[k] (label)`.
+
+`compileTemplate(template).stats.registers` (`compiled.stats.registers` in Rust) gives the count
+after reuse, and `stats.instructions` the VM instructions, at most 128: each value above takes one,
+and so do most other steps, such as a `require` or a call.
+
+## SDK limits
+
+Both SDK compilers add their own maximums. A template built by hand or with other tools is bound
 only by the program limits above.
 
 | Limit | Maximum |
 | --- | ---: |
 | Batch rows (`maxIterations`) | 60 |
-| Top-level steps | 128 |
 | Steps in a loop body | 64 |
 | Data parts per CPI | 64 |
 | Data parts per `emit` or `setReturnData` | 64 |
@@ -109,37 +132,77 @@ loop at its maximum, must fit in 64.
 
 Solana's own limits often bind before Ballista's.
 
+### Transaction size {#transaction-size}
+
+A legacy or version 0 transaction holds at most **1,232 bytes**, and each upload instruction goes
+in a transaction of its own. With the creator as fee payer, these are the largest that fit:
+
+| Transaction | Largest upload chunk | Largest template uploaded in one shot |
+| --- | ---: | ---: |
+| Legacy | 1,023 bytes | 960 bytes |
+| Version 0 | 1,021 bytes | 958 bytes |
+
+One byte more makes 1,233. Larger templates upload in chunks. In one shot, the version 0
+transaction would be 1,288 bytes for the [daily cap](/examples/protocols/daily-cap), 1,636 for the
+[signed quote](/examples/protocols/signed-quote) and 1,866 for the
+[oracle swap](/examples/protocols/jupiter-oracle-swap). In TypeScript, give
+`buildKitTemplateUploadPlan` the `transactionMessage` you send, and it fits each instruction to it
+([Lifecycle](/reference/typescript#lifecycle)).
+
 ### Accounts per transaction
 
-- A version 1 transaction lists at most **64 account addresses** and cannot use address lookup
-  tables. The template account and the Ballista program take two of them, and the fee payer a third
-  unless it is also a runtime account. In practice a v1 run fits about **60 runtime accounts**.
-- Runs larger than that, up to Ballista's 120, need a version 0 transaction with an address lookup
-  table. A v0 transaction is limited to 1,232 bytes.
-- Accounts used by other instructions in the same transaction count toward the same 64.
+A transaction uses at most **64 accounts**, whatever its version. Accounts loaded from address
+lookup tables count too: a table makes a transaction smaller, not wider. Solana's feature to raise
+the limit to 128, `increase_tx_account_lock_limit`, is not active on mainnet.
 
-See [Transaction v1](/guide/transaction-v1) for how to build one.
+So a run alone in its transaction fits about **61 runtime accounts**:
+
+- the Ballista program and the template account take two of the 64;
+- the fee payer takes a third, unless it is also one of the run's accounts;
+- every other instruction takes the accounts it adds, such as the Compute Budget program.
+
+Ballista's limit of 120 runtime accounts can't be reached in one transaction today. To carry 61
+accounts in bytes, use a version 1 transaction, up to 4,096 bytes, or a
+version 0 transaction, up to 1,232 bytes, with an address lookup table.
 
 ### Instruction trace {#instruction-trace}
 
 A transaction runs at most **64 instructions in total**: its own instructions plus every CPI at
-every depth, including the calls a called program makes itself. Ballista's check can't see those
-nested calls, so size a loop to the trace, not only to its `max`.
+every depth, including the calls a called program makes itself. The run is one of them, so even
+alone in its transaction a run can make at most 63 CPIs. Ballista's count can't see nested calls,
+so size a loop to the trace, not only to its `max`.
 
-In a test that sells SOL through Jupiter in slices, one slice per pass of a count loop, Jupiter's
-setup takes 15 entries and each slice takes 7: the route and its event call, the pool's swap and two
-event calls, and two token transfers. Six slices is the most that fits in Jupiter's own
-transaction. The seventh fails with `MaxInstructionTraceLengthExceeded`, although the loop allows
-more.
+In a local test against copies of the mainnet programs, a template sells SOL through Jupiter in
+slices, one per pass of a count loop, then pays out rows. The transaction spends 15 entries before
+the first slice (compute budget, Jupiter's setup and its CPIs, and the run), 7 per slice (Jupiter,
+the pool, their event calls and two token transfers) and 1 per payout. Seven slices fill the trace
+exactly, 15 + 7 × 7 = 64, so the first payout would be entry 65 and fails with
+`MaxInstructionTraceLengthExceeded`, although the loop allows 8.
 
-### Size and compute
+### Call depth {#call-depth}
 
-- A v1 transaction can be up to 4,096 bytes. The account and compute limits usually run out first.
-- Compute cost depends on the template: PDA bump searches, account reads, loop passes, logs, CPIs
-  and the programs they call all add to it. So does creating a registry entry, which derives the
-  entry's address and calls the System program. Solana's log call alone charges an `emit` 200
-  compute units plus 1 per byte. Simulate the exact transaction and set the compute-unit limit
-  from the measurement plus a margin. The TypeScript SDK's `createComputeUnitProvider` does this.
+Solana nests calls at most **5 frames** deep. The transaction's own instruction is frame 1, and
+each CPI runs one frame below its caller. SIMD-0268 would raise this to 9; it is not active on
+mainnet.
+
+- A run called by the transaction is frame 1, so the programs a template calls run at frame 2,
+  and their own calls at frames 3 to 5.
+- A template that [runs another template](/examples/composition#run-another-template) puts the
+  inner run at frame 2, and the inner run's calls at frame 3.
+- A call into frame 6 fails the transaction with Solana's `CallDepth` error, not a Ballista code.
+
+In a local test, a run that runs a Jupiter sale reaches exactly frame 5: the outer run, the inner
+run, Jupiter, Meteora DLMM, then the Token program. A deeper venue, a transfer hook or one more
+wrapper doesn't fit.
+
+### Compute
+
+Compute cost depends on the template: PDA bump searches, account reads, loop passes, logs, CPIs and
+the programs they call all add to it. So does creating a registry entry, which derives the entry's
+address and calls the System program. Solana's log call alone charges an `emit` 200
+[compute units](/reference/glossary#compute-units) plus 1 per byte. Simulate the exact transaction
+and set the compute-unit limit from the measurement plus a margin. The TypeScript SDK's
+`createComputeUnitProvider` does this.
 
 ## When each limit is checked {#static-versus-runtime}
 

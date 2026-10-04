@@ -1,26 +1,13 @@
 # Loops over rows and counts
 
-This page shows loops in which each row decides what to do from state read during the run: pay
-creditors in priority order, collect only the token accounts that hold a balance, process only
-the queue entries that are due, and split a balance by weight. The last example repeats a call as
-many times as a count read during the run.
+In these loops each row decides what to do from what it reads during the run: pay creditors in
+order, collect only funded token accounts, process only due entries, split by weight. The last
+example repeats a call a number of times read during the run.
 
-A template declares its rows as a **batch**, one **row** per item. In `batch`, `row` names the
-accounts in each row, `rowInputs` declares values the caller supplies for each row, and
-`maxIterations` caps the number of rows. `step.forEach` holds the steps that run once per row.
-Inside it, `account.iteration('name')` is the current row's account and
-`expression.rowInput('name')` is the current row's value. [Batch execution](/guide/batching)
-covers the rules and limits.
-
-A template can hold up to eight loops. They run one after another, never one inside another, and
-every `forEach` runs over the same rows. `step.repeat` loops over a count instead of rows, as the
-[last example](#crank-once-per-waiting-entry) shows.
-
-The accounts the caller passes fix how many rows run. What each row does can still depend on what
-earlier rows spent, or on the row's own account. `when` skips a single call when its condition is
-false. In a run, the row accounts follow the fixed accounts, and the row inputs follow the fixed
-inputs. The examples that call another protocol use marked stand-ins (the System program and its
-Transfer data) so they compile and run as written.
+Row loops run over a [batch](/guide/batching): `step.forEach` runs once per row, with
+`account.iteration('name')` as the row's account and `expression.rowInput('name')` as its value.
+The caller fixes how many rows run; each row can still act on what earlier rows spent, and `when`
+skips one call. Calls to other protocols use marked stand-ins.
 
 ## Waterfall until the money runs out
 
@@ -39,17 +26,13 @@ what is left, and what is left is known only when the transaction executes.
 
 :::
 
-Each row is one creditor account, marked writable (the transaction may change it) because it
-receives [lamports](/reference/glossary#lamports). `remaining` starts as the treasury's balance
-minus a reserve. Each row pays the smaller of `remaining` and that creditor's `owed` amount, then
-subtracts the payment.
-
-`carry: ['remaining']` is what passes the balance from one row to the next. A variable created
-before the loop and listed in `carry` can be updated with `step.assign` inside the loop, so row
-four sees what rows one to three paid. Variables created inside the loop, such as `pay`, start
-fresh on every row. Once the money runs out, `pay` is zero and `when` skips the transfer, so the
-later creditors get nothing and the transaction still succeeds. In Rust, the first argument to
-`for_each` is the carry: a bit mask with one bit per carried register.
+Each row is one creditor account, writable because it receives
+[lamports](/reference/glossary#lamports). `remaining` starts as the treasury's balance minus a
+reserve. Each row pays the smaller of `remaining` and that creditor's `owed` amount, then
+subtracts the payment. [`carry`](/guide/batching#carry-a-total-across-rows) passes `remaining`
+from row to row, so row four sees what rows one to three paid, while `pay` starts fresh on every
+row. Once the money runs out, `pay` is zero and `when` skips the transfer, so the later creditors
+get nothing and the transaction still succeeds.
 
 ## Consolidate only the funded accounts
 
@@ -128,83 +111,21 @@ instructions when it is signed.
 
 ::: code-group
 
-```ts [TypeScript · Template]
-import { SYSTEM_PROGRAM_ADDRESS_BYTES, account, data, defineTemplate, expression, step } from '@jac0xb/ballista';
+<<< @/../clients/js/examples/docs/crank-once-per-waiting-entry.ts#template [TypeScript · Template]
 
-// Stand-ins, as in the examples above: replace them with the queue program's address, its crank
-// instruction data, and the offset of the waiting count in its queue account.
-const QUEUE_PROGRAM = SYSTEM_PROGRAM_ADDRESS_BYTES;
-const CRANK_DATA = Uint8Array.of(2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0);
-const WAITING_OFFSET = 8;
+<<< @/../clients/js/examples/docs/crank-once-per-waiting-entry.ts#run [TypeScript · Run]
 
-/** Crank the queue once for each waiting entry, at most eight times. */
-export const crankOncePerWaitingEntry = defineTemplate({
-  accounts: {
-    queueProgram: { executable: true, address: QUEUE_PROGRAM },
-    keeper: { signer: true, writable: true },
-    queue: { writable: true, owner: QUEUE_PROGRAM },
-  },
-  steps: [
-    step.repeat(
-      expression.min(expression.accountData(account.fixed('queue'), WAITING_OFFSET, 'u64'), expression.u64(8)),
-      [
-        step.invoke({
-          program: account.fixed('queueProgram'),
-          accounts: [
-            { account: account.fixed('keeper'), signer: true, writable: true },
-            { account: account.fixed('queue'), signer: false, writable: true },
-          ],
-          data: [data.literal(CRANK_DATA)],
-        }),
-      ],
-      { max: 8 },
-    ),
-  ],
-});
-```
+<<< @/../clients/rust/examples/docs_templates.rs#crank-once-per-waiting-entry [Rust · Template]
 
-```rust [Rust · Template]
-/// Crank the queue once for each waiting entry, at most eight times.
-pub fn crank_once_per_waiting_entry() -> Vec<u8> {
-    use ballista_sdk::{ballista_common::template::*, ProgramBuilder, Segment, SYSTEM_PROGRAM_ID};
-
-    // The same stand-ins.
-    const QUEUE_PROGRAM: [u8; 32] = SYSTEM_PROGRAM_ID.to_bytes();
-    const CRANK_DATA: [u8; 12] = [2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];
-    const WAITING_OFFSET: u64 = 8;
-
-    let mut builder = ProgramBuilder::new();
-    let queue_program = builder.account(ACCOUNT_EXECUTABLE, Some(QUEUE_PROGRAM), None, 0);
-    let keeper = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
-    // 16 bytes, so the u64 at offset 8 fits. The TypeScript compiler works this out itself.
-    let queue = builder.account(ACCOUNT_WRITABLE, None, Some(QUEUE_PROGRAM), 16);
-
-    let most = builder.const_u64(8);
-    let waiting = builder.read(OP_READ_U64, queue, WAITING_OFFSET);
-    let count = builder.binary(OP_MIN, waiting, most);
-    let crank_ix = builder.blob(&CRANK_DATA);
-    let crank = builder.cpi(
-        queue_program,
-        &[(keeper, ACCOUNT_SIGNER | ACCOUNT_WRITABLE), (queue, ACCOUNT_WRITABLE)],
-        &[Segment::Literal(crank_ix)],
-    );
-    // Runs `count` times, at most 8. The 0 is the carry mask: nothing is carried.
-    builder.repeat(count, 8, 0, |pass| pass.invoke(crank, None));
-    builder.build().expect("template builds")
-}
-```
+<<< @/../clients/rust/examples/docs_runs.rs#crank-once-per-waiting-entry [Rust · Run]
 
 :::
 
 - The count is a `u64`, read once, when the loop starts. A count of 0 skips the loop.
 - `max`, from 1 to 255, is the most times the loop may run. A run whose count is above it fails
   with `LoopCountExceeded` (6022), so this template caps the count with `min`.
-- Finalization, the one-time check before a template is locked, counts the loop's calls at `max`:
-  here 8 of the 64 a run may make. Solana's [instruction trace](/reference/limits#instruction-trace)
-  also counts the calls those programs make themselves, and can run out first.
+- Finalization counts the loop's calls at `max`, here 8 of the 64 a run may make.
+  [Rules and limits](/guide/batching#rules-and-limits) covers that count and Solana's instruction
+  trace, which can run out first.
 - `carry` and `expression.loopIndex()` (the pass number, from 0) work as they do in `forEach`.
   There are no rows, so `account.iteration` and `expression.rowInput` are rejected inside.
-
-The TypeScript SDK refuses a ninth loop, a `repeat` inside another loop, and a row named inside a
-`repeat`. A template built another way with one of these fails finalization with `InvalidLoop`
-(6129).

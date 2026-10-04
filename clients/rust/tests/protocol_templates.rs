@@ -1,10 +1,10 @@
 //! The Rust-authored protocol templates are byte-identical to what the TypeScript compiler
 //! produced, and the Rust runs pass the accounts and inputs those templates declare.
 
-#[path = "../examples/protocol_templates.rs"]
-mod templates;
 #[path = "../examples/protocol_templates_run.rs"]
 mod runs;
+
+use runs::templates;
 
 use ballista_sdk::ballista_common::template::*;
 
@@ -17,7 +17,10 @@ fn fixture() -> Vec<(String, Vec<u8>)> {
     let mut entries = Vec::new();
     let mut name = None;
     for line in FIXTURE.lines() {
-        if let Some(entry) = line.strip_prefix("  \"").and_then(|rest| rest.strip_suffix("\": {")) {
+        if let Some(entry) = line
+            .strip_prefix("  \"")
+            .and_then(|rest| rest.strip_suffix("\": {"))
+        {
             name = Some(entry.to_string());
         } else if let Some(hex) = line.trim_start().strip_prefix("\"payload\": \"") {
             let hex = hex.trim_end_matches(',').trim_end_matches('"');
@@ -35,7 +38,7 @@ fn decode_hex(text: &str) -> Vec<u8> {
         .collect()
 }
 
-/// Names the first table that differs, so a mismatch points at the builder call to fix.
+/// Names the first table that differs, so a mismatch points at the step to fix.
 fn first_difference(expected: &[u8], actual: &[u8]) -> String {
     let (expected, actual) = match (ProgramView::parse(expected), ProgramView::parse(actual)) {
         (Ok(expected), Ok(actual)) => (expected, actual),
@@ -63,11 +66,25 @@ fn first_difference(expected: &[u8], actual: &[u8]) -> String {
         )*};
     }
     if expected.header != actual.header {
-        return format!("headers differ:\n  expected {:?}\n  actual   {:?}", expected.header, actual.header);
+        return format!(
+            "headers differ:\n  expected {:?}\n  actual   {:?}",
+            expected.header, actual.header
+        );
     }
-    compare!(accounts, inputs, instructions, cpis, cpi_accounts, data_segments, pubkeys);
+    compare!(
+        accounts,
+        inputs,
+        instructions,
+        cpis,
+        cpi_accounts,
+        data_segments,
+        pubkeys
+    );
     if expected.blob != actual.blob {
-        return format!("blobs differ:\n  expected {:?}\n  actual   {:?}", expected.blob, actual.blob);
+        return format!(
+            "blobs differ:\n  expected {:?}\n  actual   {:?}",
+            expected.blob, actual.blob
+        );
     }
     "no table differs".into()
 }
@@ -75,15 +92,25 @@ fn first_difference(expected: &[u8], actual: &[u8]) -> String {
 #[test]
 fn rust_templates_match_the_typescript_fixture_byte_for_byte() {
     let fixture = fixture();
-    assert_eq!(fixture.len(), templates::TEMPLATES.len(), "one Rust template per fixture entry");
+    assert_eq!(
+        fixture.len(),
+        templates::ALL.len(),
+        "one Rust template per fixture entry"
+    );
     let mut failures = Vec::new();
-    for (name, build) in templates::TEMPLATES {
+    for (name, build) in templates::ALL {
         let expected = &fixture
             .iter()
             .find(|(fixture_name, _)| fixture_name == name)
             .unwrap_or_else(|| panic!("{name} is not in the fixture"))
             .1;
-        let actual = build();
+        let actual = match build().compile() {
+            Ok(compiled) => compiled.bytes,
+            Err(error) => {
+                failures.push(format!("{name}: does not compile: {error}"));
+                continue;
+            }
+        };
         if &actual != expected {
             failures.push(format!("{name}: {}", first_difference(expected, &actual)));
             continue;
@@ -95,31 +122,39 @@ fn rust_templates_match_the_typescript_fixture_byte_for_byte() {
 
 /// Each Rust run passes the template account, then one meta per declared account with the
 /// declared signer and writable flags, then the group members; and encodes one value per
-/// declared input, after one length byte per group. A template that calls Kamino runs right
-/// after Kamino's refreshes, one that reads an Ed25519 signature right after the precompile
-/// instruction carrying it, and any other runs alone.
+/// declared input, then one per row input for each row, after one length byte per group. A
+/// template that calls Kamino runs right after Kamino's refreshes, one that reads an Ed25519
+/// signature right after the precompile instruction carrying it, and any other runs alone.
 #[test]
 fn rust_runs_match_the_accounts_and_inputs_each_template_declares() {
     let kamino = solana_program::pubkey!("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");
     let ed25519 = ballista_sdk::ED25519_PROGRAM_ID;
     let refresh_obligation = solana_sha256_hasher::hash(b"global:refresh_obligation").to_bytes();
     let refresh_obligation = &refresh_obligation[..8];
-    assert_eq!(runs::RUNS.len(), templates::TEMPLATES.len(), "one run per template");
+    assert_eq!(
+        runs::RUNS.len(),
+        templates::ALL.len(),
+        "one run per template"
+    );
     for (name, transaction) in runs::RUNS {
-        let build = templates::TEMPLATES
+        let build = templates::ALL
             .iter()
             .find(|(template, _)| *template == name)
             .unwrap_or_else(|| panic!("{name} has no Rust template"))
             .1;
-        let payload = build();
+        let payload = build().compile().unwrap().bytes;
         let program = ProgramView::parse(&payload).unwrap();
         let header = program.header;
         let transaction = transaction();
-        let (instruction, before) =
-            transaction.split_last().unwrap_or_else(|| panic!("{name}: no instructions"));
+        let (instruction, before) = transaction
+            .split_last()
+            .unwrap_or_else(|| panic!("{name}: no instructions"));
 
         let pins = |address: solana_program::pubkey::Pubkey| {
-            program.pubkeys.iter().any(|key| key.bytes == address.to_bytes())
+            program
+                .pubkeys
+                .iter()
+                .any(|key| key.bytes == address.to_bytes())
         };
         // klend's v2 deposit, repayment and liquidation need the obligation refreshed in the same
         // slot, and no template refreshes it.
@@ -135,13 +170,19 @@ fn rust_runs_match_the_accounts_and_inputs_each_template_declares() {
             );
         } else if pins(ed25519) {
             let programs: Vec<_> = before.iter().map(|verify| verify.program_id).collect();
-            assert_eq!(programs, [ed25519], "{name}: the Ed25519 instruction comes right before");
+            assert_eq!(
+                programs,
+                [ed25519],
+                "{name}: the Ed25519 instruction comes right before"
+            );
         } else {
             assert!(before.is_empty(), "{name}: the run needs nothing before it");
         }
         let groups = header.account_group_count();
-        let group_lengths: Vec<usize> =
-            instruction.data[1..1 + groups].iter().map(|&len| len as usize).collect();
+        let group_lengths: Vec<usize> = instruction.data[1..1 + groups]
+            .iter()
+            .map(|&len| len as usize)
+            .collect();
         let fixed = header.fixed_account_count();
         let stride = header.batch_stride();
         let group_total: usize = group_lengths.iter().sum();
@@ -152,7 +193,11 @@ fn rust_runs_match_the_accounts_and_inputs_each_template_declares() {
         }
         let rows = row_accounts / stride.max(1);
 
-        assert_eq!(instruction.accounts[0].pubkey, runs::TEMPLATE, "{name}: template first");
+        assert_eq!(
+            instruction.accounts[0].pubkey,
+            runs::TEMPLATE,
+            "{name}: template first"
+        );
         let declared = program.accounts[..fixed]
             .iter()
             .chain((0..rows).flat_map(|_| program.accounts[fixed..fixed + stride].iter()));
@@ -171,17 +216,29 @@ fn rust_runs_match_the_accounts_and_inputs_each_template_declares() {
             );
         }
 
-        // Walk the input values the template declares and check they fill the data exactly.
+        // Walk the input values the template declares, then each row's, and check they fill the
+        // data exactly.
         let mut cursor = 1 + groups;
-        for input in program.inputs.iter().take(header.input_count()) {
+        let fixed_inputs = header.input_count();
+        let row_inputs = &program.inputs[fixed_inputs..fixed_inputs + header.row_input_count()];
+        let inputs = program.inputs[..fixed_inputs]
+            .iter()
+            .chain((0..rows).flat_map(|_| row_inputs.iter()));
+        for input in inputs {
             cursor += match input.value_type {
                 VALUE_BOOL => 1,
                 VALUE_U64 | VALUE_I64 => 8,
                 VALUE_U128 => 16,
                 VALUE_PUBKEY => 32,
                 VALUE_BYTES => {
-                    let len = u16::from_le_bytes([instruction.data[cursor], instruction.data[cursor + 1]]);
-                    assert!(len <= u16::from_le_bytes(input.max_len_le), "{name}: bytes input too long");
+                    let len = u16::from_le_bytes([
+                        instruction.data[cursor],
+                        instruction.data[cursor + 1],
+                    ]);
+                    assert!(
+                        len <= u16::from_le_bytes(input.max_len_le),
+                        "{name}: bytes input too long"
+                    );
                     2 + len as usize
                 }
                 other => panic!("{name}: unexpected input type {other}"),

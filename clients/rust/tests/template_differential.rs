@@ -12,6 +12,9 @@
 //!
 //! A document the Rust builders cannot express (an unknown key, a number out of a builder's
 //! range) is counted, not compared: TypeScript must refuse every such document.
+//!
+//! Refusal messages are compared but not required to match: Rust's name the Rust API.
+//! `COMPILER_DIFF_MESSAGES=<path>` writes the ones that differ.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -835,6 +838,8 @@ struct Tally {
     same_bytes: usize,
     both_refuse: usize,
     same_message: usize,
+    /// Refused by both, with different messages (written to `COMPILER_DIFF_MESSAGES`).
+    other_messages: Vec<String>,
     unbuildable: usize,
     /// Rust compiles it and TypeScript refuses it for its open finding `proto-name`.
     known: usize,
@@ -908,6 +913,12 @@ fn compare(corpus: &str) -> Tally {
                 tally.both_refuse += 1;
                 if message.as_deref() == Some(error.message()) {
                     tally.same_message += 1;
+                } else {
+                    tally.other_messages.push(format!(
+                        "{name}\n  TypeScript: {}\n  Rust:       {}",
+                        message.unwrap_or_default().replace('\n', " "),
+                        error.message()
+                    ));
                 }
             }
             // Open TypeScript finding `proto-name`: a declaration named `__proto__` vanishes.
@@ -963,6 +974,9 @@ fn the_rust_compiler_gives_the_typescript_bytes_for_fuzzer_documents() {
         tally.hazards_compared,
         tally.mismatches.len()
     );
+    if let Ok(path) = std::env::var("COMPILER_DIFF_MESSAGES") {
+        std::fs::write(path, tally.other_messages.join("\n")).unwrap();
+    }
     if let Ok(path) = std::env::var("COMPILER_DIFF_REPORT") {
         std::fs::write(path, tally.mismatches.join("\n")).unwrap();
     }

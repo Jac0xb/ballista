@@ -40,8 +40,10 @@ before you run a template you did not compile yourself.
 ## Formal verification
 
 The Certora Solana Prover, Kani, four fuzzers and mutation testing check the program.
-[Formal verification](/guide/formal-verification) says what each covers, what none of them
-covers, and how to run them.
+Each tool's README says what it covers and how to run it:
+[Certora](https://github.com/Jac0xb/ballista/tree/main/certora),
+[Kani](https://github.com/Jac0xb/ballista/tree/main/kani) and
+[the fuzzers](https://github.com/Jac0xb/ballista/tree/main/fuzz).
 
 - **Proved:** 19 Certora rules, at commit `cb2fb2d`: section parsing, `u128` arithmetic, registry
   opens and fields, return-data provenance, and the account checks at run start. That predates the

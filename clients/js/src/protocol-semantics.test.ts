@@ -12,6 +12,7 @@ import { describe, expect, test } from 'vitest';
 
 import {
   ED25519_PROGRAM_ADDRESS_BYTES,
+  TOKEN_2022_PROGRAM_ADDRESS_BYTES,
   TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
   data,
@@ -31,6 +32,8 @@ import {
   kaminoRepaySwapOutput,
   orcaCompoundFees,
   orcaHarvestManyPositions,
+  pumpFunBuyBasket,
+  pumpFunSellAll,
   pythFreshPriceGate,
   signedQuoteSettlement,
   tokenSweepIntoSwap,
@@ -51,6 +54,9 @@ import {
 } from '../examples/scenarios/split-sell.js';
 import { buildJupiterDepositRun } from '../examples/protocols/run-jupiter-deposit.js';
 import { buildDailyCapRun } from '../examples/protocols/run/jupiter-daily-cap.js';
+import { buildPumpBuyBasketRun } from '../examples/protocols/run/pump-buy-basket.js';
+import { pumpCoinAccounts, pumpUserVolumeAccumulator, token2022Ata } from '../examples/protocols/run/pump-fun.js';
+import { buildPumpSellAllRun } from '../examples/protocols/run/pump-sell-all.js';
 import {
   buildOrcaHarvestRun,
   describeFailure,
@@ -64,6 +70,11 @@ import {
   KAMINO_LEND,
   KAMINO_LIQUIDATE,
   KAMINO_REPAY,
+  PUMP_BONDING_CURVE,
+  PUMP_FEES,
+  PUMP_FUN,
+  PUMP_FUN_BUY,
+  PUMP_FUN_SELL,
   PYTH,
   PYTH_RECEIVER,
   SPL_MINT,
@@ -989,5 +1000,245 @@ describe('the signed-quote settlement', () => {
   test('every field lies inside the signed message', () => {
     expect(() => signedQuote.field(QUOTE.quoteMint + 1, 'pubkey')).toThrow(/inside/);
     expect(() => signedQuote.field(QUOTE.length - 7, 'u64')).toThrow(/inside/);
+  });
+});
+
+/**
+ * pump.fun's `buy` and `sell`, as its published IDL lists their accounts, then the two accounts its
+ * April 2026 upgrade appended: the coin's `bonding-curve-v2` PDA and a buyback fee recipient. The
+ * writable flags are a mainnet transaction's (`5SvWdLrM…` for `buy`, `2waaFKBL…` for `sell`).
+ */
+const pumpBuyAccounts: [string, boolean][] = [
+  ['global', false],
+  ['feeRecipient', true],
+  ['mint', false],
+  ['bondingCurve', true],
+  ['curveTokenAccount', true],
+  ['buyerTokenAccount', true],
+  ['buyer', true],
+  ['systemProgram', false],
+  ['tokenProgram', false],
+  ['creatorVault', true],
+  ['eventAuthority', false],
+  ['pumpProgram', false],
+  ['globalVolumeAccumulator', true],
+  ['userVolumeAccumulator', true],
+  ['feeConfig', false],
+  ['feeProgram', false],
+  ['bondingCurveV2', false],
+  ['buybackFeeRecipient', true],
+];
+const pumpSellAccounts: [string, boolean][] = [
+  ['global', false],
+  ['feeRecipient', true],
+  ['mint', false],
+  ['bondingCurve', true],
+  ['curveTokenAccount', true],
+  ['sellerTokenAccount', true],
+  ['seller', true],
+  ['systemProgram', false],
+  ['creatorVault', true],
+  ['tokenProgram', false],
+  ['eventAuthority', false],
+  ['pumpProgram', false],
+  ['feeConfig', false],
+  ['feeProgram', false],
+  ['bondingCurveV2', false],
+  ['buybackFeeRecipient', true],
+];
+
+describe('pump.fun calls are `buy` and `sell`, with their accounts in pump.fun’s order', () => {
+  const pumpCalls: [string, Template, Uint8Array, [string, boolean][], string][] = [
+    ['pumpFunBuyBasket', pumpFunBuyBasket, PUMP_FUN_BUY, pumpBuyAccounts, 'buyer'],
+    ['pumpFunSellAll', pumpFunSellAll, PUMP_FUN_SELL, pumpSellAccounts, 'seller'],
+  ];
+
+  test('every example that pins pump.fun is listed here', () => {
+    expect(pinning(PUMP_FUN)).toEqual(pumpCalls.map(([name]) => name).sort());
+  });
+
+  test.each(pumpCalls)('%s', (_, template, discriminator, accounts, signer) => {
+    const calls = invokesOf(template, 'pumpProgram');
+    expect(calls).toHaveLength(1);
+    const [call] = calls as [Invoke];
+    const [head] = call.data;
+    expect(head?.kind === 'literal' ? [...head.bytes] : []).toEqual([...discriminator]);
+    expect(call.accounts.map((entry) => [nameOf(entry.account), entry.writable])).toEqual(accounts);
+    expect(call.accounts.filter((entry) => entry.signer).map((entry) => nameOf(entry.account))).toEqual([signer]);
+    expect(template.accounts.pumpProgram?.address).toEqual(addressBytes(PUMP_FUN));
+    expect(template.accounts.feeProgram?.address).toEqual(addressBytes(PUMP_FEES));
+    expect(template.accounts.tokenProgram?.address).toEqual(TOKEN_2022_PROGRAM_ADDRESS_BYTES);
+  });
+});
+
+/** Whether `candidate` reads the lamports of fixed account `name`. */
+const lamportsOf = (name: string) => (candidate: Expression) =>
+  candidate.kind === 'accountField' &&
+  candidate.account.kind === 'account' &&
+  candidate.account.name === name &&
+  candidate.field === 'lamports';
+
+describe('the pump.fun basket', () => {
+  const bindings = bindingsOf(pumpFunBuyBasket);
+  const [buy] = invokesOf(pumpFunBuyBasket, 'pumpProgram') as [Invoke];
+  const loop = pumpFunBuyBasket.steps.find((step) => step.kind === 'forEach') as Extract<Step, { kind: 'forEach' }>;
+  const row = (name: string) => account.iteration(name);
+
+  test("buys each row's own amount, for at most its own max cost, and records the volume", () => {
+    expect(buy.data.slice(1)).toEqual([
+      data.encode('u64', expression.rowInput('amount')),
+      data.encode('u64', expression.rowInput('maxSolCost')),
+      data.literal(Uint8Array.of(1)),
+    ]);
+  });
+
+  // pump.fun's `buy` pays any token account of the mint; on the real program, a stranger's
+  // account in the row took the coins the buyer paid for (tests/protocols/tests/pump_fun_buy_basket.rs).
+  test("requires each row's token account to be the buyer's, before buying", () => {
+    expect(requireLabeled(pumpFunBuyBasket, 'tokensGoToTheBuyer').condition).toEqual(
+      expression.equal(
+        expression.accountData(row('buyerTokenAccount'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('buyer'), 'key'),
+      ),
+    );
+    expect(pumpFunBuyBasket.batch?.row.buyerTokenAccount?.owner).toEqual(TOKEN_2022_PROGRAM_ADDRESS_BYTES);
+    const labels = loop.steps.map((step) => step.label);
+    expect(labels.indexOf('tokensGoToTheBuyer')).toBeLessThan(labels.indexOf('buyOnTheCurve'));
+  });
+
+  test("refuses a graduated curve by its `complete` flag, read from pump.fun's own account, before buying", () => {
+    expect(PUMP_BONDING_CURVE.complete).toBe(8 + 5 * 8);
+    expect(requireLabeled(pumpFunBuyBasket, 'curveNotGraduated').condition).toEqual(
+      expression.not(expression.accountData(row('bondingCurve'), PUMP_BONDING_CURVE.complete, 'bool')),
+    );
+    expect(pumpFunBuyBasket.batch?.row.bondingCurve?.owner).toEqual(addressBytes(PUMP_FUN));
+    const labels = loop.steps.map((step) => step.label);
+    expect(labels.indexOf('curveNotGraduated')).toBeLessThan(labels.indexOf('buyOnTheCurve'));
+  });
+
+  test('holds the running total of what the buyer lost to the budget, after every buy', () => {
+    expect(loop.carry).toEqual(['spent']);
+    const check = requireLabeled(pumpFunBuyBasket, 'withinBudget').condition;
+    expect(dependsOn(check, bindings, lamportsOf('buyer'))).toBe(true);
+    expect(dependsOn(check, bindings, (candidate) => isDeepStrictEqual(candidate, expression.input('budget')))).toBe(
+      true,
+    );
+    // Measured on the buyer, never taken from what the run says a buy costs.
+    expect(dependsOn(check, bindings, (candidate) => candidate.kind === 'rowInput')).toBe(false);
+    expect(loop.steps.at(-1)?.label).toBe('withinBudget');
+  });
+});
+
+describe('the pump.fun sale', () => {
+  const bindings = bindingsOf(pumpFunSellAll);
+  const [sell] = invokesOf(pumpFunSellAll, 'pumpProgram') as [Invoke];
+  const labels = pumpFunSellAll.steps.map((step) => step.label);
+
+  test('sells the balance it read, and leaves pump.fun’s own floor at 0', () => {
+    const [, amount, floor] = sell.data;
+    expect(amount?.kind === 'encoded' ? amount.encoding : undefined).toBe('u64');
+    expect(
+      amount?.kind === 'encoded' &&
+        dependsOn(amount.value, bindings, reads('sellerTokenAccount', TOKEN_ACCOUNT_AMOUNT_OFFSET)),
+    ).toBe(true);
+    expect(floor).toEqual(data.encode('u64', expression.u64(0)));
+  });
+
+  test("measures the floor on the seller's lamports", () => {
+    const check = requireLabeled(pumpFunSellAll, 'receivedAtLeastMinSolOut').condition;
+    expect(dependsOn(check, bindings, lamportsOf('seller'))).toBe(true);
+    expect(dependsOn(check, bindings, (candidate) => isDeepStrictEqual(candidate, expression.input('minSolOut')))).toBe(
+      true,
+    );
+    expect(labels.at(-1)).toBe('receivedAtLeastMinSolOut');
+  });
+
+  test('requires the seller to own the account and the account to hold the mint, before the sale', () => {
+    expect(requireLabeled(pumpFunSellAll, 'sellsTheSellersOwnTokens').condition).toEqual(
+      expression.equal(
+        expression.accountData(account.fixed('sellerTokenAccount'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('seller'), 'key'),
+      ),
+    );
+    expect(requireLabeled(pumpFunSellAll, 'holdsTheCurvesCoin').condition).toEqual(
+      expression.equal(
+        expression.accountData(account.fixed('sellerTokenAccount'), TOKEN_ACCOUNT_MINT_OFFSET, 'pubkey'),
+        expression.accountField(account.fixed('mint'), 'key'),
+      ),
+    );
+    for (const label of ['sellsTheSellersOwnTokens', 'holdsTheCurvesCoin', 'curveNotGraduated']) {
+      expect(labels.indexOf(label)).toBeLessThan(labels.indexOf('sellEverything'));
+    }
+    expect(pumpFunSellAll.accounts.sellerTokenAccount?.owner).toEqual(TOKEN_2022_PROGRAM_ADDRESS_BYTES);
+  });
+});
+
+describe('the pump.fun runners', () => {
+  const decoder = getAddressDecoder();
+  const key = (byte: number): Address => decoder.decode(new Uint8Array(32).fill(byte));
+
+  // From mainnet: a buy of 9pd6hk… by 4qTArR… (`5SvWdLrM…`), and the snapshot's HjXcr1… curve,
+  // whose creator is PLhgKg….
+  test('derive the accounts mainnet uses', async () => {
+    const traded = await pumpCoinAccounts({
+      mint: address('9pd6hkPFWMN5Bid4spPhNrwsMSMjdikCH1w11nU1gj5M'),
+      creator: key(0),
+      mayhem: false,
+    });
+    expect(traded.bondingCurve).toBe('CkwPErsQdtxBG8PAt7jB48CZsqepk9GgrS7uL2djNmV2');
+    expect(traded.curveTokenAccount).toBe('J4cateTFChfoTcpo46iroDYwHquxaFwxVxXpYhEWrFMH');
+    expect(traded.bondingCurveV2).toBe('BMAN53X1yvLcJsbAhxxWuvsAVFJ4Hu9mnXb99ED3wKR7');
+    const user = address('4qTArR2hTkL2o2gDNmz7P1LBXVUx5659waxHe2hNnuZk');
+    expect(await token2022Ata(user, traded.mint)).toBe('HBhU8xqxyhKV4MnF8gJtsorkE6qopez7YKm59zPrqgm7');
+    expect(await pumpUserVolumeAccumulator(user)).toBe('G8XbqQDXDG5sThi8J9GjSbegH5vXJA97AMujegJ2Gnc');
+    const snapshotted = await pumpCoinAccounts({
+      mint: address('HjXcr1A2k9mG2614UrCw5JnYnK7sAbe1y3EEeSmGmPUD'),
+      creator: address('PLhgKg7snhYKniSsivdmydPmS9H78JFDrDdJKvBUTtu'),
+      mayhem: false,
+    });
+    expect(snapshotted.creatorVault).toBe('91m6UXduxMiyYCkhirCkT9RbRiqJvHasBf4FTNFLsiaT');
+  });
+
+  test('pass one row per coin, in order, with a mayhem coin paying a reserved fee recipient', async () => {
+    const coins = [
+      { mint: key(10), creator: key(11), mayhem: false },
+      { mint: key(20), creator: key(21), mayhem: true },
+    ];
+    const instruction = await buildPumpBuyBasketRun({
+      templateAddress: key(1),
+      buyer: key(2),
+      buys: coins.map((coin) => ({ coin, amount: 5n, maxSolCost: 7n })),
+      budget: 9n,
+    });
+    const metas = instruction.accounts ?? [];
+    // The template, then eleven fixed accounts, then seven per row.
+    expect(metas).toHaveLength(1 + 11 + 2 * 7);
+    const rows = [0, 1].map((index) => metas.slice(12 + 7 * index, 19 + 7 * index));
+    for (const [index, coin] of coins.entries()) {
+      const accounts = await pumpCoinAccounts(coin);
+      expect(rows[index]!.map((meta) => meta.address)).toEqual([
+        coin.mint,
+        accounts.bondingCurve,
+        accounts.curveTokenAccount,
+        await token2022Ata(key(2), coin.mint),
+        accounts.creatorVault,
+        accounts.bondingCurveV2,
+        accounts.feeRecipient,
+      ]);
+      expect(rows[index]!.map((meta) => isWritableRole(meta.role))).toEqual([false, true, true, true, true, false, true]);
+    }
+    expect(rows[1]![6]!.address).toBe('GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS');
+    await expect(
+      buildPumpBuyBasketRun({ templateAddress: key(1), buyer: key(2), buys: [], budget: 9n }),
+    ).rejects.toThrow(/1 to 7 coins/);
+  });
+
+  test("the sale names the seller's own associated token account", async () => {
+    const coin = { mint: key(10), creator: key(11), mayhem: false };
+    const instruction = await buildPumpSellAllRun({ templateAddress: key(1), seller: key(2), minSolOut: 3n, coin });
+    const metas = instruction.accounts ?? [];
+    expect(metas).toHaveLength(1 + 16);
+    expect(metas[1 + 6]!.address).toBe(await token2022Ata(key(2), coin.mint));
+    expect(metas[1 + 7]).toMatchObject({ address: key(2), role: AccountRole.WRITABLE_SIGNER });
   });
 });

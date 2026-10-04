@@ -26,6 +26,13 @@ export const MEMO_PROGRAM = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr' as con
 export const SYSVAR_INSTRUCTIONS = 'Sysvar1nstructions1111111111111111111111111' as const;
 /** Kamino Farms, which Kamino Lend invokes whenever a lending instruction touches a reserve with a farm. */
 export const KAMINO_FARMS = 'FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr' as const;
+/**
+ * pump.fun's bonding-curve program, from its published IDL (`pump-fun/pump-public-docs`,
+ * `idl/pump.json`). Not PumpSwap, the AMM a coin moves to when its curve graduates.
+ */
+export const PUMP_FUN = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P' as const;
+/** Pump Fees, which pump.fun invokes on every trade for its fee rates. */
+export const PUMP_FEES = 'pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ' as const;
 
 // ----------------------------------------------------------------- layouts
 
@@ -85,6 +92,17 @@ export const PYTH = {
   confidence: 81,
   exponent: 89,
   publishTime: 93,
+} as const;
+
+/**
+ * pump.fun `BondingCurve`: after the discriminator, five `u64`s (virtual token reserves, virtual SOL
+ * reserves, real token reserves, real SOL reserves, total supply), then `complete`, then `creator`.
+ * `complete` is set when the curve sells its last token, and the coin graduates to PumpSwap.
+ */
+export const PUMP_BONDING_CURVE = {
+  /** The fewest bytes a curve holds: through `complete`. Later upgrades appended fields. */
+  minLength: 49,
+  complete: 48,
 } as const;
 
 /**
@@ -186,6 +204,26 @@ export const ORCA_INCREASE_LIQUIDITY_BY_TOKEN_AMOUNTS_V2 = anchorDiscriminator(
  * u128, max_sqrt_price: u128 }`, the enum's only variant, as its one-byte Borsh tag.
  */
 export const ORCA_BY_TOKEN_AMOUNTS = Uint8Array.of(0);
+
+/**
+ * pump.fun `buy(amount: u64, max_sol_cost: u64, track_volume: OptionBool)`: buys exactly `amount`
+ * base units for at most `max_sol_cost` lamports, fees included. Its 16 named accounts are
+ * `global`, `fee_recipient`, `mint`, `bonding_curve`, `associated_bonding_curve`,
+ * `associated_user`, `user`, `system_program`, `token_program`, `creator_vault`,
+ * `event_authority`, `program`, `global_volume_accumulator`, `user_volume_accumulator`,
+ * `fee_config` and `fee_program`. pump.fun's April 2026 upgrade appended two more: the coin's
+ * `["bonding-curve-v2", mint]` PDA, read-only, then a buyback fee recipient, writable.
+ */
+export const PUMP_FUN_BUY = anchorDiscriminator('buy');
+/**
+ * pump.fun `sell(amount: u64, min_sol_output: u64)`. Its 14 named accounts are `buy`'s first eight,
+ * then `creator_vault` and `token_program` (the other way round from `buy`), then
+ * `event_authority`, `program`, `fee_config` and `fee_program`. The same two appended accounts
+ * follow.
+ */
+export const PUMP_FUN_SELL = anchorDiscriminator('sell');
+/** pump.fun's `OptionBool(true)`: `buy` records the volume for pump.fun's trading rewards, as its SDK does. */
+export const PUMP_TRACK_VOLUME = Uint8Array.of(1);
 
 /** Borsh `Option::None`. */
 export const OPTION_NONE = Uint8Array.of(0);

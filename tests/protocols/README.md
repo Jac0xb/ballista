@@ -31,6 +31,7 @@ compiles OpenSSL from source, which needs perl, make and a C compiler.
 | `snapshot/programs/*.so` | Program binaries, in Git LFS |
 | `snapshot-lending/` | The Kamino templates' snapshot, from `manifests/lending.json`, in the same four parts |
 | `snapshot-orca/` | The same files for the Orca tests: both SOL/USDC Whirlpools, their vaults and tick arrays, and five programs |
+| `snapshot-pump/` | The pump.fun tests' snapshot, from `manifests/pump-fun.json`: pump.fun and Pump Fees, three live curves and a graduated one |
 
 `scripts/snapshot/manifests/` says what to take: programs, accounts and the swaps to quote. To
 refresh (Node 22 or later), from the repository root:
@@ -39,11 +40,13 @@ refresh (Node 22 or later), from the repository root:
 node scripts/snapshot/snapshot.mjs scripts/snapshot/manifests/milestone-1.json tests/protocols/snapshot
 node scripts/snapshot/snapshot.mjs scripts/snapshot/manifests/lending.json tests/protocols/snapshot-lending
 node scripts/snapshot/snapshot.mjs scripts/snapshot/manifests/orca.json tests/protocols/snapshot-orca
+node scripts/snapshot/snapshot.mjs scripts/snapshot/manifests/pump-fun.json tests/protocols/snapshot-pump
 ```
 
 Each run replaces its snapshot directory whole and prints what changed. When `tests/orca_snapshot.rs`
 fails after a refresh, the price has left the tick arrays `orca.json` lists: list the ones its
-message names, and refresh again.
+message names, and refresh again. When `tests/pump_fun_snapshot.rs` fails, a coin in `pump-fun.json`
+has graduated or is close to it: replace it with a live one, and refresh again.
 
 - `SOLANA_RPC_URL`: a mainnet RPC. Defaults to the public `https://api.mainnet.solana.com`.
 - `JUPITER_API_KEY`: query `api.jup.ag` with this key. Defaults to the keyless `lite-api.jup.ag`.

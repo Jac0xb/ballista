@@ -122,9 +122,9 @@ fn rust_templates_match_the_typescript_fixture_byte_for_byte() {
 
 /// Each Rust run passes the template account, then one meta per declared account with the
 /// declared signer and writable flags, then the group members; and encodes one value per
-/// declared input, after one length byte per group. A template that calls Kamino runs right
-/// after Kamino's refreshes, one that reads an Ed25519 signature right after the precompile
-/// instruction carrying it, and any other runs alone.
+/// declared input, then one per row input for each row, after one length byte per group. A
+/// template that calls Kamino runs right after Kamino's refreshes, one that reads an Ed25519
+/// signature right after the precompile instruction carrying it, and any other runs alone.
 #[test]
 fn rust_runs_match_the_accounts_and_inputs_each_template_declares() {
     let kamino = solana_program::pubkey!("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");
@@ -216,9 +216,15 @@ fn rust_runs_match_the_accounts_and_inputs_each_template_declares() {
             );
         }
 
-        // Walk the input values the template declares and check they fill the data exactly.
+        // Walk the input values the template declares, then each row's, and check they fill the
+        // data exactly.
         let mut cursor = 1 + groups;
-        for input in program.inputs.iter().take(header.input_count()) {
+        let fixed_inputs = header.input_count();
+        let row_inputs = &program.inputs[fixed_inputs..fixed_inputs + header.row_input_count()];
+        let inputs = program.inputs[..fixed_inputs]
+            .iter()
+            .chain((0..rows).flat_map(|_| row_inputs.iter()));
+        for input in inputs {
             cursor += match input.value_type {
                 VALUE_BOOL => 1,
                 VALUE_U64 | VALUE_I64 => 8,

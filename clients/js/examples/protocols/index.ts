@@ -13,6 +13,8 @@ export { kaminoLiquidateWithProof } from './kamino-liquidate-with-proof.js';
 export { kaminoRepaySwapOutput } from './kamino-repay-swap-output.js';
 export { orcaCompoundFees } from './orca-compound-fees.js';
 export { orcaHarvestManyPositions } from './orca-harvest-many-positions.js';
+export { pumpFunBuyBasket } from './pump-fun-buy-basket.js';
+export { pumpFunSellAll } from './pump-fun-sell-all.js';
 export { pythFreshPriceGate } from './pyth-fresh-price-gate.js';
 export { signedQuoteSettlement } from './signed-quote-settlement.js';
 export { tokenSweepIntoSwap } from './token-sweep-into-swap.js';

@@ -177,10 +177,8 @@ impl ProgramView<'_> {
                     row_loops += 1;
                     (LoopScope::Rows, header.batch_max_iterations())
                 } else {
-                    // A REPEAT writes no register, so its destination is reserved: a stored
-                    // template is never verified again, so a field accepted with any value now
-                    // could never take a meaning later. FOREACH shipped without this check.
-                    if instruction.a == 0 || instruction.c == 0 || instruction.dst != NO_INDEX {
+                    // A REPEAT writes no register: `verify_record_header` refused a destination.
+                    if instruction.a == 0 || instruction.c == 0 {
                         return Err(TemplateError::InvalidLoop(program_counter));
                     }
                     self.require_type(&registers, instruction.b, VALUE_U64)?;
@@ -234,10 +232,12 @@ impl ProgramView<'_> {
         if root_cpis > MAX_EXPANDED_CPIS {
             return Err(TemplateError::ExcessiveCpiExpansion);
         }
-        // Descriptors that no instruction invokes still shape the executor's scratch buffers.
+        // Every descriptor shapes the executor's scratch buffers, so each is checked, and then each
+        // must be invoked.
         for index in 0..self.cpis.len() {
             self.verify_cpi_shape(index)?;
         }
+        self.verify_references()?;
 
         Ok(VerificationStats {
             fixed_accounts: header.fixed_account_count() as u8,
@@ -264,6 +264,11 @@ impl ProgramView<'_> {
         previous: Option<&InstructionRecord>,
         registers: &mut [Option<RegisterInfo>; MAX_REGISTERS],
     ) -> Result<(usize, usize), TemplateError> {
+        // `verify` checks the header first. Without that check, a register index below a declared
+        // count above 64 would reach past the typing table.
+        if self.header.register_count() > MAX_REGISTERS {
+            return Err(TemplateError::TooManyRegisters);
+        }
         self.verify_record_header(instruction, instruction_index)?;
         self.verify_instruction(instruction, instruction_index, scope, previous, registers)
     }
@@ -292,6 +297,9 @@ impl ProgramView<'_> {
         Ok((cpis, max_data_len))
     }
 
+    /// The checks every record gets before its opcode's own: zero reserved bytes, only the flags
+    /// its opcode accepts, and `NO_INDEX` or zero in every field its opcode leaves unused (see
+    /// [`operand_fields`]).
     fn verify_record_header(
         &self,
         instruction: &InstructionRecord,
@@ -307,6 +315,32 @@ impl ProgramView<'_> {
         };
         if instruction.flags & !allowed_flags != 0 {
             return Err(TemplateError::InvalidFlags(index));
+        }
+        // Only a read opcode can carry the dynamic-offset flag here, and it makes `b` the offset.
+        let mut used = OPERAND_FIELDS[instruction.opcode as usize];
+        if instruction.flags & INSTRUCTION_FLAG_DYNAMIC_OFFSET != 0 {
+            used |= FIELD_B;
+        }
+        // The four one-byte fields in one test: each unused one must be all ones.
+        let unused = UNUSED_OPERAND_BYTES[usize::from(used & 0x0f)];
+        let operands =
+            u32::from_le_bytes([instruction.dst, instruction.a, instruction.b, instruction.c]);
+        if operands & unused != unused
+            || (used & FIELD_IMMEDIATE == 0 && instruction.immediate() != 0)
+        {
+            // Each loop, the registry opcodes and the group opcodes keep the error their other
+            // malformations get.
+            return Err(match instruction.opcode {
+                OP_FOREACH => TemplateError::InvalidBatch,
+                OP_REPEAT => TemplateError::InvalidLoop(index),
+                OP_OPEN_REGISTRY | OP_READ_REGISTRY | OP_WRITE_REGISTRY => {
+                    TemplateError::InvalidRegistry(index)
+                }
+                OP_GROUP_LENGTH | OP_GROUP_ANY | OP_GROUP_COUNT => {
+                    TemplateError::InvalidAccountGroup(index)
+                }
+                _ => TemplateError::InvalidInstruction(index),
+            });
         }
         Ok(())
     }
@@ -528,22 +562,32 @@ impl ProgramView<'_> {
                 return Ok((REGISTRY_OPEN_CPIS, 0));
             }
             OP_READ_REGISTRY => {
-                if instruction.b != NO_INDEX || instruction.c != NO_INDEX {
-                    return Err(TemplateError::InvalidRegistry(instruction_index));
-                }
                 let field = self.registry_field(instruction, instruction_index, instruction.a, false)?;
                 self.write_register(registers, instruction.dst, scalar(read_type(field.selector)))?;
             }
             OP_WRITE_REGISTRY => {
                 let invalid = TemplateError::InvalidRegistry(instruction_index);
-                if instruction.dst != NO_INDEX || instruction.c != NO_INDEX {
-                    return Err(invalid);
-                }
                 let field = self.registry_field(instruction, instruction_index, instruction.b, true)?;
                 let value = self.read_register(registers, instruction.a).map_err(|_| invalid)?;
                 if value.value_type != read_type(field.selector) {
                     return Err(invalid);
                 }
+            }
+            OP_GROUP_LENGTH => {
+                // `b`, `c` and the immediate are unused: `verify_record_header` checked them.
+                if usize::from(instruction.a) >= self.header.account_group_count() {
+                    return Err(TemplateError::InvalidAccountGroup(instruction_index));
+                }
+                self.write_register(registers, instruction.dst, scalar(VALUE_U64))?;
+            }
+            OP_GROUP_ANY | OP_GROUP_COUNT => {
+                self.verify_group_filter(instruction, instruction_index, registers)?;
+                let value_type = if instruction.opcode == OP_GROUP_ANY {
+                    VALUE_BOOL
+                } else {
+                    VALUE_U64
+                };
+                self.write_register(registers, instruction.dst, scalar(value_type))?;
             }
             OP_EQ | OP_NE => {
                 let left = self.read_register(registers, instruction.a)?;
@@ -707,19 +751,17 @@ impl ProgramView<'_> {
         Ok(())
     }
 
-    /// Shared by `EMIT` and `SET_RETURN_DATA`. The record names no register, and its immediate
-    /// names a non-empty, in-bounds run of data segments, encoded as invocation data is. Their
-    /// widths, a `bytes` register counted at its maximum length, must sum to at most
-    /// `MAX_RETURN_DATA_LEN`, the return-data limit, which also bounds a log line.
+    /// Shared by `EMIT` and `SET_RETURN_DATA`. The record names no register (see
+    /// [`operand_fields`]), and its immediate names a non-empty, in-bounds run of data segments,
+    /// encoded as invocation data is. Their widths, a `bytes` register counted at its maximum
+    /// length, must sum to at most `MAX_RETURN_DATA_LEN`, the return-data limit, which also bounds
+    /// a log line.
     fn verify_output(
         &self,
         instruction: &InstructionRecord,
         instruction_index: usize,
         registers: &[Option<RegisterInfo>; MAX_REGISTERS],
     ) -> Result<(), TemplateError> {
-        if [instruction.dst, instruction.a, instruction.b, instruction.c] != [NO_INDEX; 4] {
-            return Err(TemplateError::InvalidInstruction(instruction_index));
-        }
         let (segment_start, segment_len) = instruction.blob_range();
         let segment_end = segment_start
             .checked_add(segment_len)
@@ -743,15 +785,79 @@ impl ProgramView<'_> {
         Ok(())
     }
 
+    /// `GROUP_ANY` and `GROUP_COUNT`, every structural rule `InvalidAccountGroup`: `a` a declared
+    /// group; `b` a pubkey-table index and `c` another or `NO_INDEX`, the programs a member's
+    /// owner must be, constants a reader of the template can see; a [`GroupScan`] with 1 to
+    /// [`MAX_GROUP_MATCHES`] matches and at most [`MAX_GROUP_EXCEPTS`] excepts whose segments are
+    /// in range. A match segment holds a fixed-width value (`bool`, `u64`, `i64`, `u128` or
+    /// `pubkey`, the kind matching the register's type exactly) at a data offset, and the
+    /// data-length floor covers every match's bytes, so the run compares only bytes a member it
+    /// tests has. An except segment is a `pubkey` at offset zero. A register of the wrong type is
+    /// `TypeMismatch`, and an unset one `RegisterNotInitialized`, as for every opcode.
+    fn verify_group_filter(
+        &self,
+        instruction: &InstructionRecord,
+        instruction_index: usize,
+        registers: &[Option<RegisterInfo>; MAX_REGISTERS],
+    ) -> Result<(), TemplateError> {
+        let invalid = TemplateError::InvalidAccountGroup(instruction_index);
+        let pubkeys = self.pubkeys.len();
+        if usize::from(instruction.a) >= self.header.account_group_count()
+            || usize::from(instruction.b) >= pubkeys
+            || (instruction.c != NO_INDEX && usize::from(instruction.c) >= pubkeys)
+        {
+            return Err(invalid);
+        }
+        let filter = GroupScan::decode(instruction.immediate());
+        let matches = usize::from(filter.matches);
+        if !(1..=MAX_GROUP_MATCHES).contains(&matches)
+            || usize::from(filter.excepts) > MAX_GROUP_EXCEPTS
+        {
+            return Err(invalid);
+        }
+        let (start, end) = filter.segment_range();
+        let segments = self.data_segments.get(start..end).ok_or(invalid)?;
+        let mut floor = 0usize;
+        for (position, segment) in segments.iter().enumerate() {
+            if segment.reserved != [0; 2] || segment.len() != 0 {
+                return Err(invalid);
+            }
+            let (value_type, width) = match segment.kind {
+                DATA_REG_BOOL => (VALUE_BOOL, 1),
+                DATA_REG_U64 => (VALUE_U64, 8),
+                DATA_REG_I64 => (VALUE_I64, 8),
+                DATA_REG_U128 => (VALUE_U128, 16),
+                DATA_REG_PUBKEY => (VALUE_PUBKEY, 32),
+                _ => return Err(invalid),
+            };
+            if position < matches {
+                floor = floor.max(segment.offset() + width);
+            } else if segment.kind != DATA_REG_PUBKEY || segment.offset() != 0 {
+                return Err(invalid);
+            }
+            self.require_type(registers, segment.register, value_type)?;
+        }
+        if (filter.min_data_len as usize) < floor {
+            return Err(invalid);
+        }
+        Ok(())
+    }
+
     /// `OPEN_REGISTRY`, every rule `InvalidRegistry`: at the root; a valid [`RegistryOpen`] with a
     /// registry index below [`MAX_REGISTRIES`] and 1 to [`MAX_REGISTRY_SIZE`] field bytes; no
-    /// destination; the entry a fixed account declared writable and nothing else; the payer a
-    /// fixed account declared signer and writable; the System program account fixed and pinned to
-    /// the System program; the key [`NO_INDEX`] or a set `pubkey` register. Against the opens
-    /// before it: its entry account not opened already, the same size as any open of the same
-    /// registry index, at most [`MAX_REGISTRY_OPENS`] in all, and no `SET_RETURN_DATA` before it,
-    /// since creating an entry calls the System program and a CPI clears return data. Against the
-    /// whole program: no CPI lists the entry account writable.
+    /// destination, which `verify_record_header` checks; the entry a fixed account declared
+    /// writable and nothing else; the payer a fixed account declared signer and writable; the
+    /// System program account fixed and pinned to the System program; the key [`NO_INDEX`] or a
+    /// set `pubkey` register. Against the records before it: its entry account not opened
+    /// already, the same size as any open of the same registry index, at most
+    /// [`MAX_REGISTRY_OPENS`] in all, no `SET_RETURN_DATA`, since creating an entry calls the
+    /// System program and a CPI clears return data, and no `INVOKE`, in a loop or not. Until the
+    /// open marks the entry, nothing stops a CPI that reaches it through another
+    /// slot or an account group, writable, and a nested run of this template could then change the
+    /// entry under a read the open's own run already made. With every invoke after every open,
+    /// each CPI meets the mark. Against the whole program: no CPI lists the entry account writable.
+    /// Two entry accounts that a run fills with one account, two entries whose keys come out
+    /// equal, are left to the run: the second open fails with `InvalidRegistryEntry`.
     ///
     /// The other records are found by scanning, as `SET_RETURN_DATA` scans the records after it:
     /// the per-instruction signature Certora verifies against has no room for a slot table. A
@@ -766,7 +872,6 @@ impl ProgramView<'_> {
         let invalid = TemplateError::InvalidRegistry(instruction_index);
         let open = RegistryOpen::decode(instruction.immediate()).ok_or(invalid)?;
         if scope != LoopScope::Root
-            || instruction.dst != NO_INDEX
             || usize::from(open.index) >= MAX_REGISTRIES
             || !(1..=MAX_REGISTRY_SIZE).contains(&usize::from(open.size))
         {
@@ -808,7 +913,7 @@ impl ProgramView<'_> {
         let mut opens = 0usize;
         for record in self.instructions.get(..instruction_index).unwrap_or(&[]) {
             match record.opcode {
-                OP_SET_RETURN_DATA => return Err(invalid),
+                OP_SET_RETURN_DATA | OP_INVOKE => return Err(invalid),
                 OP_OPEN_REGISTRY => {
                     opens += 1;
                     let earlier = RegistryOpen::decode(record.immediate()).ok_or(invalid)?;
@@ -824,13 +929,12 @@ impl ProgramView<'_> {
         if opens >= MAX_REGISTRY_OPENS {
             return Err(invalid);
         }
-        // No CPI lists the entry writable, wherever its invoke sits. After the open, the entry's
-        // borrow mark fails every such CPI with `RegistryReentry`. Before it, no template needs
-        // one: only Ballista writes an entry, through its fields once it is open, and an entry
-        // holds its rent and nothing else. The CPI account records are scanned directly, a few
-        // bytes against a pass over every instruction to find the invokes, so a CPI that nothing
-        // invokes is refused as well. A row account or a group member that turns out to be the
-        // entry is left to the run's check.
+        // No CPI lists the entry writable. Every invoke follows every open, so the entry's borrow
+        // mark would fail such a CPI with `RegistryReentry` in every run; the upload refuses it
+        // instead. The CPI account records are scanned directly, a few bytes against a pass over
+        // every instruction to find the invokes, so a CPI that nothing invokes is refused as well.
+        // Another slot, a row account or a group member that turns out to be the entry is left to
+        // the mark.
         if self
             .cpi_accounts
             .iter()
@@ -880,10 +984,10 @@ impl ProgramView<'_> {
 
     /// Refuses an account-data read, a read opcode or `READ_ACCOUNT_BYTES`, of an account any
     /// `OPEN_REGISTRY` names, wherever either sits: an entry's fields are read with
-    /// `READ_REGISTRY`, which needs the open first. Before the open, the entry is not yet marked,
-    /// so a CPI between such a read and the open could change the entry, and a write based on the
-    /// read would lose that update. After the open, the read would fail on the mark. The entry's
-    /// key, owner, lamports and data length stay readable, since none of them is a field.
+    /// `READ_REGISTRY`, which needs the open first. After the open, such a read would fail on the
+    /// mark. Before it, no invoke can run (see `verify_open_registry`), so the read would see what
+    /// the open is about to check, but outside the fields. The entry's key, owner, lamports and
+    /// data length stay readable, since none of them is a field.
     ///
     /// An open accepts only a fixed account declared writable, so the scan for one runs only for
     /// such an account: most data reads name an account the template cannot write, and scanning
@@ -909,8 +1013,9 @@ impl ProgramView<'_> {
     }
 
     /// An `EMIT` starts with a literal tag of at least `MIN_EMIT_TAG_LEN` bytes outside the run
-    /// event's family, `RUN_EVENT_TAG_FAMILY`. A log line names the program that wrote it but not
-    /// the template, so an untagged line could be a byte-exact run event for any template address.
+    /// event's family, `RUN_EVENT_TAG_FAMILY`. The `invoke` lines around a `Program data:` line show
+    /// which program logged it, but nothing shows the template, so an untagged line could be a
+    /// byte-exact run event for any template address.
     /// Checked after `verify_output`, so a bad segment reports its own error first.
     fn verify_emit_tag(
         &self,
@@ -936,11 +1041,13 @@ impl ProgramView<'_> {
         }
     }
 
-    /// Checks one data segment of a PDA seed or an output and returns the most bytes it can
-    /// encode: a literal's length, a register kind's width, or a `bytes` register's maximum
-    /// length. Invocation data applies the same widths in `verify_cpi`.
+    /// Checks data segment `index`, part of a CPI's data, a PDA seed or an output, and returns the
+    /// most bytes it can encode: a literal's length, a register kind's width, or a `bytes`
+    /// register's maximum length. A literal names no register and lies inside the blob; a
+    /// register segment has no blob offset or length. Every use checks the same fields, and every
+    /// error names the segment by its index in the table.
     ///
-    /// Inlined into both callers. With the outputs as a second caller, the compiler kept it out of
+    /// Inlined into every caller. With the outputs as a second caller, the compiler kept it out of
     /// line, and creating a cookbook template that derives a PDA cost about 80 compute units more.
     #[inline(always)]
     fn verify_segment(
@@ -1089,57 +1196,11 @@ impl ProgramView<'_> {
         }
 
         let mut max_len = 0usize;
-        for (segment_index, segment) in self.data_segments[descriptor.segment_start()..segment_end]
+        for (offset, segment) in self.data_segments[descriptor.segment_start()..segment_end]
             .iter()
             .enumerate()
         {
-            if segment.reserved != [0; 2] {
-                return Err(TemplateError::InvalidDataSegment(segment_index));
-            }
-            let len = match segment.kind {
-                DATA_LITERAL => {
-                    if !valid_range(self.blob.len(), segment.offset(), segment.len()) {
-                        return Err(TemplateError::InvalidBlobRange);
-                    }
-                    segment.len()
-                }
-                DATA_REG_U8 | DATA_REG_U16 | DATA_REG_U32 | DATA_REG_U64 => {
-                    let register = self.read_register(registers, segment.register)?;
-                    if !matches!(register.value_type, VALUE_U64 | VALUE_U128) {
-                        return Err(TemplateError::TypeMismatch);
-                    }
-                    match segment.kind {
-                        DATA_REG_U8 => 1,
-                        DATA_REG_U16 => 2,
-                        DATA_REG_U32 => 4,
-                        _ => 8,
-                    }
-                }
-                DATA_REG_I64 => {
-                    self.require_type(registers, segment.register, VALUE_I64)?;
-                    8
-                }
-                DATA_REG_U128 => {
-                    self.require_type(registers, segment.register, VALUE_U128)?;
-                    16
-                }
-                DATA_REG_PUBKEY => {
-                    self.require_type(registers, segment.register, VALUE_PUBKEY)?;
-                    32
-                }
-                DATA_REG_BOOL => {
-                    self.require_type(registers, segment.register, VALUE_BOOL)?;
-                    1
-                }
-                DATA_REG_BYTES => {
-                    let register = self.read_register(registers, segment.register)?;
-                    if register.value_type != VALUE_BYTES {
-                        return Err(TemplateError::TypeMismatch);
-                    }
-                    register.bytes_max_len
-                }
-                _ => return Err(TemplateError::InvalidDataSegment(segment_index)),
-            };
+            let len = self.verify_segment(descriptor.segment_start() + offset, segment, registers)?;
             max_len = max_len
                 .checked_add(len)
                 .ok_or(TemplateError::CountOverflow)?;
@@ -1148,6 +1209,65 @@ impl ProgramView<'_> {
             return Err(TemplateError::InvalidCpi(index));
         }
         Ok(max_len)
+    }
+
+    /// Every CPI descriptor is invoked (otherwise `InvalidCpi`), and every data segment is part of
+    /// an invoked descriptor's data, an output or a PDA's seeds (otherwise `InvalidDataSegment`).
+    /// Nothing checks a record no instruction reaches, so it could hold anything, and a reader of
+    /// the template could take it for one that runs. Called once the walk has checked every range
+    /// these records are named by; this pass only marks what those ranges cover.
+    ///
+    /// Out of line, so `verify`'s frame does not hold the marks through the walk. A template with
+    /// at most 64 descriptors and 64 segments, nearly all of them, keeps one word of marks for
+    /// each: the full sets cost creating each cookbook template about 75 compute units more.
+    #[inline(never)]
+    fn verify_references(&self) -> Result<(), TemplateError> {
+        // A payload has room for at most 1,277 data segments, and the header counts at most 255
+        // descriptors.
+        const SEGMENT_WORDS: usize =
+            MAX_TEMPLATE_PAYLOAD_LEN / core::mem::size_of::<DataSegment>() / 64;
+        if self.cpis.len() <= 64 && self.data_segments.len() <= 64 {
+            self.verify_references_in::<1, 1>()
+        } else {
+            self.verify_references_in::<4, SEGMENT_WORDS>()
+        }
+    }
+
+    /// [`Self::verify_references`] with room for `64 * CPI_WORDS` descriptors and
+    /// `64 * SEGMENT_WORDS` segments; any past that stay unmarked, and so refused.
+    fn verify_references_in<const CPI_WORDS: usize, const SEGMENT_WORDS: usize>(
+        &self,
+    ) -> Result<(), TemplateError> {
+        let mut invoked = [0u64; CPI_WORDS];
+        let mut named = [0u64; SEGMENT_WORDS];
+        for instruction in self.instructions {
+            let (start, len) = match instruction.opcode {
+                OP_INVOKE => {
+                    let index = usize::from(instruction.a);
+                    mark(&mut invoked, index);
+                    let Some(descriptor) = self.cpis.get(index) else { continue };
+                    (descriptor.segment_start(), usize::from(descriptor.segment_len))
+                }
+                OP_EMIT | OP_SET_RETURN_DATA | OP_DERIVE_PDA | OP_CREATE_PDA => {
+                    instruction.blob_range()
+                }
+                OP_GROUP_ANY | OP_GROUP_COUNT => {
+                    let (start, end) = GroupScan::decode(instruction.immediate()).segment_range();
+                    (start, end - start)
+                }
+                _ => continue,
+            };
+            for index in start..start.saturating_add(len) {
+                mark(&mut named, index);
+            }
+        }
+        if let Some(index) = first_unmarked(&invoked, self.cpis.len()) {
+            return Err(TemplateError::InvalidCpi(index));
+        }
+        if let Some(index) = first_unmarked(&named, self.data_segments.len()) {
+            return Err(TemplateError::InvalidDataSegment(index));
+        }
+        Ok(())
     }
 
     fn valid_optional_pubkey(&self, index: u8) -> bool {
@@ -1271,6 +1391,29 @@ fn valid_range(total: usize, offset: usize, len: usize) -> bool {
     offset.checked_add(len).is_some_and(|end| end <= total)
 }
 
+/// Sets bit `index` of `set`; an index past its end stays unmarked.
+fn mark(set: &mut [u64], index: usize) {
+    if let Some(word) = set.get_mut(index / 64) {
+        *word |= 1 << (index % 64);
+    }
+}
+
+/// The lowest index below `count` whose bit `set` lacks, whole words at a time.
+fn first_unmarked(set: &[u64], count: usize) -> Option<usize> {
+    for (word_index, word) in set.iter().enumerate() {
+        let base = word_index * 64;
+        if base >= count {
+            return None;
+        }
+        let in_range = if count - base >= 64 { u64::MAX } else { (1 << (count - base)) - 1 };
+        let missing = !word & in_range;
+        if missing != 0 {
+            return Some(base + missing.trailing_zeros() as usize);
+        }
+    }
+    (count > set.len() * 64).then_some(set.len() * 64)
+}
+
 /// A carried register must leave the loop body with exactly the type it entered with.
 fn verify_carry_after(
     carry: u64,
@@ -1312,6 +1455,94 @@ pub const fn read_type(opcode: u8) -> u8 {
         _ => VALUE_U64,
     }
 }
+
+/// An instruction record's destination, as a bit of [`operand_fields`].
+pub const FIELD_DST: u8 = 1 << 0;
+/// Operand `a`.
+pub const FIELD_A: u8 = 1 << 1;
+/// Operand `b`.
+pub const FIELD_B: u8 = 1 << 2;
+/// Operand `c`.
+pub const FIELD_C: u8 = 1 << 3;
+/// The eight-byte immediate.
+pub const FIELD_IMMEDIATE: u8 = 1 << 4;
+/// Every field: what an unassigned opcode gets, so it fails as an unknown opcode instead.
+pub const FIELD_ALL: u8 = FIELD_DST | FIELD_A | FIELD_B | FIELD_C | FIELD_IMMEDIATE;
+
+/// The fields of an instruction record `opcode` uses: the destination of an opcode that produces
+/// a value, and the operands and immediate the opcode table in `docs/reference/wire-format.md`
+/// names. A field an opcode leaves unused must hold `NO_INDEX`, or zero for the immediate. A
+/// stored template is never verified again, so a spare byte accepted with any value now could
+/// never take a meaning later.
+///
+/// A read opcode also uses `b`, its offset register, under `INSTRUCTION_FLAG_DYNAMIC_OFFSET`; its
+/// immediate must then be zero, which `verify_instruction` checks with `InvalidFlags`. `INVOKE`'s
+/// guard, `OPEN_REGISTRY`'s key and a group filter's second program are used fields that
+/// `NO_INDEX` leaves out.
+pub const fn operand_fields(opcode: u8) -> u8 {
+    const DA: u8 = FIELD_DST | FIELD_A;
+    const DAB: u8 = DA | FIELD_B;
+    const DABC: u8 = DAB | FIELD_C;
+    match opcode {
+        OP_CLOCK_SLOT | OP_CLOCK_TIMESTAMP | OP_LOOP_INDEX => FIELD_DST,
+        OP_CONST_U64 | OP_CONST_I64 | OP_CONST_U128 | OP_CONST_BYTES => {
+            FIELD_DST | FIELD_IMMEDIATE
+        }
+        OP_LOAD_INPUT | OP_CONST_BOOL | OP_CONST_PUBKEY | OP_ACCOUNT_KEY | OP_ACCOUNT_OWNER
+        | OP_ACCOUNT_LAMPORTS | OP_ACCOUNT_DATA_LEN | OP_ACCOUNT_IS_EMPTY | OP_NOT | OP_CAST_U64
+        | OP_CAST_I64 | OP_CAST_U128 | OP_MOVE | OP_POW10 | OP_BYTES_LEN | OP_INSTRUCTION_COUNT
+        | OP_INSTRUCTION_INDEX => DA,
+        OP_READ_U8 | OP_READ_U16 | OP_READ_U32 | OP_READ_U64 | OP_READ_I32 | OP_READ_I64
+        | OP_READ_U128 | OP_READ_PUBKEY | OP_READ_BOOL | OP_DERIVE_PDA | OP_RETURN_DATA
+        | OP_READ_REGISTRY => DA | FIELD_IMMEDIATE,
+        OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_REM | OP_MIN | OP_MAX | OP_EQ | OP_NE | OP_LT
+        | OP_LTE | OP_GT | OP_GTE | OP_AND | OP_OR | OP_SHL | OP_SHR | OP_BIT_AND | OP_BIT_OR
+        | OP_BIT_XOR | OP_INSTRUCTION_PROGRAM | OP_INSTRUCTION_ACCOUNT_COUNT
+        | OP_INSTRUCTION_DATA_LEN => DAB,
+        OP_CREATE_PDA | OP_READ_ACCOUNT_BYTES => DAB | FIELD_IMMEDIATE,
+        OP_SELECT | OP_MUL_DIV | OP_MUL_DIV_CEIL | OP_INSTRUCTION_ACCOUNT
+        | OP_INSTRUCTION_ACCOUNT_FLAGS => DABC,
+        OP_READ_INSTRUCTION_DATA | OP_READ_INSTRUCTION_BYTES => DABC | FIELD_IMMEDIATE,
+        OP_REQUIRE => FIELD_A,
+        OP_INVOKE => FIELD_A | FIELD_B,
+        OP_FOREACH => FIELD_A | FIELD_IMMEDIATE,
+        OP_WRITE_REGISTRY => FIELD_A | FIELD_B | FIELD_IMMEDIATE,
+        OP_REPEAT | OP_OPEN_REGISTRY => FIELD_A | FIELD_B | FIELD_C | FIELD_IMMEDIATE,
+        OP_EMIT | OP_SET_RETURN_DATA => FIELD_IMMEDIATE,
+        OP_GROUP_LENGTH => DA,
+        OP_GROUP_ANY | OP_GROUP_COUNT => DABC | FIELD_IMMEDIATE,
+        _ => FIELD_ALL,
+    }
+}
+
+/// [`operand_fields`] for every byte, so a record's lookup is one load with no bounds check.
+const OPERAND_FIELDS: [u8; 256] = {
+    let mut table = [FIELD_ALL; 256];
+    let mut opcode = 0;
+    while opcode < table.len() {
+        table[opcode] = operand_fields(opcode as u8);
+        opcode += 1;
+    }
+    table
+};
+
+/// For the low four bits of [`operand_fields`], the destination and the operands `a` to `c` as a
+/// little-endian `u32`, with `0xff` in each byte the opcode leaves unused.
+const UNUSED_OPERAND_BYTES: [u32; 16] = {
+    let mut table = [0u32; 16];
+    let mut used = 0;
+    while used < table.len() {
+        let mut field = 0;
+        while field < 4 {
+            if used & (1 << field) == 0 {
+                table[used] |= 0xff << (8 * field);
+            }
+            field += 1;
+        }
+        used += 1;
+    }
+    table
+};
 
 #[cfg(test)]
 mod tests {
@@ -1535,7 +1766,7 @@ mod tests {
             (OP_BYTES_LEN, Some(VALUE_U64), None, Err(TemplateError::TypeMismatch)),
             (OP_BYTES_LEN, Some(VALUE_PUBKEY), None, Err(TemplateError::TypeMismatch)),
             (OP_BYTES_LEN, None, None, Err(TemplateError::RegisterNotInitialized(0))),
-            (OP_WRITE_REGISTRY + 1, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
+            (OP_GROUP_COUNT + 1, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
             (39, Some(VALUE_U64), None, Err(TemplateError::InvalidInstruction(1))),
             (0xfe, Some(VALUE_U64), Some(VALUE_U64), Err(TemplateError::InvalidInstruction(2))),
         ];
@@ -1543,10 +1774,19 @@ mod tests {
             let mut builder = ProgramBuilder::new();
             let register_a = typed_register(&mut builder, *a);
             let register_b = typed_register(&mut builder, *b);
+            // An operand the opcode leaves unused holds `NO_INDEX`, except the registers the
+            // outputs' cases name on purpose.
+            let takes_b = !matches!(
+                *opcode,
+                OP_NOT | OP_CAST_U64 | OP_CAST_I64 | OP_CAST_U128 | OP_LOAD_INPUT | OP_LOOP_INDEX
+                    | OP_POW10 | OP_BYTES_LEN | OP_EMIT
+            );
+            let operand_a = if *opcode == OP_LOOP_INDEX { NO_INDEX } else { register_a };
+            let operand_b = if takes_b { register_b } else { NO_INDEX };
             if *opcode == OP_REQUIRE {
                 builder.require(register_a);
             } else {
-                builder.op(*opcode, register_a, register_b, NO_INDEX, 0);
+                builder.op(*opcode, operand_a, operand_b, NO_INDEX, 0);
             }
             let result = verify_builder(&builder).map(|_| ());
             assert_eq!(&result, expected, "opcode {opcode} with a={a:?} b={b:?}");
@@ -1590,6 +1830,16 @@ mod tests {
         }
     }
 
+    /// `b` and `c` for math `opcode`: only `MUL_DIV` and `MUL_DIV_CEIL` take `c`, and `POW10`
+    /// takes neither, so those fields get `NO_INDEX`.
+    fn math_operands(opcode: u8, b: u8, c: u8) -> (u8, u8) {
+        match opcode {
+            OP_MUL_DIV | OP_MUL_DIV_CEIL => (b, c),
+            OP_POW10 => (NO_INDEX, NO_INDEX),
+            _ => (b, NO_INDEX),
+        }
+    }
+
     #[test]
     fn destination_types() {
         // Every new math opcode pins its destination's type: a witness of that type must be
@@ -1611,6 +1861,7 @@ mod tests {
                 let a = typed_register(&mut builder, Some(types[0]));
                 let b = typed_register(&mut builder, Some(types[1]));
                 let c = typed_register(&mut builder, Some(types[2]));
+                let (b, c) = math_operands(*opcode, b, c);
                 let result = builder.op(*opcode, a, b, c, 0);
                 let other = typed_register(&mut builder, Some(witness));
                 builder.binary(OP_EQ, result, other);
@@ -1639,6 +1890,7 @@ mod tests {
             let a = builder.const_u64(1);
             let b = builder.const_u64(1);
             let c = builder.const_u64(1);
+            let (b, c) = math_operands(opcode, b, c);
             builder.op(opcode, a, b, c, 0);
             assert!(verify_builder(&builder).is_ok(), "opcode {opcode} unflagged");
             builder.instructions_mut()[3].flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET;
@@ -1739,6 +1991,18 @@ mod tests {
         (builder, sysvar)
     }
 
+    /// `b` and `c` for introspection `opcode`: `index` and `position` where it takes them, and
+    /// `NO_INDEX` in a field it leaves unused.
+    fn introspection_operands(opcode: u8, index: u8, position: u8) -> (u8, u8) {
+        match opcode {
+            OP_INSTRUCTION_COUNT | OP_INSTRUCTION_INDEX => (NO_INDEX, NO_INDEX),
+            OP_INSTRUCTION_PROGRAM | OP_INSTRUCTION_ACCOUNT_COUNT | OP_INSTRUCTION_DATA_LEN => {
+                (index, NO_INDEX)
+            }
+            _ => (index, position),
+        }
+    }
+
     /// A valid use of `opcode`, one of `OP_INSTRUCTION_COUNT` to `OP_BYTES_LEN`, as the last
     /// instruction of its program. Returns the builder and the result register.
     fn introspection_program(opcode: u8) -> (ProgramBuilder, u8) {
@@ -1754,7 +2018,10 @@ mod tests {
                 let bytes = builder.const_bytes(&[1, 2]);
                 builder.bytes_len(bytes)
             }
-            _ => builder.introspect(opcode, sysvar, zero, zero),
+            _ => {
+                let (index, position) = introspection_operands(opcode, zero, zero);
+                builder.introspect(opcode, sysvar, index, position)
+            }
         };
         (builder, result)
     }
@@ -1806,7 +2073,8 @@ mod tests {
                 let mut builder = ProgramBuilder::new();
                 let account = builder.account(0, address, Some(INSTRUCTIONS_SYSVAR_ID), 0);
                 let zero = builder.const_u64(0);
-                builder.op(opcode, account, zero, zero, immediate);
+                let (index, position) = introspection_operands(opcode, zero, zero);
+                builder.op(opcode, account, index, position, immediate);
                 assert_eq!(
                     verify_builder(&builder),
                     Err(TemplateError::InvalidIntrospection(1)),
@@ -1816,7 +2084,8 @@ mod tests {
             // An account the schema does not declare.
             let (mut builder, _) = with_sysvar();
             let zero = builder.const_u64(0);
-            builder.op(opcode, 1, zero, zero, immediate);
+            let (index, position) = introspection_operands(opcode, zero, zero);
+            builder.op(opcode, 1, index, position, immediate);
             assert_eq!(
                 verify_builder(&builder),
                 Err(TemplateError::InvalidIntrospection(1)),
@@ -1827,8 +2096,9 @@ mod tests {
             let row = builder.row_account(0, Some(INSTRUCTIONS_SYSVAR_ID), None, 0);
             builder.batch(1, 0);
             let zero = builder.const_u64(0);
+            let (index, position) = introspection_operands(opcode, zero, zero);
             builder.for_each(0, |body| {
-                body.op(opcode, row, zero, zero, immediate);
+                body.op(opcode, row, index, position, immediate);
             });
             assert_eq!(
                 verify_builder(&builder),
@@ -1841,8 +2111,9 @@ mod tests {
             let row = builder.row_account(0, Some(INSTRUCTIONS_SYSVAR_ID), None, 0);
             builder.batch(1, 0);
             let zero = builder.const_u64(0);
+            let (index, position) = introspection_operands(opcode, zero, zero);
             builder.repeat(zero, 1, 0, |body| {
-                body.op(opcode, row, zero, zero, immediate);
+                body.op(opcode, row, index, position, immediate);
             });
             builder.for_each(0, |body| {
                 body.loop_index();
@@ -1858,8 +2129,9 @@ mod tests {
             builder.row_account(0, None, None, 0);
             builder.batch(1, 0);
             let zero = builder.const_u64(0);
+            let (index, position) = introspection_operands(opcode, zero, zero);
             builder.for_each(0, |body| {
-                body.op(opcode, sysvar, zero, zero, immediate);
+                body.op(opcode, sysvar, index, position, immediate);
             });
             assert_eq!(verify_builder(&builder).map(|_| ()), Ok(()), "opcode {opcode} in a loop");
         }
@@ -1880,7 +2152,8 @@ mod tests {
             let (mut builder, sysvar) = with_sysvar();
             let index = builder.const_i64(0);
             let zero = builder.const_u64(0);
-            builder.op(opcode, sysvar, index, zero, immediate);
+            let (index, position) = introspection_operands(opcode, index, zero);
+            builder.op(opcode, sysvar, index, position, immediate);
             assert_eq!(
                 verify_builder(&builder),
                 Err(TemplateError::TypeMismatch),
@@ -1890,7 +2163,8 @@ mod tests {
             let (mut builder, sysvar) = with_sysvar();
             let index = builder.register();
             let zero = builder.const_u64(0);
-            builder.op(opcode, sysvar, index, zero, immediate);
+            let (index, position) = introspection_operands(opcode, index, zero);
+            builder.op(opcode, sysvar, index, position, immediate);
             assert_eq!(
                 verify_builder(&builder),
                 Err(TemplateError::RegisterNotInitialized(index)),
@@ -1966,10 +2240,12 @@ mod tests {
                 (MAX_INPUT_BYTES as u64 + 1, Err(TemplateError::InvalidInstruction(1))),
                 (u64::MAX, Err(TemplateError::InvalidInstruction(1))),
             ];
+            // An account byte read takes no `c`.
+            let c = |zero| if opcode == OP_READ_ACCOUNT_BYTES { NO_INDEX } else { zero };
             for (len, expected) in lengths {
                 let (mut builder, sysvar) = with_sysvar();
                 let zero = builder.const_u64(0);
-                builder.op(opcode, sysvar, zero, zero, len);
+                builder.op(opcode, sysvar, zero, c(zero), len);
                 assert_eq!(
                     verify_builder(&builder).map(|_| ()),
                     expected,
@@ -1980,7 +2256,7 @@ mod tests {
             let (mut builder, sysvar) = with_sysvar();
             let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
             let zero = builder.const_u64(0);
-            let bytes = builder.op(opcode, sysvar, zero, zero, 40);
+            let bytes = builder.op(opcode, sysvar, zero, c(zero), 40);
             let cpi = builder.cpi(program, &[], &[Segment::Register(DATA_REG_BYTES, bytes)]);
             builder.set_cpi_max_data_len(cpi, 40);
             builder.invoke(cpi, None);
@@ -2368,15 +2644,16 @@ mod tests {
                 "destination {dst}"
             );
         }
-        // FOREACH shipped accepting any destination, and templates that verify today must keep
-        // verifying, so its destination stays unchecked.
+        // A FOREACH's destination too, which it shipped accepting, with a malformed FOREACH's
+        // error. Every compiler always wrote `NO_INDEX` there.
         let mut builder = ProgramBuilder::new();
         builder.row_account(0, None, None, 0);
         builder.batch(2, 0);
         let condition = builder.const_bool(true);
         let foreach = builder.for_each(0, |body| body.require(condition));
-        builder.instructions_mut()[foreach].dst = 0;
         assert!(verify_builder(&builder).is_ok());
+        builder.instructions_mut()[foreach].dst = 0;
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidBatch));
 
         // Carried registers follow the FOREACH rules: set before the loop, and the same type after.
         let mut builder = ProgramBuilder::new();
@@ -3022,8 +3299,15 @@ mod tests {
         builder.invoke(cpi, None);
         assert!(verify_builder(&builder).is_ok(), "exactly 64 accounts are allowed");
 
-        // A descriptor that no instruction invokes still has to be well formed, because the
-        // executor sizes its scratch buffers from every descriptor's declared data length.
+        // A descriptor that no instruction invokes is refused, after the shape checks every
+        // descriptor gets: the executor sizes its scratch buffers from every descriptor's declared
+        // data length, so a malformed one reports its own error first.
+        let mut builder = ProgramBuilder::new();
+        let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
+        builder.cpi(program, &[], &[]);
+        builder.const_bool(true);
+        assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidCpi(0)));
+
         let mut builder = ProgramBuilder::new();
         let program = builder.account(ACCOUNT_EXECUTABLE, Some([1; 32]), None, 0);
         let dead = builder.cpi(program, &[], &[]);
@@ -3564,9 +3848,10 @@ mod tests {
         }
     }
 
-    /// A log line names the program that wrote it, not the template, so an `EMIT` starts with a
-    /// literal tag of four bytes or more, and never with the run event's family: otherwise any
-    /// template could log a byte-exact run event for any template address.
+    /// The `invoke` lines around a `Program data:` line show which program logged it, not which
+    /// template, so an `EMIT` starts with a literal tag of four bytes or more, and never with the
+    /// run event's family: otherwise any template could log a byte-exact run event for any
+    /// template address.
     #[test]
     fn an_emit_starts_with_a_tag_outside_the_run_event_family() {
         let emit = |parts: &dyn Fn(&mut ProgramBuilder, u8) -> Vec<Segment>| {
@@ -3814,6 +4099,68 @@ mod tests {
         assert_eq!(verify_builder(&builder), Err(TemplateError::InvalidRegister(7)));
     }
 
+    /// Every field an opcode leaves unused holds `NO_INDEX`, or zero for the immediate, and every
+    /// field it uses passes this check whatever it holds. Each family keeps its error: a FOREACH's
+    /// `InvalidBatch`, a REPEAT's `InvalidLoop`, the registry opcodes' `InvalidRegistry`, the group
+    /// opcodes' `InvalidAccountGroup`.
+    #[test]
+    fn unused_fields_hold_no_index_or_zero() {
+        // Every assigned opcode has its own entry; only the two instruction-data reads and the two
+        // group filters use every field, as an unassigned opcode is said to.
+        for opcode in 0..=u8::MAX {
+            let assigned = matches!(opcode, 1..=38 | 40..=OP_GROUP_COUNT);
+            let uses_every_field = matches!(
+                opcode,
+                OP_READ_INSTRUCTION_DATA | OP_READ_INSTRUCTION_BYTES | OP_GROUP_ANY | OP_GROUP_COUNT
+            );
+            assert_eq!(
+                operand_fields(opcode) == FIELD_ALL,
+                !assigned || uses_every_field,
+                "opcode {opcode}"
+            );
+            assert_eq!(OPERAND_FIELDS[opcode as usize], operand_fields(opcode));
+        }
+        let mut builder = ProgramBuilder::new();
+        builder.const_bool(true);
+        let bytes = builder.build().unwrap();
+        let program = ProgramView::parse(&bytes).unwrap();
+        let pc = 5;
+        let fields: [(u8, fn(&mut InstructionRecord)); 5] = [
+            (FIELD_DST, |record| record.dst = 0),
+            (FIELD_A, |record| record.a = 0),
+            (FIELD_B, |record| record.b = 0),
+            (FIELD_C, |record| record.c = 0),
+            (FIELD_IMMEDIATE, |record| record.immediate_le = 1u64.to_le_bytes()),
+        ];
+        for opcode in (1..=38).chain(40..=OP_GROUP_COUNT) {
+            let empty = record(opcode, NO_INDEX, NO_INDEX, NO_INDEX, NO_INDEX, 0, 0);
+            assert_eq!(program.verify_record_header(&empty, pc), Ok(()), "opcode {opcode}");
+            let refused = match opcode {
+                OP_FOREACH => TemplateError::InvalidBatch,
+                OP_REPEAT => TemplateError::InvalidLoop(pc),
+                OP_OPEN_REGISTRY | OP_READ_REGISTRY | OP_WRITE_REGISTRY => {
+                    TemplateError::InvalidRegistry(pc)
+                }
+                OP_GROUP_LENGTH | OP_GROUP_ANY | OP_GROUP_COUNT => TemplateError::InvalidAccountGroup(pc),
+                _ => TemplateError::InvalidInstruction(pc),
+            };
+            for (field, set) in fields {
+                let mut dirty = empty;
+                set(&mut dirty);
+                let expected = if operand_fields(opcode) & field != 0 { Ok(()) } else { Err(refused) };
+                assert_eq!(program.verify_record_header(&dirty, pc), expected, "opcode {opcode}");
+            }
+        }
+        // A read's `b` is its offset register under the dynamic-offset flag, and unused otherwise.
+        let dynamic = record(OP_READ_U64, 0, 0, 1, NO_INDEX, INSTRUCTION_FLAG_DYNAMIC_OFFSET, 0);
+        assert_eq!(program.verify_record_header(&dynamic, pc), Ok(()));
+        let fixed = record(OP_READ_U64, 0, 0, 1, NO_INDEX, 0, 8);
+        assert_eq!(
+            program.verify_record_header(&fixed, pc),
+            Err(TemplateError::InvalidInstruction(pc))
+        );
+    }
+
     /// Compiled by the TypeScript SDK; regenerate with `pnpm fixtures`.
     const SYSTEM_TRANSFER_HEX: &str = include_str!("../../../fixtures/system-transfer.hex");
     const ATA_ASSERTION_HEX: &str = include_str!("../../../fixtures/assert-ata.hex");
@@ -3981,7 +4328,7 @@ mod tests {
                 .unwrap_or_else(|error| panic!("protocol example {examples}: {error}"));
             examples += 1;
         }
-        assert_eq!(examples, 13, "every protocol example is verified");
+        assert_eq!(examples, 12, "every protocol example is verified");
         // The test-only runtime scenarios in `clients/js/examples/scenarios`, recorded the same way
         // in their own file. The LiteSVM suite uploads them, but it needs the snapshot; this does
         // not.
@@ -4210,6 +4557,38 @@ mod tests {
         let pc = builder.open_registry(entry, None, payer, 0, 8, system);
         assert_eq!(verify_builder(&builder).map(|_| ()), Err(invalid(pc)));
 
+        // Never after an INVOKE, guarded or not, at the root or in a loop body: until its open
+        // marks the entry, a CPI could pass it writable through another slot. The same program
+        // with the open first verifies.
+        let placements = [
+            ("unguarded", false, false),
+            ("guarded", true, false),
+            ("in a loop", false, true),
+        ];
+        for (name, guarded, in_loop) in placements {
+            for open_first in [false, true] {
+                let mut builder = ProgramBuilder::new();
+                let system = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ADDRESS), None, 0);
+                let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
+                let payer = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
+                let cpi = builder.cpi(system, &[], &[]);
+                let guard = builder.const_bool(true);
+                let count = builder.const_u64(1);
+                let mut open = None;
+                if open_first {
+                    open = Some(builder.open_registry(entry, None, payer, 0, 8, system));
+                }
+                if in_loop {
+                    builder.repeat(count, 1, 0, |body| body.invoke(cpi, None));
+                } else {
+                    builder.invoke(cpi, guarded.then_some(guard));
+                }
+                let open = open.unwrap_or_else(|| builder.open_registry(entry, None, payer, 0, 8, system));
+                let expected = if open_first { Ok(()) } else { Err(invalid(open)) };
+                assert_eq!(verify_builder(&builder).map(|_| ()), expected, "{name}, open first: {open_first}");
+            }
+        }
+
         // Reads and writes need an open of their account before them, and a field inside it.
         for (name, on_payer, offset, selector, write, fine) in [
             ("read past the end", false, 9, OP_READ_U64, false, false),
@@ -4266,8 +4645,8 @@ mod tests {
     }
 
     /// An entry's data is read only through its fields: any other account-data read of an entry
-    /// account is refused, after the open, before it, where a CPI could still change the entry,
-    /// or in a loop body. The entry's key, owner, lamports and data length stay readable.
+    /// account is refused, after the open, before it, or in a loop body. The entry's key, owner,
+    /// lamports and data length stay readable.
     #[test]
     fn entry_data_is_read_only_through_its_fields() {
         let invalid = TemplateError::InvalidRegistry;
@@ -4379,5 +4758,217 @@ mod tests {
         let rows = cpi(&mut builder, &[(row, ACCOUNT_WRITABLE)], 0);
         builder.for_each(0, |body| body.invoke(rows, None));
         assert!(verify_builder(&builder).is_ok());
+    }
+
+    const TOKEN: [u8; 32] = [6; 32];
+    const TOKEN_2022: [u8; 32] = [7; 32];
+
+    /// A program with one account group and a `pubkey` and a `u64` register, then `build` adds a
+    /// group opcode. Returns the outcome and the type the opcode's destination took, read back by
+    /// comparing it with a constant of each type.
+    fn group_outcome(
+        build: impl Fn(&mut ProgramBuilder, u8, u8) -> u8,
+    ) -> Result<u8, TemplateError> {
+        let mut outcome = Err(TemplateError::TypeMismatch);
+        for witness in [VALUE_BOOL, VALUE_U64] {
+            let mut builder = ProgramBuilder::new();
+            builder.account_groups(1);
+            let key = builder.const_pubkey([1; 32]);
+            let amount = builder.const_u64(5);
+            let result = build(&mut builder, key, amount);
+            let other = typed_register(&mut builder, Some(witness));
+            builder.binary(OP_EQ, result, other);
+            match verify_builder(&builder) {
+                Ok(_) => return Ok(witness),
+                Err(TemplateError::TypeMismatch) => {}
+                Err(error) => outcome = Err(error),
+            }
+        }
+        outcome
+    }
+
+    #[test]
+    fn group_opcodes_type_their_results() {
+        assert_eq!(group_outcome(|builder, _, _| builder.group_length(0)), Ok(VALUE_U64));
+        assert_eq!(
+            group_outcome(|builder, key, _| {
+                builder.group_filter(false, 0, &[TOKEN], &[(32, DATA_REG_PUBKEY, key)], &[], 64)
+            }),
+            Ok(VALUE_BOOL)
+        );
+        assert_eq!(
+            group_outcome(|builder, key, amount| {
+                builder.group_filter(
+                    true,
+                    0,
+                    &[TOKEN, TOKEN_2022],
+                    &[(32, DATA_REG_PUBKEY, key), (64, DATA_REG_U64, amount)],
+                    &[key],
+                    165,
+                )
+            }),
+            Ok(VALUE_U64)
+        );
+    }
+
+    #[test]
+    fn group_length_names_a_declared_group_and_nothing_else() {
+        let invalid = Err(TemplateError::InvalidAccountGroup(2));
+        let mut builder = ProgramBuilder::new();
+        builder.group_length(0);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(TemplateError::InvalidAccountGroup(0)), "no group");
+        let set = |patch: fn(&mut InstructionRecord)| {
+            group_outcome(move |builder, _, _| {
+                let result = builder.group_length(0);
+                patch(builder.instructions_mut().last_mut().unwrap());
+                result
+            })
+        };
+        assert_eq!(set(|record| record.a = 1), invalid, "an undeclared group");
+        assert_eq!(set(|record| record.b = 0), invalid, "b set");
+        assert_eq!(set(|record| record.c = 0), invalid, "c set");
+        assert_eq!(set(|record| record.immediate_le = 1u64.to_le_bytes()), invalid, "an immediate");
+        assert_eq!(
+            set(|record| record.flags = INSTRUCTION_FLAG_DYNAMIC_OFFSET),
+            Err(TemplateError::InvalidFlags(2))
+        );
+    }
+
+    #[test]
+    fn group_filters_pin_their_programs_and_bound_their_entries() {
+        let invalid = Err(TemplateError::InvalidAccountGroup(2));
+        let filter = |programs: &'static [[u8; 32]],
+                      matches: &'static [(u16, u8)],
+                      excepts: usize,
+                      min_data_len: u32| {
+            group_outcome(move |builder, key, amount| {
+                let matches: Vec<_> = matches
+                    .iter()
+                    .map(|&(offset, kind)| {
+                        let register = if kind == DATA_REG_U64 { amount } else { key };
+                        (offset, kind, register)
+                    })
+                    .collect();
+                builder.group_filter(false, 0, programs, &matches, &vec![key; excepts], min_data_len)
+            })
+        };
+        let owner = &[(32, DATA_REG_PUBKEY)][..];
+        assert_eq!(filter(&[TOKEN], owner, 0, 64), Ok(VALUE_BOOL));
+        assert_eq!(filter(&[TOKEN], owner, 4, 64), Ok(VALUE_BOOL), "four excepts");
+        assert_eq!(filter(&[TOKEN], owner, 5, 64), invalid, "five excepts");
+        assert_eq!(filter(&[], owner, 0, 64), invalid, "no program");
+        assert_eq!(filter(&[TOKEN], &[], 0, 64), invalid, "no match");
+        let four = &[(0, DATA_REG_PUBKEY), (32, DATA_REG_PUBKEY), (64, DATA_REG_U64), (72, DATA_REG_U64)][..];
+        assert_eq!(filter(&[TOKEN], four, 0, 80), Ok(VALUE_BOOL), "four matches");
+        let five = &[(0, DATA_REG_PUBKEY), (32, DATA_REG_PUBKEY), (64, DATA_REG_U64), (72, DATA_REG_U64), (80, DATA_REG_U64)][..];
+        assert_eq!(filter(&[TOKEN], five, 0, 88), invalid, "five matches");
+        // The floor covers every match's bytes, exactly or more.
+        assert_eq!(filter(&[TOKEN], owner, 0, 63), invalid, "a floor one byte short");
+        assert_eq!(filter(&[TOKEN], four, 0, 79), invalid, "a floor short of the last match");
+        assert_eq!(filter(&[TOKEN], owner, 0, u32::MAX), Ok(VALUE_BOOL), "any floor above");
+        // Narrow and byte-string kinds are not match values.
+        for kind in [DATA_REG_U8, DATA_REG_U16, DATA_REG_U32, DATA_REG_BYTES, DATA_LITERAL, 0x7f] {
+            let kinds: &'static [(u16, u8)] = Box::leak(vec![(0, kind)].into_boxed_slice());
+            assert_eq!(filter(&[TOKEN], kinds, 0, 64), invalid, "kind {kind}");
+        }
+
+        // The programs are pubkey-table indices: `b` always, `c` when it is not `NO_INDEX`.
+        let patched = |patch: fn(&mut InstructionRecord)| {
+            group_outcome(move |builder, key, _| {
+                let result = builder.group_filter(false, 0, &[TOKEN], &[(32, DATA_REG_PUBKEY, key)], &[], 64);
+                patch(builder.instructions_mut().last_mut().unwrap());
+                result
+            })
+        };
+        assert_eq!(patched(|record| record.c = 1), Ok(VALUE_BOOL), "c names the second pubkey");
+        assert_eq!(patched(|record| record.b = 2), invalid, "b past the table");
+        assert_eq!(patched(|record| record.b = NO_INDEX), invalid, "b unset");
+        assert_eq!(patched(|record| record.c = 2), invalid, "c past the table");
+        assert_eq!(patched(|record| record.a = 1), invalid, "an undeclared group");
+        assert_eq!(
+            patched(|record| record.immediate_le[0] = 9),
+            invalid,
+            "segments past the table"
+        );
+    }
+
+    #[test]
+    fn group_filter_segments_are_checked_like_every_other_segment() {
+        let invalid = Err(TemplateError::InvalidAccountGroup(2));
+        let patched = |excepts: bool, patch: fn(&mut DataSegment)| {
+            group_outcome(move |builder, key, _| {
+                let excepts: &[u8] = if excepts { &[0] } else { &[] };
+                let result = builder.group_filter(false, 0, &[TOKEN], &[(32, DATA_REG_PUBKEY, key)], excepts, 64);
+                patch(builder.segments_mut().last_mut().unwrap());
+                let _ = key;
+                result
+            })
+        };
+        assert_eq!(patched(false, |segment| segment.reserved = [1, 0]), invalid, "reserved");
+        assert_eq!(patched(false, |segment| segment.len_le = [1, 0]), invalid, "a length");
+        assert_eq!(patched(true, |segment| segment.offset_le = [1, 0]), invalid, "an except offset");
+        assert_eq!(patched(true, |segment| segment.kind = DATA_REG_U64), invalid, "an except u64");
+        assert_eq!(patched(true, |_| {}), Ok(VALUE_BOOL));
+
+        // A value of another type than its kind, and an unset register.
+        assert_eq!(
+            patched(false, |segment| segment.register = 1),
+            Err(TemplateError::TypeMismatch)
+        );
+        assert_eq!(
+            patched(true, |segment| segment.register = 1),
+            Err(TemplateError::TypeMismatch)
+        );
+        assert_eq!(
+            patched(false, |segment| segment.register = 9),
+            Err(TemplateError::InvalidRegister(9))
+        );
+        let mut builder = ProgramBuilder::new();
+        builder.account_groups(1);
+        let unset = builder.register();
+        builder.group_filter(false, 0, &[TOKEN], &[(32, DATA_REG_PUBKEY, unset)], &[], 64);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(TemplateError::RegisterNotInitialized(0)));
+
+        // Every fixed-width kind matches a register of its own type.
+        for (kind, value_type, width) in [
+            (DATA_REG_BOOL, VALUE_BOOL, 1),
+            (DATA_REG_U64, VALUE_U64, 8),
+            (DATA_REG_I64, VALUE_I64, 8),
+            (DATA_REG_U128, VALUE_U128, 16),
+            (DATA_REG_PUBKEY, VALUE_PUBKEY, 32),
+        ] {
+            let mut builder = ProgramBuilder::new();
+            builder.account_groups(2);
+            let value = typed_register(&mut builder, Some(value_type));
+            builder.group_filter(true, 1, &[TOKEN], &[(10, kind, value)], &[], 10 + width);
+            assert!(verify_builder(&builder).is_ok(), "kind {kind}");
+        }
+    }
+
+    #[test]
+    fn group_opcodes_run_in_every_scope() {
+        let mut builder = ProgramBuilder::new();
+        builder.account_groups(1);
+        let key = builder.const_pubkey([1; 32]);
+        let count = builder.const_u64(2);
+        builder.repeat(count, 2, 0, |body| {
+            body.group_length(0);
+            body.group_filter(true, 0, &[TOKEN], &[(32, DATA_REG_PUBKEY, key)], &[key], 64);
+        });
+        assert!(verify_builder(&builder).is_ok());
+    }
+
+    /// A group filter's segments count as used, as a CPI's, an output's and a seed's do; a
+    /// segment no filter, CPI, output or seed names is refused, beside a filter as anywhere else.
+    #[test]
+    fn group_filter_segments_are_used_and_a_spare_one_is_not() {
+        let mut builder = ProgramBuilder::new();
+        builder.account_groups(1);
+        let key = builder.const_pubkey([1; 32]);
+        builder.group_filter(false, 0, &[TOKEN], &[(32, DATA_REG_PUBKEY, key)], &[key], 64);
+        assert!(verify_builder(&builder).is_ok());
+        let spare = builder.segments_mut()[0];
+        builder.segments_mut().push(spare);
+        assert_eq!(verify_builder(&builder).map(|_| ()), Err(TemplateError::InvalidDataSegment(2)));
     }
 }

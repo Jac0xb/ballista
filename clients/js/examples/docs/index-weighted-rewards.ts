@@ -6,7 +6,7 @@ import {
   expression,
   step,
   systemTransfer,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 
 /** Pay the recipient in row `i` (counting from 0) `(i + 1) × base` lamports. */
 export const indexWeightedRewards = defineTemplate({
@@ -35,8 +35,8 @@ export const indexWeightedRewards = defineTemplate({
 // #region run
 import type { Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 /** The order of `recipients` sets each one's multiple of `base`. */
 export function runIndexWeightedRewards(run: {

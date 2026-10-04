@@ -7,6 +7,9 @@ Kit instructions, derives addresses, and talks to an RPC node. Import it only wh
 
 ## Authoring
 
+Each `step.*` call builds one step; [the template language](/reference/language#steps) says what
+each step does when a template runs.
+
 | API | Purpose |
 | --- | --- |
 | `defineTemplate(document)` | Validate a template document with Zod (a TypeScript schema library) and fill in defaults |
@@ -18,6 +21,7 @@ Kit instructions, derives addresses, and talks to an RPC node. Import it only wh
 | `expression.accountData(account, offset, type)` | Read account data at a fixed offset or at a `u64` expression offset |
 | `expression.accountKey(name)` | Read a fixed account's address; short for `accountField(account.fixed(name), 'key')` |
 | `expression.registry(entry, field)` | Read a field of the registry entry in fixed account `entry` |
+| `expression.groupLength(group)`, `groupAny(group, filter)`, `groupCount(group, filter)` | Count an account group's members, or test them against a filter; see [Account groups](/reference/language#account-groups) |
 | `expression.returnData(type, offset?)` | Read the return data (bytes a called program hands back) of the invoke just before; `offset` defaults to 0 |
 | `expression.rowInput(name)` | Read a row input of the current batch row, inside `forEach` only |
 | `step.require(condition, label?)` | Fail the run unless the condition is true |
@@ -26,7 +30,7 @@ Kit instructions, derives addresses, and talks to an RPC node. Import it only wh
 | `step.assign(name, value, label?)` | Reassign a carried variable inside a loop |
 | `step.invoke(descriptor)` | Perform a CPI (a call to another program); `when` makes it conditional, `programAddress` names the intended program, and `accountGroup` forwards an account group |
 | `step.forEach(steps, { carry?, label? })` | Run the steps once per batch row; see [Loops](#loops) |
-| `step.repeat(count, steps, { max, carry?, label? })` | Run the steps `count` times, at most `max`; see [Loops](#loops) |
+| `step.repeat(count, steps, { max, carry?, label? })` | Run the steps `count` times; a `count` above `max` fails the run; see [Loops](#loops) |
 | `step.emit(parts, label?)` | Log the parts for indexers; see [Output](#output) |
 | `step.setReturnData(parts, label?)` | Set the parts as the run's return data; see [Output](#output) |
 | `step.setRegistry(entry, field, value, label?)` | Write a field of the registry entry in fixed account `entry` |
@@ -44,7 +48,7 @@ A template document has these fields:
 | `accounts` | Named fixed accounts and their constraints |
 | `registries` | Optional: up to 8 named registries and their fields; see [Registries](#registries) |
 | `batch` | Optional: `maxIterations` (1 to 60), `minIterations` (default 0), `row` (1 to 8 named accounts with constraints), and `rowInputs` (up to 8 named inputs) |
-| `accountGroups` | Up to 8 names of caller-sized account lists; see [Account groups](/guide/account-groups) |
+| `accountGroups` | Up to 8 names of caller-sized account lists; see [Account groups](/guide/accounts-and-cpis#account-groups) |
 | `emitEvent` | Log a run event after each successful run; default `false` |
 | `steps` | 1 to 128 steps |
 | `version` | Optional; must be `1` |
@@ -89,21 +93,13 @@ maximum: `maxIterations` passes for `forEach` and `max` for `repeat`.
 
 ### Output
 
-`step.emit` and `step.setReturnData` build bytes the way `step.invoke` builds instruction data:
-from 1 to 64 `data.literal` and `data.encode` parts, at most 1,024 bytes in all, counting a `bytes`
-value at its maximum length.
-
-- `step.emit(parts, label?)` logs the bytes as one base64 `Program data:` line in the
-  transaction's logs, where indexers can read them. The first part must be a `data.literal` tag of
-  at least 4 bytes (`MIN_EMIT_TAG_LENGTH`) that does not start with `BEV`
-  (`RUN_EVENT_TAG_FAMILY`), so the log cannot pass for Ballista's
-  [run event](/guide/errors-and-events#run-events). It can appear anywhere, loops included.
-- `step.setReturnData(parts, label?)` sets the bytes as the run's return data. The run's caller
-  reads them: a template that invoked the run, with `expression.returnData`, or a client simulating
-  a transaction that ends with the run. It can appear once, outside every loop, with no invoke
-  after it, because invoking a program clears return data.
-
-Compilation fails when a step breaks these rules.
+`step.emit(parts, label?)` logs the parts as one `Program data:` line, and
+`step.setReturnData(parts, label?)` sets them as the run's return data. Both take the
+`data.literal` and `data.encode` parts that `step.invoke` builds instruction data from, and an
+`emit`'s first part is its tag. `MIN_EMIT_TAG_LENGTH` and `RUN_EVENT_TAG_FAMILY` hold the tag rule's
+length and reserved prefix. Compilation fails when a step breaks a rule in
+[Output](/reference/language#output); [Run events and output](/guide/errors-and-events#run-events)
+reads both from a client.
 
 ```ts
 // systemProgram, payer and recipient are account.fixed(...) references.
@@ -129,49 +125,30 @@ const steps = [
 
 ### Introspection and byte reads
 
-Introspection means reading the other instructions in the same transaction. These expressions do
-it through the Instructions sysvar. A sysvar is an account whose data the Solana runtime maintains,
-and this one holds every instruction in the current transaction. Declare it as a fixed account
-pinned to its address, `{ address: INSTRUCTIONS_SYSVAR_ADDRESS_BYTES }`, and pass that account as
-`sysvar`; compilation fails for any other account. At run time, bind it to
-`Sysvar1nstructions1111111111111111111111111`.
+These sit on `expression` and read the transaction's other instructions through the
+[Instructions sysvar](/reference/glossary#instructions-sysvar). Each takes that account first, as
+`sysvar`: a fixed account declared `{ address: INSTRUCTIONS_SYSVAR_ADDRESS_BYTES }`.
+[Introspection](/reference/language#introspection) has what each returns, and the rules.
 
-| Expression | Result |
-| --- | --- |
-| `instructionCount(sysvar)` | The number of instructions in the transaction, as a `u64` |
-| `currentInstructionIndex(sysvar)` | The index of the instruction running the template |
-| `instructionProgram(sysvar, index)` | The program that instruction `index` calls, as a `pubkey` |
-| `instructionAccountCount(sysvar, index)` | How many accounts instruction `index` lists |
-| `instructionAccount(sysvar, index, position)` | The address of the account at `position` in instruction `index` |
-| `instructionAccountFlags(sysvar, index, position)` | The flags of that account, as a `u64`: bit 0 is signer, bit 1 is writable |
-| `instructionAccountIsSigner(sysvar, index, position)`, `instructionAccountIsWritable(...)` | One of those flags, as a `bool` |
-| `instructionDataLength(sysvar, index)` | The length of instruction `index`'s data |
-| `instructionData(sysvar, index, offset, type)` | A value of one of the read types, from instruction `index`'s data at `offset` |
-| `instructionDataBytes(sysvar, index, offset, length)` | Exactly `length` bytes, 1 to 1,024, of instruction `index`'s data from `offset` |
-| `accountDataBytes(account, offset, length)` | Exactly `length` bytes, 1 to 1,024, of an account's data from `offset`, read in place without a copy |
-| `bytesLength(value)` | The length of a `bytes` value, as a `u64` |
+- `instructionCount(sysvar)` and `currentInstructionIndex(sysvar)`. The current index is the
+  top-level instruction's, so in a run reached through a CPI it names the outer instruction.
+- `instructionProgram(sysvar, index)`, `instructionAccountCount(sysvar, index)` and
+  `instructionDataLength(sysvar, index)`.
+- `instructionAccount(sysvar, index, position)`, `instructionAccountFlags(...)`,
+  `instructionAccountIsSigner(...)` and `instructionAccountIsWritable(...)`, with the same arguments.
+- `instructionData(sysvar, index, offset, type)` and
+  `instructionDataBytes(sysvar, index, offset, length)`.
 
-`index`, `position`, and `offset` take a number or a `u64` expression. An index, position, or byte
-range beyond what exists fails the run with `InstructionOutOfRange`.
-
-`accountDataBytes` needs an account that pins `owner` or `address` (or is `unsafeUnpinned`) and is
-not declared `writable`. If the account is writable in the run instruction anyway, the run fails
-with `WritableAccountBytesRead`, because a CPI could change the bytes while the run holds them.
-
-Compare `bytes` values with `expression.equal`, or pass one on with `data.encode('bytes', value)`,
-which adds no length prefix. When the receiving program expects one, encode `bytesLength(value)`
-before it, at the width that program reads.
+`index`, `position`, and `offset` take a number or a `u64` expression.
+`accountDataBytes(account, offset, length)` reads an account's data as a `bytes` value, under the
+rules in [Account data](/reference/language#account-data), and `bytesLength(value)` gives a `bytes`
+value's length.
 
 ### Registries
 
-[Remember state between runs](/guide/registries) walks through examples, and the
-[language reference](/reference/language#registries) has the full rules.
-
 A registry gives a template state that outlives a run, such as a running total or a spending
-limit. It declares named fields, and each entry holds one copy of them in its own account, picked
-by a 32-byte key the template computes, such as the caller's address. Ballista owns every entry.
-Only the template's own runs can write it, and anyone can read it. Entries belong to the
-template's address, so a new version of a template starts with new entries.
+limit. [Remember state between runs](/guide/registries) walks through examples, and
+[Registries](/reference/language#registries) has the rules.
 
 ```ts
 // Each caller can send at most 1 SOL in all, over every run.
@@ -204,48 +181,19 @@ const template = defineTemplate({
 });
 ```
 
-- `registries` declares up to 8 registries (`MAX_REGISTRIES`). A field is a `bool`, `u64`, `i64`,
-  `u128`, or `pubkey`, and a registry holds 1 to 512 bytes of fields (`MAX_REGISTRY_SIZE`), packed
-  in declaration order; `registrySize(fields)` adds them up. A registry's index is its position in
-  `registries`.
-- Each `account.registry` account is one entry, and a template declares at most 8
-  (`MAX_REGISTRY_OPENS`). `key` is a `pubkey` expression. Leave it out for one entry that every run
-  shares, keyed by 32 zero bytes. `payer` names a fixed account declared signer and writable.
-- `expression.registry` and `step.setRegistry` name the entry's account, not the registry, so two
-  entries of one registry stay apart. A written value must have the field's type. The write lands
-  at once, and a run that fails later undoes it with the rest of the transaction.
-- Read an entry's data only through its fields: `accountData` and `accountDataBytes` do not compile
-  on it. Its address, owner, lamports, and data length stay readable with `expression.accountField`.
-  No invoke may pass an entry writable.
+- `registries` names each registry's fields: `bool`, `u64`, `i64`, `u128`, or `pubkey`.
+  `registrySize(fields)` adds up their bytes.
+- `account.registry(registry, { key?, payer })` declares a fixed account that holds one entry.
+  `key` is a `pubkey` expression, and `payer` names the signer that pays a new entry's rent.
+- `expression.registry(entry, field)` reads a field, and `step.setRegistry(entry, field, value)`
+  writes one. Both name the entry's account, not the registry.
+- `MAX_REGISTRIES`, `MAX_REGISTRY_SIZE`, `MAX_REGISTRY_OPENS`, `REGISTRY_ENTRY_HEADER_LENGTH`, and
+  `REGISTRY_OPEN_CPIS` hold the numbers in [Limits](/reference/limits#registries).
 
-The compiler opens every entry before the first step, in the order the accounts are declared, so a
-key can read the fields of entries declared before its own. Opening checks an existing entry, or
-creates a missing one:
-
-- An entry lives at a program-derived address (PDA): an address computed from a program's ID and
-  a list of byte strings called seeds. Its seeds are `"registry"`, the template's address, the
-  registry's index, and the key.
-- Creating it calls the System Program, so a template with registry accounts must declare a fixed
-  account pinned to it, such as `account.systemProgram()`. The payer pays the rent: the lamports
-  (the smallest unit of SOL) that Solana requires an account to hold for its size, here a 72-byte
-  header (`REGISTRY_ENTRY_HEADER_LENGTH`) plus the fields. Entries are never closed, so the rent
-  stays in them.
-- Each open counts as 3 of the 64 CPIs a run allows (`REGISTRY_OPEN_CPIS`), because an address
-  that already holds lamports takes three calls to create.
-
-At run time, pass each entry's address like any fixed account's.
-[`findRegistryEntryAddress`](#solana-kit-adapter) derives it. A run fails with:
-
-- `InvalidRegistryEntry` (6025) if an entry account is not this template's entry for its registry
-  and key, or has another size. `explainRunError` names the account.
-- `RegistryReentry` (6026) if a CPI passes an open entry writable, as a row account or an account
-  group member, where the compiler cannot see it.
-- `AccountConstraintFailed` (6020) if an entry is passed read-only.
-
-The program's verifier checks the same rules when a template is created or finalized. It rejects a
-template that breaks a registry rule with `InvalidRegistry` (6132), and one with more than 64 CPIs,
-opens included, with `ExcessiveCpiExpansion` (6121). [Rate limits](#rate-limits) builds a limit
-that refills over time on a registry.
+At run time, pass each entry's address like any fixed account's:
+[`findRegistryEntryAddress`](#solana-kit-adapter) derives it, and `registryIndex(compiled, name)`
+gives a registry's index. [Rate limits](#rate-limits) builds a limit that refills over time on a
+registry.
 
 ## Compile-time checks
 
@@ -255,31 +203,21 @@ that refills over time on a registry.
   does not pin its `address` and is not `unsafeUnpinned`;
 - a data read from an account that pins neither `owner` nor `address` and is not
   `unsafeUnpinned`, or an `accountDataBytes` read from an account declared `writable`;
-- an introspection expression whose `sysvar` is not a fixed account pinned to
-  `INSTRUCTIONS_SYSVAR_ADDRESS_BYTES`;
 - an invoke whose `programAddress` differs from the address its program account pins (the CPI
   helpers below set `programAddress`);
 - an invoke that asks for signer or writable on an account whose constraint does not allow it;
 - `assign` outside a loop, to a variable not listed in `carry`, or with a different type or size;
 - a row account or row input outside `forEach`, including in a `repeat` body;
 - `returnData` anywhere except as the value of a `let` directly after an invoke with no guard;
-- an `emit` without a valid tag, or a `setReturnData` inside a loop, a second time, or before an
-  invoke;
-- a registry account in a batch row or declared with anything besides `writable`, more than 8 of
-  them, a payer not declared signer and writable, or no fixed account pinned to the System
-  Program;
-- a registry key that is not a `pubkey` or reads its own entry or a later one, an unknown
-  registry, registry account, or field, a write of another type, a data read of an entry, or an
-  invoke that passes an entry writable;
-- more than 64 registers (the numbered slots that hold values during a run), 128 bytecode
-  instructions, 64 CPIs per run (counting every loop at its maximum and each registry open as 3),
-  or 10,240 bytes of bytecode;
-- CPI instruction data that could exceed 4,096 bytes, an output that could exceed 1,024 bytes, or
-  a PDA seed that could exceed 32 bytes.
+- an output, a registry, or an introspection read that breaks a rule in
+  [Output](/reference/language#output), [Registries](/reference/language#registries), or
+  [Introspection](/reference/language#introspection);
+- a template over one of the [limits](/reference/limits): registers, bytecode instructions or
+  size, CPIs per run with every loop at its maximum, CPI data, output size, or seed length.
 
 `defineTemplate` and `compileTemplate` also reject anything the document schema forbids, such as
-more than 120 runtime accounts, more than 8 loops, a loop inside another, or a registry outside 1
-to 512 bytes. Reads at a fixed offset raise the account's `minDataLength` to cover the read.
+too many runtime accounts or loops, or a loop inside another. Reads at a fixed offset raise the
+account's `minDataLength` to cover the read.
 
 ## Compilation and inspection
 
@@ -311,21 +249,41 @@ program counter reported in run errors) to the step that produced it, as a path 
 account, such as `accounts.callerTotal`.
 
 `inspectTemplate(bytes)` reads any compiled payload and returns the same stats.
-`decodeTemplateAccount(accountBytes)` decodes a template account: its state (0 uploading,
-1 finalized), creator, template ID, lengths, hash, and payload.
+`decodeTemplateAccount(accountBytes)` decodes a template account: its state
+(`TEMPLATE_STATE_UPLOADING` or `TEMPLATE_STATE_FINALIZED`), creator, template ID, lengths, hash,
+and payload.
 
-## Errors
+## Errors and events
 
 ```ts
-import { decodeBallistaError, explainRunError } from '@jac0xb/ballista';
+import {
+  decodeBallistaError,
+  decodeBallistaFailure,
+  decodeRunEvent,
+  explainRunError,
+  failedProgram,
+  parseProgramData,
+} from '@jac0xb/ballista';
 
-decodeBallistaError(code);            // { kind, name, context, source } or undefined
-explainRunError(code, compiled);      // adds the step, account, or input the context points at
+decodeBallistaError(code);                    // { code, kind, name, context, source } or undefined
+explainRunError(code, compiled, { logs? });   // adds the step, account, or input the context points at
+failedProgram(logs);                          // the program whose failure ended the transaction
+decodeBallistaFailure(code, logs);            // the same, only if Ballista is the program that failed
+parseProgramData(logs);                       // [{ program, height, invocation, fields }]
+decodeRunEvent(bytes);                        // { version, iterations, expanded, executed, templateAddress }
 ```
 
-The decoded error also carries the original `code`, and `source` is `'runtime'` or `'verifier'`.
-`decodeBallistaError` returns `undefined` for a code outside Ballista's ranges, which comes from an
-invoked program. See [Errors and events](/guide/errors-and-events).
+- `code` is a `number` or a `bigint`, as Kit's RPC returns it. `source` is `'runtime'` or
+  `'verifier'`, and [Error codes](/reference/errors) lists every code.
+- A code outside Ballista's ranges decodes to `undefined`. One inside them can still be another
+  program's, so pass the transaction's logs: `explainRunError` with `{ logs }`, or
+  `decodeBallistaFailure`, decodes it only when `failedProgram(logs)` is Ballista. Each takes
+  another deployment's address, as `programAddress` or a last argument.
+- `parseProgramData` names the program behind each `Program data:` line, which the line does not,
+  and throws a `TypeError` for logs that do not nest. `decodeRunEvent` reads the run event from one
+  line's field, and returns `undefined` for other bytes, such as a template's `emit`.
+
+[Errors and events](/guide/errors-and-events) shows them at work on a simulation.
 
 ## Lifecycle
 
@@ -364,6 +322,12 @@ encodeCancelTemplate();
 | `encodeFinalizeTemplate` | Check the hash, verify the bytecode, and make the template permanent |
 | `encodeCancelTemplate` | Close an unfinished upload and return the SOL it holds to the creator |
 
+The 3,500-byte default fits a version 1 transaction, but a legacy or version 0 transaction is
+smaller: in one of those, an upload of a template over about 1 KB fails. Pass the message you will
+send to `buildKitTemplateUploadPlan` as `transactionMessage`, and it sizes each instruction to fit,
+or set `maxInstructionDataBytes` yourself. [Transaction limits](/reference/limits#transaction-ceilings)
+has the sizes.
+
 ## Run construction
 
 ```ts
@@ -386,9 +350,27 @@ account groups, pass `accountGroups`: a list of `{ address, writable? }` members
 name. The result holds the program address, the account list (the template account first, then
 the runtime accounts), and the instruction data.
 
+`inputs` maps each input's name to its value, and each `batchInputs` record does the same for row
+inputs:
+
+| Input type | Value |
+| --- | --- |
+| `bool` | `boolean` |
+| `u64`, `i64`, `u128` | `bigint`, or a whole `number` |
+| `pubkey` | A 32-byte `Uint8Array`, not a Kit `Address`: `addressBytes(address)` converts one |
+| `bytes` | A `Uint8Array` of at most the input's `maxLength` bytes |
+
 `buildRunInstruction` rejects missing or unknown account names, an address that differs from the
 account's pinned address, too many or too few rows, input values that do not fit their types, more
 than 120 runtime accounts, and run data over 1,024 bytes.
+
+To encode only the instruction data, without accounts:
+
+- `encodeRunInputs(compiled, values, { rows?, groupLengths? })` returns the run's input bytes:
+  each account group's length, the inputs in declaration order, then each row's inputs. It
+  rejects missing or unknown inputs and more than 1,024 bytes.
+- `encodeRun(compiled, values, options?)` returns the same bytes behind the run instruction's
+  tag, `INSTRUCTION_RUN`.
 
 ## Protocol helpers
 
@@ -406,10 +388,28 @@ Each helper takes one object naming the accounts and values involved, for exampl
 helpers also accept `when` and `label`; the assertions accept `bump` and `label`. The CPI helpers
 set `programAddress`, so compilation fails if the program account pins a different program.
 
-The byte constants `SYSTEM_PROGRAM_ADDRESS_BYTES`, `TOKEN_PROGRAM_ADDRESS_BYTES`, and
-`ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES` are exported for pinning those programs, and
+The byte constants `SYSTEM_PROGRAM_ADDRESS_BYTES`, `TOKEN_PROGRAM_ADDRESS_BYTES`,
+`TOKEN_2022_PROGRAM_ADDRESS_BYTES`, and `ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES` are exported for pinning those programs, and
 `INSTRUCTIONS_SYSVAR_ADDRESS_BYTES` and `ED25519_PROGRAM_ADDRESS_BYTES` for the Instructions
 sysvar and the Ed25519 program.
+
+To call another program, such as your own, pin it with `addressBytes(address)`, which turns a Kit
+`Address` or base58 string into the 32-byte `Uint8Array` a template takes. Kit's
+`getAddressEncoder().encode()` returns a read-only array that TypeScript refuses there.
+`anchorDiscriminator(name)` gives the 8-byte [discriminator](/reference/glossary#discriminator) an
+Anchor instruction's data starts with, from the handler's snake_case name, for use as
+`data.literal(anchorDiscriminator('deposit'))`.
+
+The core package also exports:
+
+- `BALLISTA_PROGRAM_ADDRESS`, the program's address as a base58 string.
+- The limits as `MAX_*` constants, such as `MAX_RUNTIME_ACCOUNTS` and `MAX_EXPANDED_CPIS`; see
+  [Limits](/reference/limits).
+- `opcode`, the bytecode opcode numbers, and `INSTRUCTION_CREATE_TEMPLATE` through
+  `INSTRUCTION_RUN`, the first byte of each Ballista instruction.
+- `RUNTIME_ERROR_NAMES` and `VERIFIER_ERROR_NAMES`, the error names in code order from
+  `RUNTIME_ERROR_BASE` (6000) and `VERIFIER_ERROR_BASE` (6100).
+- The Zod schemas behind `defineTemplate`, such as `TemplateSchema` and `StepSchema`.
 
 ### Signed messages
 
@@ -459,10 +459,11 @@ transaction that runs it.
 
 ### Rate limits
 
-`rateLimit` keeps a spending limit that refills over time in a [registry](#registries) entry. The
-steps it returns read the entry's `spent` (`u64`) and `lastSpend` (`i64`, a Unix time) fields,
-refill `spent` by the seconds since `lastSpend` times `refillPerSecond`, add `amount`, require the
-total to be at most `cap`, and write the total and the time back.
+`rateLimit({ registry, cap, refillPerSecond, amount, spent?, lastSpend?, name? })` keeps a
+spending limit that refills over time in a [registry](#registries) entry. The steps it returns read
+the entry's `spent` (`u64`) and `lastSpend` (`i64`, a Unix time) fields, refill `spent` by the
+seconds since `lastSpend` times `refillPerSecond`, add `amount`, require the total to be at most
+`cap`, and write the total and the time back.
 
 ```ts
 const template = defineTemplate({
@@ -488,24 +489,17 @@ const template = defineTemplate({
 
 - `registry` names the registry account, declared with `account.registry`. `cap`,
   `refillPerSecond`, and `amount` are `u64` expressions.
-- `cap` and `refillPerSecond` must be template constants: literals, or arithmetic and logic over
-  them. The helper throws a `TypeError` for an input, a row input, a variable (whose origin it
-  cannot trace), or a read of the transaction or of an account's data or fields, even inside
-  arithmetic. A registry field is accepted, so an author can change a limit later. The helper
-  cannot tell who wrote the field, so the template must write it only in an author-only branch,
-  one that requires a pinned author to sign. A field any caller's run can write gives the caller
-  the cap.
-- Key the entry by a signer's address, such as `expression.accountKey('caller')`, for a limit per
-  signer, or leave `key` out for one limit that every caller shares. A key taken from an input
-  lets a caller open a fresh entry on every run and spend past the cap. The helper sees only the
-  account's name, so it cannot check the key.
+- `cap` and `refillPerSecond` must be template constants, and the helper throws a `TypeError` for
+  anything a caller could choose. The helper can't check the entry's key either.
+  [Registries](/reference/language#registries) has the rules for both.
 - A run over the cap fails with `RequirementFailed` at the step labeled `withinRateLimit`.
-- A new entry starts with nothing spent. The refill is computed in `u128`, so no gap between runs
-  can overflow it. If the clock steps back, a run refills nothing, rather than failing, and
-  `lastSpend` stays where it was, so no later run refills the same seconds twice.
-- `spent` and `lastSpend` rename the two fields. `name`, `'rateLimit'` by default, prefixes the
-  variables the steps bind and names the requirement `within<Name>`, so one template can keep
-  several limits.
+- The refill is computed in `u128`, so no gap between runs can overflow it. If the clock steps
+  back, a run refills nothing, rather than failing, and `lastSpend` stays where it was.
+- `spent` and `lastSpend` rename the two fields.
+- The steps bind five variables, named after the registry account, and after the `spent` field
+  too when it is renamed: `limitsLast` through `limitsTotal` above. So limits in different entries,
+  or in different fields of one entry, fit in one template. `name` replaces that prefix and labels
+  the requirement `within<Name>`, which tells two limits' failures apart.
 
 ## Solana Kit adapter
 
@@ -524,31 +518,52 @@ import {
   measureTransactionMessage,
 } from '@jac0xb/ballista/kit';
 
-getTemplateAddress(creator, templateId, programAddress?);
-findFreeTemplateId({ rpc, creator, start? });
-findRegistryEntryAddress(template, registryIndex, key, programAddress?);
+await getTemplateAddress(creator, templateId, programAddress?);
+await findFreeTemplateId({ rpc, creator, programAddress?, start?, batchSize? });
+await findRegistryEntryAddress(template, registryIndex, key, programAddress?);
 buildKitRunInstruction(input);
-buildKitTemplateUploadPlan(input);
-buildKitResumeTemplateUploadPlan(input);
+await buildKitTemplateUploadPlan(input);
+await buildKitResumeTemplateUploadPlan(input);
 measureTransactionMessage(message);
 createComputeUnitProvider({ rpc, marginBps: 1_000 });
 getComputeUnitsConsumed(confirmedTransaction);
 ```
 
+The calls shown with `await` are async. The rest return at once, though a compute-unit provider's
+`estimate` and `estimateAndSet` are async too.
+
 | Function | Purpose |
 | --- | --- |
 | `getTemplateAddress` | The template's address and bump |
-| `findFreeTemplateId` | The lowest template ID at or above `start` whose address holds no account. An address that already holds a template cannot be reused |
+| `findFreeTemplateId` | The lowest template ID at or above `start` whose address holds no account, probing `batchSize` addresses per RPC call (default 16, at most 100). An address that already holds a template cannot be reused |
 | `findRegistryEntryAddress` | A [registry](#registries) entry's address and bump. `key` is an address or 32 bytes, all zeros for an entry without a key. Throws a `RangeError` for an index outside 0 to 7 or a key that is not 32 bytes |
-| `buildKitRunInstruction` | `buildRunInstruction` with Kit addresses, returning a Kit `Instruction` |
+| `buildKitRunInstruction` | `buildRunInstruction` with `KitAccountBinding`s, returning a Kit `Instruction` |
 | `buildKitTemplateUploadPlan` | An upload plan made of Kit instructions; given a `transactionMessage`, it sizes the chunks to fit that message |
 | `buildKitResumeTemplateUploadPlan` | The same, for resuming an upload |
 | `measureTransactionMessage` | A message's size, the size limit for its version, and whether it fits |
 | `createComputeUnitProvider` | A provider whose `estimateAndSet(message)` simulates the message and sets its compute-unit limit (the execution budget the transaction requests) to the measured amount plus a margin in basis points (1,000 is 10%, the default). For version 1 messages it also sets the loaded-account-data limit |
 | `getComputeUnitsConsumed` | The compute units a confirmed transaction used, read from its metadata |
 
-`buildKitCancelTemplateInstruction({ creator, templateId })` builds the instruction that cancels an
-unfinished upload.
+`buildKitRunInstruction` takes each account, row account, and group member as a
+`KitAccountBinding`: `{ address, writable?, signer? }`. `writable` applies to group members only.
+`signer` is a Kit `TransactionSigner` for an account the template declares a signer, which the
+instruction then carries; see [Signers](#signers).
+
+`buildKitCancelTemplateInstruction({ creator, templateId, programAddress? })` is async and resolves
+to the instruction that cancels an unfinished upload.
+
+The adapter also exports:
+
+- `BALLISTA_ADDRESS` and `SYSTEM_PROGRAM_ADDRESS`, as Kit addresses.
+- `toKitInstruction(descriptor)`, which turns any core instruction descriptor into a Kit
+  `Instruction`.
+- `measureInstructionInTransaction(message, instruction)`, which measures the message with the
+  instruction appended.
+- `getComputeUnitLimitWithMargin(simulatedUnits, { marginBps?, maxComputeUnitLimit? })`, the
+  margin math `createComputeUnitProvider` uses, capped at `MAX_TRANSACTION_COMPUTE_UNITS`
+  (1,400,000).
+- `getLoadedAccountsDataSizeLimitWithHeadroom(bytes)`, which rounds a loaded-account-data size up
+  to the next 32 KiB page.
 
 To run the [Registries](#registries) example, derive the caller's entry and pass it as
 `callerTotal`'s address:
@@ -564,3 +579,33 @@ const [callerTotal] = await findRegistryEntryAddress(
   caller,
 );
 ```
+
+## Run from a dApp
+
+A run is one instruction in a transaction your app builds, signs, and sends with Kit, as
+[Getting started](/guide/getting-started) does. A dApp often also needs a second signer, lookup
+tables, and a way to read the result.
+
+### Signers
+
+The run instruction marks every account the template declares a signer, and each needs a
+signature. The message's fee payer signs for itself. For any other, such as the user's account when
+a relayer pays, bind its signer, a wallet's or a key's, to the account. Without it, signing fails
+with "Transaction is missing signatures".
+
+<<< @/../clients/js/examples/sdk/second-signer.ts#second-signer
+
+### Lookup tables
+
+A version 0 transaction can take accounts from address lookup tables, so each takes 1 byte of the
+transaction instead of 32. Tables shrink a run with many accounts, but they don't raise the number
+of accounts a transaction can lock; see [Transaction limits](/reference/limits#transaction-ceilings).
+
+<<< @/../clients/js/examples/sdk/lookup-tables.ts#lookup-tables
+
+### Simulation, errors, and events
+
+Simulate the transaction before you ask a wallet to sign; it needs no signature.
+[Which program failed](/guide/errors-and-events#which-program-failed) explains a failure by the
+program that refused it, and [Run events and output](/guide/errors-and-events#run-events)
+reads the run's events, its `emit` outputs, and its return data.

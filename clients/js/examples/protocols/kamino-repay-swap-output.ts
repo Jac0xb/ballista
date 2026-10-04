@@ -1,29 +1,5 @@
-/**
- * Deleverage: swap collateral into the borrowed asset and repay exactly what the swap produced.
- *
- * `repay_obligation_liquidity_v2(liquidity_amount: u64)` takes the amount as an argument, and the
- * amount worth repaying is what the swap returns, which nobody knows at signing.
- *
- * The template swaps, measures what landed in the borrowed-asset account, and repays exactly
- * that.
- *
- * The run names that account, and Kamino repays from any account the borrower may spend,
- * including one whose owner approved the borrower as a delegate. It repays at most the debt, and
- * the rest of the swap stays in the account. So the borrower must own it (`swapPaysTheBorrower`).
- *
- * The repayment is Kamino's `_v2` handler: the v1 handler refuses every caller but Kamino itself
- * and a short whitelist. v2 takes the 9 accounts declared below, then `farmAccounts`, its tail:
- * - the obligation's farm user state and the reserve's debt farm, or the Kamino program for each
- *   when the reserve has no debt farm (the main market's SOL and USDC reserves have none);
- * - the lending market authority;
- * - the Farms program.
- * A group carries them so each keeps its own writable flag.
- *
- * Kamino takes a repayment only against a reserve and an obligation refreshed in the same slot,
- * and does not care where in the transaction that happened. Put `refresh_reserve` for each
- * reserve the obligation holds, then `refresh_obligation` with them, before this run. The swap in
- * between does not touch Kamino.
- */
+/** Repay what a swap produced: docs/examples/protocols/kamino-repay.md. */
+// #region template
 import {
   TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
@@ -32,7 +8,7 @@ import {
   defineTemplate,
   expression,
   step,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 import {
   JUPITER_ROUTE,
   JUPITER_V6,
@@ -85,11 +61,14 @@ export const kaminoRepaySwapOutput = defineTemplate({
     reserveLiquiditySupply: { writable: true },
   },
   /**
-   * `routeAccounts`: Jupiter's own list, whose length depends on the route. `farmAccounts`:
-   * Kamino's v2 tail, described above.
+   * `routeAccounts`: Jupiter's own list, whose length depends on the route. `farmAccounts`: the end
+   * of Kamino's v2 repayment, its own writable flags kept: the debt farm pair, the lending market
+   * authority and the Farms program.
    */
   accountGroups: ['routeAccounts', 'farmAccounts'],
   steps: [
+    // The swap pays into `borrowedAssetAta` and Kamino repays from it. Kamino accepts any account
+    // the borrower may spend, even another owner's, and what the debt doesn't take stays there.
     step.require(
       expression.equal(
         expression.accountData(account.fixed('borrowedAssetAta'), TOKEN_ACCOUNT_OWNER_OFFSET, 'pubkey'),
@@ -145,6 +124,7 @@ export const kaminoRepaySwapOutput = defineTemplate({
       'swapWorthRepaying',
     ),
 
+    // v2: the v1 handler refuses every caller but Kamino itself and a short whitelist.
     step.invoke({
       program: account.fixed('kamino'),
       accounts: [
@@ -171,3 +151,4 @@ export const kaminoRepaySwapOutput = defineTemplate({
 });
 
 export const compiled = compileTemplate(kaminoRepaySwapOutput);
+// #endregion template

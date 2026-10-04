@@ -20,7 +20,7 @@ import {
   defineTemplate,
   expression,
   step,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 import { addressBytes } from '../protocols/shared.js';
 import { payoutBatch, payoutSteps, splitSellAccounts } from './split-sell.js';
 

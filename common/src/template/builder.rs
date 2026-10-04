@@ -291,7 +291,8 @@ impl ProgramBuilder {
     /// Opens registry `index`'s entry in account `entry` for the rest of the run: the run checks
     /// the entry, or creates it with `payer`'s lamports through `system_program`. `key` is a
     /// `pubkey` register, or `None` for the zero key; `size` is the registry's field bytes.
-    /// Returns the instruction's index.
+    /// Returns the instruction's index. Put every open before the first `invoke` and any
+    /// `set_return_data`: `verify` refuses an open after either with `InvalidRegistry`.
     pub fn open_registry(
         &mut self,
         entry: u8,
@@ -318,6 +319,50 @@ impl ProgramBuilder {
     pub fn write_registry(&mut self, entry: u8, offset: u16, read_opcode: u8, value: u8) -> usize {
         let field = RegistryField { offset, selector: read_opcode };
         self.emit(record(OP_WRITE_REGISTRY, NO_INDEX, value, entry, NO_INDEX, 0, field.encode()))
+    }
+
+    /// The number of members the caller supplied in account group `group`, as a `u64`.
+    pub fn group_length(&mut self, group: u8) -> u8 {
+        self.op(OP_GROUP_LENGTH, group, NO_INDEX, NO_INDEX, 0)
+    }
+
+    /// Whether any member of `group` matches (`count` false, a `bool`), or how many do (`count`
+    /// true, a `u64`). A member matches when its owner is one of `programs` (one or two, interned
+    /// as pubkeys), its data holds at least `min_data_len` bytes, each `(offset, kind, register)`
+    /// match finds the register's value encoded as `kind` at that offset, and its address is none
+    /// of the `pubkey` registers in `excepts`. Pushes the match segments, then the except segments.
+    pub fn group_filter(
+        &mut self,
+        count: bool,
+        group: u8,
+        programs: &[[u8; 32]],
+        matches: &[(u16, u8, u8)],
+        excepts: &[u8],
+        min_data_len: u32,
+    ) -> u8 {
+        let first = programs.first().map_or(NO_INDEX, |program| self.pubkey(*program));
+        let second = programs.get(1).map_or(NO_INDEX, |program| self.pubkey(*program));
+        let segment_start = self.segments.len() as u16;
+        for (offset, kind, register) in matches {
+            self.segments.push(DataSegment {
+                kind: *kind,
+                register: *register,
+                offset_le: offset.to_le_bytes(),
+                len_le: [0; 2],
+                reserved: [0; 2],
+            });
+        }
+        for register in excepts {
+            self.push_segment(Segment::Register(DATA_REG_PUBKEY, *register));
+        }
+        let filter = GroupScan {
+            segment_start,
+            matches: matches.len() as u8,
+            excepts: excepts.len() as u8,
+            min_data_len,
+        };
+        let opcode = if count { OP_GROUP_COUNT } else { OP_GROUP_ANY };
+        self.op(opcode, group, first, second, filter.encode())
     }
 
     pub fn loop_index(&mut self) -> u8 {

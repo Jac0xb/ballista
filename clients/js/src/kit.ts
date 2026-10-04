@@ -12,6 +12,8 @@ import {
   setTransactionMessageLoadedAccountsDataSizeLimit,
   type Address,
   type Instruction,
+  type InstructionWithSigners,
+  type TransactionSigner,
 } from '@solana/kit';
 
 import { type CompiledTemplate } from './compiler.js';
@@ -38,6 +40,12 @@ export interface KitAccountBinding {
   address: Address;
   /** Account group members only: pass the account as writable. */
   writable?: boolean;
+  /**
+   * The account's Kit signer, for an account the template declares `signer: true`. The
+   * instruction carries it, so `signTransactionMessageWithSigners` signs with it as well as with
+   * the fee payer. Its address must be `address`.
+   */
+  signer?: TransactionSigner;
 }
 
 export interface KitUploadInstruction {
@@ -322,7 +330,7 @@ export function buildKitRunInstruction(input: {
   batchRows?: readonly Readonly<Record<string, KitAccountBinding>>[];
   batchInputs?: readonly Readonly<Record<string, RunInputValue>>[];
   accountGroups?: Readonly<Record<string, readonly KitAccountBinding[]>>;
-}): Instruction {
+}): Instruction & InstructionWithSigners {
   const encoder = getAddressEncoder();
   const accountGroups = input.accountGroups
     ? (Object.fromEntries(
@@ -350,7 +358,7 @@ export function buildKitRunInstruction(input: {
         ]),
       ) as Readonly<Record<string, AccountBinding>>,
   );
-  return toKitInstruction(
+  const instruction = toKitInstruction(
     buildRunInstruction({
       compiled: input.compiled,
       programAddress: Uint8Array.from(encoder.encode(input.programAddress ?? BALLISTA_ADDRESS)),
@@ -362,6 +370,46 @@ export function buildKitRunInstruction(input: {
       ...(accountGroups ? { accountGroups } : {}),
     }),
   );
+  return { ...instruction, accounts: withSigners(instruction, runBindings(input)) };
+}
+
+/** Each run account's binding and name, in the instruction's order, after the template account. */
+function runBindings(input: {
+  compiled: CompiledTemplate;
+  accounts: Readonly<Record<string, KitAccountBinding>>;
+  batchRows?: readonly Readonly<Record<string, KitAccountBinding>>[];
+  accountGroups?: Readonly<Record<string, readonly KitAccountBinding[]>>;
+}): { name: string; binding: KitAccountBinding }[] {
+  const { compiled } = input;
+  return [
+    ...compiled.fixedAccountOrder.map((name) => ({ name, binding: input.accounts[name]! })),
+    ...(input.batchRows ?? []).flatMap((row, index) =>
+      compiled.batchAccountOrder.map((name) => ({ name: `${name} in row ${index}`, binding: row[name]! })),
+    ),
+    ...compiled.accountGroupOrder.flatMap((group) =>
+      (input.accountGroups?.[group] ?? []).map((binding) => ({ name: `a member of ${group}`, binding })),
+    ),
+  ];
+}
+
+/** Attaches each binding's signer to its account, where the template declares it a signer. */
+function withSigners(
+  instruction: Instruction,
+  bindings: readonly { name: string; binding: KitAccountBinding }[],
+): NonNullable<(Instruction & InstructionWithSigners)['accounts']> {
+  return (instruction.accounts ?? []).map((meta, index) => {
+    const bound = index === 0 ? undefined : bindings[index - 1];
+    const signer = bound?.binding.signer;
+    if (!bound || !signer) return meta;
+    if (signer.address !== bound.binding.address) {
+      throw new TypeError(`The signer for ${bound.name} is ${signer.address}, not the bound ${bound.binding.address}`);
+    }
+    if (meta.role !== AccountRole.READONLY_SIGNER && meta.role !== AccountRole.WRITABLE_SIGNER) {
+      throw new TypeError(`The template does not declare ${bound.name} a signer, so it cannot carry one`);
+    }
+    // `role` is restated so its narrowing to a signer role carries into the result.
+    return { ...meta, role: meta.role, signer };
+  });
 }
 
 export async function buildKitTemplateUploadPlan(input: {

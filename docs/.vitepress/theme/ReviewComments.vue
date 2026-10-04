@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useData, useRoute } from 'vitepress';
+import ReviewReading from './ReviewReading.vue';
 import ReviewVariations from './ReviewVariations.vue';
 
 // Highlight text on any page of the dev server, write a comment, and it is appended to
@@ -10,7 +11,8 @@ import ReviewVariations from './ReviewVariations.vue';
 interface ReviewComment {
   id: string;
   createdAt: string;
-  kind?: 'comment' | 'edit';
+  /** A comment is a suggestion, answered with options to pick from; a modify request is just made. */
+  kind?: 'comment' | 'modify' | 'edit' | 'todo';
   page: string;
   file?: string;
   heading: string;
@@ -31,6 +33,8 @@ interface Draft {
   left: number;
   block: Element;
   editable: boolean;
+  /** Suggest: Claude offers options to pick from. Modify: Claude makes the change. Todo: TODO.md. */
+  mode?: 'suggest' | 'modify' | 'todo';
 }
 interface Editing {
   element: HTMLElement;
@@ -195,7 +199,8 @@ const triggerStyle = computed(() =>
   pending.value
     ? {
         top: `${clamp(pending.value.top + 8, 8, window.innerHeight - 44)}px`,
-        left: `${clamp(pending.value.left - 76, 8, window.innerWidth - 176)}px`,
+        // Four buttons, about 300 px wide: centred under the selection, kept on screen.
+        left: `${clamp(pending.value.left - 150, 8, window.innerWidth - 308)}px`,
       }
     : {},
 );
@@ -214,9 +219,9 @@ function say(message: string) {
   noticeTimer = setTimeout(() => (notice.value = ''), 5000);
 }
 
-function open() {
+function open(mode: Draft['mode'] = 'suggest') {
   if (!pending.value) return;
-  draft.value = pending.value;
+  draft.value = { ...pending.value, mode };
   pending.value = null;
   text.value = '';
   nextTick(() => field.value?.focus());
@@ -334,10 +339,15 @@ async function saveEdit() {
 }
 
 const counts = computed(() => {
-  const edits = comments.value.filter((item) => item.kind === 'edit').length;
-  const notes = comments.value.length - edits;
-  const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
-  return edits ? `${plural(notes, 'comment')} · ${plural(edits, 'edit')}` : `${plural(notes, 'comment')} on this page`;
+  const count = (kind: string) => comments.value.filter((item) => (item.kind ?? 'comment') === kind).length;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const extra = [
+    count('modify') && plural(count('modify'), 'change'),
+    count('edit') && plural(count('edit'), 'edit'),
+    count('todo') && plural(count('todo'), 'todo'),
+  ].filter(Boolean);
+  const suggestions = plural(count('comment'), 'suggestion');
+  return extra.length ? [suggestions, ...extra].join(' · ') : `${suggestions} on this page`;
 });
 
 async function load() {
@@ -349,6 +359,11 @@ async function load() {
   }
   // Once an edit is in the source, the page shows it for real; drop the mark.
   for (const item of comments.value) {
+    if (item.kind === 'modify' && item.appliedAt && !appliedEdits.has(item.id)) {
+      appliedEdits.add(item.id);
+      if (awaiting.value?.id === item.id) stopAwaiting();
+      if (!firstLoad) say('✓ Claude made your change.');
+    }
     if (item.kind === 'edit' && item.appliedAt) {
       document.querySelector(`[data-review-edited="${CSS.escape(item.id)}"]`)?.removeAttribute('data-review-edited');
       if (!appliedEdits.has(item.id)) {
@@ -361,8 +376,10 @@ async function load() {
 }
 
 async function save() {
-  if (!draft.value || !text.value.trim() || saving.value) return;
-  // Mark the spot where Comment was pressed, in page coordinates so it scrolls with the text.
+  const mode = draft.value?.mode ?? 'suggest';
+  const todo = mode === 'todo';
+  if (!draft.value || (!todo && !text.value.trim()) || saving.value) return;
+  // Mark the spot where the request was sent, in page coordinates so it scrolls with the text.
   const spot = { pageTop: draft.value.top + window.scrollY, left: draft.value.left };
   saving.value = true;
   try {
@@ -370,6 +387,7 @@ async function save() {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
+        kind: todo ? 'todo' : mode === 'modify' ? 'modify' : 'comment',
         page: route.path,
         file: page.value.relativePath,
         title: document.title,
@@ -387,6 +405,11 @@ async function save() {
     draft.value = null;
     text.value = '';
     window.getSelection()?.removeAllRanges();
+    if (todo) {
+      say('Added to TODO.md.');
+      await load();
+      return;
+    }
     say('Sent to Claude.');
     awaiting.value = { id: result.id, ...spot };
     placeAwaiting();
@@ -441,8 +464,11 @@ watch(
 <template>
   <div class="review-ui">
     <ReviewVariations />
+    <ReviewReading />
     <div v-if="pending" class="review-trigger" :style="triggerStyle" @mousedown.prevent>
-      <button type="button" @click="open">Comment</button>
+      <button type="button" title="Claude offers options to pick from" @click="open('suggest')">Suggest</button>
+      <button type="button" title="Claude makes the change" @click="open('modify')">Modify</button>
+      <button type="button" @click="open('todo')">TODO</button>
       <button v-if="pending.editable" type="button" @click="startEdit">Edit text</button>
     </div>
 
@@ -459,20 +485,22 @@ watch(
     </div>
 
     <form v-if="draft" class="review-popover" :style="popoverStyle" @submit.prevent="save" @keydown.esc.prevent="cancel">
-      <p class="review-label">Commenting on{{ draft.heading ? ` · ${draft.heading}` : '' }}</p>
+      <p class="review-label">{{ { suggest: 'Suggestion for', modify: 'Modify', todo: 'TODO for' }[draft.mode ?? 'suggest'] }}{{ draft.heading ? ` · ${draft.heading}` : '' }}</p>
       <blockquote class="review-quote">{{ draft.selection }}</blockquote>
       <textarea
         ref="field"
         v-model="text"
         rows="4"
-        placeholder="What should change?"
+        :placeholder="{ suggest: 'What should change? Claude offers options.', modify: 'What should Claude change here?', todo: 'What is left to do? (optional)' }[draft.mode ?? 'suggest']"
         @keydown.meta.enter.prevent="save"
         @keydown.ctrl.enter.prevent="save"
       />
       <div class="review-actions">
         <span class="review-hint">⌘/Ctrl + Enter saves · Esc cancels</span>
         <button type="button" class="review-secondary" @click="cancel">Cancel</button>
-        <button type="submit" class="review-primary" :disabled="saving || !text.trim()">Save</button>
+        <button type="submit" class="review-primary" :disabled="saving || (draft.mode !== 'todo' && !text.trim())">
+          {{ { suggest: 'Ask for options', modify: 'Make this change', todo: 'Add to TODO.md' }[draft.mode ?? 'suggest'] }}
+        </button>
       </div>
     </form>
 
@@ -484,7 +512,7 @@ watch(
     </div>
 
     <aside v-if="panelOpen" class="review-panel" aria-label="Comments on this page">
-      <p v-if="!comments.length" class="review-empty">Highlight any text on the page, then press Comment.</p>
+      <p v-if="!comments.length" class="review-empty">Highlight any text on the page, then press Suggest or Modify.</p>
       <article v-for="item in comments" :key="item.id" class="review-item">
         <template v-if="item.kind === 'edit'">
           <p class="review-label">Edit{{ item.appliedAt ? ' · in the source' : ' · waiting for Claude' }}</p>
@@ -492,8 +520,11 @@ watch(
           <blockquote class="review-quote review-now">{{ item.edited }}</blockquote>
         </template>
         <template v-else>
+          <p v-if="item.kind === 'todo'" class="review-label">TODO · in TODO.md</p>
+          <p v-else-if="item.kind === 'modify'" class="review-label">Change{{ item.appliedAt ? ' · made' : ' · waiting for Claude' }}</p>
+          <p v-else class="review-label">Suggestion</p>
           <blockquote class="review-quote">{{ item.selection }}</blockquote>
-          <p class="review-comment">{{ item.comment }}</p>
+          <p v-if="item.comment" class="review-comment">{{ item.comment }}</p>
         </template>
         <p class="review-meta">
           <span>{{ item.heading || 'Top of the page' }} · {{ new Date(item.createdAt).toLocaleString() }}</span>
@@ -582,7 +613,7 @@ watch(
 :global([data-review-editing]) {
   outline: 2px solid var(--signal);
   outline-offset: 4px;
-  background: #fffdf6;
+  background: var(--vp-c-bg-soft);
   caret-color: var(--signal);
 }
 :global([data-review-edited]) {
@@ -610,7 +641,7 @@ watch(
   max-height: 96px;
   overflow: auto;
   padding: 8px 10px;
-  background: #eeede7;
+  background: var(--vp-c-bg-soft);
   border-left: 2px solid var(--signal);
   font-size: 11px;
   line-height: 1.6;
@@ -621,7 +652,8 @@ watch(
   min-height: 92px;
   padding: 8px 10px;
   border: 1px solid var(--rule);
-  background: #fbfaf7;
+  background: var(--vp-c-bg-soft);
+  color: var(--ink);
   font-family: var(--vp-font-family-base);
   font-size: 13px;
   line-height: 1.5;

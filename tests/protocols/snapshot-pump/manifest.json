@@ -1,0 +1,434 @@
+{
+  "format": 1,
+  "manifests": [
+    "scripts/snapshot/manifests/pump-fun.json"
+  ],
+  "rpc": "api.mainnet.solana.com",
+  "jupiter": "https://lite-api.jup.ag/swap/v1",
+  "slot": 453108532,
+  "unixTimestamp": 1791077373,
+  "time": "2026-10-04T01:29:33.000Z",
+  "clock": {
+    "slot": 453108532,
+    "epochStartTimestamp": 1790977798,
+    "epoch": 1048,
+    "leaderScheduleEpoch": 1049,
+    "unixTimestamp": 1791077373
+  },
+  "wallet": {
+    "seed": "ballista-protocol-tests-wallet-1",
+    "address": "ApS3VQAaUaEMsUKzoyt26G2wUM5Xpta57WbQEN17tyq1"
+  },
+  "programs": [
+    {
+      "name": "associatedToken",
+      "programId": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      "loader": "BPFLoader2111111111111111111111111111111111",
+      "file": "programs/ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL.so",
+      "elfLength": 105032,
+      "elfSha256": "6804554e69fd3a58caa191dc4a58f4c67223d30ca28ab8987f39fc18d2f7374d",
+      "paddingTrimmed": 0
+    },
+    {
+      "name": "pump",
+      "programId": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "file": "programs/6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P.so",
+      "elfLength": 1769472,
+      "elfSha256": "9d7d015fcf8976091c6319c76053783f7fc5e4aae7be2a1693b7c9dd28de6967",
+      "paddingTrimmed": 8716243,
+      "programData": "B5MvUwXdiW1NMM6QFFD3ssPKBujD4zMohncbM73Z2BQu",
+      "deploySlot": 452654932,
+      "upgradeAuthority": "7gZufwwAo17y5kg8FMyJy2phgpvv9RSdzWtdXiWHjFr8"
+    },
+    {
+      "name": "pumpFees",
+      "programId": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+      "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "file": "programs/pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ.so",
+      "elfLength": 852456,
+      "elfSha256": "0b9a3b553eee0a1a2370bb2ffaceb26ec3296c4c02f42ded2b8d8f3da4b451c1",
+      "paddingTrimmed": 96488,
+      "programData": "75Uu23mqWBb8LM8vDppqC1mQAnCcBuLXhVaDezVMQLRw",
+      "deploySlot": 452655002,
+      "upgradeAuthority": "7gZufwwAo17y5kg8FMyJy2phgpvv9RSdzWtdXiWHjFr8"
+    },
+    {
+      "name": "token2022",
+      "programId": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "file": "programs/TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb.so",
+      "elfLength": 632560,
+      "elfSha256": "9bbf90b30e06778ca0feca100b29f0eeb9be576ae024f6323cc207308f51a5d1",
+      "paddingTrimmed": 749456,
+      "programData": "DoU57AYuPFu2QU514RktNPG22QhApEjnKxnBcu4BHDTY",
+      "deploySlot": 427147035,
+      "upgradeAuthority": "AeLmXCbPaQHGWRLr2saFsEVfmMNuKnxRAbWCT9P5twgz"
+    }
+  ],
+  "accounts": [
+    {
+      "address": "2DxynL2rD7xZwSZ4Q1FgbQPutbKdKZ9JdSW6ULWiVvkZ",
+      "roles": [
+        "account bfx4CurveTokenAccount"
+      ],
+      "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      "lamports": 1513840,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 170,
+      "sha256": "0d15ab6dbba456a30346b68c05d50605eb44f02d641921bcb34966404549ef60"
+    },
+    {
+      "address": "2Q8Y16chuZMc9Bq6sTaLWP6f6Uyr71dS9J5yyJU6bKDd",
+      "roles": [
+        "account hjxcBondingCurve"
+      ],
+      "owner": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "lamports": 440691137,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 151,
+      "sha256": "b1e1565a52539e7df20ad2ac34776b9dd405d3d2690798e9e2bc3c0f9f8b27a9"
+    },
+    {
+      "address": "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf",
+      "roles": [
+        "account global"
+      ],
+      "owner": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "lamports": 4089837831,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 1087,
+      "sha256": "6afa5f43e71cf99644f62568a48666fe970f8396a4c4d6bd144e14bcc522cc6f"
+    },
+    {
+      "address": "5of8miFgjv5tbDcphRyyQgYqSGHCjDNnRwMp8bpum5Jz",
+      "roles": [
+        "account avygCurveTokenAccount"
+      ],
+      "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      "lamports": 2074080,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 170,
+      "sha256": "1790e22e6115fe9d70307a1d468855b0ea0184a86ecdbce339895bf1268eee3c"
+    },
+    {
+      "address": "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV",
+      "roles": [
+        "account feeRecipient"
+      ],
+      "owner": "11111111111111111111111111111111",
+      "lamports": 34235431659370,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "roles": [
+        "program pump"
+      ],
+      "owner": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "lamports": 9296912471,
+      "executable": true,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 36,
+      "sha256": "8101492b544ce08703d5de95363bf796e7e4cd17d03639cfe603071fb59652eb"
+    },
+    {
+      "address": "75Uu23mqWBb8LM8vDppqC1mQAnCcBuLXhVaDezVMQLRw",
+      "roles": [
+        "programData pumpFees"
+      ],
+      "owner": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "lamports": 4821514360,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 948989,
+      "sha256": "fe28677b89dc6b1d9dd45c268afb7831883abded51d3a06ef66e2fa89c024e89"
+    },
+    {
+      "address": "7RQDH1Wa1wbdkgbQHaxefCcrcZmDDWUYUrGFmXp9U8AV",
+      "roles": [
+        "account avygCreatorVault"
+      ],
+      "owner": "11111111111111111111111111111111",
+      "lamports": 64243011,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "address": "8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt",
+      "roles": [
+        "account feeConfig"
+      ],
+      "owner": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+      "lamports": 37290293,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 4097,
+      "sha256": "3504fae20640e15bd441257ab118aa96fb4e99190defc06a01aae26b307bf204"
+    },
+    {
+      "address": "91m6UXduxMiyYCkhirCkT9RbRiqJvHasBf4FTNFLsiaT",
+      "roles": [
+        "account hjxcCreatorVault"
+      ],
+      "owner": "11111111111111111111111111111111",
+      "lamports": 650241,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "address": "92ZzH74y5wrihjw1BPd9beMKqz3EM3dNHUZHCA7Hrq5U",
+      "roles": [
+        "account avj1CurveTokenAccount"
+      ],
+      "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      "lamports": 1513840,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 170,
+      "sha256": "593b666274db59ddc097cd64e9fda6e675cb85d05084bcf0698dd54973b537a3"
+    },
+    {
+      "address": "9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7",
+      "roles": [
+        "account buybackFeeRecipient"
+      ],
+      "owner": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+      "lamports": 919684562,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 208,
+      "sha256": "198e911ca9aaaecfde4745cf12976e92cc4c6fc46c4eff24c34a7a918e07a442"
+    },
+    {
+      "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      "roles": [
+        "program associatedToken"
+      ],
+      "owner": "BPFLoader2111111111111111111111111111111111",
+      "lamports": 3388612899,
+      "executable": true,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 105032,
+      "sha256": "6804554e69fd3a58caa191dc4a58f4c67223d30ca28ab8987f39fc18d2f7374d"
+    },
+    {
+      "address": "AVJ1akJaBGvMoCE7c39DhWGDL7Fb5eLtUgAw3Tfppump",
+      "roles": [
+        "account avj1Mint"
+      ],
+      "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      "lamports": 2646680,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 393,
+      "sha256": "a37344a62d2be5e332f894543dfe7d12a867a2a60ea77c8b6e4f4236fafe0612"
+    },
+    {
+      "address": "AvygmeaEVDXFT8pUQdtr3pv6sUBf8CtMRsRtdzuPpump",
+      "roles": [
+        "account avygMint"
+      ],
+      "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      "lamports": 3654000,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 397,
+      "sha256": "f12594cc4c80d6230649bbf4e892a32136326a9c7353ad3856d7897f44dff1bb"
+    },
+    {
+      "address": "B5MvUwXdiW1NMM6QFFD3ssPKBujD4zMohncbM73Z2BQu",
+      "roles": [
+        "programData pump"
+      ],
+      "owner": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "lamports": 53268311040,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 10485760,
+      "sha256": "dc3a91d8c35b3017715daf83d54d58a2fd15fb3d20e94edc1fcb69847b8925e0"
+    },
+    {
+      "address": "BFX4LknRDLUiJvmAYNWWg8o6x5Wo21c2zXNxUDgipump",
+      "roles": [
+        "account bfx4Mint"
+      ],
+      "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      "lamports": 2799080,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 423,
+      "sha256": "00ae039568b6639b58fcdb2db1200e046810a22b7d30f85a9a5a2ba5b42790e0"
+    },
+    {
+      "address": "CW8X4sQ5xwgkoVCVism4rqMfo4x9Rpg1Librhg4DU3UA",
+      "roles": [
+        "account hjxcCurveTokenAccount"
+      ],
+      "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      "lamports": 1513840,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 170,
+      "sha256": "ba193d65addd0e54d91bc3ab323f442a92f88ee4e085947b1fc52a35cd5fce92"
+    },
+    {
+      "address": "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1",
+      "roles": [
+        "account eventAuthority"
+      ],
+      "owner": "11111111111111111111111111111111",
+      "lamports": 168261611,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "address": "DoU57AYuPFu2QU514RktNPG22QhApEjnKxnBcu4BHDTY",
+      "roles": [
+        "programData token2022"
+      ],
+      "owner": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "lamports": 9620035440,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 1382061,
+      "sha256": "4bba6bf1da06a44b467038e2df01ae41199f97d9072888ce9856694ea8b2eec1"
+    },
+    {
+      "address": "DsEZiYRUqwVi9MfTKM1hLnz2itBfT27JhSwW4BzYysUd",
+      "roles": [
+        "account avj1BondingCurve"
+      ],
+      "owner": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "lamports": 33038281,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 141,
+      "sha256": "60933688fda29324a0097b0d79c6b675ffa389bfecb20b86f1787199c4a3b51c"
+    },
+    {
+      "address": "EjzbVxXZLx3bE5Y3Jq9BkMVbtoSvaZvfb6wyrpHHRtBy",
+      "roles": [
+        "account avygBondingCurve"
+      ],
+      "owner": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "lamports": 990969295,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 151,
+      "sha256": "dee37cc5512475bee422afa4810520d6cacc796f0e1f0979451db80757f824d8"
+    },
+    {
+      "address": "FBhnAqNuDuM2S4oiYk5mkHg8WNssEwRP9Mqpo8rVf6LB",
+      "roles": [
+        "account bfx4CreatorVault"
+      ],
+      "owner": "11111111111111111111111111111111",
+      "lamports": 255666318,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "address": "GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS",
+      "roles": [
+        "account reservedFeeRecipient"
+      ],
+      "owner": "MAyhSmzXzV1pTf7LsNkrNwkWKTo4ougAJ1PPg47MD4e",
+      "lamports": 13732399996,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 74,
+      "sha256": "5329d17a5b71de9701832c4df6491c56961a578b6415b8077b12d2c73ed5bbca"
+    },
+    {
+      "address": "GmnzVDecLBtPFE5BrU1jm78N9bZzMFyVBFc2HozQxkrj",
+      "roles": [
+        "account bfx4BondingCurve"
+      ],
+      "owner": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "lamports": 1366520,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 141,
+      "sha256": "6d13a8a2d077b49c5ae96671d756eb0db66c1c46949416dfdf98cd7424438473"
+    },
+    {
+      "address": "Hc8JKonaYAQJme6rjRo4n3F6cPbh17yRpNfnGyPY8XPQ",
+      "roles": [
+        "account avj1CreatorVault"
+      ],
+      "owner": "11111111111111111111111111111111",
+      "lamports": 27988100,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "address": "HjXcr1A2k9mG2614UrCw5JnYnK7sAbe1y3EEeSmGmPUD",
+      "roles": [
+        "account hjxcMint"
+      ],
+      "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      "lamports": 2733040,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 410,
+      "sha256": "f8d847d0cbc03cfe625505f7ab5cf3b630ef8c2b2e41a31b24a5ecb579c34ae8"
+    },
+    {
+      "address": "Hq2wp8uJ9jCPsYgNHex8RtqdvMPfVGoYwjvF1ATiwn2Y",
+      "roles": [
+        "account globalVolumeAccumulator"
+      ],
+      "owner": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "lamports": 17016138,
+      "executable": false,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 600,
+      "sha256": "47084375f27db1723df7f28ea0eb4b2eec307a4b8f726f1c0c32f883665c320f"
+    },
+    {
+      "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      "roles": [
+        "program token2022"
+      ],
+      "owner": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "lamports": 70228638,
+      "executable": true,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 36,
+      "sha256": "bae3e5d63e30c0c3e6fe788b9e027bf003ca5e5bb46d3a9627e034bb3002ea5c"
+    },
+    {
+      "address": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+      "roles": [
+        "program pumpFees"
+      ],
+      "owner": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "lamports": 6046721,
+      "executable": true,
+      "rentEpoch": 18446744073709551615,
+      "dataLength": 36,
+      "sha256": "cc9077315efa761cfe0b52aae08678ccda2a07e0fa2b374c98a1d51a1b4ce079"
+    }
+  ],
+  "lookupTables": [],
+  "absent": [],
+  "skipped": []
+}

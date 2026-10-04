@@ -5,23 +5,10 @@
  * the commit cited beside it. A protocol upgrade can move a field, and a moved field is a
  * silently wrong read, so re-derive these from the current IDL before you upload a template.
  */
-import { sha256 } from '@noble/hashes/sha2.js';
-import { address, getAddressEncoder, type Address } from '@solana/kit';
+import { addressBytes, anchorDiscriminator } from '@jac0xb/ballista';
 
-const encoder = getAddressEncoder();
-
-/** A base58 program address as the 32 raw bytes a template schema pins. */
-export function addressBytes(value: string): Uint8Array<ArrayBuffer> {
-  return Uint8Array.from(encoder.encode(address(value)));
-}
-
-/**
- * An Anchor instruction discriminator: the first eight bytes of `sha256("global:<name>")`, where
- * `<name>` is the handler's snake_case name in the `#[program]` module.
- */
-export function anchorDiscriminator(name: string): Uint8Array<ArrayBuffer> {
-  return Uint8Array.from(sha256(new TextEncoder().encode(`global:${name}`)).slice(0, 8));
-}
+/** The SDK's address and Anchor discriminator helpers, which the examples import from here. */
+export { addressBytes, anchorDiscriminator };
 
 // ---------------------------------------------------------------- programs
 
@@ -31,8 +18,6 @@ export const JUPITER_V6 = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4' as const
 export const KAMINO_LEND = 'KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD' as const;
 /** Orca Whirlpools, from `declare_id!` in programs/whirlpool/src/lib.rs. */
 export const ORCA_WHIRLPOOL = 'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc' as const;
-/** marginfi v2. */
-export const MARGINFI_V2 = 'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA' as const;
 /** Pyth Solana receiver, the non-`pro-compatible` build. */
 export const PYTH_RECEIVER = 'rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ' as const;
 /** SPL Memo. Orca's v2 instructions take it, for Token-2022 transfers that require a memo. */
@@ -41,27 +26,13 @@ export const MEMO_PROGRAM = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr' as con
 export const SYSVAR_INSTRUCTIONS = 'Sysvar1nstructions1111111111111111111111111' as const;
 /** Kamino Farms, which Kamino Lend invokes whenever a lending instruction touches a reserve with a farm. */
 export const KAMINO_FARMS = 'FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr' as const;
-
 /**
- * Jito's Tip Payment program. It owns all eight tip accounts, as program addresses holding eight
- * bytes of data, so none of them is a plain System account.
+ * pump.fun's bonding-curve program, from its published IDL (`pump-fun/pump-public-docs`,
+ * `idl/pump.json`). Not PumpSwap, the AMM a coin moves to when its curve graduates.
  */
-export const JITO_TIP_PAYMENT = 'T1pyyaTNZsKv2WcRAB8oVnk93mLJw2XzjtVYqCsaHqt' as const;
-
-/**
- * The eight Jito tip accounts. A tip is a plain SOL transfer to one of these and may be made by
- * CPI; the minimum is 1,000 lamports.
- */
-export const JITO_TIP_ACCOUNTS: readonly Address[] = [
-  address('96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5'),
-  address('HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe'),
-  address('Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY'),
-  address('ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49'),
-  address('DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh'),
-  address('ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt'),
-  address('DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL'),
-  address('3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT'),
-];
+export const PUMP_FUN = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P' as const;
+/** Pump Fees, which pump.fun invokes on every trade for its fee rates. */
+export const PUMP_FEES = 'pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ' as const;
 
 // ----------------------------------------------------------------- layouts
 
@@ -77,6 +48,15 @@ export const TOKEN_ACCOUNT_OWNER_OFFSET = 32;
 
 /** The wrapped SOL mint. Its token accounts count their balance in lamports. */
 export const WRAPPED_SOL_MINT = 'So11111111111111111111111111111111111111112' as const;
+
+/** Circle's USDC mint. */
+export const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' as const;
+
+/** A Pyth feed id, which Pyth publishes as 64 hex digits, as the 32 bytes a price account stores. */
+export function pythFeedId(hex: string): Uint8Array<ArrayBuffer> {
+  if (!/^[0-9a-f]{64}$/.test(hex)) throw new Error('A Pyth feed id is 64 lowercase hex digits');
+  return Uint8Array.from({ length: 32 }, (_, index) => Number.parseInt(hex.slice(2 * index, 2 * index + 2), 16));
+}
 
 /** SPL Token `Mint`: `decimals` is the u8 at offset 44 of the 82-byte layout. */
 export const SPL_MINT = { length: 82, decimals: 44 } as const;
@@ -103,15 +83,26 @@ export const PYTH = {
   /**
    * Offsets for a `Full` account. A `Partial` one shifts each by one.
    *
-   * `feedId` is `price_message.feed_id`, the 32 bytes that say which feed the price belongs to:
-   * SOL/USD's is `ef0d8b6f…c280b56d`. The receiver owns every feed's account alike, so nothing
-   * else about the account says which one it is.
+   * `feedId` is `price_message.feed_id`, the 32 bytes that say which feed the price belongs to.
+   * The receiver owns every feed's account alike, so nothing else about the account says which
+   * one it is.
    */
   feedId: 41,
   price: 73,
   confidence: 81,
   exponent: 89,
   publishTime: 93,
+} as const;
+
+/**
+ * pump.fun `BondingCurve`: after the discriminator, five `u64`s (virtual token reserves, virtual SOL
+ * reserves, real token reserves, real SOL reserves, total supply), then `complete`, then `creator`.
+ * `complete` is set when the curve sells its last token, and the coin graduates to PumpSwap.
+ */
+export const PUMP_BONDING_CURVE = {
+  /** The fewest bytes a curve holds: through `complete`. Later upgrades appended fields. */
+  minLength: 49,
+  complete: 48,
 } as const;
 
 /**
@@ -170,6 +161,14 @@ export function splitJupiterRoute(data: Uint8Array) {
   };
 }
 
+/** The shape the Jupiter Swap API returns for `swapInstruction`. */
+export interface JupiterSwapInstruction {
+  programId: string;
+  accounts: readonly { pubkey: string; isSigner: boolean; isWritable: boolean }[];
+  /** Base64. */
+  data: string;
+}
+
 /** `deposit_reserve_liquidity_and_obligation_collateral_v2(liquidity_amount: u64)`. */
 export const KAMINO_DEPOSIT = anchorDiscriminator('deposit_reserve_liquidity_and_obligation_collateral_v2');
 /** `repay_obligation_liquidity_v2(liquidity_amount: u64)`. */
@@ -205,10 +204,26 @@ export const ORCA_INCREASE_LIQUIDITY_BY_TOKEN_AMOUNTS_V2 = anchorDiscriminator(
  * u128, max_sqrt_price: u128 }`, the enum's only variant, as its one-byte Borsh tag.
  */
 export const ORCA_BY_TOKEN_AMOUNTS = Uint8Array.of(0);
-/** `lending_account_withdraw(amount: u64, withdraw_all: Option<bool>)`. */
-export const MARGINFI_WITHDRAW = anchorDiscriminator('lending_account_withdraw');
-/** `lending_account_deposit(amount: u64, ...)`. */
-export const MARGINFI_DEPOSIT = anchorDiscriminator('lending_account_deposit');
+
+/**
+ * pump.fun `buy(amount: u64, max_sol_cost: u64, track_volume: OptionBool)`: buys exactly `amount`
+ * base units for at most `max_sol_cost` lamports, fees included. Its 16 named accounts are
+ * `global`, `fee_recipient`, `mint`, `bonding_curve`, `associated_bonding_curve`,
+ * `associated_user`, `user`, `system_program`, `token_program`, `creator_vault`,
+ * `event_authority`, `program`, `global_volume_accumulator`, `user_volume_accumulator`,
+ * `fee_config` and `fee_program`. pump.fun's April 2026 upgrade appended two more: the coin's
+ * `["bonding-curve-v2", mint]` PDA, read-only, then a buyback fee recipient, writable.
+ */
+export const PUMP_FUN_BUY = anchorDiscriminator('buy');
+/**
+ * pump.fun `sell(amount: u64, min_sol_output: u64)`. Its 14 named accounts are `buy`'s first eight,
+ * then `creator_vault` and `token_program` (the other way round from `buy`), then
+ * `event_authority`, `program`, `fee_config` and `fee_program`. The same two appended accounts
+ * follow.
+ */
+export const PUMP_FUN_SELL = anchorDiscriminator('sell');
+/** pump.fun's `OptionBool(true)`: `buy` records the volume for pump.fun's trading rewards, as its SDK does. */
+export const PUMP_TRACK_VOLUME = Uint8Array.of(1);
 
 /** Borsh `Option::None`. */
 export const OPTION_NONE = Uint8Array.of(0);

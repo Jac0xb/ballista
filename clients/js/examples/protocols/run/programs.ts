@@ -1,7 +1,7 @@
 /** Program accounts the run files bind by address. */
 import { address, type Address } from '@solana/kit';
 
-import type { KitAccountBinding } from '../../../src/kit.js';
+import type { KitAccountBinding } from '@jac0xb/ballista/kit';
 
 export const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 export const SYSTEM_PROGRAM = '11111111111111111111111111111111';

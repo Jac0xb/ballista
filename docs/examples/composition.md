@@ -104,3 +104,47 @@ no authority over the accounts.
 
 Ballista doesn't run on a schedule. A bot, a user or a keeper service still decides when to send
 each run.
+
+## Run another template
+
+A template can call Ballista's `Run` to run another finalized template, then read what that run
+returns. Here the inner template swaps, requires a minimum, and returns what arrived with
+`step.setReturnData`. The outer template runs it, reads the amount with `expression.returnData`,
+and deposits exactly that.
+
+The inner template:
+
+::: code-group
+
+<<< @/../clients/js/examples/docs/swap-and-return-what-arrived.ts#template [TypeScript · Template]
+
+<<< @/../clients/rust/examples/docs_templates.rs#swap-and-return-what-arrived [Rust · Template]
+
+:::
+
+The outer template, and its run:
+
+::: code-group
+
+<<< @/../clients/js/examples/docs/nested-swap-then-deposit.ts#template [TypeScript · Template]
+
+<<< @/../clients/js/examples/docs/nested-swap-then-deposit.ts#run [TypeScript · Run]
+
+<<< @/../clients/rust/examples/docs_templates.rs#nested-swap-then-deposit [Rust · Template]
+
+<<< @/../clients/rust/examples/docs_runs.rs#nested-swap-then-deposit [Rust · Run]
+
+:::
+
+- **Pin the inner template by address.** Return data shows only that a Ballista run set it, not
+  which template ran. A finalized template can't be changed or closed, so its address fixes what
+  it does. Upload the inner template first, and put its address in place of the stand-in.
+- **Pass the inner run's accounts as its own run would:** the inner template account, then its
+  accounts in the order it declares them. An account the inner run needs as a signer must be
+  declared and passed as one by the outer template.
+- **Read the return data straight after the call,** which has no `when`, as the
+  [output rules](/reference/language#output) require.
+- **It costs a call frame.** The inner run is frame 2, so its own calls start at frame 3 of
+  Solana's [5](/reference/limits#call-depth), and the inner run and its calls all count toward
+  the transaction's [instruction trace](/reference/limits#instruction-trace). In return, the inner
+  run has its own registers, VM instructions and 64 CPIs.

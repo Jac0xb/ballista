@@ -1,6 +1,7 @@
+// #region run
 import type { Address, Instruction } from '@solana/kit';
 
-import { buildKitRunInstruction } from '../../../src/kit.js';
+import { buildKitRunInstruction } from '@jac0xb/ballista/kit';
 import { compiled } from '../orca-compound-fees.js';
 import { MEMO_PROGRAM, ORCA_WHIRLPOOL } from '../shared.js';
 import { TOKEN_PROGRAM, at, pinned } from './programs.js';
@@ -56,3 +57,4 @@ export function buildOrcaCompoundRun(input: {
     },
   });
 }
+// #endregion run

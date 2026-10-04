@@ -6,6 +6,10 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "noEmit": true,
+    "paths": {
+      "@jac0xb/ballista": ["./src/index.ts"],
+      "@jac0xb/ballista/kit": ["./src/kit.ts"]
+    },
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "strict": true,

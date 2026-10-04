@@ -12,7 +12,7 @@ import {
   expression,
   planTemplateUpload,
   systemTransfer,
-} from '../src/index.js';
+} from '@jac0xb/ballista';
 
 export const transfer = defineTemplate({
   inputs: { lamports: { type: 'u64' } },

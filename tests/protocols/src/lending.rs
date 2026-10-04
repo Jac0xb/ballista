@@ -1,15 +1,15 @@
-//! The lending snapshot, and the setup the Kamino and marginfi scenarios share.
+//! The lending snapshot, and the setup the Kamino scenarios share.
 //!
 //! `snapshot-lending/` (`scripts/snapshot/manifests/lending.json`) holds, at one slot:
 //! - Kamino Lend's main market, with its SOL and USDC reserves, their vaults, collateral mints and
 //!   farms;
 //! - Scope's price account and Kamino Farms;
-//! - marginfi's main group, with its USDC and SOL banks and their oracles;
+//! - marginfi's main group, with its USDC and SOL banks and their oracles, which no test uses now;
 //! - the Jupiter route `solToUsdc`.
 
 use {
     crate::{
-        kamino, marginfi, oracle,
+        kamino, oracle,
         snapshot::{self, Leg, Snapshot},
         template::{self, Example},
         tx::{self, Failure, Outcome},
@@ -42,12 +42,6 @@ pub const USDC_SPOT: usize = 13;
 pub const USDC_TWAP: usize = 456;
 pub const USDC_MINT: Address =
     Address::from_str_const("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
-pub const MARGINFI_GROUP: Address =
-    Address::from_str_const("4qp6Fx6tnZkY5Wropq9wUYgtFxXKwE6viZxFHg3rdAG8");
-pub const USDC_BANK: Address =
-    Address::from_str_const("2s37akK2eyBbp8DZgCm7RtsaEz8eJP3Nxd4urLHQv7yB");
-pub const SOL_BANK: Address =
-    Address::from_str_const("CCKtUs6Cgwo4aaQUmBPmyoApH2gUDErxNZCAntD6LYGh");
 /// Both swap templates' route: 1 SOL for USDC, built for [`wallet::wallet`].
 pub const SOL_TO_USDC: &str = "solToUsdc";
 pub const JUPITER: Address = Address::from_str_const("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
@@ -233,56 +227,6 @@ pub fn borrow(
     setup(svm, owner, &[], instructions);
 }
 
-/// Opens the marginfi account `account` for `authority` in the main group, and deposits each
-/// `(bank, source token account, amount)`. Returns the account's address.
-pub fn marginfi_account(
-    svm: &mut LiteSVM,
-    authority: &Keypair,
-    account: &Keypair,
-    deposits: &[(Address, Address, u64)],
-) -> Address {
-    let a = authority.pubkey();
-    let mut instructions = vec![marginfi::initialize_account(
-        &MARGINFI_GROUP,
-        &account.pubkey(),
-        &a,
-        &a,
-    )];
-    for (bank, source, amount) in deposits {
-        instructions.push(marginfi::deposit(
-            svm,
-            &MARGINFI_GROUP,
-            &account.pubkey(),
-            &a,
-            bank,
-            source,
-            *amount,
-        ));
-    }
-    setup(svm, authority, &[account], instructions);
-    account.pubkey()
-}
-
-/// A marginfi account (seed `ballista-protocol-tests-mfi-acct`) for an authority (seed
-/// `ballista-protocol-tests-mfi-auth`) holding `deposit` USDC and, with `with_sol`, 1 SOL,
-/// deposited from the authority's own token accounts (write rule 1). Returns the SVM, the
-/// authority, the account, and the authority's USDC account, the one the deposit came from.
-pub fn marginfi_scene(with_sol: bool, deposit: u64) -> (LiteSVM, Keypair, Address, Address) {
-    let mut svm = svm();
-    let authority = wallet::keypair(b"ballista-protocol-tests-mfi-auth");
-    let account = wallet::keypair(b"ballista-protocol-tests-mfi-acct");
-    let a = authority.pubkey();
-    wallet::fund(&mut svm, &a, 10 * SOL);
-    let usdc = wallet::token_account(&mut svm, &a, &USDC_MINT, deposit);
-    let mut deposits = vec![(USDC_BANK, usdc, deposit)];
-    if with_sol {
-        let wsol = wallet::token_account(&mut svm, &a, &wallet::WSOL_MINT, SOL);
-        deposits.push((SOL_BANK, wsol, SOL));
-    }
-    let account = marginfi_account(&mut svm, &authority, &account, &deposits);
-    (svm, authority, account, usdc)
-}
-
 /// An obligation klend will liquidate:
 /// - Its borrower (seed `ballista-protocol-tests-borrower`) deposited 1 SOL and borrowed 70% of its
 ///   value in USDC. The SOL reserve's loan-to-value is 74%.
@@ -391,12 +335,8 @@ mod tests {
             (SCOPE_PRICES, "scopePrices"),
             (USDC_MINT, "usdcMint"),
             (wallet::WSOL_MINT, "wsolMint"),
-            (MARGINFI_GROUP, "marginfiMainGroup"),
-            (USDC_BANK, "marginfiUsdcBank"),
-            (SOL_BANK, "marginfiSolBank"),
             (kamino::KLEND, "kamino"),
             (kamino::FARMS, "kaminoFarms"),
-            (marginfi::MARGINFI, "marginfi"),
         ] {
             assert_eq!(constant, named(name), "{name}");
         }
@@ -520,43 +460,6 @@ mod tests {
         assert_eq!(
             wallet::token_balance(&svm, &leg.destination_token_account),
             0
-        );
-    }
-
-    #[test]
-    fn a_marginfi_account_takes_deposits_in_two_banks() {
-        let mut svm = svm();
-        let authority = wallet::keypair(b"ballista-protocol-tests-mfi-auth");
-        let account = wallet::keypair(b"ballista-protocol-tests-mfi-acct");
-        let a = authority.pubkey();
-        wallet::fund(&mut svm, &a, 10 * SOL);
-        let usdc = wallet::token_account(&mut svm, &a, &USDC_MINT, 100_000_000);
-        let wsol = wallet::token_account(&mut svm, &a, &wallet::WSOL_MINT, SOL);
-
-        let address = marginfi_account(
-            &mut svm,
-            &authority,
-            &account,
-            &[(USDC_BANK, usdc, 100_000_000), (SOL_BANK, wsol, SOL)],
-        );
-        assert_eq!(address, account.pubkey());
-        assert_eq!(wallet::token_balance(&svm, &usdc), 0);
-        assert_eq!(wallet::token_balance(&svm, &wsol), 0);
-        let mut active = marginfi::active_banks(&svm, &address);
-        active.sort();
-        let mut both = vec![USDC_BANK, SOL_BANK];
-        both.sort();
-        assert_eq!(active, both);
-        assert_eq!(
-            marginfi::health_accounts(&svm, &address, &USDC_BANK),
-            [
-                AccountMeta::new_readonly(SOL_BANK, false),
-                AccountMeta::new_readonly(marginfi::bank(&svm, &SOL_BANK).oracle, false),
-            ]
-        );
-        assert_eq!(
-            marginfi::health_accounts(&svm, &address, &SOL_BANK).len(),
-            2
         );
     }
 }

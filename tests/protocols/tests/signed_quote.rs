@@ -359,10 +359,11 @@ fn an_honest_quote_settles_at_the_signed_price_rounded_up() {
         (maker_lamports - AMOUNT, taker_lamports + AMOUNT)
     );
     println!(
-        "settled {AMOUNT} lamports for {paid} USDC units: {} CU, {} in Ballista's run, {} bytes, \
-         fee {}",
+        "settled {AMOUNT} lamports for {paid} USDC units: {} CU, {} in Ballista's run, {} of them \
+         its own, {} bytes, fee {}",
         outcome.compute_units,
         outcome.compute_units_of(&ballista_sdk::ID).unwrap(),
+        outcome.own_compute_units_of(&ballista_sdk::ID).unwrap(),
         outcome.size,
         outcome.fee,
     );

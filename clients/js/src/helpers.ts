@@ -1,3 +1,6 @@
+import { sha256 } from '@noble/hashes/sha2.js';
+
+import { decodeBase58 } from './base58.js';
 import {
   data,
   expression,
@@ -15,6 +18,11 @@ export const SYSTEM_PROGRAM_ADDRESS_BYTES = new Uint8Array(32);
 export const TOKEN_PROGRAM_ADDRESS_BYTES = Uint8Array.of(
   6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91,
   55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
+);
+/** `TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb`, Token-2022. Its token accounts share the SPL Token layout's first 165 bytes. */
+export const TOKEN_2022_PROGRAM_ADDRESS_BYTES = Uint8Array.of(
+  6, 221, 246, 225, 238, 117, 143, 222, 24, 66, 93, 188, 228, 108, 205, 218, 182, 26, 252, 77, 131, 185, 13,
+  39, 254, 189, 249, 40, 216, 161, 139, 252,
 );
 /** `ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL` */
 export const ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES = Uint8Array.of(
@@ -34,6 +42,28 @@ export const ED25519_PROGRAM_ADDRESS_BYTES = Uint8Array.of(
   3, 125, 70, 214, 124, 147, 251, 190, 18, 249, 66, 143, 131, 141, 64, 255, 5, 112, 116, 73, 39, 244, 138,
   100, 252, 202, 112, 68, 128, 0, 0, 0,
 );
+
+/**
+ * An address as the 32 bytes a template pins, or a `pubkey` input takes: a Kit `Address` or any
+ * base58 string. Throws a `TypeError` for text that is not 32 bytes of base58.
+ *
+ * Kit's `getAddressEncoder().encode()` gives a `ReadonlyUint8Array`, which TypeScript refuses where
+ * a template expects a `Uint8Array`.
+ */
+export function addressBytes(address: string): Uint8Array<ArrayBuffer> {
+  const bytes = decodeBase58(address);
+  if (bytes.length !== 32) throw new TypeError(`${JSON.stringify(address)} is not a 32-byte address`);
+  return bytes;
+}
+
+/**
+ * An Anchor instruction discriminator: the first 8 bytes of `sha256("global:<name>")`, where `name`
+ * is the handler's snake_case name in the program's `#[program]` module. A call to an Anchor
+ * program starts its data with these bytes.
+ */
+export function anchorDiscriminator(name: string): Uint8Array<ArrayBuffer> {
+  return Uint8Array.from(sha256(new TextEncoder().encode(`global:${name}`)).slice(0, 8));
+}
 
 export function assertPda(input: {
   account: AccountReference;
@@ -381,8 +411,11 @@ function isTemplateConstant(value: unknown): boolean {
  *   get right.
  *
  * `name` prefixes the variables the steps bind, `<name>Last`, `<name>Now`, `<name>Spent`,
- * `<name>Refill` and `<name>Total`, and names the requirement `within<Name>`: `withinRateLimit` by
- * default.
+ * `<name>Refill` and `<name>Total`, and names the requirement `within<Name>`. Without it, the
+ * variables take the registry account's name, followed by the `spent` field's when that is not
+ * `spent`, and the requirement is `withinRateLimit`. So limits kept in different entries, or in
+ * different fields of one entry, fit in one template; give each a `name` to tell their failures
+ * apart by label.
  */
 export function rateLimit(input: {
   registry: string;
@@ -404,30 +437,31 @@ export function rateLimit(input: {
       );
     }
   }
-  const name = input.name ?? 'rateLimit';
   const spentField = input.spent ?? 'spent';
   const lastSpendField = input.lastSpend ?? 'lastSpend';
+  const capitalized = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+  // Each limit lives in its own entry, or its own field of one, so either names its variables
+  // apart from another limit's in the same template.
+  const prefix =
+    input.name ?? (spentField === 'spent' ? input.registry : `${input.registry}${capitalized(spentField)}`);
   const u128 = (value: Expression) => expression.cast('u128', value);
-  const last = expression.variable(`${name}Last`);
-  const now = expression.variable(`${name}Now`);
-  const spent = expression.variable(`${name}Spent`);
-  const refill = expression.variable(`${name}Refill`);
-  const total = expression.variable(`${name}Total`);
+  const last = expression.variable(`${prefix}Last`);
+  const now = expression.variable(`${prefix}Now`);
+  const spent = expression.variable(`${prefix}Spent`);
+  const refill = expression.variable(`${prefix}Refill`);
+  const total = expression.variable(`${prefix}Total`);
   return [
-    step.let(`${name}Last`, expression.registry(input.registry, lastSpendField)),
+    step.let(`${prefix}Last`, expression.registry(input.registry, lastSpendField)),
     // `now` never reads earlier than `lastSpend`, so `now − lastSpend` is never negative, and the
     // `lastSpend` written back never moves back.
-    step.let(`${name}Now`, expression.max(expression.clockUnixTimestamp(), last)),
-    step.let(`${name}Spent`, u128(expression.registry(input.registry, spentField))),
-    step.let(`${name}Refill`, expression.multiply(u128(expression.subtract(now, last)), u128(input.refillPerSecond))),
+    step.let(`${prefix}Now`, expression.max(expression.clockUnixTimestamp(), last)),
+    step.let(`${prefix}Spent`, u128(expression.registry(input.registry, spentField))),
+    step.let(`${prefix}Refill`, expression.multiply(u128(expression.subtract(now, last)), u128(input.refillPerSecond))),
     step.let(
-      `${name}Total`,
+      `${prefix}Total`,
       expression.add(expression.subtract(spent, expression.min(spent, refill)), u128(input.amount)),
     ),
-    step.require(
-      expression.lessThanOrEqual(total, u128(input.cap)),
-      `within${name.charAt(0).toUpperCase()}${name.slice(1)}`,
-    ),
+    step.require(expression.lessThanOrEqual(total, u128(input.cap)), `within${capitalized(input.name ?? 'rateLimit')}`),
     step.setRegistry(input.registry, spentField, expression.cast('u64', total)),
     step.setRegistry(input.registry, lastSpendField, now),
   ];

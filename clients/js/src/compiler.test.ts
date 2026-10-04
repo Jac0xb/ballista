@@ -1983,11 +1983,11 @@ describe('rateLimit', () => {
   test('refills in u128, requires withinRateLimit, and writes both fields back', () => {
     const steps = limited().steps;
     expect(steps.map((item) => (item.kind === 'let' ? `let ${item.name}` : item.kind))).toEqual([
-      'let rateLimitLast',
-      'let rateLimitNow',
-      'let rateLimitSpent',
-      'let rateLimitRefill',
-      'let rateLimitTotal',
+      'let limitsLast',
+      'let limitsNow',
+      'let limitsSpent',
+      'let limitsRefill',
+      'let limitsTotal',
       'require',
       'setRegistry',
       'setRegistry',
@@ -1995,8 +1995,8 @@ describe('rateLimit', () => {
     // The run's time is the clock, but never earlier than the last spend, and it is what the run
     // writes back: after a clock that steps back, `lastSpend` stays put, so no later run refills
     // the same seconds twice, and the elapsed time is never below zero.
-    const last = expression.variable('rateLimitLast');
-    const now = expression.variable('rateLimitNow');
+    const last = expression.variable('limitsLast');
+    const now = expression.variable('limitsNow');
     expect(steps[0]).toMatchObject({ value: expression.registry('limits', 'lastSpend') });
     expect(steps[1]).toMatchObject({ value: expression.max(expression.clockUnixTimestamp(), last) });
     expect(steps[3]).toMatchObject({
@@ -2133,5 +2133,113 @@ describe('rateLimit', () => {
         amount: expression.input('amount'),
       }),
     ).not.toThrow();
+  });
+});
+
+describe('account group filters', () => {
+  const TOKEN_2022 = address(0x22);
+  const user = expression.accountKey('user');
+  const destination = expression.accountKey('destination');
+  const define = (steps: Step[], accountGroups = ['route']) =>
+    defineTemplate({
+      inputs: { mint: { type: 'pubkey' }, amount: { type: 'u64' } },
+      accounts: { user: { signer: true }, destination: {} },
+      accountGroups,
+      steps,
+    });
+  const compileWith = (steps: Step[], accountGroups?: string[]) => compileTemplate(define(steps, accountGroups));
+  const operandsOf = (compiled: CompiledTemplate, wanted: number) =>
+    records(compiled)
+      .filter((record) => record[0] === wanted)
+      .map((record) => [record[2], record[3], record[4], readU64(record, 6)] as const);
+  /** The data segments of a template that invokes nothing: they follow the instructions directly. */
+  const segments = (compiled: CompiledTemplate) => {
+    const start = instructionOffset(compiled, compiled.stats.instructions);
+    const count = compiled.bytes[14]! | (compiled.bytes[15]! << 8);
+    return Array.from({ length: count }, (_, index) =>
+      compiled.bytes.slice(start + index * DATA_SEGMENT_LENGTH, start + (index + 1) * DATA_SEGMENT_LENGTH),
+    );
+  };
+  const ownedByUser = { programs: [TOKEN_PROGRAM_ADDRESS_BYTES], match: [{ offset: 32, equals: user }] };
+
+  test('groupLength reads the group by its index', () => {
+    const compiled = compileWith([step.let('n', expression.groupLength('second'))], ['first', 'second']);
+    expect(operandsOf(compiled, opcode.groupLength)).toEqual([[1, 0xff, 0xff, 0n]]);
+    expect(() => compileWith([step.let('n', expression.groupLength('missing'))])).toThrow(/Unknown account group: missing/);
+  });
+
+  test('a filter packs its segments, counts and floor, and pins its programs in the pubkey table', () => {
+    const compiled = compileWith([
+      step.require(
+        expression.not(
+          expression.groupAny('route', {
+            programs: [TOKEN_PROGRAM_ADDRESS_BYTES, TOKEN_2022],
+            match: [
+              { offset: 0, equals: expression.input('mint') },
+              { offset: 32, equals: user },
+            ],
+            exceptKeys: [destination],
+          }),
+        ),
+      ),
+      step.let('count', expression.groupCount('route', { ...ownedByUser, minDataLength: 165 })),
+    ]);
+    // Inputs load into r0 (mint), the keys into r1 (user) and r2 (destination).
+    const [any, count] = [operandsOf(compiled, opcode.groupAny), operandsOf(compiled, opcode.groupCount)];
+    // Two programs, interned in order; the floor is the end of the owner match, byte 64.
+    expect(any).toEqual([[0, 0, 1, 0n | (2n << 16n) | (1n << 24n) | (64n << 32n)]]);
+    // The second filter reuses Token's index and names no second program.
+    expect(count).toEqual([[0, 0, 0xff, 3n | (1n << 16n) | (165n << 32n)]]);
+    const kinds = segments(compiled).map((segment) => [segment[0], segment[2]! | (segment[3]! << 8)]);
+    expect(kinds).toEqual([
+      [segmentKind.pubkey, 0],
+      [segmentKind.pubkey, 32],
+      [segmentKind.pubkey, 0],
+      [segmentKind.pubkey, 32],
+    ]);
+  });
+
+  test('match values have a fixed width, except keys are pubkeys, and the floor covers every match', () => {
+    const filter = (overrides: Partial<Parameters<typeof expression.groupAny>[1]>) => () =>
+      compileWith([step.let('found', expression.groupAny('route', { ...ownedByUser, ...overrides }))]);
+    expect(filter({ match: [{ offset: 64, equals: expression.input('amount') }] })).not.toThrow();
+    expect(filter({ match: [{ offset: 0, equals: expression.bytes(Uint8Array.of(1)) }] })).toThrow(/not bytes/);
+    expect(filter({ exceptKeys: [expression.input('amount')] })).toThrow(/exceptKeys requires pubkey/);
+    expect(filter({ minDataLength: 63 })).toThrow(/minDataLength 63 is shorter than the matches, which read to byte 64/);
+    expect(filter({ minDataLength: 64 })).not.toThrow();
+  });
+
+  test('the schema bounds the programs, matches, except keys and offsets', () => {
+    const issues = (filter: unknown) =>
+      schemaIssues(() => define([step.let('found', expression.groupAny('route', filter as never))])).map(
+        ({ path }) => path.slice(4).join('.'),
+      );
+    expect(issues({ ...ownedByUser, programs: [] })).toEqual(['programs']);
+    expect(issues({ ...ownedByUser, programs: [TOKEN_2022, TOKEN_2022] })).toEqual(['programs']);
+    expect(issues({ ...ownedByUser, programs: [address(1), address(2), address(3)] })).toEqual(['programs']);
+    expect(issues({ ...ownedByUser, match: [] })).toEqual(['match']);
+    expect(issues({ ...ownedByUser, match: Array(5).fill({ offset: 0, equals: user }) })).toEqual(['match']);
+    expect(issues({ ...ownedByUser, match: [{ offset: 0x1_0000, equals: user }] })).toEqual(['match.0.offset']);
+    expect(issues({ ...ownedByUser, exceptKeys: Array(5).fill(user) })).toEqual(['exceptKeys']);
+  });
+
+  test('register reuse renames a filter\'s values', () => {
+    // 35 constants and 34 additions take more than 64 registers, so the compiler renumbers them;
+    // the filter's match value is the last sum.
+    const values = Array.from({ length: 35 }, (_, index) => step.let(`v${index}`, expression.u64(index)));
+    const sum = values.reduce<Expression>(
+      (total, _, index) => expression.add(total, expression.variable(`v${index}`)),
+      expression.u64(0),
+    );
+    const compiled = compileWith([
+      ...values,
+      step.let('found', expression.groupAny('route', { programs: [TOKEN_PROGRAM_ADDRESS_BYTES], match: [{ offset: 64, equals: sum }] })),
+    ]);
+    // One register per value would be 70; reuse brings it under 64.
+    expect(compiled.stats.registers).toBeLessThanOrEqual(64);
+    const [filter] = segments(compiled);
+    // The match names the register the last addition wrote.
+    const last = records(compiled).filter((record) => record[0] === opcode.add).at(-1)!;
+    expect(filter![1]).toBe(last[1]);
   });
 });

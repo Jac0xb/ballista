@@ -6,7 +6,7 @@ import {
   expression,
   step,
   systemTransfer,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 
 /** Split `total` lamports: `partnerBps` of it to the partner, the rest to the treasury. */
 export const basisPointRevenueSplit = defineTemplate({
@@ -45,8 +45,8 @@ export const basisPointRevenueSplit = defineTemplate({
 // #region run
 import type { Address } from '@solana/kit';
 
-import { compileTemplate } from '../../src/index.js';
-import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '../../src/kit.js';
+import { compileTemplate } from '@jac0xb/ballista';
+import { SYSTEM_PROGRAM_ADDRESS, buildKitRunInstruction } from '@jac0xb/ballista/kit';
 
 export function runBasisPointRevenueSplit(run: {
   templateAddress: Address;

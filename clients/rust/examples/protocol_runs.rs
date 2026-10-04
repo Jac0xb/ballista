@@ -6,7 +6,7 @@
 //!
 //! A runner never sees the bytecode. It needs three things from the template author: the order
 //! of the fixed accounts, the order of the inputs, and — for a batched template — the row shape.
-//! There are only three run shapes across all eleven examples, and they are all below.
+//! There are only three run shapes across all thirteen examples, and they are all below.
 //!
 //! ```bash
 //! cargo run -p ballista-sdk --example protocol_runs
@@ -298,7 +298,7 @@ fn main() {
     route_data.extend_from_slice(&50u16.to_le_bytes());
     route_data.push(0);
 
-    // SOL/USD's feed id, `ef0d8b6f…c280b56d`.
+    // SOL/USD's feed id, `ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d`.
     let sol_usd = [
         0xef, 0x0d, 0x8b, 0x6f, 0xda, 0x2c, 0xeb, 0xa4, 0x1d, 0xa1, 0x5d, 0x40, 0x95, 0xd1, 0xda,
         0x39, 0x2a, 0x0d, 0x2f, 0x8e, 0xd0, 0xc6, 0xc7, 0xbc, 0x0f, 0x4c, 0xfa, 0xc8, 0xc2, 0x80,

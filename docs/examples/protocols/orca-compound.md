@@ -1,9 +1,13 @@
-# Compound the fees you collected
+# Compound collected fees
 
 <p class="protocol-line">Orca</p>
 
-**Status:** Run as real transactions against Orca's Whirlpools program and a SOL/USDC pool, copied
-from mainnet at one slot into LiteSVM, a local Solana runtime. Not yet run on mainnet itself.
+**Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against Orca's
+Whirlpools program and a SOL/USDC pool copied from mainnet; not yet run on devnet or mainnet.
+
+**Cost:** Ballista's own work took 8,972 of the tested transaction's 43,784
+[compute units](/reference/glossary#compute-units); Whirlpools took the rest. Ballista charges no
+fee; see [what it costs](/guide/why-ballista#cost).
 
 ## What it does
 
@@ -34,27 +38,28 @@ emptied of liquidity is collected, not refilled.
 ::: warning Don't use a floor of 0
 A fee above the floor can still be too small to buy any liquidity. The deposit then fails with
 Whirlpools' `LiquidityZero` (6012), and the whole run reverts, collect included. A few base units (a
-token's smallest unit) cover SOL/USDC, but a pool whose token A is worth less per unit needs more;
-the template's header suggests a few thousand. One floor applies to both fees, each counted in its
-own token's base units.
+token's smallest unit) cover SOL/USDC, but a pool whose token A is worth less per unit needs more:
+a few thousand is safer. One floor applies to both fees, each counted in its own token's base units.
 :::
 
 ## Template
 
 ::: code-group
 
-<<< ../../../clients/js/examples/protocols/orca-compound-fees.ts [TypeScript · Template]
+<<< @/../clients/js/examples/protocols/orca-compound-fees.ts#template [TypeScript · Template]
 
-<<< ../../../clients/rust/examples/protocol_templates.rs#orca-compound [Rust · Template]
+<<< @/../clients/rust/examples/protocol_templates.rs#orca-compound [Rust · Template]
 
-<<< ../../../clients/js/examples/protocols/run/orca-compound.ts [TypeScript · Run]
+<<< @/../clients/js/examples/protocols/run/orca-compound.ts#run [TypeScript · Run]
 
-<<< ../../../clients/rust/examples/protocol_templates_run.rs#orca-compound [Rust · Run]
+<<< @/../clients/rust/examples/protocol_templates_run.rs#orca-compound [Rust · Run]
 
 :::
 
 The offsets come from Orca's `Position` account and the SPL Token account; see
-[reading offsets](/examples/protocols/#reading-offsets-from-an-account).
+[reading offsets](/examples/protocols/#reading-offsets-from-an-account). The Rust template takes
+its program addresses, offsets, discriminators and `token_account()` from the
+[shared helpers](/examples/protocols/#rust-helpers).
 
 ## Run it
 
@@ -65,7 +70,7 @@ The Run tabs pass the template's 15 accounts in the order it declares them: `whi
 
 - `memoProgram` is SPL Memo, which Whirlpools' v2 instructions take.
 - `tickArrayLower` and `tickArrayUpper` hold the position's lower and upper ticks, the prices its
-  range starts and ends at. Whirlpools keeps a pool's ticks in accounts of 88, called tick arrays.
+  range starts and ends at. Whirlpools stores a pool's ticks 88 to an account, in tick arrays.
 - Both pool mints must be SPL Token mints, as SOL and USDC are.
 
 The inputs are `dustFloor` (a `u64`), then `minSqrtPrice` and `maxSqrtPrice` (`u128`s), the lowest
@@ -78,16 +83,22 @@ lands, the deposit fails with `PriceSlippageOutOfBounds` (6069), and the whole r
 `positionAuthority` signs for the position. It can be the holder, or a delegate: an account, such as
 a keeper bot, that the holder approved on `positionTokenAccount` with the token program's `approve`.
 A delegate that reinvests also needs approval on both fee accounts, since the deposit spends from
-them under its signature. Approve a bounded amount there: an unlimited approval lets the keeper
-spend those accounts outside this template too.
+them under its signature.
+
+::: warning Approving a keeper hands it the position
+Neither approval is limited to this template. Outside it, the delegate can call Whirlpools'
+`collect_fees` itself and send the fees to accounts of its own, or move the NFT, and with it the
+position. It can also spend from the fee accounts up to the amount approved there. Approve only a
+keeper you would trust with the position itself, and approve a bounded amount on the fee accounts.
+:::
 
 ## What has been tested
 
-- **Against the real program.** `tests/protocols/tests/orca_compound_fees.rs` earns fees with real
-  swaps through the pool, then runs the template:
+- **In LiteSVM.** `tests/protocols/tests/orca_compound_fees.rs` earns fees with real swaps through
+  the pool, then runs the template:
   - Fees in both tokens are updated, collected and reinvested. The liquidity added is exactly what
-    Orca's own math says the fees buy, and one fee is used whole. The run took 43,958 compute units
-    (Solana's measure of execution cost) and 706 bytes.
+    Orca's own math says the fees buy, and one fee is used whole. The run took 43,784 compute units
+    and 706 bytes.
   - Fees in one token are collected whole, not reinvested. With no fees, only the update runs. A
     position without liquidity gets no Whirlpools call, and an emptied one is collected, not
     refilled.
@@ -106,11 +117,6 @@ spend those accounts outside this template too.
   (`tests/protocols/tests/orca_setup.rs`).
 - Every Whirlpools call passes the same accounts, in the same order and with the same signer and
   writable flags, as Orca's own Rust client (`tests/protocols/tests/orca_cpis.rs`).
-- A test reads the template and checks that `feesGoToThePositionHolder` compares the fee accounts'
-  owners with `positionTokenAccount`'s owner, never with `positionAuthority`
-  (`clients/js/src/protocol-semantics.test.ts`).
 - An opt-in test checks the Orca offsets against devnet accounts.
-- The Rust template is byte-identical to the TypeScript one, and the Rust run passes the accounts
-  and inputs the template declares (`clients/rust/tests/protocol_templates.rs`).
 
 [All protocol templates](/examples/protocols/) · [What has been tested](/examples/protocols/#what-has-been-tested)

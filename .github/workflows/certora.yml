@@ -1,8 +1,16 @@
 name: Formal verification
 
-# Runs the Certora Solana Prover over certora/ballista-specs. The job needs a CERTORAKEY secret,
-# so it is skipped on forks and pull requests from them; the host typecheck of the specifications
-# always runs.
+# The specification crate's host tests, its SBF build and the typing enumeration always run. With
+# a CERTORAKEY secret the Certora Solana Prover then runs every conf in certora/ballista-specs, one
+# job each, and certora/check-results.py reads each log:
+#
+# - run.conf and the candidate confs gate: every rule must be verified, with its sanity check;
+# - the twin confs gate inverted: every twin must come back violated, with a counterexample, or
+#   its rule proves less than it claims;
+# - run-blocked.conf only reports, since its rules have known blockers (certora/README.md).
+#
+# Each job's --msg names the conf and the commit, so a result on prover.certora.com can be traced
+# to the code it checked. Without the secret (forks, pull requests from them) the prover is skipped.
 
 on:
   pull_request:
@@ -15,9 +23,13 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  CERTORA_CLI_VERSION: 8.19.2
+  CARGO_CERTORA_SBF_VERSION: 0.3.5
+
 jobs:
-  typecheck:
-    name: Specifications typecheck
+  specs:
+    name: Specification tests, SBF build and typing enumeration
     runs-on: ubuntu-latest
     outputs:
       has_key: ${{ steps.key.outputs.has_key }}
@@ -30,16 +42,51 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: certora -> certora/target
-      - run: cargo check -p ballista-specs --features rt
+      # Every crate's host tests: the adapter, the rules' oracles and conf bookkeeping, and the
+      # critics' regression tests.
+      - run: cargo test --features rt
         working-directory: certora
-      - run: cargo test -p cvlr-pinocchio --features rt
+      # The typing rule's oracle over every single-instruction program it enumerates (about 565
+      # million verifier calls); ignored by default because it takes a while.
+      - name: Typing enumeration
+        run: cargo test --release -p ballista-specs --features rt --test typing_enumeration -- --ignored
+        working-directory: certora
+      - run: cargo install cargo-certora-sbf --version "$CARGO_CERTORA_SBF_VERSION" --locked
+      # The binary the prover checks, built with Certora's platform tools; fails on any SBF stack
+      # frame over 4 KiB, which cargo certora-sbf reports but does not fail on.
+      - run: ./build-sbf.sh
         working-directory: certora
 
   prove:
-    name: Certora Solana Prover
-    needs: typecheck
-    if: needs.typecheck.outputs.has_key == 'true'
+    name: Prover, ${{ matrix.conf }}
+    needs: specs
+    if: needs.specs.outputs.has_key == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - conf: run.conf
+            check: --expect verified
+            gating: true
+          - conf: run-candidates.conf
+            check: --expect verified
+            gating: true
+          - conf: run-candidates-memcmp.conf
+            check: --expect verified
+            gating: true
+          - conf: run-twins.conf
+            check: --expect violated
+            gating: true
+          - conf: run-twins-memcmp.conf
+            check: --expect violated
+            gating: true
+          - conf: run-blocked.conf
+            check: --report-only
+            gating: false
+    # The blocked conf is informative: its job may fail without failing the workflow.
+    continue-on-error: ${{ !matrix.gating }}
     env:
       CERTORAKEY: ${{ secrets.CERTORAKEY }}
     steps:
@@ -48,9 +95,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install certora-cli
-      - run: cargo install cargo-certora-sbf
-      - run: cargo certora-sbf --tools-version v1.53 --no-build
+      - run: pip install "certora-cli==$CERTORA_CLI_VERSION"
+      - run: cargo install cargo-certora-sbf --version "$CARGO_CERTORA_SBF_VERSION" --locked
+      - name: Install Certora's platform tools
+        run: cargo certora-sbf --tools-version v1.53 --no-build
         working-directory: certora/ballista-specs
-      - run: certoraSolanaProver run.conf --wait_for_results all
+      # The prover exits non-zero when a rule is violated, which is the point for a twin, so its
+      # status is not the verdict; check-results.py below reads every rule's result from the log.
+      - name: Run the prover
         working-directory: certora/ballista-specs
+        run: |
+          status=0
+          certoraSolanaProver ${{ matrix.conf }} --wait_for_results all \
+            --msg "${{ matrix.conf }} at ${{ github.sha }}" > prover.log 2>&1 || status=$?
+          tail -n 80 prover.log
+          echo "certoraSolanaProver exited with $status"
+      - name: Check every rule's result
+        working-directory: certora
+        run: python3 check-results.py ballista-specs/${{ matrix.conf }} ballista-specs/prover.log ${{ matrix.check }}
+      - name: Keep the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prover-${{ matrix.conf }}
+          path: certora/ballista-specs/prover.log

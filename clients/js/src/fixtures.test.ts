@@ -16,6 +16,7 @@ import {
   INSTRUCTIONS_SYSVAR_ADDRESS_BYTES,
   RUNTIME_ERROR_NAMES,
   SYSTEM_PROGRAM_ADDRESS_BYTES,
+  TOKEN_2022_PROGRAM_ADDRESS_BYTES,
   TOKEN_PROGRAM_ADDRESS_BYTES,
   VERIFIER_ERROR_NAMES,
   account,
@@ -292,6 +293,43 @@ export const fixtures: Record<string, () => Template> = {
         }),
       ],
     }),
+
+  // Run by the Mollusk suite, which sets the route's members up to match, miss, or sit in the except
+  // list, and reads the five results back from the return data. The Rust compiler's test compiles
+  // the same template and expects these bytes.
+  'group-filter': () => {
+    const userTokenAccounts = {
+      programs: [TOKEN_PROGRAM_ADDRESS_BYTES, TOKEN_2022_PROGRAM_ADDRESS_BYTES],
+      match: [
+        { offset: 0, equals: expression.input('mint') },
+        { offset: 32, equals: expression.accountKey('user') },
+      ],
+    };
+    return defineTemplate({
+      inputs: { mint: { type: 'pubkey' } },
+      accounts: { user: { signer: true }, destination: {} },
+      accountGroups: ['route'],
+      steps: [
+        step.setReturnData([
+          data.encode('u64', expression.groupLength('route')),
+          data.encode('u64', expression.groupCount('route', userTokenAccounts)),
+          data.encode('bool', expression.groupAny('route', userTokenAccounts)),
+          data.encode(
+            'u64',
+            expression.groupCount('route', { ...userTokenAccounts, exceptKeys: [expression.accountKey('destination')] }),
+          ),
+          data.encode(
+            'u64',
+            expression.groupCount('route', {
+              programs: [TOKEN_PROGRAM_ADDRESS_BYTES],
+              minDataLength: 165,
+              match: [{ offset: 64, equals: expression.u64(1_000) }],
+            }),
+          ),
+        ]),
+      ],
+    });
+  },
 
   'dynamic-read': () =>
     defineTemplate({
@@ -617,6 +655,92 @@ export const fixtures: Record<string, () => Template> = {
         ),
       ],
     }),
+
+  /**
+   * The signed-quote settlement with a `rateLimit` on what each taker takes: more values than 64
+   * registers hold one each, so the compiler reuses registers. The Mollusk suite settles quotes up
+   * to the cap, past it, and as it refills.
+   */
+  'register-reuse-signed-quote': () => {
+    const { accounts, steps, ...settlement } = signedQuoteSettlement;
+    return defineTemplate({
+      ...settlement,
+      registries: { fills: { spent: 'u64', lastSpend: 'i64' } },
+      accounts: {
+        ...accounts,
+        // The taker pays for its entry the first time it settles.
+        taker: { signer: true, writable: true },
+        takerFills: account.registry('fills', { key: expression.accountKey('taker'), payer: 'taker' }),
+        systemProgram: account.systemProgram(),
+      },
+      steps: [
+        ...steps,
+        ...rateLimit({
+          registry: 'takerFills',
+          cap: expression.u64(5_000_000),
+          refillPerSecond: expression.u64(100),
+          amount: expression.input('amount'),
+          name: 'takerCap',
+        }),
+      ],
+    });
+  },
+
+  /**
+   * A count loop over `passes` terms of `index × stride + 1` lamports. It carries their total and
+   * the largest, pays the terms of even passes, and returns the total and the largest. The balance
+   * checks around it stand in for a real template's assertions; with them, its values need more
+   * than 64 registers, one each, so the compiler reuses registers across the loop. The Mollusk
+   * suite checks the payments and the returned values.
+   */
+  'register-reuse-loop': () => {
+    const lamports = (name: string) => expression.accountField(account.fixed(name), 'lamports');
+    const balancesInOrder = (label: string) =>
+      step.require(expression.lessThanOrEqual(lamports('recipient'), lamports('payer')), label);
+    const stride = expression.input('stride');
+    const term = expression.variable('term');
+    const largest = expression.variable('largest');
+    return defineTemplate({
+      inputs: { passes: { type: 'u64' }, stride: { type: 'u64' } },
+      accounts: { ...systemPrograms, payer: { signer: true, writable: true }, recipient: { writable: true } },
+      steps: [
+        ...Array.from({ length: 14 }, (_, index) => balancesInOrder(`before${index}`)),
+        step.let('total', expression.u64(0)),
+        step.let('largest', expression.u64(0)),
+        step.repeat(
+          expression.input('passes'),
+          [
+            step.let('term', expression.add(expression.multiply(expression.loopIndex(), stride), expression.u64(1))),
+            step.assign('total', expression.add(expression.variable('total'), term)),
+            step.assign('largest', expression.select(expression.greaterThan(term, largest), term, largest)),
+            // The guard's values are computed after the amount and before the invoke reads both.
+            systemTransfer({
+              systemProgram: account.fixed('systemProgram'),
+              from: account.fixed('payer'),
+              to: account.fixed('recipient'),
+              lamports: term,
+              when: expression.equal(expression.remainder(expression.loopIndex(), expression.u64(2)), expression.u64(0)),
+              label: 'payEvenTerms',
+            }),
+            step.require(
+              expression.equal(
+                expression.add(stride, expression.loopIndex()),
+                expression.add(expression.loopIndex(), stride),
+              ),
+              'indexCommutes',
+            ),
+          ],
+          { max: 10, carry: ['total', 'largest'], label: 'payTerms' },
+        ),
+        ...Array.from({ length: 4 }, (_, index) => balancesInOrder(`after${index}`)),
+        step.require(
+          expression.lessThanOrEqual(expression.variable('largest'), expression.variable('total')),
+          'largestWithinTotal',
+        ),
+        step.setReturnData([data.encode('u64', expression.variable('total')), data.encode('u64', expression.variable('largest'))]),
+      ],
+    });
+  },
 };
 
 const manifest: Record<string, unknown> = {};

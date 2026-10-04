@@ -1,9 +1,8 @@
 //! Build the `Run` instruction for each template from the guide and example pages.
 //!
-//! A runner never sees the bytecode. It passes the template address, one `AccountMeta` per
-//! declared account in the order the template declares them (fixed accounts first, then each
-//! row's accounts, then any account-group members), and the inputs encoded with `RunInputs` in
-//! declaration order (group lengths first, then fixed inputs, then each row's inputs).
+//! Each function compiles its template from `docs_templates.rs` and names every input and
+//! account, as the TypeScript runs do. The compiled template puts them in the order it declares
+//! them and gives each account the signer and writable flags it declares.
 //!
 //! `tests/docs_examples.rs` checks each function below against the run the TypeScript client
 //! builds for the same example: the same run data and the same signer and writable flags.
@@ -11,10 +10,25 @@
 //! ```bash
 //! cargo run -p ballista-sdk --example docs_runs
 //! ```
+//!
+//! The pages include each function by its `#region` name.
 
 #![allow(dead_code)]
 
-use solana_program::{instruction::Instruction, pubkey::Pubkey};
+#[path = "docs_templates.rs"]
+pub mod templates;
+
+use std::error::Error;
+
+use ballista_sdk::template::Row;
+use ballista_sdk::{
+    find_registry_entry_address, ASSOCIATED_TOKEN_PROGRAM_ID, SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID,
+};
+use solana_program::{
+    instruction::{AccountMeta, Instruction},
+    pubkey,
+    pubkey::Pubkey,
+};
 
 fn main() {
     for (name, run) in ALL {
@@ -44,82 +58,96 @@ fn stand_in_data() -> Vec<u8> {
     data
 }
 
-/// Every run in this file, called with the example inputs and a given number of batch rows.
-/// An example's name and a function that builds its run for a given number of batch rows.
+type RunResult = Result<Instruction, Box<dyn Error>>;
+
+/// An example's name and a function that builds its run, with the example inputs, for a given
+/// number of batch rows.
 pub type ExampleRun = (&'static str, fn(usize) -> Instruction);
 
 pub const ALL: &[ExampleRun] = &[
     ("sweep-above-a-reserve", |_| {
-        sweep_above_a_reserve(key(200), key(1), key(2), 2_000_000)
+        sweep_above_a_reserve(key(200), key(1), key(2), 2_000_000).unwrap()
     }),
     ("forward-the-whole-token-balance", |_| {
-        forward_the_whole_token_balance(key(200), key(1), key(2), key(3))
-    }),
-    ("repay-exactly-what-is-owed", |_| {
-        repay_exactly_what_is_owed(key(200), key(1), key(2), key(3))
+        forward_the_whole_token_balance(key(200), key(1), key(2), key(3)).unwrap()
     }),
     ("split-what-arrived", |_| {
-        split_what_arrived(key(200), key(1), key(2), key(3), 2_000_000, 3_000)
+        split_what_arrived(key(200), key(1), key(2), key(3), 2_000_000, 3_000).unwrap()
     }),
     ("claim-only-when-there-is-something", |_| {
-        claim_only_when_there_is_something(key(200), key(1), key(2), key(3))
+        claim_only_when_there_is_something(key(200), key(1), key(2), key(3)).unwrap()
     }),
     ("liquidate-only-when-unhealthy", |_| {
-        liquidate_only_when_unhealthy(key(200), key(1), key(2), key(3), 2)
+        liquidate_only_when_unhealthy(key(200), key(1), key(2), key(3), 2).unwrap()
     }),
-    ("top-up-only-when-low", |_| {
-        top_up_only_when_low(key(200), key(1), key(2), 2_000_000_000, 10_000)
+    ("top-up-to-a-target", |_| {
+        top_up_to_a_target(key(200), key(1), key(2), 2_000_000_000).unwrap()
     }),
     ("initialize-only-if-missing", |_| {
-        initialize_only_if_missing(key(200), key(1), key(2))
+        initialize_only_if_missing(key(200), key(1), key(2)).unwrap()
     }),
     ("waterfall-until-the-money-runs-out", |rows| {
         let creditors: Vec<(Pubkey, u64)> =
             keys(10, rows).into_iter().map(|k| (k, 1_000)).collect();
-        waterfall_until_the_money_runs_out(key(200), key(1), 2_000_000, &creditors)
+        waterfall_until_the_money_runs_out(key(200), key(1), 2_000_000, &creditors).unwrap()
     }),
     ("consolidate-only-the-funded-accounts", |rows| {
-        consolidate_only_the_funded_accounts(key(200), key(1), key(2), &keys(10, rows))
+        consolidate_only_the_funded_accounts(key(200), key(1), key(2), &keys(10, rows)).unwrap()
     }),
     ("crank-only-the-ripe-entries", |rows| {
-        crank_only_the_ripe_entries(key(200), key(1), &keys(10, rows))
+        crank_only_the_ripe_entries(key(200), key(1), &keys(10, rows)).unwrap()
+    }),
+    ("crank-once-per-waiting-entry", |_| {
+        crank_once_per_waiting_entry(key(200), key(1), key(2)).unwrap()
     }),
     ("distribute-a-runtime-pot-pro-rata", |rows| {
         let holders: Vec<(Pubkey, u64)> = keys(10, rows).into_iter().map(|k| (k, 100)).collect();
-        distribute_a_runtime_pot_pro_rata(key(200), key(1), 2_000_000, &holders)
+        distribute_a_runtime_pot_pro_rata(key(200), key(1), 2_000_000, &holders).unwrap()
     }),
     ("bounded-sol-payroll", |rows| {
-        bounded_sol_payroll(key(200), key(1), &keys(10, rows), 10_000)
+        bounded_sol_payroll(key(200), key(1), &keys(10, rows), 10_000).unwrap()
     }),
     ("basis-point-revenue-split", |_| {
-        basis_point_revenue_split(key(200), key(1), key(2), key(3), 1_000_000, 250)
+        basis_point_revenue_split(key(200), key(1), key(2), key(3), 1_000_000, 250).unwrap()
     }),
     ("index-weighted-rewards", |rows| {
-        index_weighted_rewards(key(200), key(1), &keys(10, rows), 1_000)
+        index_weighted_rewards(key(200), key(1), &keys(10, rows), 1_000).unwrap()
     }),
     ("deadline-refund", |_| {
-        deadline_refund(key(200), key(1), key(2), 10_000, 9_000_000_000)
+        deadline_refund(key(200), key(1), key(2), 10_000, 9_000_000_000).unwrap()
     }),
     ("reserve-preserving-sweep", |_| {
-        reserve_preserving_sweep(key(200), key(1), key(2), 1_000_000_000, 50_000)
+        reserve_preserving_sweep(key(200), key(1), key(2), 1_000_000_000, 50_000).unwrap()
+    }),
+    ("payment-agent", |_| {
+        payment_agent(key(200), key(1), key(2), 1_000).unwrap()
+    }),
+    ("daily-limit-per-caller", |_| {
+        daily_limit_per_caller(key(200), key(1), key(2), 1_000).unwrap()
+    }),
+    ("listed-callers-only", |_| {
+        listed_callers_only(key(200), key(1), key(2), Some((key(3), true))).unwrap()
+    }),
+    ("assert-recipient-ata", |_| {
+        assert_recipient_ata(key(200), key(1), key(2), TOKEN_PROGRAM_ID).unwrap()
     }),
     ("assert-create-then-transfer", |rows| {
         let recipients = keys(10, rows);
         let atas = keys(100, rows);
         let rows: Vec<(Pubkey, Pubkey)> = recipients.into_iter().zip(atas).collect();
-        assert_create_then_transfer(key(200), key(1), key(2), key(3), key(4), &rows, 1_000)
+        assert_create_then_transfer(key(200), key(1), key(2), key(3), key(4), &rows, 1_000).unwrap()
     }),
     ("existing-account-token-payroll", |rows| {
-        existing_account_token_payroll(key(200), key(1), key(2), &keys(10, rows), 1_000)
+        existing_account_token_payroll(key(200), key(1), key(2), &keys(10, rows), 1_000).unwrap()
     }),
     ("conditional-ata-setup", |_| {
-        conditional_ata_setup(key(200), key(1), key(2), key(3), key(4))
+        conditional_ata_setup(key(200), key(1), key(2), key(3), key(4)).unwrap()
     }),
     ("close-empty-token-accounts", |rows| {
-        close_empty_token_accounts(key(200), key(1), key(2), &keys(10, rows))
+        close_empty_token_accounts(key(200), key(1), key(2), &keys(10, rows)).unwrap()
     }),
     ("exact-token-debit", |_| {
-        exact_token_debit(key(200), key(1), key(2), key(3), 1_000)
+        exact_token_debit(key(200), key(1), key(2), key(3), 1_000).unwrap()
     }),
     ("deadline-and-minimum-output", |_| {
         deadline_and_minimum_output(
@@ -129,18 +157,19 @@ pub const ALL: &[ExampleRun] = &[
             (9_000_000_000, 1_000, 900),
             &stand_in_data(),
         )
+        .unwrap()
     }),
     ("pinned-program-and-owner", |_| {
-        pinned_program_and_owner(key(200), key(1), key(2), 10_000)
+        pinned_program_and_owner(key(200), key(1), key(2), 10_000).unwrap()
     }),
     ("oracle-price-band", |_| {
-        oracle_price_band(key(200), key(1), key(2), key(3), (1, 1_000_000))
+        oracle_price_band(key(200), key(1), key(2), key(3), (1, 1_000_000)).unwrap()
     }),
     ("maximum-lamport-spend", |_| {
-        maximum_lamport_spend(key(200), key(1), key(2), 1_000_000)
+        maximum_lamport_spend(key(200), key(1), key(2), 1_000_000).unwrap()
     }),
     ("canonical-position-account", |_| {
-        canonical_position_account(key(200), key(1), 7).expect("the example key is off curve")
+        canonical_position_account(key(200), key(1), 7).unwrap()
     }),
     ("swap-then-deposit", |_| {
         swap_then_deposit(
@@ -152,6 +181,7 @@ pub const ALL: &[ExampleRun] = &[
             &stand_in_data(),
             &stand_in_data(),
         )
+        .unwrap()
     }),
     ("claim-then-distribute", |rows| {
         claim_then_distribute(
@@ -163,6 +193,7 @@ pub const ALL: &[ExampleRun] = &[
             &keys(10, rows),
             1_000,
         )
+        .unwrap()
     }),
     ("primary-or-fallback-route", |_| {
         primary_or_fallback_route(
@@ -173,15 +204,23 @@ pub const ALL: &[ExampleRun] = &[
             &stand_in_data(),
             &stand_in_data(),
         )
+        .unwrap()
     }),
     ("time-gated-governance-execution", |_| {
-        time_gated_governance_execution(key(200), key(1), key(2), key(3), &stand_in_data())
+        time_gated_governance_execution(key(200), key(1), key(2), key(3), &stand_in_data()).unwrap()
     }),
     ("bounded-keeper-crank", |rows| {
         let markets = keys(10, rows);
         let queues = keys(100, rows);
         let rows: Vec<(Pubkey, Pubkey)> = markets.into_iter().zip(queues).collect();
-        bounded_keeper_crank(key(200), key(1), &rows)
+        bounded_keeper_crank(key(200), key(1), &rows).unwrap()
+    }),
+    ("swap-and-return-what-arrived", |_| {
+        swap_and_return_what_arrived(key(200), key(1), key(2), key(3), 900, &stand_in_data())
+            .unwrap()
+    }),
+    ("nested-swap-then-deposit", |_| {
+        nested_swap_then_deposit(key(200), key(1), key(2), key(3), 900, &stand_in_data()).unwrap()
     }),
     ("row-amounts", |rows| {
         let payees: Vec<(Pubkey, u64)> = keys(10, rows)
@@ -189,19 +228,26 @@ pub const ALL: &[ExampleRun] = &[
             .enumerate()
             .map(|(i, k)| (k, 10_000 * (i as u64 + 1)))
             .collect();
-        row_amounts(key(200), key(1), &payees)
+        row_amounts(key(200), key(1), &payees).unwrap()
     }),
     ("budgeted-payroll", |rows| {
-        budgeted_payroll(key(200), key(1), &keys(10, rows), 10_000, 250_000)
+        budgeted_payroll(key(200), key(1), &keys(10, rows), 10_000, 250_000).unwrap()
     }),
     ("exact-lamport-delta", |_| {
-        exact_lamport_delta(key(200), key(1), key(2), 50_000_000)
+        exact_lamport_delta(key(200), key(1), key(2), 50_000_000).unwrap()
     }),
     ("token-transfer", |_| {
-        token_transfer(key(200), key(1), key(2), key(3), 25_000)
+        token_transfer(key(200), key(1), key(2), key(3), 25_000).unwrap()
     }),
     ("generic-cpi", |_| {
-        generic_cpi(key(200), key(1), key(2), 25_000, &[9, 9, 9], true)
+        generic_cpi(key(200), key(1), key(2), 25_000, &[9, 9, 9], true).unwrap()
+    }),
+    ("swap-through-a-checked-route", |_| {
+        let pools = keys(20, 3)
+            .into_iter()
+            .map(|pool| AccountMeta::new(pool, false))
+            .collect();
+        swap_through_a_checked_route(key(200), key(10), key(1), key(2), vec![1; 40], pools).unwrap()
     }),
     ("rebalance-three-swaps", |_| {
         let legs = [
@@ -209,7 +255,10 @@ pub const ALL: &[ExampleRun] = &[
                 source: key(1),
                 destination: key(2),
                 route: vec![1; 40],
-                pools: keys(20, 3),
+                pools: keys(20, 3)
+                    .into_iter()
+                    .map(|pool| AccountMeta::new(pool, false))
+                    .collect(),
                 target: 5_000,
                 min_out: 4_900,
             },
@@ -225,12 +274,15 @@ pub const ALL: &[ExampleRun] = &[
                 source: key(5),
                 destination: key(6),
                 route: vec![3; 24],
-                pools: keys(30, 2),
+                pools: keys(30, 2)
+                    .into_iter()
+                    .map(|pool| AccountMeta::new(pool, false))
+                    .collect(),
                 target: 7_000,
                 min_out: 6_800,
             },
         ];
-        rebalance_three_swaps(key(200), key(10), &legs)
+        rebalance_three_swaps(key(200), key(10), &legs).unwrap()
     }),
 ];
 
@@ -243,17 +295,16 @@ pub fn sweep_above_a_reserve(
     vault: Pubkey,
     destination: Pubkey,
     reserve: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    let inputs = RunInputs::new().u64(reserve).finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false), // systemProgram
-        AccountMeta::new(vault, true),                       // vault: signs, writable
-        AccountMeta::new(destination, false),                // destination: writable
-    ];
-    run_instruction(template, accounts, &inputs)
+) -> RunResult {
+    let instruction = templates::sweep_above_a_reserve()
+        .compile()?
+        .run(template)
+        .input("reserve", reserve)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("vault", vault) // signs: the template declares it a signer
+        .account("destination", destination)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion sweep-above-a-reserve
 
@@ -264,42 +315,18 @@ pub fn forward_the_whole_token_balance(
     source: Pubkey,
     destination: Pubkey,
     authority: Pubkey,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, TOKEN_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    let accounts = vec![
-        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
-        AccountMeta::new(source, false),
-        AccountMeta::new(destination, false),
-        AccountMeta::new_readonly(authority, true),
-    ];
-    run_instruction(template, accounts, &[])
+) -> RunResult {
+    let instruction = templates::forward_the_whole_token_balance()
+        .compile()?
+        .run(template)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("source", source)
+        .account("destination", destination)
+        .account("authority", authority)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion forward-the-whole-token-balance
-
-// #region repay-exactly-what-is-owed
-/// No inputs: the template reads the debt and the borrower's balance itself.
-pub fn repay_exactly_what_is_owed(
-    template: Pubkey,
-    loan: Pubkey,
-    borrower: Pubkey,
-    pool: Pubkey,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    const LENDING_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
-
-    let accounts = vec![
-        AccountMeta::new_readonly(LENDING_PROGRAM, false),
-        AccountMeta::new_readonly(loan, false),
-        AccountMeta::new(borrower, true),
-        AccountMeta::new(pool, false),
-    ];
-    run_instruction(template, accounts, &[])
-}
-// #endregion repay-exactly-what-is-owed
 
 // #region split-what-arrived
 pub fn split_what_arrived(
@@ -309,19 +336,18 @@ pub fn split_what_arrived(
     treasury: Pubkey,
     reserve: u64,
     share_bps: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    // Inputs in declaration order: reserve, then shareBps.
-    let inputs = RunInputs::new().u64(reserve).u64(share_bps).finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new(vault, true),
-        AccountMeta::new(partner, false),
-        AccountMeta::new(treasury, false),
-    ];
-    run_instruction(template, accounts, &inputs)
+) -> RunResult {
+    let instruction = templates::split_what_arrived()
+        .compile()?
+        .run(template)
+        .input("reserve", reserve)
+        .input("shareBps", share_bps)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("vault", vault)
+        .account("partner", partner)
+        .account("treasury", treasury)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion split-what-arrived
 
@@ -334,19 +360,18 @@ pub fn claim_only_when_there_is_something(
     rewards: Pubkey,
     claimant: Pubkey,
     destination: Pubkey,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
+) -> RunResult {
     const REWARDS_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
 
-    let accounts = vec![
-        AccountMeta::new_readonly(REWARDS_PROGRAM, false),
-        AccountMeta::new_readonly(rewards, false),
-        AccountMeta::new(claimant, true),
-        AccountMeta::new(destination, false),
-    ];
-    run_instruction(template, accounts, &[])
+    let instruction = templates::claim_only_when_there_is_something()
+        .compile()?
+        .run(template)
+        .account("rewardsProgram", REWARDS_PROGRAM)
+        .account("rewards", rewards)
+        .account("claimant", claimant)
+        .account("destination", destination)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion claim-only-when-there-is-something
 
@@ -357,62 +382,49 @@ pub fn liquidate_only_when_unhealthy(
     liquidator: Pubkey,
     vault: Pubkey,
     threshold: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
+) -> RunResult {
     const LENDING_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
 
-    let inputs = RunInputs::new().u64(threshold).finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(LENDING_PROGRAM, false),
-        AccountMeta::new_readonly(position, false),
-        AccountMeta::new(liquidator, true),
-        AccountMeta::new(vault, false),
-    ];
-    run_instruction(template, accounts, &inputs)
+    let instruction = templates::liquidate_only_when_unhealthy()
+        .compile()?
+        .run(template)
+        .input("threshold", threshold)
+        .account("lendingProgram", LENDING_PROGRAM)
+        .account("position", position)
+        .account("liquidator", liquidator)
+        .account("vault", vault)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion liquidate-only-when-unhealthy
 
-// #region top-up-only-when-low
-pub fn top_up_only_when_low(
-    template: Pubkey,
-    funder: Pubkey,
-    bot: Pubkey,
-    floor: u64,
-    top_up: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    let inputs = RunInputs::new().u64(floor).u64(top_up).finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new(funder, true),
-        AccountMeta::new(bot, false),
-    ];
-    run_instruction(template, accounts, &inputs)
+// #region top-up-to-a-target
+pub fn top_up_to_a_target(template: Pubkey, funder: Pubkey, bot: Pubkey, target: u64) -> RunResult {
+    let instruction = templates::top_up_to_a_target()
+        .compile()?
+        .run(template)
+        .input("target", target)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("funder", funder)
+        .account("bot", bot)
+        .instruction()?;
+    Ok(instruction)
 }
-// #endregion top-up-only-when-low
+// #endregion top-up-to-a-target
 
 // #region initialize-only-if-missing
 /// The same instruction whether or not the position exists yet.
-pub fn initialize_only_if_missing(
-    template: Pubkey,
-    payer: Pubkey,
-    position: Pubkey,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
+pub fn initialize_only_if_missing(template: Pubkey, payer: Pubkey, position: Pubkey) -> RunResult {
     const PROTOCOL_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
 
-    let accounts = vec![
-        AccountMeta::new_readonly(PROTOCOL_PROGRAM, false),
-        AccountMeta::new(payer, true),
-        AccountMeta::new(position, false),
-    ];
-    run_instruction(template, accounts, &[])
+    let instruction = templates::initialize_only_if_missing()
+        .compile()?
+        .run(template)
+        .account("protocolProgram", PROTOCOL_PROGRAM)
+        .account("payer", payer)
+        .account("position", position)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion initialize-only-if-missing
 
@@ -425,26 +437,21 @@ pub fn waterfall_until_the_money_runs_out(
     treasury: Pubkey,
     reserve: u64,
     creditors: &[(Pubkey, u64)],
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    // The fixed input first, then one `owed` value per row, in row order.
-    let mut inputs = RunInputs::new().u64(reserve);
-    for (_, owed) in creditors {
-        inputs = inputs.u64(*owed);
-    }
-    let mut accounts = vec![
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new(treasury, true),
-    ];
-    // One row per creditor: its account, after the fixed accounts.
-    accounts.extend(
-        creditors
-            .iter()
-            .map(|(creditor, _)| AccountMeta::new(*creditor, false)),
-    );
-    run_instruction(template, accounts, &inputs.finish())
+) -> RunResult {
+    let instruction = templates::waterfall_until_the_money_runs_out()
+        .compile()?
+        .run(template)
+        .input("reserve", reserve)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("treasury", treasury)
+        // One row per creditor: its account and what it is owed.
+        .rows(creditors.iter().map(|(creditor, owed)| {
+            Row::new()
+                .account("creditor", *creditor)
+                .input("owed", *owed)
+        }))
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion waterfall-until-the-money-runs-out
 
@@ -455,21 +462,20 @@ pub fn consolidate_only_the_funded_accounts(
     vault: Pubkey,
     authority: Pubkey,
     sources: &[Pubkey],
-) -> Instruction {
-    use ballista_sdk::{run_instruction, TOKEN_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    let mut accounts = vec![
-        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
-        AccountMeta::new(vault, false),
-        AccountMeta::new_readonly(authority, true),
-    ];
-    accounts.extend(
-        sources
-            .iter()
-            .map(|source| AccountMeta::new(*source, false)),
-    );
-    run_instruction(template, accounts, &[])
+) -> RunResult {
+    let instruction = templates::consolidate_only_the_funded_accounts()
+        .compile()?
+        .run(template)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("vault", vault)
+        .account("authority", authority)
+        .rows(
+            sources
+                .iter()
+                .map(|source| Row::new().account("source", *source)),
+        )
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion consolidate-only-the-funded-accounts
 
@@ -479,18 +485,21 @@ pub fn crank_only_the_ripe_entries(
     template: Pubkey,
     keeper: Pubkey,
     entries: &[Pubkey],
-) -> Instruction {
-    use ballista_sdk::{run_instruction, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
+) -> RunResult {
     const QUEUE_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
 
-    let mut accounts = vec![
-        AccountMeta::new_readonly(QUEUE_PROGRAM, false),
-        AccountMeta::new(keeper, true),
-    ];
-    accounts.extend(entries.iter().map(|entry| AccountMeta::new(*entry, false)));
-    run_instruction(template, accounts, &[])
+    let instruction = templates::crank_only_the_ripe_entries()
+        .compile()?
+        .run(template)
+        .account("queueProgram", QUEUE_PROGRAM)
+        .account("keeper", keeper)
+        .rows(
+            entries
+                .iter()
+                .map(|entry| Row::new().account("entry", *entry)),
+        )
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion crank-only-the-ripe-entries
 
@@ -501,26 +510,38 @@ pub fn distribute_a_runtime_pot_pro_rata(
     vault: Pubkey,
     reserve: u64,
     holders: &[(Pubkey, u64)],
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    let mut inputs = RunInputs::new().u64(reserve);
-    for (_, weight_bps) in holders {
-        inputs = inputs.u64(*weight_bps);
-    }
-    let mut accounts = vec![
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new(vault, true),
-    ];
-    accounts.extend(
-        holders
-            .iter()
-            .map(|(holder, _)| AccountMeta::new(*holder, false)),
-    );
-    run_instruction(template, accounts, &inputs.finish())
+) -> RunResult {
+    let instruction = templates::distribute_a_runtime_pot_pro_rata()
+        .compile()?
+        .run(template)
+        .input("reserve", reserve)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("vault", vault)
+        .rows(holders.iter().map(|(holder, weight_bps)| {
+            Row::new()
+                .account("holder", *holder)
+                .input("weightBps", *weight_bps)
+        }))
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion distribute-a-runtime-pot-pro-rata
+
+// #region crank-once-per-waiting-entry
+/// The run reads the count itself, so the keeper passes only the accounts.
+pub fn crank_once_per_waiting_entry(template: Pubkey, keeper: Pubkey, queue: Pubkey) -> RunResult {
+    const QUEUE_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
+
+    let instruction = templates::crank_once_per_waiting_entry()
+        .compile()?
+        .run(template)
+        .account("queueProgram", QUEUE_PROGRAM)
+        .account("keeper", keeper)
+        .account("queue", queue)
+        .instruction()?;
+    Ok(instruction)
+}
+// #endregion crank-once-per-waiting-entry
 
 // ------------------------------------------------------------------ payments
 
@@ -530,22 +551,21 @@ pub fn bounded_sol_payroll(
     treasury: Pubkey,
     recipients: &[Pubkey],
     amount: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    let inputs = RunInputs::new().u64(amount).finish();
-    let mut accounts = vec![
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new(treasury, true),
-    ];
-    // One row per recipient, after the fixed accounts.
-    accounts.extend(
-        recipients
-            .iter()
-            .map(|recipient| AccountMeta::new(*recipient, false)),
-    );
-    run_instruction(template, accounts, &inputs)
+) -> RunResult {
+    let instruction = templates::bounded_sol_payroll()
+        .compile()?
+        .run(template)
+        .input("amount", amount)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("treasury", treasury)
+        // One row per recipient, after the fixed accounts.
+        .rows(
+            recipients
+                .iter()
+                .map(|recipient| Row::new().account("recipient", *recipient)),
+        )
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion bounded-sol-payroll
 
@@ -557,18 +577,18 @@ pub fn basis_point_revenue_split(
     treasury: Pubkey,
     total: u64,
     partner_bps: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    let inputs = RunInputs::new().u64(total).u64(partner_bps).finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new(source, true),
-        AccountMeta::new(partner, false),
-        AccountMeta::new(treasury, false),
-    ];
-    run_instruction(template, accounts, &inputs)
+) -> RunResult {
+    let instruction = templates::basis_point_revenue_split()
+        .compile()?
+        .run(template)
+        .input("total", total)
+        .input("partnerBps", partner_bps)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("source", source)
+        .account("partner", partner)
+        .account("treasury", treasury)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion basis-point-revenue-split
 
@@ -579,21 +599,20 @@ pub fn index_weighted_rewards(
     treasury: Pubkey,
     recipients: &[Pubkey],
     base: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    let inputs = RunInputs::new().u64(base).finish();
-    let mut accounts = vec![
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new(treasury, true),
-    ];
-    accounts.extend(
-        recipients
-            .iter()
-            .map(|recipient| AccountMeta::new(*recipient, false)),
-    );
-    run_instruction(template, accounts, &inputs)
+) -> RunResult {
+    let instruction = templates::index_weighted_rewards()
+        .compile()?
+        .run(template)
+        .input("base", base)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("treasury", treasury)
+        .rows(
+            recipients
+                .iter()
+                .map(|recipient| Row::new().account("recipient", *recipient)),
+        )
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion index-weighted-rewards
 
@@ -604,17 +623,17 @@ pub fn deadline_refund(
     customer: Pubkey,
     refund_amount: u64,
     deadline: i64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    let inputs = RunInputs::new().u64(refund_amount).i64(deadline).finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new(escrow_authority, true),
-        AccountMeta::new(customer, false),
-    ];
-    run_instruction(template, accounts, &inputs)
+) -> RunResult {
+    let instruction = templates::deadline_refund()
+        .compile()?
+        .run(template)
+        .input("refundAmount", refund_amount)
+        .input("deadline", deadline)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("escrowAuthority", escrow_authority)
+        .account("customer", customer)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion deadline-refund
 
@@ -625,21 +644,119 @@ pub fn reserve_preserving_sweep(
     vault: Pubkey,
     reserve: u64,
     cap: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    let inputs = RunInputs::new().u64(reserve).u64(cap).finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new(payer, true),
-        AccountMeta::new(vault, false),
-    ];
-    run_instruction(template, accounts, &inputs)
+) -> RunResult {
+    let instruction = templates::reserve_preserving_sweep()
+        .compile()?
+        .run(template)
+        .input("reserve", reserve)
+        .input("cap", cap)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("payer", payer)
+        .account("vault", vault)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion reserve-preserving-sweep
 
+// #region payment-agent
+pub fn payment_agent(template: Pubkey, agent: Pubkey, recipient: Pubkey, amount: u64) -> RunResult {
+    let compiled = templates::payment_agent().compile()?;
+    // The agent's entry in `limits`, keyed by the agent's address.
+    let limits = compiled.registry_index("limits").unwrap();
+    let (agent_limit, _) = find_registry_entry_address(&template, limits, &agent.to_bytes());
+    let instruction = compiled
+        .run(template)
+        .input("amount", amount)
+        .account("agent", agent)
+        .account("recipient", recipient)
+        .account("agentLimit", agent_limit)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .instruction()?;
+    Ok(instruction)
+}
+// #endregion payment-agent
+
+// ------------------------------------------------------------------ registries
+
+// #region daily-limit-per-caller
+pub fn daily_limit_per_caller(
+    template: Pubkey,
+    caller: Pubkey,
+    recipient: Pubkey,
+    amount: u64,
+) -> RunResult {
+    let compiled = templates::daily_limit_per_caller().compile()?;
+    // The caller's entry in `limits`, keyed by the caller's address.
+    let limits = compiled.registry_index("limits").unwrap();
+    let (caller_limit, _) = find_registry_entry_address(&template, limits, &caller.to_bytes());
+    let instruction = compiled
+        .run(template)
+        .input("amount", amount)
+        .account("caller", caller)
+        .account("recipient", recipient)
+        .account("callerLimit", caller_limit)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .instruction()?;
+    Ok(instruction)
+}
+// #endregion daily-limit-per-caller
+
+// #region listed-callers-only
+/// `set` is for the author's runs only: the member to add or remove, and the flag to set.
+pub fn listed_callers_only(
+    template: Pubkey,
+    caller: Pubkey,
+    pool: Pubkey,
+    set: Option<(Pubkey, bool)>,
+) -> RunResult {
+    const PROTOCOL_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in
+
+    let compiled = templates::listed_callers_only().compile()?;
+    // The key the template computes: the member in the author's runs, the caller in everyone else's.
+    let (member, allow) = set.unwrap_or((caller, false));
+    let allowed = compiled.registry_index("allowed").unwrap();
+    let (entry, _) = find_registry_entry_address(&template, allowed, &member.to_bytes());
+    let instruction = compiled
+        .run(template)
+        // Every run passes both inputs. Only the author's runs read them.
+        .input("member", member)
+        .input("allow", allow)
+        .account("caller", caller)
+        .account("entry", entry)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("protocolProgram", PROTOCOL_PROGRAM)
+        .account("pool", pool)
+        .instruction()?;
+    Ok(instruction)
+}
+// #endregion listed-callers-only
+
 // ------------------------------------------------------------------ token accounts
+
+// #region assert-recipient-ata
+/// Derive the ATA as the template does, and name each account the template declares.
+pub fn assert_recipient_ata(
+    template: Pubkey,
+    recipient: Pubkey,
+    mint: Pubkey,
+    token_program: Pubkey,
+) -> RunResult {
+    let (destination_ata, _bump) = Pubkey::find_program_address(
+        &[recipient.as_ref(), token_program.as_ref(), mint.as_ref()],
+        &ASSOCIATED_TOKEN_PROGRAM_ID,
+    );
+    let instruction = templates::assert_recipient_ata()
+        .compile()?
+        .run(template)
+        .account("associatedTokenProgram", ASSOCIATED_TOKEN_PROGRAM_ID)
+        .account("tokenProgram", token_program)
+        .account("recipient", recipient)
+        .account("mint", mint)
+        .account("destinationAta", destination_ata)
+        .instruction()?;
+    Ok(instruction)
+}
+// #endregion assert-recipient-ata
 
 // #region assert-create-then-transfer
 /// `rows` pairs each recipient's wallet with its ATA for `mint`.
@@ -651,29 +768,25 @@ pub fn assert_create_then_transfer(
     source: Pubkey,
     rows: &[(Pubkey, Pubkey)],
     amount: u64,
-) -> Instruction {
-    use ballista_sdk::{
-        run_instruction, RunInputs, ASSOCIATED_TOKEN_PROGRAM_ID, SYSTEM_PROGRAM_ID,
-        TOKEN_PROGRAM_ID,
-    };
-    use solana_program::instruction::AccountMeta;
-
-    let inputs = RunInputs::new().u64(amount).finish();
-    let mut accounts = vec![
-        AccountMeta::new_readonly(ASSOCIATED_TOKEN_PROGRAM_ID, false),
-        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new_readonly(mint, false),
-        AccountMeta::new(payer, true),
-        AccountMeta::new_readonly(authority, true),
-        AccountMeta::new(source, false),
-    ];
-    // Each row is two accounts, in the order the row declares them.
-    for (recipient, destination_ata) in rows {
-        accounts.push(AccountMeta::new_readonly(*recipient, false));
-        accounts.push(AccountMeta::new(*destination_ata, false));
-    }
-    run_instruction(template, accounts, &inputs)
+) -> RunResult {
+    let instruction = templates::assert_create_then_transfer()
+        .compile()?
+        .run(template)
+        .input("amount", amount)
+        .account("associatedTokenProgram", ASSOCIATED_TOKEN_PROGRAM_ID)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("mint", mint)
+        .account("payer", payer)
+        .account("authority", authority)
+        .account("source", source)
+        .rows(rows.iter().map(|(recipient, destination_ata)| {
+            Row::new()
+                .account("recipient", *recipient)
+                .account("destinationAta", *destination_ata)
+        }))
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion assert-create-then-transfer
 
@@ -684,22 +797,21 @@ pub fn existing_account_token_payroll(
     authority: Pubkey,
     destinations: &[Pubkey],
     amount: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, TOKEN_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    let inputs = RunInputs::new().u64(amount).finish();
-    let mut accounts = vec![
-        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
-        AccountMeta::new(source, false),
-        AccountMeta::new_readonly(authority, true),
-    ];
-    accounts.extend(
-        destinations
-            .iter()
-            .map(|destination| AccountMeta::new(*destination, false)),
-    );
-    run_instruction(template, accounts, &inputs)
+) -> RunResult {
+    let instruction = templates::existing_account_token_payroll()
+        .compile()?
+        .run(template)
+        .input("amount", amount)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("source", source)
+        .account("authority", authority)
+        .rows(
+            destinations
+                .iter()
+                .map(|destination| Row::new().account("destination", *destination)),
+        )
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion existing-account-token-payroll
 
@@ -711,22 +823,19 @@ pub fn conditional_ata_setup(
     payer: Pubkey,
     wallet: Pubkey,
     ata: Pubkey,
-) -> Instruction {
-    use ballista_sdk::{
-        run_instruction, ASSOCIATED_TOKEN_PROGRAM_ID, SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID,
-    };
-    use solana_program::instruction::AccountMeta;
-
-    let accounts = vec![
-        AccountMeta::new_readonly(ASSOCIATED_TOKEN_PROGRAM_ID, false),
-        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new_readonly(mint, false),
-        AccountMeta::new(payer, true),
-        AccountMeta::new_readonly(wallet, false),
-        AccountMeta::new(ata, false),
-    ];
-    run_instruction(template, accounts, &[])
+) -> RunResult {
+    let instruction = templates::conditional_ata_setup()
+        .compile()?
+        .run(template)
+        .account("associatedTokenProgram", ASSOCIATED_TOKEN_PROGRAM_ID)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("mint", mint)
+        .account("payer", payer)
+        .account("wallet", wallet)
+        .account("ata", ata)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion conditional-ata-setup
 
@@ -737,21 +846,20 @@ pub fn close_empty_token_accounts(
     rent_destination: Pubkey,
     authority: Pubkey,
     token_accounts: &[Pubkey],
-) -> Instruction {
-    use ballista_sdk::{run_instruction, TOKEN_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    let mut accounts = vec![
-        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
-        AccountMeta::new(rent_destination, false),
-        AccountMeta::new_readonly(authority, true),
-    ];
-    accounts.extend(
-        token_accounts
-            .iter()
-            .map(|account| AccountMeta::new(*account, false)),
-    );
-    run_instruction(template, accounts, &[])
+) -> RunResult {
+    let instruction = templates::close_empty_token_accounts()
+        .compile()?
+        .run(template)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("rentDestination", rent_destination)
+        .account("authority", authority)
+        .rows(
+            token_accounts
+                .iter()
+                .map(|account| Row::new().account("tokenAccount", *account)),
+        )
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion close-empty-token-accounts
 
@@ -762,18 +870,17 @@ pub fn exact_token_debit(
     destination: Pubkey,
     authority: Pubkey,
     amount: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, TOKEN_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    let inputs = RunInputs::new().u64(amount).finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
-        AccountMeta::new(source, false),
-        AccountMeta::new(destination, false),
-        AccountMeta::new_readonly(authority, true),
-    ];
-    run_instruction(template, accounts, &inputs)
+) -> RunResult {
+    let instruction = templates::exact_token_debit()
+        .compile()?
+        .run(template)
+        .input("amount", amount)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("source", source)
+        .account("destination", destination)
+        .account("authority", authority)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion exact-token-debit
 
@@ -787,25 +894,22 @@ pub fn deadline_and_minimum_output(
     pool: Pubkey,
     quote: (i64, u64, u64),
     route_data: &[u8],
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
+) -> RunResult {
     const SWAP_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
 
     let (deadline, quoted_out, minimum_out) = quote;
-    let inputs = RunInputs::new()
-        .i64(deadline)
-        .u64(quoted_out)
-        .u64(minimum_out)
-        .bytes(route_data) // a u16 length, then the bytes
-        .finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(SWAP_PROGRAM, false),
-        AccountMeta::new(payer, true),
-        AccountMeta::new(pool, false),
-    ];
-    run_instruction(template, accounts, &inputs)
+    let instruction = templates::deadline_and_minimum_output()
+        .compile()?
+        .run(template)
+        .input("deadline", deadline)
+        .input("quotedOut", quoted_out)
+        .input("minimumOut", minimum_out)
+        .input("routeData", route_data) // a u16 length, then the bytes
+        .account("swapProgram", SWAP_PROGRAM)
+        .account("payer", payer)
+        .account("pool", pool)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion deadline-and-minimum-output
 
@@ -816,19 +920,18 @@ pub fn pinned_program_and_owner(
     payer: Pubkey,
     position: Pubkey,
     amount: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
+) -> RunResult {
     const PROTOCOL_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
 
-    let inputs = RunInputs::new().u64(amount).finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(PROTOCOL_PROGRAM, false),
-        AccountMeta::new(payer, true),
-        AccountMeta::new(position, false),
-    ];
-    run_instruction(template, accounts, &inputs)
+    let instruction = templates::pinned_program_and_owner()
+        .compile()?
+        .run(template)
+        .input("amount", amount)
+        .account("protocolProgram", PROTOCOL_PROGRAM)
+        .account("payer", payer)
+        .account("position", position)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion pinned-program-and-owner
 
@@ -840,20 +943,20 @@ pub fn oracle_price_band(
     payer: Pubkey,
     pool: Pubkey,
     band: (i64, i64),
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
+) -> RunResult {
     const PROTOCOL_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
 
-    let inputs = RunInputs::new().i64(band.0).i64(band.1).finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(oracle, false),
-        AccountMeta::new_readonly(PROTOCOL_PROGRAM, false),
-        AccountMeta::new(payer, true),
-        AccountMeta::new(pool, false),
-    ];
-    run_instruction(template, accounts, &inputs)
+    let instruction = templates::oracle_price_band()
+        .compile()?
+        .run(template)
+        .input("minimumPrice", band.0)
+        .input("maximumPrice", band.1)
+        .account("oracle", oracle)
+        .account("protocolProgram", PROTOCOL_PROGRAM)
+        .account("payer", payer)
+        .account("pool", pool)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion oracle-price-band
 
@@ -863,46 +966,40 @@ pub fn maximum_lamport_spend(
     payer: Pubkey,
     pool: Pubkey,
     maximum_spend: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
+) -> RunResult {
     const PROTOCOL_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
 
-    let inputs = RunInputs::new().u64(maximum_spend).finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(PROTOCOL_PROGRAM, false),
-        AccountMeta::new(payer, true),
-        AccountMeta::new(pool, false),
-    ];
-    run_instruction(template, accounts, &inputs)
+    let instruction = templates::maximum_lamport_spend()
+        .compile()?
+        .run(template)
+        .input("maximumSpend", maximum_spend)
+        .account("protocolProgram", PROTOCOL_PROGRAM)
+        .account("payer", payer)
+        .account("pool", pool)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion maximum-lamport-spend
 
 // #region canonical-position-account
-/// Derives the position the same way the template checks it. `None` if the seeds have no PDA.
-pub fn canonical_position_account(
-    template: Pubkey,
-    owner: Pubkey,
-    position_id: u64,
-) -> Option<Instruction> {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
+/// Derives the position the same way the template checks it.
+pub fn canonical_position_account(template: Pubkey, owner: Pubkey, position_id: u64) -> RunResult {
     const PROTOCOL_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
 
     let position_id = position_id.to_le_bytes();
-    let (position, _bump) = Pubkey::try_find_program_address(
+    let (position, _bump) = Pubkey::find_program_address(
         &[b"position", owner.as_ref(), &position_id],
         &PROTOCOL_PROGRAM,
-    )?;
-    let inputs = RunInputs::new().bytes(&position_id).finish(); // `positionId` is a bytes input
-    let accounts = vec![
-        AccountMeta::new_readonly(PROTOCOL_PROGRAM, false),
-        AccountMeta::new(owner, true),
-        AccountMeta::new(position, false),
-    ];
-    Some(run_instruction(template, accounts, &inputs))
+    );
+    let instruction = templates::canonical_position_account()
+        .compile()?
+        .run(template)
+        .input("positionId", position_id) // a bytes input
+        .account("protocolProgram", PROTOCOL_PROGRAM)
+        .account("owner", owner)
+        .account("position", position)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion canonical-position-account
 
@@ -918,27 +1015,24 @@ pub fn swap_then_deposit(
     minimum_out: u64,
     swap_data: &[u8],
     deposit_data: &[u8],
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
+) -> RunResult {
     // The same stand-ins as the template.
     const SWAP_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID;
     const VAULT_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID;
 
-    let inputs = RunInputs::new()
-        .u64(minimum_out)
-        .bytes(swap_data)
-        .bytes(deposit_data)
-        .finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(SWAP_PROGRAM, false),
-        AccountMeta::new_readonly(VAULT_PROGRAM, false),
-        AccountMeta::new(payer, true),
-        AccountMeta::new(pool, false),
-        AccountMeta::new(received_tokens, false),
-    ];
-    run_instruction(template, accounts, &inputs)
+    let instruction = templates::swap_then_deposit()
+        .compile()?
+        .run(template)
+        .input("minimumOut", minimum_out)
+        .input("swapData", swap_data)
+        .input("depositData", deposit_data)
+        .account("swapProgram", SWAP_PROGRAM)
+        .account("vaultProgram", VAULT_PROGRAM)
+        .account("payer", payer)
+        .account("pool", pool)
+        .account("receivedTokens", received_tokens)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion swap-then-deposit
 
@@ -951,27 +1045,26 @@ pub fn claim_then_distribute(
     authority: Pubkey,
     recipient_tokens: &[Pubkey],
     amount_per_recipient: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
+) -> RunResult {
     const REWARDS_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
 
-    let inputs = RunInputs::new().u64(amount_per_recipient).finish();
-    let mut accounts = vec![
-        AccountMeta::new_readonly(REWARDS_PROGRAM, false),
-        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
-        AccountMeta::new(claimer, true),
-        AccountMeta::new(pool, false),
-        AccountMeta::new(treasury_tokens, false),
-        AccountMeta::new_readonly(authority, true),
-    ];
-    accounts.extend(
-        recipient_tokens
-            .iter()
-            .map(|account| AccountMeta::new(*account, false)),
-    );
-    run_instruction(template, accounts, &inputs)
+    let instruction = templates::claim_then_distribute()
+        .compile()?
+        .run(template)
+        .input("amountPerRecipient", amount_per_recipient)
+        .account("rewardsProgram", REWARDS_PROGRAM)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("claimer", claimer)
+        .account("pool", pool)
+        .account("treasuryTokens", treasury_tokens)
+        .account("authority", authority)
+        .rows(
+            recipient_tokens
+                .iter()
+                .map(|account| Row::new().account("recipientTokens", *account)),
+        )
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion claim-then-distribute
 
@@ -984,26 +1077,23 @@ pub fn primary_or_fallback_route(
     use_primary: bool,
     primary_data: &[u8],
     fallback_data: &[u8],
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
+) -> RunResult {
     // The same stand-ins as the template.
     const PRIMARY_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID;
     const FALLBACK_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID;
 
-    let inputs = RunInputs::new()
-        .bool(use_primary)
-        .bytes(primary_data)
-        .bytes(fallback_data)
-        .finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(PRIMARY_PROGRAM, false),
-        AccountMeta::new_readonly(FALLBACK_PROGRAM, false),
-        AccountMeta::new(payer, true),
-        AccountMeta::new(pool, false),
-    ];
-    run_instruction(template, accounts, &inputs)
+    let instruction = templates::primary_or_fallback_route()
+        .compile()?
+        .run(template)
+        .input("usePrimary", use_primary)
+        .input("primaryData", primary_data)
+        .input("fallbackData", fallback_data)
+        .account("primaryProgram", PRIMARY_PROGRAM)
+        .account("fallbackProgram", FALLBACK_PROGRAM)
+        .account("payer", payer)
+        .account("pool", pool)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion primary-or-fallback-route
 
@@ -1014,20 +1104,19 @@ pub fn time_gated_governance_execution(
     payer: Pubkey,
     target: Pubkey,
     execute_data: &[u8],
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
+) -> RunResult {
     const GOVERNANCE_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
 
-    let inputs = RunInputs::new().bytes(execute_data).finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(GOVERNANCE_PROGRAM, false),
-        AccountMeta::new_readonly(proposal, false),
-        AccountMeta::new(payer, true),
-        AccountMeta::new(target, false),
-    ];
-    run_instruction(template, accounts, &inputs)
+    let instruction = templates::time_gated_governance_execution()
+        .compile()?
+        .run(template)
+        .input("executeData", execute_data)
+        .account("governanceProgram", GOVERNANCE_PROGRAM)
+        .account("proposal", proposal)
+        .account("payer", payer)
+        .account("target", target)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion time-gated-governance-execution
 
@@ -1037,47 +1126,105 @@ pub fn bounded_keeper_crank(
     template: Pubkey,
     keeper: Pubkey,
     rows: &[(Pubkey, Pubkey)],
-) -> Instruction {
-    use ballista_sdk::{run_instruction, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
+) -> RunResult {
     const PROTOCOL_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
 
-    let mut accounts = vec![
-        AccountMeta::new_readonly(PROTOCOL_PROGRAM, false),
-        AccountMeta::new(keeper, true),
-    ];
-    for (market, queue) in rows {
-        accounts.push(AccountMeta::new(*market, false));
-        accounts.push(AccountMeta::new(*queue, false));
-    }
-    run_instruction(template, accounts, &[])
+    let instruction = templates::bounded_keeper_crank()
+        .compile()?
+        .run(template)
+        .account("protocolProgram", PROTOCOL_PROGRAM)
+        .account("keeper", keeper)
+        .rows(rows.iter().map(|(market, queue)| {
+            Row::new()
+                .account("market", *market)
+                .account("queue", *queue)
+        }))
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion bounded-keeper-crank
+
+// #region swap-and-return-what-arrived
+/// Run on its own, the template returns what arrived to whoever reads the transaction's return
+/// data.
+pub fn swap_and_return_what_arrived(
+    template: Pubkey,
+    payer: Pubkey,
+    pool: Pubkey,
+    received_tokens: Pubkey,
+    minimum_out: u64,
+    swap_data: &[u8],
+) -> RunResult {
+    const SWAP_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID; // the same stand-in as the template
+
+    let instruction = templates::swap_and_return_what_arrived()
+        .compile()?
+        .run(template)
+        .input("minimumOut", minimum_out)
+        .input("swapData", swap_data)
+        .account("swapProgram", SWAP_PROGRAM)
+        .account("payer", payer)
+        .account("pool", pool)
+        .account("receivedTokens", received_tokens)
+        .instruction()?;
+    Ok(instruction)
+}
+// #endregion swap-and-return-what-arrived
+
+// #region nested-swap-then-deposit
+/// `innerRun` is what the inner template's own run would carry: its inputs, encoded.
+pub fn nested_swap_then_deposit(
+    template: Pubkey,
+    payer: Pubkey,
+    pool: Pubkey,
+    received_tokens: Pubkey,
+    minimum_out: u64,
+    swap_data: &[u8],
+) -> RunResult {
+    // The same stand-ins as the template.
+    const INNER_TEMPLATE: Pubkey = Pubkey::new_from_array([7; 32]);
+    const SWAP_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID;
+    const VAULT_PROGRAM: Pubkey = SYSTEM_PROGRAM_ID;
+
+    let inner_run = templates::swap_and_return_what_arrived()
+        .compile()?
+        .run_inputs()
+        .input("minimumOut", minimum_out)
+        .input("swapData", swap_data)
+        .encode_inputs()?;
+    let instruction = templates::nested_swap_then_deposit()
+        .compile()?
+        .run(template)
+        .input("innerRun", inner_run)
+        .account("ballista", ballista_sdk::ID)
+        .account("innerTemplate", INNER_TEMPLATE)
+        .account("swapProgram", SWAP_PROGRAM)
+        .account("vaultProgram", VAULT_PROGRAM)
+        .account("payer", payer)
+        .account("pool", pool)
+        .account("receivedTokens", received_tokens)
+        .instruction()?;
+    Ok(instruction)
+}
+// #endregion nested-swap-then-deposit
 
 // ------------------------------------------------------------------ guide pages
 
 // #region row-amounts
 /// `payees` with each one's amount in lamports.
-pub fn row_amounts(template: Pubkey, treasury: Pubkey, payees: &[(Pubkey, u64)]) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    // No fixed inputs here, so the data is one row of values per payee, in row order.
-    let mut inputs = RunInputs::new();
-    for (_, lamports) in payees {
-        inputs = inputs.u64(*lamports);
-    }
-    let mut accounts = vec![
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new(treasury, true),
-    ];
-    accounts.extend(
-        payees
-            .iter()
-            .map(|(payee, _)| AccountMeta::new(*payee, false)),
-    );
-    run_instruction(template, accounts, &inputs.finish())
+pub fn row_amounts(template: Pubkey, treasury: Pubkey, payees: &[(Pubkey, u64)]) -> RunResult {
+    let instruction = templates::row_amounts()
+        .compile()?
+        .run(template)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("treasury", treasury)
+        .rows(payees.iter().map(|(payee, lamports)| {
+            Row::new()
+                .account("recipient", *payee)
+                .input("amount", *lamports)
+        }))
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion row-amounts
 
@@ -1088,21 +1235,21 @@ pub fn budgeted_payroll(
     recipients: &[Pubkey],
     amount: u64,
     budget: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    let inputs = RunInputs::new().u64(amount).u64(budget).finish();
-    let mut accounts = vec![
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new(treasury, true),
-    ];
-    accounts.extend(
-        recipients
-            .iter()
-            .map(|recipient| AccountMeta::new(*recipient, false)),
-    );
-    run_instruction(template, accounts, &inputs)
+) -> RunResult {
+    let instruction = templates::budgeted_payroll()
+        .compile()?
+        .run(template)
+        .input("amount", amount)
+        .input("budget", budget)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("treasury", treasury)
+        .rows(
+            recipients
+                .iter()
+                .map(|recipient| Row::new().account("recipient", *recipient)),
+        )
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion budgeted-payroll
 
@@ -1113,17 +1260,16 @@ pub fn exact_lamport_delta(
     sender: Pubkey,
     recipient: Pubkey,
     amount: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    let inputs = RunInputs::new().u64(amount).finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new(sender, true),
-        AccountMeta::new(recipient, false),
-    ];
-    run_instruction(template, accounts, &inputs)
+) -> RunResult {
+    let instruction = templates::exact_lamport_delta()
+        .compile()?
+        .run(template)
+        .input("amount", amount)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("sender", sender)
+        .account("recipient", recipient)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion exact-lamport-delta
 
@@ -1134,18 +1280,17 @@ pub fn token_transfer(
     source: Pubkey,
     destination: Pubkey,
     amount: u64,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, TOKEN_PROGRAM_ID};
-    use solana_program::instruction::AccountMeta;
-
-    let inputs = RunInputs::new().u64(amount).finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
-        AccountMeta::new_readonly(authority, true),
-        AccountMeta::new(source, false),
-        AccountMeta::new(destination, false),
-    ];
-    run_instruction(template, accounts, &inputs)
+) -> RunResult {
+    let instruction = templates::token_transfer_template()
+        .compile()?
+        .run(template)
+        .input("amount", amount)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("authority", authority)
+        .account("source", source)
+        .account("destination", destination)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion token-transfer
 
@@ -1157,25 +1302,50 @@ pub fn generic_cpi(
     amount: u64,
     client_payload: &[u8],
     enabled: bool,
-) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs};
-    use solana_program::instruction::AccountMeta;
-
+) -> RunResult {
     const MY_PROGRAM: Pubkey = Pubkey::new_from_array([7; 32]); // the template's placeholder
 
-    let inputs = RunInputs::new()
-        .u64(amount)
-        .bytes(client_payload)
-        .bool(enabled)
-        .finish();
-    let accounts = vec![
-        AccountMeta::new_readonly(MY_PROGRAM, false),
-        AccountMeta::new(vault, false),
-        AccountMeta::new_readonly(authority, true),
-    ];
-    run_instruction(template, accounts, &inputs)
+    let instruction = templates::generic_cpi()
+        .compile()?
+        .run(template)
+        .input("amount", amount)
+        .input("clientPayload", client_payload)
+        .input("enabled", enabled)
+        .account("program", MY_PROGRAM)
+        .account("vault", vault)
+        .account("authority", authority)
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion generic-cpi
+
+// #region swap-through-a-checked-route
+/// `route` and `pools` are the quote's route data and pool accounts, each pool writable or not as
+/// the quote lists it.
+pub fn swap_through_a_checked_route(
+    template: Pubkey,
+    user: Pubkey,
+    source: Pubkey,
+    destination: Pubkey,
+    route: Vec<u8>,
+    pools: Vec<AccountMeta>,
+) -> RunResult {
+    const JUPITER_V6: Pubkey = pubkey!("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
+
+    let instruction = templates::swap_through_a_checked_route()
+        .compile()?
+        .run(template)
+        .account("jupiter", JUPITER_V6)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("user", user)
+        .account("source", source)
+        .account("destination", destination)
+        .input("route", route)
+        .group("amm", pools)
+        .instruction()?;
+    Ok(instruction)
+}
+// #endregion swap-through-a-checked-route
 
 // #region rebalance-three-swaps
 /// One swap: its token accounts, its quote's route data and pool accounts, and its limits. A
@@ -1184,45 +1354,41 @@ pub struct SwapLeg {
     pub source: Pubkey,
     pub destination: Pubkey,
     pub route: Vec<u8>,
-    pub pools: Vec<Pubkey>,
+    /// Writable or not as the quote lists each one. Members never sign.
+    pub pools: Vec<AccountMeta>,
     pub target: u64,
     pub min_out: u64,
 }
 
-pub fn rebalance_three_swaps(template: Pubkey, user: Pubkey, legs: &[SwapLeg; 3]) -> Instruction {
-    use ballista_sdk::{run_instruction, RunInputs, TOKEN_PROGRAM_ID};
-    use solana_program::{instruction::AccountMeta, pubkey};
-
+pub fn rebalance_three_swaps(template: Pubkey, user: Pubkey, legs: &[SwapLeg; 3]) -> RunResult {
     const JUPITER_V6: Pubkey = pubkey!("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
 
-    // Group lengths come first, one byte per group, then the inputs in declaration order:
-    // the three routes, the three targets, the three minimum outputs.
-    let lengths: Vec<u8> = legs.iter().map(|leg| leg.pools.len() as u8).collect();
-    let mut inputs = RunInputs::new().groups(&lengths);
-    for leg in legs {
-        inputs = inputs.bytes(&leg.route);
-    }
-    for leg in legs {
-        inputs = inputs.u64(leg.target);
-    }
-    for leg in legs {
-        inputs = inputs.u64(leg.min_out);
-    }
-
-    let mut accounts = vec![
-        AccountMeta::new_readonly(JUPITER_V6, false),
-        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
-        AccountMeta::new(user, true),
-    ];
-    for leg in legs {
-        accounts.push(AccountMeta::new(leg.source, false));
-        accounts.push(AccountMeta::new(leg.destination, false));
-    }
-    // Group members follow the declared accounts, group by group. They never sign; mark each
-    // writable or not as the quote says (all writable here).
-    for leg in legs {
-        accounts.extend(leg.pools.iter().map(|pool| AccountMeta::new(*pool, false)));
-    }
-    run_instruction(template, accounts, &inputs.finish())
+    let [a, b, c] = legs;
+    let instruction = templates::rebalance_three_swaps()
+        .compile()?
+        .run(template)
+        .account("jupiter", JUPITER_V6)
+        .account("tokenProgram", TOKEN_PROGRAM_ID)
+        .account("user", user)
+        .account("sourceA", a.source)
+        .account("destinationA", a.destination)
+        .account("sourceB", b.source)
+        .account("destinationB", b.destination)
+        .account("sourceC", c.source)
+        .account("destinationC", c.destination)
+        .input("routeA", &a.route)
+        .input("routeB", &b.route)
+        .input("routeC", &c.route)
+        .input("targetA", a.target)
+        .input("targetB", b.target)
+        .input("targetC", c.target)
+        .input("minOutA", a.min_out)
+        .input("minOutB", b.min_out)
+        .input("minOutC", c.min_out)
+        .group("ammA", a.pools.clone())
+        .group("ammB", b.pools.clone())
+        .group("ammC", c.pools.clone())
+        .instruction()?;
+    Ok(instruction)
 }
 // #endregion rebalance-three-swaps

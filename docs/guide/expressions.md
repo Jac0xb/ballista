@@ -29,25 +29,9 @@ one byte (0 or 1), and a `bytes` input is a little-endian `u16` length followed 
 
 ::: code-group
 
-```ts [TypeScript encoding]
-const data = encodeRunInputs(compiled, {
-  amount: 25_000n,
-  deadline: 1_800_000_000n,
-  enabled: true,
-  routeData: quote.swapInstructionData,
-});
-```
+<<< @/../clients/js/examples/docs/named-inputs.ts#encode [TypeScript]
 
-```rust [Rust encoding]
-use ballista_sdk::RunInputs;
-
-let data = RunInputs::new()
-    .u64(25_000)
-    .i64(1_800_000_000)
-    .bool(true)
-    .bytes(&route_data) // a u16 length, then the bytes
-    .finish();
-```
+<<< @/../clients/rust/examples/docs_limits.rs#encode-run-inputs [Rust]
 
 :::
 

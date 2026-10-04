@@ -32,6 +32,41 @@ the same commit and says why here.
 
 ---
 
+## Pending: verifier fixes, not merged
+
+### 2026-10-03 · Group-opcode verification at finalization · `claude/verification`
+- **Change:** the verifier now checks the operands of `GROUP_LENGTH`, `GROUP_ANY` and `GROUP_COUNT`
+  and marks a filter's segments as used, which the account-group merge added. Runs are unchanged.
+- **Measured:** create template, payroll 30 rows: 4,709 → 4,722 (+13). No other case or example
+  moved.
+- **Checked:** `tests/ballista` 93/93; the executor fuzzer at 20k seeds in normal and limits mode.
+- **Watch:** every opcode the operand table learns adds a little to finalization.
+
+### 2026-10-03 · Canonical encodings at finalization · `claude/pf-verifier`
+- **Change:** `verify` refuses a record that sets a field its opcode leaves unused, with one
+  operand table checked beside the record's reserved bytes and flags. CPI data goes through
+  `verify_segment`, as seeds and outputs do. After the walk, one pass refuses a data segment or a
+  CPI descriptor that nothing uses. Runs are untouched.
+- **Measured** against `728159f`:
+  - `create template, payroll 30 rows`: 4,486 → 4,709 (+223). The unused-record pass costs about
+    97, the operand table about 43 over three records, and CPI data through `verify_segment`
+    about 36; code layout takes the rest.
+  - Uploading the 32 cookbook examples, not ratcheted: 145,299 → 156,709 (+11,410, +7.9%). Each
+    rises by 143 to 549.
+  - Every run case and example is unchanged; the cookbook run total stays 552,304.
+- **Measured, and not built:**
+  - Marks with room for 1,277 segments and 255 descriptors cost each cookbook upload about 75 more
+    (+2,436 in all) than one word each, which every template with at most 64 of both now uses.
+  - Folding the read opcodes' flag rule into the operand table saved 4 on the create case and 359
+    over the uploads: too little for a table of fields that would also hold a flag.
+  - Keeping `verify_cpi` out of line changed nothing; `verify_segment` out of line for CPI data cost
+    15 more on the create case.
+- **Checked:** the verifier's unit tests, `common/tests/fuzz_findings.rs`, the 87 real templates,
+  and 32,067 payloads from two 5,000-seed compiler corpora all verify as before; the Mollusk and
+  protocol suites; both ceiling tests.
+- **Watch:** the walk and the unused-record pass both visit every `INVOKE`, so a template's upload
+  cost now grows with its instructions twice.
+
 ## Pending: runtime extensions, not merged
 
 ### 2026-09-28 · Registry entries · `claude/runtime-registry`

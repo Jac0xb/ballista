@@ -143,7 +143,6 @@ a, button, input { -webkit-tap-highlight-color: transparent; }
 }
 .VPNavBarSearch .DocSearch-Button:hover { border-color: var(--rule); background: transparent; }
 .DocSearch-Button .DocSearch-Button-Key { border-radius: 0; box-shadow: none; }
-.VPNavBarSocialLinks { border-left: 1px solid var(--rule); }
 .VPNavBar .VPFlyout .menu .VPMenu { border-radius: 0; box-shadow: 3px 3px 0 var(--shadow); }
 .VPHome { margin: 0 !important; }
 .VPHome > .vp-doc.container { max-width: 1184px; padding: 0 40px 84px; margin: 0 auto; }
@@ -180,6 +179,11 @@ a, button, input { -webkit-tap-highlight-color: transparent; }
 .start-link:hover { background: var(--signal); }
 .plain-link { padding: 8px 0; border-bottom: 1px solid var(--ink); }
 .plain-link:hover { color: var(--signal); border-color: var(--signal); }
+/* Pre-release status, under the links, so nobody reads the cover as production-ready. */
+.cover-status { max-width: 420px; margin: 28px 0 0; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 13px; line-height: 1.6; color: var(--muted); }
+.cover-status strong { color: var(--signal); font-weight: 600; }
+.cover-status a { color: var(--ink); border-bottom: 1px solid currentColor; }
+.cover-status a:hover { color: var(--signal); }
 
 /* The execution plate is a small, interactive technical drawing. */
 .execution-plate { border: 1px solid var(--ink); position: relative; }
@@ -298,6 +302,10 @@ a, button, input { -webkit-tap-highlight-color: transparent; }
 .vp-doc a:hover { color: var(--signal); }
 .vp-doc a.header-anchor { color: var(--signal); }
 .vp-doc :not(pre) > code { border-radius: 0; font-size: .82em; color: var(--ink); padding: 2px 4px; }
+/* Numbers in prose render as chips (config.mts, numberChips): orange on dark gray, inverted in light. */
+:root { --num-fg: #b4520f; --num-bg: #ecebe5; }
+.dark { --num-fg: #ff9a4d; --num-bg: #2a2b26; }
+.vp-doc :not(pre) > code.num { color: var(--num-fg); background: var(--num-bg); font-variant-numeric: tabular-nums; }
 .vp-doc .custom-block { border: 0; border-left: 2px solid var(--signal); border-radius: 0; padding: 16px 20px; }
 .vp-doc .custom-block-title { font-family: var(--vp-font-family-mono); font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
 /* Links in callouts read like every other link, not in the callout's accent. */

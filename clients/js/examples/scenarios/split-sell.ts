@@ -34,7 +34,7 @@ import {
   step,
   tokenTransfer,
   type Step,
-} from '../../src/index.js';
+} from '@jac0xb/ballista';
 import {
   JUPITER_ROUTE,
   JUPITER_V6,

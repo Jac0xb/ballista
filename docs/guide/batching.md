@@ -1,40 +1,23 @@
 # Batch execution
 
-This page shows how a template repeats its steps over a list of rows, such as paying 30 recipients
-in one run, and the limits that apply.
+A template can declare one batch: a row of 1 to 8 accounts, plus optional row inputs, that the
+caller repeats once per item, such as one recipient per row. `step.forEach` runs its steps once per
+row.
 
-A template can declare one batch: a row of accounts, and optionally a row of input values, that the
-caller repeats once per item. The caller passes the rows after the template's fixed accounts (the
-ones declared in `accounts`), and the program works out the number of rows from how many accounts
-follow, not counting members of [account groups](./account-groups). Each row's input values travel
-in the run data, so every row can carry its own amount or flag. A template can also require a
-minimum number of rows, so that a run with no rows fails instead of succeeding without doing
-anything.
+The caller passes the rows after the fixed accounts and before any
+[account group](/guide/accounts-and-cpis#account-groups) members, and the row inputs in the run
+data, one set per row. The program counts the rows from the accounts left over: they must divide
+evenly into rows, and the count must fall between the batch's minimum and maximum (at most 60), or
+the run fails.
 
-## Thirty-recipient payroll
+## Variable payroll
 
-This template sends the same number of [lamports](/reference/glossary#lamports) from a treasury,
-which must sign, to each of 1 to 30 recipients. `step.forEach` runs its steps once per row, and
-`account.iteration('recipient')` refers to the current row's account. The same template appears on
-[payment patterns](/examples/payments#bounded-sol-payroll).
-
-::: code-group
-
-<<< @/../clients/js/examples/docs/bounded-sol-payroll.ts#template [TypeScript · Template]
-
-<<< @/../clients/js/examples/docs/bounded-sol-payroll.ts#run [TypeScript · Run]
-
-<<< @/../clients/rust/examples/docs_templates.rs#bounded-sol-payroll [Rust · Template]
-
-<<< @/../clients/rust/examples/docs_runs.rs#bounded-sol-payroll [Rust · Run]
-
-:::
-
-## A different amount per row
-
-`batch.rowInputs` declares inputs that every row carries. Inside `forEach`,
-`expression.rowInput(name)` reads the current row's value. At run time the caller passes one set of
-values per row, in the same order as the rows.
+This template pays each of 1 to 30 recipients its own number of
+[lamports](/reference/glossary#lamports) from a treasury, which must sign. `step.forEach` runs its
+steps once per row, and `account.iteration('recipient')` refers to the current row's account.
+`batch.rowInputs` declares inputs that every row carries, and `expression.rowInput('amount')` reads
+the current row's value. At run time the caller passes one set of values per row, in the same order
+as the rows.
 
 ::: code-group
 
@@ -84,11 +67,9 @@ template enforce a limit over the whole batch, such as a total budget.
 The `require` carries the label `withinBudget`, so a run that goes over budget fails with an error
 that names that step; the TypeScript Run tab shows how to read it with `explainRunError`.
 
-In Rust, values live in registers (numbered slots the builder hands back), and the first argument to
-`for_each` lists the registers to carry as a bit mask: `1 << total` carries the register that holds
-the total, and `0` carries nothing. Finalization, the one-time check before a template is locked on
-chain, confirms that every carried value is set before the loop and keeps its type through the loop
-body. A carried `bytes` value must also keep its maximum length.
+In Rust, the loop lists its carried variables with `.carry("total")`. Finalization, the one-time
+check before a template is locked on chain, confirms that every carried value is set before the loop
+and keeps its type through the loop body. A carried `bytes` value must also keep its maximum length.
 
 ## Stride-two rows
 
@@ -113,16 +94,11 @@ exist, and transfers tokens to it. The same template appears on
 The caller passes each row's accounts together, in the order `row` declares them: wallet, ATA,
 wallet, ATA, and so on.
 
-A row holds 1 to 8 accounts. The accounts passed for rows must make up a whole number of rows, and
-the row count must lie between `minIterations` and `maxIterations`. A template can have up to eight
-loops, run one after another. There are no nested loops, no backward jumps, and no `while` loops
-that run until a condition changes. Steps outside a loop can run before it and after it.
+## Rules and limits
 
-::: warning Count CPIs, not just rows
-A template can make at most 64 CPIs, counted for the worst case: the calls outside loops, plus
-each loop's calls times its maximum (`maxIterations` for `forEach`, `max` for `repeat`). Calls with
-a `when` condition count too. A 30-row
-loop with two calls counts as 60; a third call in the loop body would make 90, and finalization
-would reject the template. The stride-two example above makes two calls per row, so its 8 rows count
-as 16.
-:::
+- **Checked at finalization.** Up to eight loops (`forEach` and
+  [`repeat`](/guide/loops#crank-once-per-waiting-entry)), one after another and never nested, else
+  `InvalidLoop` (6129). At most 64 CPIs in the worst case: each loop's calls times its maximum, plus
+  the calls outside loops. A 30-row loop with two calls counts 60.
+- **Capped by Solana.** The [instruction trace](/reference/limits#instruction-trace) counts the run
+  and every call the called programs make, and often runs out before 64. Size loops to it.

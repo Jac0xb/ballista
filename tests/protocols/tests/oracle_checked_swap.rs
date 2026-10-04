@@ -1,19 +1,17 @@
 //! `jupiterOracleCheckedSwap` against the real programs: route `solToUsdc`, 1 SOL for USDC through
 //! Meteora DLMM, valued at the snapshot's Pyth SOL/USD price.
 //!
-//! The template reads the feed's exponent and both mints' decimals itself, so a run passes only the
-//! feed id, the route and a tolerance. The route goes in parts, its plan and the four numbers after
-//! it, so that the template can require `in_amount` to leave the account it measures.
+//! The feed, the two mints it prices and the tolerance are the template's constants, and it reads
+//! the feed's exponent and both mints' decimals itself, so a run passes only the price account and
+//! the route. The route goes in parts, its plan and the four numbers after it, so that the template
+//! can require `in_amount` to leave the account it measures.
 //!
 //! The run takes `route`'s place in Jupiter's own transaction: Jupiter's setup wraps the SOL and
 //! creates the USDC account before it, and its cleanup closes the wrapped SOL account after.
 
 use {
     ballista_protocol_tests::{
-        oracle::{
-            copy_pyth_feed, pyth_price, set_pyth_price, PythPrice, SOL_USD_FEED_ID,
-            USDC_USD_FEED_ID,
-        },
+        oracle::{copy_pyth_feed, pyth_price, set_pyth_price, PythPrice, USDC_USD_FEED_ID},
         snapshot::{
             fee_at, jupiter_ran, Leg, Routing, Snapshot, PLATFORM_FEE_ACCOUNT, ROUTE_HEAD,
             SNAPSHOT_DIR,
@@ -36,7 +34,8 @@ use {
 const TEMPLATE: &str = "jupiterOracleCheckedSwap";
 const ROUTE: &str = "solToUsdc";
 const TEMPLATE_ID: u16 = 5;
-/// 1%: how far below the oracle's valuation the fill may land.
+/// The template's `TOLERANCE_BPS`, 1%: how far below the oracle's valuation the fill may land.
+/// `the_floor_is_exact_to_the_last_unit` holds the template to it.
 const TOLERANCE_BPS: u64 = 100;
 /// SPL Token `Mint`: `decimals` is the byte at 44.
 const MINT_DECIMALS: usize = 44;
@@ -54,14 +53,6 @@ const EXCESSIVE_FEE_BPS: u8 = 150;
 /// 2%: `slippageBps` loose enough that neither `PLATFORM_FEE_BPS` nor `EXCESSIVE_FEE_BPS` trips
 /// Jupiter's own slippage check.
 const HOSTILE_SLIPPAGE_BPS: u16 = 200;
-
-/// A run's `toleranceBps`, and `route`'s own `slippageBps` and `platformFeeBps`: bundled so
-/// [`Swap::run_priced`] takes one argument for the three instead of three.
-struct Fees {
-    tolerance_bps: u64,
-    slippage_bps: u64,
-    platform_fee_bps: u64,
-}
 
 /// A fresh SVM with the template uploaded and the trader holding SOL, which Jupiter's setup wraps.
 struct Swap {
@@ -107,53 +98,13 @@ impl Swap {
         }
     }
 
-    /// The run, valued at the price in `price_update`, which it requires to carry `feed_id`.
-    fn run(
-        &self,
-        example: &Example,
-        price_update: Address,
-        feed_id: Address,
-        tolerance_bps: u64,
-    ) -> Instruction {
-        self.run_routed(
-            example,
-            price_update,
-            feed_id,
-            tolerance_bps,
-            Routing::of(&self.leg),
-        )
-    }
-
-    /// [`Swap::run`] with `routing`'s accounts in place of the route's own.
-    fn run_routed(
-        &self,
-        example: &Example,
-        price_update: Address,
-        feed_id: Address,
-        tolerance_bps: u64,
-        routing: Routing,
-    ) -> Instruction {
-        self.run_priced(
-            example,
-            price_update,
-            feed_id,
-            Fees {
-                tolerance_bps,
-                slippage_bps: u64::from(self.leg.route.slippage_bps),
-                platform_fee_bps: u64::from(self.leg.route.platform_fee_bps),
-            },
-            routing,
-        )
-    }
-
-    /// [`Swap::run_routed`] with `fees` in place of `tolerance_bps` and the quote's own
-    /// `slippageBps` and `platformFeeBps`.
+    /// The run, valued at the price in `price_update`, with `routing`'s accounts and
+    /// `slippage_bps` and `platform_fee_bps` in place of the quote's own.
     fn run_priced(
         &self,
         example: &Example,
         price_update: Address,
-        feed_id: Address,
-        fees: Fees,
+        (slippage_bps, platform_fee_bps): (u64, u64),
         routing: Routing,
     ) -> Instruction {
         let leg = &self.leg;
@@ -166,31 +117,42 @@ impl Swap {
             .account("destinationAta", routing.destination, true, false)
             .account("sourceMint", leg.input_mint, false, false)
             .account("destinationMint", leg.output_mint, false, false)
-            .input_pubkey("feedId", feed_id)
             .input_bytes("routePlan", &leg.route.route_plan)
             .input_u64("inAmount", leg.route.in_amount)
             .input_u64("quotedOutAmount", leg.route.quoted_out_amount)
-            .input_u64("slippageBps", fees.slippage_bps)
-            .input_u64("platformFeeBps", fees.platform_fee_bps)
-            .input_u64("toleranceBps", fees.tolerance_bps)
+            .input_u64("slippageBps", slippage_bps)
+            .input_u64("platformFeeBps", platform_fee_bps)
             .group("routeAccounts", routing.steps)
             .build()
     }
 
+    /// The quote's own `slippageBps` and `platformFeeBps`.
+    fn quoted_fees(&self) -> (u64, u64) {
+        let route = &self.leg.route;
+        (
+            u64::from(route.slippage_bps),
+            u64::from(route.platform_fee_bps),
+        )
+    }
+
+    /// The run, valued at the price in `price_update`.
+    fn run(&self, example: &Example, price_update: Address) -> Instruction {
+        self.run_priced(
+            example,
+            price_update,
+            self.quoted_fees(),
+            Routing::of(&self.leg),
+        )
+    }
+
     /// The run at the SOL/USD price update, as a trader selling SOL would send it.
     fn sol_usd_run(&self, example: &Example) -> Instruction {
-        self.run(example, self.sol_usd, SOL_USD_FEED_ID, TOLERANCE_BPS)
+        self.run(example, self.sol_usd)
     }
 
     /// [`Swap::sol_usd_run`] with `routing`'s accounts in place of the route's own.
     fn sol_usd_run_routed(&self, example: &Example, routing: Routing) -> Instruction {
-        self.run_routed(
-            example,
-            self.sol_usd,
-            SOL_USD_FEED_ID,
-            TOLERANCE_BPS,
-            routing,
-        )
+        self.run_priced(example, self.sol_usd, self.quoted_fees(), routing)
     }
 
     /// [`Swap::sol_usd_run_routed`] with `slippage_bps` and `platform_fee_bps` in place of the
@@ -205,12 +167,7 @@ impl Swap {
         self.run_priced(
             example,
             self.sol_usd,
-            SOL_USD_FEED_ID,
-            Fees {
-                tolerance_bps: TOLERANCE_BPS,
-                slippage_bps,
-                platform_fee_bps,
-            },
+            (slippage_bps, platform_fee_bps),
             routing,
         )
     }
@@ -844,11 +801,13 @@ fn an_attackers_destination_fails_at_proceeds_go_to_the_trader() {
     assert_eq!(token_balance(&swap.svm, &attacker_usdc), 0);
 }
 
-/// A price from another feed is refused before anything else reads it.
+/// Another feed's price account is refused before anything else reads it, and before Jupiter runs.
 ///
 /// The account is mainnet's USDC/USD feed, written by copying SOL/USD's with that feed's id and
 /// address and giving it USDC's price of $0.9999 (write rule 2). The receiver owns both and both
-/// are fully verified, so only the feed id tells them apart.
+/// are fully verified, so only the feed id tells them apart. Valued at USDC's price, the SOL sold
+/// would have a floor of 989,901 USDC units, under a dollar, which any fill clears. When the feed id
+/// was a run input, a builder who named USDC/USD's got exactly that.
 #[test]
 fn a_price_from_another_feed_fails_at_the_feed_pin() {
     let snapshot = Snapshot::load(SNAPSHOT_DIR);
@@ -866,23 +825,50 @@ fn a_price_from_another_feed_fails_at_the_feed_pin() {
             ..copied
         },
     );
+    assert_eq!(
+        oracle_floor(
+            swap.leg.in_amount,
+            99_990_000,
+            swap.scale(&usdc_usd),
+            TOLERANCE_BPS
+        ),
+        989_901
+    );
 
-    let run = swap.run(example, usdc_usd, SOL_USD_FEED_ID, TOLERANCE_BPS);
+    let run = swap.run(example, usdc_usd);
     let failure = swap.send(run).unwrap_err();
     assert_requirement_failed(&failure, example, "priceIsTheExpectedFeed");
+    assert!(!jupiter_ran(&swap.jupiter, &failure), "{failure:?}");
+}
 
-    // What the pin stops. Told to expect USDC/USD, the template values the SOL sold at $0.9999,
-    // and a fill of a dollar would clear that. Before the pin, nothing read the feed id, so the run
-    // above landed like this one.
-    let run = swap.run(example, usdc_usd, USDC_USD_FEED_ID, TOLERANCE_BPS);
-    swap.send(run)
-        .unwrap_or_else(|failure| panic!("{failure:?}"));
-    let floor = oracle_floor(
-        swap.leg.in_amount,
-        99_990_000,
-        swap.scale(&usdc_usd),
-        TOLERANCE_BPS,
+/// The pair is pinned with the feed, since SOL/USD prices SOL in dollars and nothing else. Were the
+/// mints the builder's choice, a route could sell another token at SOL's price, or buy one worth
+/// less than a dollar. A run that passes another mint where the template reads a mint's decimals
+/// fails that account's address constraint, before any step: here USDC's mint as `sourceMint`.
+#[test]
+fn another_mint_fails_the_pinned_pair() {
+    let snapshot = Snapshot::load(SNAPSHOT_DIR);
+    let examples = examples();
+    let example = &examples[TEMPLATE];
+    let mut swap = Swap::new(&snapshot, example);
+    let source_mint = example
+        .fixed_accounts
+        .iter()
+        .position(|name| name == "sourceMint")
+        .unwrap();
+    let mut run = swap.sol_usd_run(example);
+    // The harness refuses to bind a pinned account to another address, so the run is edited after
+    // it is built. Account 0 is the template.
+    run.accounts[1 + source_mint].pubkey = swap.leg.output_mint;
+
+    let failure = swap.send(run).unwrap_err();
+    assert_eq!(
+        tx::ballista_error(&failure),
+        Some((
+            "AccountConstraintFailed",
+            u16::try_from(source_mint).unwrap()
+        )),
+        "{failure:?}"
     );
-    assert_eq!(floor, 989_901);
-    assert!(u128::from(swap.usdc()) > 100 * floor);
+    assert!(!jupiter_ran(&swap.jupiter, &failure), "{failure:?}");
 }

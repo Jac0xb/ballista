@@ -200,8 +200,10 @@ fn the_liquidator_nets_at_least_the_bounty() {
     let run = run(&svm, &scene, liquidity_amount, minimum_bounty);
     let outcome = send_run(&mut svm, &scene, run).unwrap_or_else(|failure| panic!("{failure:?}"));
     eprintln!(
-        "{NAME}: {} CU, {} bytes",
-        outcome.compute_units, outcome.size
+        "{NAME}: {} CU, {} of them Ballista's own, {} bytes",
+        outcome.compute_units,
+        outcome.own_compute_units_of(&ballista_sdk::ID).unwrap(),
+        outcome.size
     );
 
     let (usdc_left, received, ctokens) = holdings(&svm, &scene);

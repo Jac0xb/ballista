@@ -2,6 +2,7 @@ import {
   address,
   appendTransactionMessageInstruction,
   blockhash,
+  createNoopSigner,
   createTransactionMessage,
   getAddressDecoder,
   getTransactionMessageComputeUnitLimit,
@@ -231,6 +232,45 @@ describe('Solana Kit adapter', () => {
     expect(getComputeUnitsConsumed({ meta: { computeUnitsConsumed: 16_400n } })).toBe(16_400);
     expect(getComputeUnitsConsumed({ meta: null })).toBeUndefined();
     expect(getLoadedAccountsDataSizeLimitWithHeadroom(32_769)).toBe(65_536);
+  });
+
+  test('carries a binding\'s signer on the account the template declares a signer', () => {
+    const compiled = batchTransferTemplate();
+    const source = createNoopSigner(byteAddress(2));
+    const instruction = buildKitRunInstruction({
+      compiled,
+      templateAddress: byteAddress(9),
+      inputs: { amount: 1n },
+      accounts: { systemProgram: { address: systemAddress }, source: { address: source.address, signer: source } },
+      batchRows: [{ recipient: { address: byteAddress(3) } }],
+    });
+    const accounts = instruction.accounts ?? [];
+    expect(accounts[2]).toMatchObject({ address: source.address, signer: source });
+    expect(accounts.filter((meta) => 'signer' in meta)).toHaveLength(1);
+  });
+
+  test('refuses a signer that is not the bound address, or on an account that does not sign', () => {
+    const compiled = batchTransferTemplate();
+    const run = (accounts: Parameters<typeof buildKitRunInstruction>[0]['accounts'], recipient = {}) =>
+      buildKitRunInstruction({
+        compiled,
+        templateAddress: byteAddress(9),
+        inputs: { amount: 1n },
+        accounts,
+        batchRows: [{ recipient: { address: byteAddress(3), ...recipient } }],
+      });
+    expect(() =>
+      run({
+        systemProgram: { address: systemAddress },
+        source: { address: byteAddress(2), signer: createNoopSigner(byteAddress(4)) },
+      }),
+    ).toThrow(/signer for source is .*, not the bound/);
+    expect(() =>
+      run(
+        { systemProgram: { address: systemAddress }, source: { address: byteAddress(2) } },
+        { signer: createNoopSigner(byteAddress(3)) },
+      ),
+    ).toThrow('The template does not declare recipient in row 0 a signer, so it cannot carry one');
   });
 });
 

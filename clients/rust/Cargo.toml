@@ -16,4 +16,5 @@ default = []
 [dependencies]
 solana-program = "=4.1.0"
 solana-sha256-hasher = { workspace = true }
-ballista-common = { path = "../../common" }
+# The version lets the crate be packaged: crates.io ignores `path` and needs a published version.
+ballista-common = { path = "../../common", version = "=1.0.0" }

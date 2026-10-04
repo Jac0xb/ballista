@@ -1,0 +1,11 @@
+[package]
+name = "ballista-fuzz-support"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Model, reference checker, generators and harness shared by the Ballista fuzz targets"
+
+[dependencies]
+arbitrary = "1.4.2"
+# `proptest` exposes `template::generate`, whose generator the `structured` target reuses.
+ballista-common = { path = "../../common", features = ["proptest"] }

@@ -1,0 +1,23 @@
+[package]
+name = "ballista-kani"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+description = "Kani bounded model checking harnesses for the Ballista program and its wire format"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[lints.rust]
+# `cfg(kani)` is set by `cargo kani`; every harness lives behind it.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(target_os, values("solana"))'] }
+
+[dependencies]
+ballista = { workspace = true }
+ballista-common = { workspace = true }
+pinocchio = { workspace = true }
+solana-address = { workspace = true }
+# Only for the signatures of the hash stubs in `pda.rs`; the versions the program resolves.
+solana-hash = "=4.6.0"
+solana-sha256-hasher = { workspace = true }

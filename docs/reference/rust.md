@@ -1,426 +1,242 @@
 # Rust SDK
 
-The `ballista-sdk` crate, in `clients/rust`, lets Rust code author templates, derive template and
-registry entry addresses, build the instructions that upload and run a template, encode run
-inputs, and decode Ballista error codes. Its `ProgramBuilder` writes the same bytecode as the
-TypeScript compiler: declaring the same records in the same order produces identical bytes, and a
-test checks this against the TypeScript-compiled `fixtures/system-transfer.hex`.
+The `ballista-sdk` crate, in `clients/rust`, authors templates, derives template and registry entry
+addresses, builds the instructions that upload and run a template, and decodes errors and a run's
+logged output.
+
+Templates are written with `ballista_sdk::template`, which mirrors the TypeScript SDK's
+`defineTemplate` and `compileTemplate`. Inputs, accounts and variables keep the same camelCase
+names, functions are snake_case, and a template compiles to the same bytes with the same checks.
+Tests hold every docs and protocol template to the TypeScript compiler's bytes.
+
+## Install
+
+The crate is not on crates.io yet. Add it from the repository:
 
 ```toml
 [dependencies]
-ballista-sdk = "1"
+ballista-sdk = { git = "https://github.com/Jac0xb/ballista" }
 # The SDK's instructions and addresses are solana-program 4.1.0 types; use the same version.
 solana-program = "=4.1.0"
 ```
 
-Two runnable examples cover the basics: one authors templates, the other builds a run and decodes
-failures.
+`cargo add ballista-sdk --git https://github.com/Jac0xb/ballista` writes the same line, and
+`Cargo.lock` pins the commit you build against.
+
+The examples in `clients/rust/examples` run as they are:
 
 ```bash
-cargo run -p ballista-sdk --example author_template
-cargo run -p ballista-sdk --example run_template
+cargo run -p ballista-sdk --example docs_templates      # every guide template, compiled
+cargo run -p ballista-sdk --example docs_runs           # a run of each
+cargo run -p ballista-sdk --example protocol_templates  # the protocol templates
 ```
 
-Three more cover the protocol templates in the [examples](/examples/protocols/):
-`protocol_templates` builds all thirteen with `ProgramBuilder`, byte-identical to the TypeScript
-fixtures, and `protocol_templates_run` and `protocol_runs` build run instructions for them.
+## Authoring
 
-## Authoring with the builder
+`use ballista_sdk::template::prelude::*;` brings in everything below, plus `Pubkey`, `pubkey!`
+and the program IDs. This template pays each batch row's recipient and keeps the total within a
+budget:
 
-`ProgramBuilder` works one level below the TypeScript authoring API. You declare accounts and
-inputs, then emit bytecode instructions directly, and each call that computes a value returns the
-register that holds it. A register is a numbered slot that holds one value during a run. The flag,
-type, and opcode constants come from the shared `ballista_common` crate, which `ballista_sdk`
-re-exports.
+<<< @/../clients/rust/examples/docs_rust_reference.rs#author
 
-The example below pays `amount` lamports (the smallest unit of SOL) to each batch row's recipient
-through the System Program, keeps a running total, and requires the total to stay within `budget`.
+**The template**
 
-```rust
-use ballista_sdk::{
-    ballista_common::template::{
-        ProgramView, ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, DATA_REG_U64,
-        OP_ADD, OP_LTE, VALUE_U64,
-    },
-    ProgramBuilder, Segment, SYSTEM_PROGRAM_ID,
-};
+- `Template::new()`, then `.input(name, Type)`, `.registry(name, fields)`, `.account(name, ..)`,
+  `.batch(..)`, `.account_group(name)`, `.emit_event()` and `.step(..)` or `.steps(..)`.
+- `Type` is `Bool`, `U64`, `I64`, `U128`, `Pubkey` or `Bytes(max_length)`.
+- `Batch::new(max).min_iterations(n).account(..).input(..)` declares the rows.
 
-let mut builder = ProgramBuilder::new();
-let system = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ID.to_bytes()), None, 0);
-let treasury = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
-let recipient = builder.row_account(ACCOUNT_WRITABLE, None, None, 0);
-builder.batch(30, 1);
+**Accounts**
 
-let amount_input = builder.input(VALUE_U64, 0);
-let budget_input = builder.input(VALUE_U64, 0);
-let amount = builder.load_input(amount_input);
-let budget = builder.load_input(budget_input);
-let total = builder.const_u64(0);
-let discriminator = builder.blob(&[2, 0, 0, 0]);
-let transfer = builder.cpi(
-    system,
-    &[(treasury, ACCOUNT_SIGNER | ACCOUNT_WRITABLE), (recipient, ACCOUNT_WRITABLE)],
-    &[Segment::Literal(discriminator), Segment::Register(DATA_REG_U64, amount)],
-);
-builder.for_each(1 << total, |body| {
-    body.invoke(transfer, None);
-    let sum = body.binary(OP_ADD, total, amount);
-    body.mov(total, sum);
-});
-let within = builder.binary(OP_LTE, total, budget);
-builder.require(within);
+- `account::signer()`, `writable()`, `readonly()`, `program(address)`, `system_program()`.
+- Chain `.signer()`, `.writable()`, `.address(..)`, `.owner(..)`, `.min_data_length(n)`.
+- `account::registry(registry, payer).key(expr)` holds a registry entry.
+- In a step, a `&str` names a fixed account, and `account::iteration(name)` the current row's.
 
-let payload = builder.build()?;
-ProgramView::parse(&payload)?.verify()?;
-```
+**Steps** (`step::`)
 
-| Call | Effect |
-| --- | --- |
-| `account(flags, address, owner, min_data_len)` | Declares a fixed account and returns its reference. `address` and `owner` optionally pin the account's address or owner program |
-| `row_account(flags, address, owner, min_data_len)` | Declares one account of the batch row |
-| `batch(max, min)` | Sets the maximum and minimum number of batch rows |
-| `input(value_type, max_len)` | Declares an input; `max_len` applies only to `VALUE_BYTES` |
-| `load_input(input)`, `const_u64(value)` | Put an input or a constant into a new register |
-| `blob(bytes)` | Stores literal bytes, such as an instruction discriminator, and returns their `(offset, len)` |
-| `cpi(program, accounts, segments)` | Declares a CPI (a call to another program): its program, its `(account, flags)` pairs, and the segments of its instruction data. Returns the CPI's index |
-| `for_each(carry_mask, body)` | Emits a loop over the batch rows. Bit *n* of `carry_mask` keeps register *n*'s value from one row to the next and after the loop |
-| `invoke(cpi, guard)` | Performs a declared CPI. If `guard` names a `bool` register, the CPI runs only when that register is true |
-| `binary(opcode, a, b)` | Emits a two-operand instruction such as `OP_ADD` or `OP_LTE` |
-| `mov(dst, src)` | Copies one register into another; used to update a carried register |
-| `require(register)` | Fails the run unless the `bool` register is true |
+- `let_`, `snapshot`, `assign`, `require`, `set_registry`, `emit`, `set_return_data`.
+- `invoke(program)`, then `.writable(..)`, `.signer(..)`, `.readonly(..)`, `.writable_signer(..)`,
+  `.data(..)`, `.account_group(name)` and `.when(condition)`.
+- `for_each()` and `repeat(count, max)`, then `.step(..)` and `.carry(name)`.
+- `.label("name")` on any step names it in errors.
 
-Other methods cover the rest of the instruction set, such as `read` and `read_dynamic` for account
-data, `derive_pda` and `create_pda`, `row_input`, and `account_groups` with `cpi_with_group`. The
-sections below cover math, loops, output, introspection, and registries, and
-[Wire format](/reference/wire-format) lists every opcode.
+**Data and expressions**
 
-Declaration order matters. Callers pass fixed accounts in the order you declare them, then each
-batch row's accounts in the order you declared the row accounts, and they encode inputs in the
-order you declare the inputs.
+- `data::literal(bytes)`, `data::u8` to `data::u128`, `data::i64`, `data::pubkey`, `data::bool`,
+  `data::bytes`.
+- Expression functions are the TypeScript ones in snake_case: `input`, `var`, `lamports`,
+  `account_data`, `clock_unix_timestamp`, `pda`, `registry`, `return_data`, `instruction_program`,
+  and the rest.
+- `group_length(group)`, `group_any(group, filter)` and `group_count(group, filter)` take a
+  `GroupFilter::new().program(..).equals(offset, value).except_key(..)`, with an optional
+  `.min_data_length(n)`.
+- Operators build arithmetic: `a + b`, `-`, `*`, `/`, `%`, `&`, `|`, `^`, `<<`, `>>`.
+- Methods build comparisons and logic: `.eq`, `.ne`, `.lt`, `.lte`, `.gt`, `.gte`, `.and`, `.or`,
+  `.not`, `.min`, `.max`, `.mul_div`, `.cast`. Prefer `.not()` to `!`, which negates a whole chain.
 
-`builder.build()` writes the header from the final counts and checks only the payload size. Check
-the result with `ProgramView::parse(..).verify()` before uploading; it runs the same verifier the
-program runs when a template is finalized.
+**Helpers**
 
-The builder does not apply the TypeScript compiler's pinning rules, which require an invoked
-program to pin its address and a read account to pin its owner or address. Pin them yourself: an
-unpinned program account lets the caller choose which program runs.
+- `system_transfer`, `token_transfer`, `assert_pda`, `assert_ata`.
+- `create_associated_token_account` and `ensure_associated_token_account`, which take an
+  `AtaAccounts { .. }` with named fields.
+- `ed25519_signature` and `rate_limit`, as the TypeScript helpers of the same names.
 
-### Math
+[Template language](/reference/language) says what each step and expression does.
 
-| Call | Effect |
-| --- | --- |
-| `mul_div(a, b, c)`, `mul_div_ceil(a, b, c)` | `a × b ÷ c` for three `u64` or three `u128` registers, rounded down or up. The product is exact, up to 256 bits, so only the result has to fit |
-| `pow10(exponent)` | `10^exponent` as a `u128`, from a `u64` register holding 0 to 38 |
-| `binary(OP_REM, a, b)` | `a mod b` for matching `u64`, `i64`, or `u128` registers. The result takes the sign of `a` |
-| `binary(OP_SHL, a, b)`, `binary(OP_SHR, a, b)` | Shifts a `u64` or `u128` register by the `u64` in `b`. `OP_SHR` rounds down |
-| `binary(OP_BIT_AND, a, b)`, and the same with `OP_BIT_OR` or `OP_BIT_XOR` | Bitwise operations on matching `u64` or `u128` registers |
-| `read(OP_READ_I32, account, offset)` | Reads four bytes as a signed number into an `i64` register. Every call that takes a read opcode accepts `OP_READ_I32` |
+### Compiling
 
-A zero divisor fails the run with `DivisionByZero`. A result too large for its type, a left shift
-that would drop a set bit, an exponent above 38, or `i64::MIN` modulo -1 fails it with
-`ArithmeticOverflow`. Operands of the wrong type fail verification with `TypeMismatch`.
+`template.compile()` returns a `CompiledTemplate`, or a `CompileError` with the TypeScript
+compiler's message. It refuses a call to a program with no pinned address, a data read of an
+account that pins neither owner nor address, and a template past a [limit](/reference/limits).
+`.unsafe_unpinned()` on an account turns the pin rules off for it.
 
-### Loops
+- `bytes` and `hash` are what you upload.
+- `stats` has the sizes: bytes, instructions, registers, calls.
+- `source(pc)` and `explain_error(code)` name the step a failure points at.
+- `registry_index(name)` gives a registry's index, for its entry addresses.
 
-`repeat(count, max, carry_mask, body)` emits a count loop and returns its instruction index. The
-body runs as many times as the `u64` register `count` holds when the loop starts. `max`, from 1 to
-255, caps it: a larger count fails the run with `LoopCountExceeded`. `carry_mask` works as it does
-for `for_each`, and `loop_index` gives the current pass, counting from 0.
+The on-chain program checks none of the pin rules. `ProgramView::parse(&compiled.bytes)?.verify()`
+runs the checks it does run when it finalizes a template; the
+[trust model](/guide/trust-model#finalization-checks) lists them.
 
-A template holds up to eight loops (`MAX_LOOPS`) of either kind. They run one after another and
-never nest. A template with a batch needs at least one `for_each`. A `repeat` body has no rows, so
-it cannot name a row account or row input. The verifier rejects a ninth loop, a loop inside
-another, a `max` of 0, or a row inside `repeat` with `InvalidLoop`. A batch without a `for_each`,
-or a `for_each` inside another loop, gets `InvalidBatch`. The limit of 64 CPIs per run counts every
-loop at its maximum.
+### Output, introspection and registries
 
-### Output
+`emit` logs a tagged line, `set_return_data` returns bytes to the caller, and `emit_event` makes
+every successful run log its run event:
 
-| Call | Effect |
-| --- | --- |
-| `emit_data(parts)` | Logs the encoded `parts` as one `Program data:` line. The first part must be a `Segment::Literal` tag of at least 4 bytes (`MIN_EMIT_TAG_LEN`) that does not start with `BEV` (`RUN_EVENT_TAG_FAMILY`), so the log cannot pass for Ballista's run event |
-| `set_return_data(parts)` | Sets the encoded `parts` as the run's return data, the bytes a program hands back to its caller. At most once, outside every loop, and with no `invoke` after it, because invoking a program clears return data |
+<<< @/../clients/rust/examples/docs_rust_reference.rs#output
 
-Both encode `Segment`s as `cpi` does, write no register, and return the instruction's index. Each
-can encode at most 1,024 bytes, counting a `bytes` register at its maximum length. The builder
-checks none of this; the verifier rejects a break with `InvalidOutput`. A template that invoked the
-run reads its return data with `return_data`, and a client can read it by simulating a transaction
-that ends with the run. The plain `emit` method is different: it appends a raw instruction record.
+Introspection reads the transaction's other instructions through the Instructions sysvar, declared
+as an account pinned to `INSTRUCTIONS_SYSVAR_ID`:
 
-```rust
-// After `builder.require(within)` in the example above:
-// log the tag "PAID" and the total, then return the total to the caller.
-let tag = builder.blob(b"PAID");
-builder.emit_data(&[Segment::Literal(tag), Segment::Register(DATA_REG_U64, total)]);
-builder.set_return_data(&[Segment::Register(DATA_REG_U64, total)]);
-```
+<<< @/../clients/rust/examples/docs_rust_reference.rs#introspection
 
-### Introspection and byte reads
+A [registry](/reference/language#registries) keeps state between runs, in entries Ballista owns:
 
-Introspection means reading the other instructions in the same transaction. The builder does it
-through the Instructions sysvar. A sysvar is an account whose data the Solana runtime maintains,
-and this one holds every instruction in the current transaction. Declare it as a fixed account
-pinned to `INSTRUCTIONS_SYSVAR_ID`, and pass it read-only in the run, as
-`AccountMeta::new_readonly(INSTRUCTIONS_SYSVAR_ID, false)`. The verifier rejects `introspect`,
-`read_instruction_data`, or `read_instruction_bytes` on any other account with
-`InvalidIntrospection`.
+<<< @/../clients/rust/examples/docs_rust_reference.rs#registry
 
-| Call | Effect |
-| --- | --- |
-| `introspect(opcode, sysvar, index, position)` | One fact about the transaction, picked by `opcode` from the table below. `index` and `position` are `u64` registers; pass `NO_INDEX` for one the opcode does not take |
-| `read_instruction_data(read_opcode, sysvar, index, offset)` | A value from instruction `index`'s data at the `u64` offset in `offset`, with the width and type of an `OP_READ_*` opcode |
-| `read_instruction_bytes(sysvar, index, offset, len)` | Exactly `len` bytes, 1 to 1,024, of instruction `index`'s data from `offset` |
-| `read_account_bytes(account, offset, len)` | Exactly `len` bytes, 1 to 1,024, of an account's data from the `u64` offset in `offset`, read in place without a copy |
-| `bytes_len(value)` | The length of a `bytes` register, as a `u64` |
-
-| `opcode` | Operands | Result |
-| --- | --- | --- |
-| `OP_INSTRUCTION_COUNT` | None | The number of instructions in the transaction |
-| `OP_INSTRUCTION_INDEX` | None | The index of the instruction running the template |
-| `OP_INSTRUCTION_PROGRAM` | `index` | The program that instruction `index` calls, as a `pubkey` |
-| `OP_INSTRUCTION_ACCOUNT_COUNT` | `index` | How many accounts instruction `index` lists |
-| `OP_INSTRUCTION_ACCOUNT` | `index`, `position` | The address of the account at `position` in instruction `index` |
-| `OP_INSTRUCTION_ACCOUNT_FLAGS` | `index`, `position` | The flags of that account, as a `u64`: bit 0 is signer, bit 1 is writable |
-| `OP_INSTRUCTION_DATA_LEN` | `index` | The length of instruction `index`'s data |
-
-An index, position, or byte range beyond what exists fails the run with `InstructionOutOfRange`.
-`read_account_bytes` also fails with `WritableAccountBytesRead` if the account is writable in the
-run instruction, because a CPI could change the bytes while the run holds them. Declare the account
-without `ACCOUNT_WRITABLE` and pass it with `AccountMeta::new_readonly`: neither the builder nor the
-verifier checks this.
-
-```rust
-use ballista_sdk::{
-    ballista_common::template::{
-        NO_INDEX, OP_EQ, OP_INSTRUCTION_INDEX, OP_INSTRUCTION_PROGRAM, OP_SUB,
-    },
-    ProgramBuilder, ED25519_PROGRAM_ID, INSTRUCTIONS_SYSVAR_ID,
-};
-
-let mut builder = ProgramBuilder::new();
-let sysvar = builder.account(0, Some(INSTRUCTIONS_SYSVAR_ID.to_bytes()), None, 0);
-let one = builder.const_u64(1);
-let ed25519 = builder.const_pubkey(ED25519_PROGRAM_ID.to_bytes());
-
-// Require the instruction just before this run to call the Ed25519 program.
-let current = builder.introspect(OP_INSTRUCTION_INDEX, sysvar, NO_INDEX, NO_INDEX);
-let previous = builder.binary(OP_SUB, current, one);
-let program = builder.introspect(OP_INSTRUCTION_PROGRAM, sysvar, previous, NO_INDEX);
-let is_ed25519 = builder.binary(OP_EQ, program, ed25519);
-builder.require(is_ed25519);
-```
-
-The Ed25519 program is a precompile: a program built into Solana that checks signatures as part of
-the transaction, so a transaction with an invalid signature fails. The Rust SDK has no counterpart
-to TypeScript's `ed25519Signature`, which ties such a signature to a template.
-`signed_quote_settlement` in the `protocol_templates` example writes the same checks with the calls
-above: the instruction before the run is the Ed25519 program and holds one signature, by the maker,
-over a message of the expected length, with the key, the signature, and the message all in its own
-data. Check the signed key against one the transaction's builder cannot choose, such as a pinned
-address or the key of an account that must sign; otherwise the builder can sign with a key of
-their own. `protocol_templates_run` builds the Ed25519 instruction, and
-[Settle at a signed quote](/examples/protocols/signed-quote) walks through both.
-
-### Registries
-
-[Remember state between runs](/guide/registries) walks through examples, and the
-[language reference](/reference/language#registries) has the full rules.
-
-A registry gives a template state that outlives a run, such as a running total or a spending
-limit. An entry holds one copy of a registry's fields in its own account, picked by a 32-byte key
-the template computes, such as the caller's address. Ballista owns every entry. Only the template's
-own runs can write it, and anyone can read it.
-
-| Call | Effect |
-| --- | --- |
-| `open_registry(entry, key, payer, index, size, system_program)` | Emits `OP_OPEN_REGISTRY` (opcode 75) and returns the instruction's index. The run checks the entry in account `entry`, or creates it. `key` is `Some` of a register holding a `pubkey`, or `None` for 32 zero bytes. `index` is the registry's index, below 8 (`MAX_REGISTRIES`), and `size` its field bytes, 1 to 512 (`MAX_REGISTRY_SIZE`) |
-| `read_registry(entry, offset, read_opcode)` | Emits `OP_READ_REGISTRY` (opcode 76): reads the field at `offset` past the entry's header into a new register, with the width and type of an `OP_READ_*` opcode |
-| `write_registry(entry, offset, read_opcode, value)` | Emits `OP_WRITE_REGISTRY` (opcode 77) and returns the instruction's index: writes register `value` into the field. `read_opcode` is `OP_READ_BOOL`, `OP_READ_U64`, `OP_READ_I64`, `OP_READ_U128`, or `OP_READ_PUBKEY`, matching `value`'s type |
-
-An entry lives at a program-derived address (PDA): an address computed from a program's ID and a
-list of byte strings called seeds. An entry's seeds are `"registry"` (`REGISTRY_SEED`), the
-template's address, the registry index, and the key. The first run to open an entry creates it
-through the System Program, and `payer` pays the rent: the lamports Solana requires an account to
-hold for its size, here a 72-byte header (`REGISTRY_ENTRY_HEADER_LEN`) plus `size`. Entries are
-never closed, so the rent stays in them. A write lands at once, and a run that fails later undoes
-it with the rest of the transaction.
-
-```rust
-use ballista_sdk::{
-    ballista_common::template::{
-        ProgramView, ACCOUNT_EXECUTABLE, ACCOUNT_SIGNER, ACCOUNT_WRITABLE, OP_ADD, OP_LTE,
-        OP_READ_U64, VALUE_U64,
-    },
-    ProgramBuilder, SYSTEM_PROGRAM_ID,
-};
-
-let mut builder = ProgramBuilder::new();
-let system = builder.account(ACCOUNT_EXECUTABLE, Some(SYSTEM_PROGRAM_ID.to_bytes()), None, 0);
-let caller = builder.account(ACCOUNT_SIGNER | ACCOUNT_WRITABLE, None, None, 0);
-// The entry: declared writable and nothing else.
-let entry = builder.account(ACCOUNT_WRITABLE, None, None, 0);
-let amount_input = builder.input(VALUE_U64, 0);
-let amount = builder.load_input(amount_input);
-let cap = builder.const_u64(1_000_000_000);
-
-// Registry 0 holds one u64, 8 bytes, keyed by the caller, who pays for the entry once.
-let key = builder.account_key(caller);
-builder.open_registry(entry, Some(key), caller, 0, 8, system);
-// Add `amount` to the caller's running total, which must stay within `cap`.
-let sent = builder.read_registry(entry, 0, OP_READ_U64);
-let total = builder.binary(OP_ADD, sent, amount);
-let within = builder.binary(OP_LTE, total, cap);
-builder.require(within);
-builder.write_registry(entry, 0, OP_READ_U64, total);
-
-let payload = builder.build()?;
-ProgramView::parse(&payload)?.verify()?;
-```
-
-The builder checks none of the rules. `verify` rejects a break with `InvalidRegistry` (6132):
-
-- An open sits at the root, never inside a loop or after `set_return_data`. Each entry account is
-  opened once, at most 8 opens in all (`MAX_REGISTRY_OPENS`), and every open of one registry index
-  gives the same `size`.
-- The entry is a fixed account declared `ACCOUNT_WRITABLE` and nothing else: no other flag, no
-  address or owner pin, no minimum data length. The payer is a fixed account declared signer and
-  writable, and `system_program` a fixed account pinned to the System Program.
-- `read_registry` and `write_registry` name an entry opened earlier in the program, and a field
-  inside its `size`.
-- No CPI lists an entry writable, and no `read`, `read_dynamic`, or `read_account_bytes` names one.
-  Its key, owner, lamports, and data length stay readable.
-
-Each open also counts as 3 CPIs toward the limit of 64 (`REGISTRY_OPEN_CPIS`), because an address
-that already holds lamports takes three calls to create. A template over the limit fails `verify`
-with `ExcessiveCpiExpansion` (6121), not `InvalidRegistry`.
-
-At run time, pass the entry writable, at the address
-[`find_registry_entry_address`](#addresses-and-hashing) derives. A run fails with:
-
-- `InvalidRegistryEntry` (6025) if the account is not this template's entry for that registry and
-  key, or has another size;
-- `RegistryReentry` (6026) if a CPI passes an open entry writable, as a row account or an account
-  group member, where `verify` cannot see it;
-- `AccountConstraintFailed` (6020) if the entry is passed read-only.
+[Reading a run's output](#reading-a-runs-output) decodes logs and return data from a transaction.
 
 ## Addresses and hashing
 
-```rust
-use ballista_sdk::{
-    find_registry_entry_address, find_template_pda, find_template_pda_for_program, template_hash,
-};
+<<< @/../clients/rust/examples/docs_rust_reference.rs#addresses
 
-let (template, bump) = find_template_pda(&creator, template_id);
-let (other_template, _) = find_template_pda_for_program(&creator, template_id, &other_program_id);
-let hash = template_hash(&payload);
-// The caller's entry of registry 0, as in the Registries example above.
-let (entry, _) = find_registry_entry_address(&template, 0, &caller.to_bytes());
-```
+- `find_template_pda(creator, template_id)` derives a template's address from the seeds
+  `"template"`, the creator's address, and the 16-bit template ID.
+- `find_registry_entry_address(template, registry_index, key)` derives an entry's from `"registry"`
+  (`REGISTRY_SEED`), the template's address, the registry index, and the 32-byte key, `[0; 32]` for
+  an entry without one. It panics if the index is not below `MAX_REGISTRIES` (8).
+- `template_hash(payload)` is the payload's SHA-256 hash, which the upload instructions carry.
 
-A template lives at a program-derived address (PDA) of the Ballista program, computed from the
-seed `"template"`, the creator's address, and a 16-bit template ID. `find_template_pda` uses the
-program ID built into the crate, `ballista_sdk::ID`. Each program version is deployed at its own
-address, so `find_template_pda_for_program` takes the program ID of another deployment.
-`template_hash` returns the payload's SHA-256 hash, which the upload instructions carry.
+Both address functions derive under `ballista_sdk::ID`, the address of the pre-release devnet
+build, which rejects templates from this repository
+([status](/guide/security#audit-status)). Each has a `_for_program` variant that takes your
+deployment's program ID, as every instruction builder does.
 
-`find_registry_entry_address(template, registry_index, key)` returns a
-[registry](#registries) entry's address and bump, from the seeds `"registry"`, the template's
-address, the registry index, and the 32-byte key: an address's bytes, or `[0; 32]` for an entry
-without a key. It panics if `registry_index` is not below `MAX_REGISTRIES` (8).
-`find_registry_entry_address_for_program` takes the program ID of another deployment.
+The crate also exports `TEMPLATE_SEED`, `BALLISTA_ID` (the same as `ID`), and the program IDs
+`SYSTEM_PROGRAM_ID`, `TOKEN_PROGRAM_ID`, `TOKEN_2022_PROGRAM_ID`, `ASSOCIATED_TOKEN_PROGRAM_ID`,
+`INSTRUCTIONS_SYSVAR_ID`, and `ED25519_PROGRAM_ID`.
+
+## Calling your own program
+
+`account::program` pins the program to a `Pubkey`. An Anchor program's instruction data starts
+with the handler's [discriminator](/reference/glossary#discriminator), which
+`anchor_discriminator(name)` returns for the handler's snake_case name. The arguments follow in
+Borsh order, which writes integers little-endian and addresses as 32 bytes, as the `data::`
+functions encode them.
+
+<<< @/../clients/rust/examples/docs_rust_reference.rs#own-program
 
 ## Lifecycle instructions
 
-```rust
-let create = ballista_sdk::create_template_instruction(creator, id, &payload);
-
-let begin = ballista_sdk::begin_template_instruction(
-    creator,
-    id,
-    payload.len() as u32,
-    ballista_sdk::template_hash(&payload),
-);
-let write = ballista_sdk::write_template_chunk_instruction(creator, template, offset, chunk);
-let finalize = ballista_sdk::finalize_template_instruction(creator, template);
-let cancel = ballista_sdk::cancel_template_instruction(creator, template);
-```
+<<< @/../clients/rust/examples/docs_rust_reference.rs#upload
 
 | Function | Instruction |
 | --- | --- |
-| `create_template_instruction` | Creates, verifies, and finalizes a template in one instruction, when the payload fits in one transaction |
+| `create_template_instruction` | Creates, verifies, and finalizes a template in one instruction |
 | `begin_template_instruction` | Starts a chunked upload by creating the template account with the payload's length and hash |
-| `write_template_chunk_instruction` | Writes the next chunk; chunks must be written in order |
+| `write_template_chunk_instruction` | Writes the next chunk; chunks go in order |
 | `finalize_template_instruction` | Checks the hash, verifies the bytecode, and makes the template permanent and runnable |
 | `cancel_template_instruction` | Closes an unfinished upload and returns its lamports to the creator |
 
-The creator signs each of these. Create and begin also pass the System Program, which creates the
-template account.
+The creator signs each one. Create and begin also pass the System Program, which creates the
+template account. Each function has a `_for_program` variant for another deployment.
+
+A legacy or v0 transaction holds at most 1,232 bytes
+([limits](/reference/limits#transaction-ceilings)). In a legacy transaction that the creator signs
+and pays for, with nothing else in it, that fits a 960-byte payload in
+`create_template_instruction`, or a 1,023-byte chunk; a v0 transaction fits 2 bytes less of each.
+Another signer or instruction, such as a compute-budget instruction, takes more of the room.
 
 ## Inputs and the run instruction
 
-```rust
-use ballista_sdk::{run_instruction, RunInputs, SYSTEM_PROGRAM_ID};
-use solana_program::instruction::AccountMeta;
+<<< @/../clients/rust/examples/docs_rust_reference.rs#run
 
-// template, treasury and recipients are addresses you supply; amount and budget are u64 values.
-let inputs = RunInputs::new().u64(amount).u64(budget).finish();
-let mut accounts = vec![
-    AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-    AccountMeta::new(treasury, true),
-];
-accounts.extend(recipients.iter().map(|key| AccountMeta::new(*key, false)));
-let run = run_instruction(template, accounts, &inputs);
-```
+`compiled.run(template)` builds a run by name, as TypeScript's `buildRunInstruction` does:
 
-`RunInputs` encodes values in the order the template declares them: `bool`, `u64`, `i64`, `u128`,
-`pubkey`, and `bytes`, which gets a length prefix. If the template declares account groups, call
-`groups(&[..])` first with one length per group. Row inputs follow the fixed inputs, one set per
-row.
+- `.input(name, value)` takes an integer, a `bool`, a `Pubkey`, or bytes.
+- `.account(name, address)` binds each fixed account. Its signer and writable flags come from the
+  declaration.
+- `.row(Row::new().account(..).input(..))` or `.rows(..)` adds batch rows.
+- `.group(name, metas)` adds an account group's members, which never sign.
+- `.instruction()` checks every name, type and row count, then returns the `Run` instruction, or a
+  `RunError`.
 
-`run_instruction` puts the template account first, read-only, followed by your runtime accounts in
-the template's order: fixed accounts, then each batch row's accounts, then account group members,
-group by group.
+The instruction lists the template account first, read-only, then the fixed accounts, each row's
+accounts, and the group members, all in declaration order. `.encode_inputs()` returns only the
+input bytes; start from `compiled.run_inputs()` when there is no run to build, such as a nested
+run's inputs.
+
+## Reading a run's output {#reading-a-runs-output}
+
+A `Program data:` line doesn't name the program that logged it. `program_data(logs)` follows the
+`invoke`, `success`, and `failed` lines around each one, and returns it with its program, its stack
+height (1 for a run that is one of the transaction's instructions, more for a nested run), and its
+invocation number. Lines with the same `invocation` came from one call, so a template's `EMIT`
+lines pair with the run event that names it. `ballista_output(&ballista_sdk::ID)` then tells a run
+event from an `EMIT` by the [tag rule](/reference/language#output), and gives `None` for another
+program's line, even one with the same bytes.
+
+<<< @/../clients/rust/examples/docs_rust_reference.rs#run-output
+
+- `decode_run_event(bytes)` decodes exactly 47 bytes that start with `BEV1`: `version`,
+  `iterations`, `expanded` (the invokes reached), `executed` (a bit per invoke reached, set if it
+  ran), and `template_address`. [Wire format](/reference/wire-format#run-event) has the layout.
+- `program_data` returns a `LogError` naming the line when the logs don't nest. Logs cut off at
+  Solana's log limit parse up to the `Log truncated` line, so check for that line when you need
+  every event.
+- A failed transaction still logs what ran before the failure. Check that it succeeded first.
+- Return data names the program that set it, not the template. Read it from the return data that
+  simulation or the transaction's metadata reports, as `returned_total` does. A `Program return:`
+  log line names the program whose call just ended instead, so after a run that sets none, it can
+  hold a called program's bytes under Ballista's name.
 
 ## Decoding failures
 
-```rust
-use ballista_sdk::{decode_ballista_error, ErrorSource};
+<<< @/../clients/rust/examples/docs_rust_reference.rs#decode-failure
 
-// `code` is the custom error code (u32) from a failed transaction.
-if let Some(error) = decode_ballista_error(code) {
-    let context = match (error.source, error.name) {
-        (ErrorSource::Verifier, _) => "verifier context",
-        (_, "AccountConstraintFailed") => "runtime account index",
-        (_, "InvalidRunInputs") => "input index",
-        (_, "InvalidAccountRange") => "accounts or rows supplied",
-        (_, "CpiAccountLimitExceeded") => "accounts in the call",
-        _ => "program counter",
-    };
-    println!("{} ({context} {})", error.name, error.context);
-}
-```
+`decode_ballista_error` returns a `DecodedError` with the error's `name`, its `source` (runtime or
+verifier), and its `context`. The low 16 bits of a code name the error, and the high 16 bits say
+where it happened: for most runtime errors the program counter. The kinds matched above give an
+account index, an input index, or a count instead. [Error codes](/reference/errors#context) lists
+the context of every kind.
 
-`None` means the code is outside Ballista's ranges and came from an invoked program. The low 16
-bits of a code name the error, and the high 16 bits, `context`, say where it happened: for most
-runtime errors the program counter (the index of the failing bytecode instruction), but an account
-index, an input index, or a count for the kinds matched above. The `run_template` example does the
-same. [Errors and events](/guide/errors-and-events) lists the context of every kind.
+With the compiled template at hand, `compiled.explain_error(code)` names the step and its label
+instead, as `RequirementFailed at steps[2] (withinBudget)`.
+
+Anchor programs number their errors from 6000 too, so a code in Ballista's ranges may come from a
+program the run called. Decode it only when the transaction's first `Program <address> failed:` log
+line names Ballista. `None` means the code is outside Ballista's ranges.
 
 ## Decoding a template account {#borrowed-decoding}
 
-```rust
-use ballista_sdk::ballista_common::template::TemplateAccount;
-
-let account = TemplateAccount::parse(&account_data)?;
-let program = account.finalized_program()?;
-let stats = program.verify()?;
-```
+<<< @/../clients/rust/examples/docs_rust_reference.rs#template-account
 
 `TemplateAccount::parse` reads a template account's header and payload, and `finalized_program`
 returns a `ProgramView` of the bytecode, failing if the template is not finalized. Both point into
-the account bytes instead of copying them. `verify` runs the program's verifier and returns counts
-such as the worst-case number of CPIs.
+the account bytes instead of copying them. `verify` returns counts such as the worst-case number of
+CPIs.
 
 ## Using TypeScript-compiled templates {#sharing-compiler-artifacts}
 

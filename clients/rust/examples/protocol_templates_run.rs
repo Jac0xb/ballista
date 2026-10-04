@@ -318,54 +318,6 @@ pub fn run_token_sweep(
 }
 // #endregion token-sweep
 
-// #region jito-tip
-pub struct JitoTipAccounts {
-    pub searcher: Pubkey,
-    /// The searcher's wrapped-SOL token account: the round trip's source and its destination.
-    pub wsol_account: Pubkey,
-    /// One of Jito's eight tip accounts.
-    pub jito_tip: Pubkey,
-}
-
-/// The strategy is one Jupiter `route` from the searcher's wrapped SOL back to it. The Swap API
-/// quotes the two legs separately, so they are joined: the second leg's step goes after the
-/// first's with its token indices moved up by one, and the joined list is the second leg's fixed
-/// accounts, then both legs' step accounts. `round_trip` in `tests/protocols/tests/jito_tip.rs`
-/// joins single-step legs, as `joinRoundTrip` does in TypeScript.
-///
-/// `route` is the joined data split by [`RouteQuote::split`], and `strategy_accounts` its account
-/// list from the fifth account on: the template passes the token program, the searcher, and the
-/// wrapped-SOL account twice.
-pub fn run_jito_tip(
-    template: Pubkey,
-    a: &JitoTipAccounts,
-    route: &RouteQuote,
-    tip_lamports: u64,
-    minimum_edge: u64,
-    strategy_accounts: Vec<AccountMeta>,
-) -> Result<Instruction, Box<dyn Error>> {
-    let instruction = templates::jito_profit_guarded_tip()
-        .compile()?
-        .run(template)
-        .input("routePlan", route.route_plan)
-        .input("inAmount", route.in_amount)
-        .input("quotedOutAmount", route.quoted_out_amount)
-        .input("slippageBps", route.slippage_bps)
-        .input("platformFeeBps", route.platform_fee_bps)
-        .input("tipLamports", tip_lamports)
-        .input("minimumEdge", minimum_edge)
-        .account("systemProgram", SYSTEM_PROGRAM_ID)
-        .account("strategyProgram", JUPITER_V6)
-        .account("tokenProgram", TOKEN_PROGRAM_ID)
-        .account("searcher", a.searcher)
-        .account("wsolAccount", a.wsol_account)
-        .account("jitoTip", a.jito_tip)
-        .group("strategyAccounts", strategy_accounts)
-        .instruction()?;
-    Ok(instruction)
-}
-// #endregion jito-tip
-
 // #region pyth-gate
 pub struct PriceGate {
     /// The Pyth `PriceUpdateV2` account.
@@ -983,17 +935,7 @@ fn route_data() -> Vec<u8> {
 /// records it by: its instructions, the run last.
 pub type SampleRun = (&'static str, fn() -> Vec<Instruction>);
 
-pub const RUNS: [SampleRun; 13] = [
-    ("jitoProfitGuardedTip", || {
-        let data = route_data();
-        let route = RouteQuote::split(&data);
-        let a = JitoTipAccounts {
-            searcher: key(1),
-            wsol_account: key(2),
-            jito_tip: key(3),
-        };
-        vec![run_jito_tip(TEMPLATE, &a, &route, 10_000, 100_000, group(40)).unwrap()]
-    }),
+pub const RUNS: [SampleRun; 12] = [
     ("jupiterDailyCapSwap", || {
         let data = route_data();
         let route = RouteQuote::split(&data);

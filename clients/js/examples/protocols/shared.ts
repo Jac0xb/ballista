@@ -5,8 +5,6 @@
  * the commit cited beside it. A protocol upgrade can move a field, and a moved field is a
  * silently wrong read, so re-derive these from the current IDL before you upload a template.
  */
-import { address, type Address } from '@solana/kit';
-
 import { addressBytes, anchorDiscriminator } from '@jac0xb/ballista';
 
 /** The SDK's address and Anchor discriminator helpers, which the examples import from here. */
@@ -30,27 +28,6 @@ export const MEMO_PROGRAM = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr' as con
 export const SYSVAR_INSTRUCTIONS = 'Sysvar1nstructions1111111111111111111111111' as const;
 /** Kamino Farms, which Kamino Lend invokes whenever a lending instruction touches a reserve with a farm. */
 export const KAMINO_FARMS = 'FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr' as const;
-
-/**
- * Jito's Tip Payment program. It owns all eight tip accounts, as program addresses holding eight
- * bytes of data, so none of them is a plain System account.
- */
-export const JITO_TIP_PAYMENT = 'T1pyyaTNZsKv2WcRAB8oVnk93mLJw2XzjtVYqCsaHqt' as const;
-
-/**
- * The eight Jito tip accounts. A tip is a plain SOL transfer to one of these and may be made by
- * CPI; the minimum is 1,000 lamports.
- */
-export const JITO_TIP_ACCOUNTS: readonly Address[] = [
-  address('96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5'),
-  address('HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe'),
-  address('Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY'),
-  address('ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49'),
-  address('DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh'),
-  address('ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt'),
-  address('DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL'),
-  address('3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT'),
-];
 
 // ----------------------------------------------------------------- layouts
 
@@ -174,72 +151,6 @@ export interface JupiterSwapInstruction {
   accounts: readonly { pubkey: string; isSigner: boolean; isWritable: boolean }[];
   /** Base64. */
   data: string;
-}
-
-/** One quoted leg: its quote's `inputMint` and `outputMint`, and the Swap API's `swapInstruction`. */
-export interface JupiterLeg {
-  inputMint: string;
-  outputMint: string;
-  swapInstruction: JupiterSwapInstruction;
-}
-
-/** `route`'s own accounts, before its steps': the four a template passes, then five more. */
-const ROUTE_ACCOUNTS_BEFORE_STEPS = 9;
-
-/**
- * Joins two quoted legs, wrapped SOL to another token and back, into one `route`: a round trip,
- * which the Swap API won't quote whole. The plan is the first leg's step, then the second's with
- * its input and output indices moved up by one, so that it spends exactly what the first produced.
- * The accounts are the second leg's own nine, then both legs' steps. It sells the first leg's input
- * for at least the second leg's quote less its slippage. `round_trip` in
- * `tests/protocols/tests/jito_tip.rs` is the same join in Rust.
- *
- * Each leg must be one step: a step ends in its two indices, but the `Swap` enum before them has
- * variants of different lengths, so a longer plan can't be renumbered without decoding it.
- *
- * Returns the joined `route` data, and its accounts from the fifth on, which a run passes as its
- * group: the template passes the token program, the signer and the wrapped SOL account twice.
- */
-export function joinRoundTrip(
-  first: JupiterLeg,
-  second: JupiterLeg,
-): { routeData: Uint8Array<ArrayBuffer>; strategyAccounts: { address: Address; writable: boolean }[] } {
-  if (first.inputMint !== WRAPPED_SOL_MINT || second.outputMint !== WRAPPED_SOL_MINT) {
-    throw new Error('A round trip starts and ends in wrapped SOL');
-  }
-  const routes = [first, second].map(({ swapInstruction }) => {
-    if (swapInstruction.programId !== JUPITER_V6) throw new Error('Both legs must be Jupiter v6 `route`');
-    return splitJupiterRoute(Uint8Array.from(atob(swapInstruction.data), (char) => char.charCodeAt(0)));
-  }) as [ReturnType<typeof splitJupiterRoute>, ReturnType<typeof splitJupiterRoute>];
-  const source = first.swapInstruction.accounts[2]?.pubkey;
-  if (source === undefined || source !== second.swapInstruction.accounts[3]?.pubkey) {
-    throw new Error('The legs must start and end in the same token account');
-  }
-
-  const steps = routes.flatMap(({ routePlan }, position) => {
-    const [count, step] = [new DataView(routePlan.buffer, routePlan.byteOffset).getUint32(0, true), routePlan.slice(4)];
-    if (count !== 1) throw new Error('Each leg must be a single step');
-    if (step.at(-2) !== 0 || step.at(-1) !== 1) throw new Error('A single step reads index 0 and writes index 1');
-    return [...step.slice(0, -2), position, position + 1];
-  });
-  const tail = new DataView(new ArrayBuffer(JUPITER_ROUTE_TAIL_LENGTH));
-  tail.setBigUint64(0, routes[0].inAmount, true);
-  tail.setBigUint64(8, routes[1].quotedOutAmount, true);
-  tail.setUint16(16, routes[1].slippageBps, true);
-  tail.setUint8(18, routes[1].platformFeeBps);
-  const routeData = Uint8Array.from([...JUPITER_ROUTE, 2, 0, 0, 0, ...steps, ...new Uint8Array(tail.buffer)]);
-
-  const accounts = [
-    ...second.swapInstruction.accounts.slice(0, ROUTE_ACCOUNTS_BEFORE_STEPS),
-    ...first.swapInstruction.accounts.slice(ROUTE_ACCOUNTS_BEFORE_STEPS),
-    ...second.swapInstruction.accounts.slice(ROUTE_ACCOUNTS_BEFORE_STEPS),
-  ];
-  return {
-    routeData,
-    strategyAccounts: accounts
-      .slice(JUPITER_ROUTE_FIXED_ACCOUNTS)
-      .map((meta) => ({ address: address(meta.pubkey), writable: meta.isWritable })),
-  };
 }
 
 /** `deposit_reserve_liquidity_and_obligation_collateral_v2(liquidity_amount: u64)`. */

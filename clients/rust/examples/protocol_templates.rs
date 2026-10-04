@@ -34,7 +34,6 @@ fn main() {
 pub type Example = (&'static str, fn() -> Template);
 
 pub const ALL: &[Example] = &[
-    ("jitoProfitGuardedTip", jito_profit_guarded_tip),
     ("jupiterDailyCapSwap", jupiter_daily_cap_swap),
     ("jupiterDepositExactOutput", jupiter_deposit_exact_output),
     ("jupiterOracleCheckedSwap", jupiter_oracle_checked_swap),
@@ -69,8 +68,6 @@ const MARGINFI_V2: Pubkey = pubkey!("MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA
 const PYTH_RECEIVER: Pubkey = pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
 /// SPL Memo. Orca's v2 instructions take it.
 const MEMO_PROGRAM: Pubkey = pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
-/// Jito's Tip Payment program, which owns all eight tip accounts.
-const JITO_TIP_PAYMENT: Pubkey = pubkey!("T1pyyaTNZsKv2WcRAB8oVnk93mLJw2XzjtVYqCsaHqt");
 /// The wrapped SOL mint. Its token accounts count their balance in lamports.
 const WRAPPED_SOL_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 /// Circle's USDC mint.
@@ -190,83 +187,6 @@ fn jupiter_route_data(in_amount: Expr, quoted_out_amount: Expr) -> [DataPart; 6]
 }
 
 // #endregion helpers
-
-// ===================================================================================== Jito
-
-// #region jito-tip
-/// Pay a Jito tip only from a Jupiter round trip's profit.
-pub fn jito_profit_guarded_tip() -> Template {
-    let wrapped_sol_balance = balance_of("wsolAccount");
-    Template::new()
-        // The round trip's `route_plan`, as `joinRoundTrip` joined it.
-        .input("routePlan", Type::Bytes(512))
-        .input("inAmount", Type::U64)
-        .input("quotedOutAmount", Type::U64)
-        .input("slippageBps", Type::U64)
-        .input("platformFeeBps", Type::U64)
-        // The bid, fixed before signing. Jito's floor is 1,000 lamports.
-        .input("tipLamports", Type::U64)
-        // What the searcher insists on keeping after the tip.
-        .input("minimumEdge", Type::U64)
-        .account("systemProgram", account::program(SYSTEM_PROGRAM_ID))
-        .account("strategyProgram", account::program(JUPITER_V6))
-        .account("tokenProgram", account::program(TOKEN_PROGRAM_ID))
-        .account("searcher", account::signer().writable())
-        // The searcher's wrapped-SOL token account, where the round trip starts and ends.
-        .account("wsolAccount", token_account())
-        // One of the eight Jito tip accounts, all of which the Tip Payment program owns.
-        .account("jitoTip", account::writable().owner(JITO_TIP_PAYMENT))
-        .account_group("strategyAccounts")
-        // Wrapped SOL is counted in lamports, so the profit is in the tip's own unit.
-        .step(
-            step::require(
-                account_data("wsolAccount", TOKEN_ACCOUNT_MINT_OFFSET, ReadType::Pubkey)
-                    .eq(pubkey(WRAPPED_SOL_MINT)),
-            )
-            .label("wsolAccountHoldsWrappedSol"),
-        )
-        // The searcher pays the tip, so only profit that reaches the searcher may cover it.
-        .step(
-            step::require(
-                account_data("wsolAccount", TOKEN_ACCOUNT_OWNER_OFFSET, ReadType::Pubkey)
-                    .eq(key("searcher")),
-            )
-            .label("searcherOwnsTheWsolAccount"),
-        )
-        .step(
-            step::snapshot("balanceBefore", &wrapped_sol_balance)
-                .label("readBalanceBeforeStrategy"),
-        )
-        .step(platform_fee_within_cap())
-        // A round trip's source and destination are both the account measured here.
-        .step(
-            step::invoke("strategyProgram")
-                .readonly("tokenProgram")
-                .signer("searcher")
-                .writable("wsolAccount")
-                .writable("wsolAccount")
-                .account_group("strategyAccounts")
-                .data_parts(jupiter_route_data(
-                    input("inAmount"),
-                    input("quotedOutAmount"),
-                ))
-                .label("runStrategy"),
-        )
-        // Adding to the balance before, instead of subtracting it from the balance after, keeps a
-        // loss from underflowing: it fails here like any profit too thin to cover the tip.
-        .step(
-            step::require(
-                wrapped_sol_balance
-                    .gte(snapshot("balanceBefore") + input("tipLamports") + input("minimumEdge")),
-            )
-            .label("profitCoversTheTip"),
-        )
-        .step(
-            system_transfer("systemProgram", "searcher", "jitoTip", input("tipLamports"))
-                .label("payJitoTip"),
-        )
-}
-// #endregion jito-tip
 
 // ================================================================================== Jupiter
 

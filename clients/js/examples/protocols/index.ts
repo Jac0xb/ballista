@@ -6,7 +6,6 @@
  * What CI cannot check is the other side: the protocols' own account layouts and discriminators,
  * which move when they upgrade. Re-derive those from the current IDL before uploading.
  */
-export { jitoProfitGuardedTip } from './jito-profit-guarded-tip.js';
 export { jupiterDailyCapSwap } from './jupiter-daily-cap-swap.js';
 export { jupiterDepositExactOutput } from './jupiter-deposit-exact-output.js';
 export { jupiterOracleCheckedSwap } from './jupiter-oracle-checked-swap.js';

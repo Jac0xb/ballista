@@ -1,10 +1,10 @@
 # Protocol templates
 
-Thirteen example templates. Twelve work with real Solana protocols: Jupiter, Kamino, marginfi,
-Orca, Pyth and Jito, and one of those, the daily cap, also keeps state between runs. The thirteenth
-settles a trade at a price someone signed off chain. Each one works with a value that only exists
-while the transaction runs, such as what a swap returned or what a position has earned. The source
-files are in `clients/js/examples/protocols/`.
+Twelve example templates. Eleven work with real Solana protocols: Jupiter, Kamino, marginfi, Orca
+and Pyth, and one of those, the daily cap, also keeps state between runs. The twelfth settles a
+trade at a price someone signed off chain. Each one works with a value that only exists while the
+transaction runs, such as what a swap returned or what a position has earned. The source files are
+in `clients/js/examples/protocols/`.
 
 **Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against copies of the
 protocols' mainnet programs and accounts; not yet run on devnet or mainnet.
@@ -24,7 +24,6 @@ points, and check them against the protocols' current programs before you use th
 | [Compound collected fees](/examples/protocols/orca-compound) | Orca | How much the position had earned |
 | [Harvest positions that earned](/examples/protocols/orca-harvest) | Orca | Which positions have earned enough to collect |
 | [Act only on a fresh price](/examples/protocols/pyth-gate) | Pyth → Jupiter | Whether the price is recent, precise and in range |
-| [Tip only from profit](/examples/protocols/jito-tip) | Jupiter → Jito | Whether the trade's profit covered the tip |
 | [Settle at a signed quote](/examples/protocols/signed-quote) | Ed25519 → SPL Token | Whether the maker signed this quote for this taker, and it hasn't expired |
 
 ## What has been tested
@@ -38,7 +37,7 @@ points, and check them against the protocols' current programs before you use th
 - **Rust.** Each Rust template is byte-identical to the TypeScript one, and each Rust run passes
   the accounts, flags and inputs its template declares, right after any instructions it needs before
   it: Kamino's refreshes, or the Ed25519 instruction (`clients/rust/tests/protocol_templates.rs`).
-- **Running against copies of the protocols.** The twelve protocol templates run as signed
+- **Running against copies of the protocols.** The eleven protocol templates run as signed
   transactions in LiteSVM, a local Solana runtime, against the protocols' programs and accounts
   copied from mainnet at a single slot. The tests never touch the network (`tests/protocols/`). The
   signed quote runs the same way against a copy of mainnet's Token program, with the Ed25519
@@ -48,7 +47,7 @@ points, and check them against the protocols' current programs before you use th
   accounts by an opt-in test; see [reading offsets](#reading-offsets-from-an-account). The Kamino
   and marginfi templates don't read those protocols' accounts. They read SPL token accounts: their
   balances before and after each call and, where it matters, who owns them.
-- **Jupiter calls.** The seven templates that call Jupiter send its `route` instruction, with
+- **Jupiter calls.** The six templates that call Jupiter send its `route` instruction, with
   `route`'s first accounts in the order Jupiter's published interface lists them and the rest as an
   account group. The semantics test checks this, and the protocol tests send real routes, recorded
   from Jupiter's API, through Jupiter's own program. Each template caps the route's platform fee at
@@ -135,7 +134,7 @@ program standing in for a farm the reserve doesn't have.
 ## TypeScript helpers {#typescript-helpers}
 
 The TypeScript templates and run files take their program addresses, account offsets,
-discriminators and route helpers (`splitJupiterRoute`, `joinRoundTrip`) from
+discriminators and Jupiter route helper (`splitJupiterRoute`) from
 [`shared.ts`](https://github.com/Jac0xb/ballista/blob/main/clients/js/examples/protocols/shared.ts).
 The run files bind accounts with `pinned` and `at`:
 
@@ -176,7 +175,7 @@ Each page shows the template and a run of it, in TypeScript and in Rust.
 
 ## Getting a Jupiter route {#jupiter-routes}
 
-Seven templates call Jupiter's `route` instruction, and each takes the route from Jupiter's Swap
+Six templates call Jupiter's `route` instruction, and each takes the route from Jupiter's Swap
 API:
 
 1. **Quote** with `swapMode=ExactIn` and `instructionVersion=V1`. `ExactOut` returns
@@ -189,8 +188,7 @@ API:
    `routePlan` and the four numbers after it. Both refuse data that isn't `route`.
 4. **Drop the accounts the template passes itself:** the first four, or three for the
    [daily cap](/examples/protocols/daily-cap) and two for the
-   [price gate](/examples/protocols/pyth-gate). The rest are the run's account group. For the
-   [Jito tip](/examples/protocols/jito-tip), `joinRoundTrip` joins two quotes and does this.
+   [price gate](/examples/protocols/pyth-gate). The rest are the run's account group.
 5. **Keep the rest of the response.** Put the setup instructions before the run and the cleanup
    after it: they create token accounts and wrap and unwrap SOL. Compile the transaction with the
    lookup tables in `addressLookupTableAddresses`; most routes don't fit without them.

@@ -156,7 +156,6 @@ const examplesSidebar = [
         ],
       },
       { text: 'Pyth', collapsed: true, items: [{ text: 'Act only on a fresh price', link: '/examples/protocols/pyth-gate' }] },
-      { text: 'Jito', collapsed: true, items: [{ text: 'Tip only from profit', link: '/examples/protocols/jito-tip' }] },
       { text: 'Ed25519', collapsed: true, items: [{ text: 'Settle at a signed quote', link: '/examples/protocols/signed-quote' }] },
     ],
   },

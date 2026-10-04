@@ -39,35 +39,23 @@ before you run a template you did not compile yourself.
 
 ## Formal verification
 
-A formal verifier proves a rule for every possible input, not just the ones a test picks. Ballista's
-rules run on the Certora Solana Prover against the compiled program; they live in `certora/`, whose
-README covers setup.
+The Certora Solana Prover, Kani, four fuzzers and mutation testing check the program.
+Each tool's README says what it covers and how to run it:
+[Certora](https://github.com/Jac0xb/ballista/tree/main/certora),
+[Kani](https://github.com/Jac0xb/ballista/tree/main/kani) and
+[the fuzzers](https://github.com/Jac0xb/ballista/tree/main/fuzz).
 
-- **Set up to prove: 29 rules** (`run.conf` and the candidate confs in `certora/ballista-specs`).
-  `u64`, `i64` and `u128` arithmetic matches Rust's checked operations, comparisons and casts behave
-  exactly, every error code decodes back to what built it, the template parser checks its header
-  first, a registry entry opens only when writable and of its declared size, and return data comes
-  from the invoked program.
-- **Blocked: 21 rules** (`run-blocked.conf`), because of how the prover models memory:
-  `multiplyDivide`, account checks, the template lifecycle, type preservation (a finalized template
-  never fails because of its structure), and diagnostics.
-- **Last prover run:** at commit `cb2fb2d`, 19 rules met the bar in `certora/README.md`: verified,
-  not vacuous, reachable, and with a twin that fails. That was the code before account groups and
-  the latest verifier rules, so the results need a rerun.
-- **Not covered:** what called programs do, Solana's system calls, a whole template run end to
-  end, and the libraries and runtime underneath, which are trusted.
-- **Found so far:** two stack overflows, in the CPI path and the return-data read, that the
-  standard build tools didn't report. Both are fixed.
-- **In CI:** the prover runs only when the repository has a `CERTORAKEY` secret; otherwise CI just
-  checks that the rules compile.
-
-To run it yourself, with a key from Certora:
-
-```bash
-cd certora/ballista-specs
-cargo certora-sbf --tools-version v1.53
-certoraSolanaProver run.conf
-```
+- **Proved:** 19 Certora rules, at commit `cb2fb2d`: section parsing, `u128` arithmetic, registry
+  opens and fields, return-data provenance, and the account checks at run start. That predates the
+  current verifier and the account-group opcodes, so the proofs need a re-run.
+- **Sampled:** the verifier, the executor, the template lifecycle and the TypeScript compiler, by
+  fuzzing, with mutants confirming that the tests catch a deleted check.
+- **Not covered:** what called programs do, accounts passed in two slots (in the proofs), the
+  deployed binary itself, and a whole template run end to end.
+- **Found so far, all fixed:** two stack overflows the standard build tools didn't report; a bug
+  in both compilers that could make a cap check inside a loop always pass; and a way for a template
+  built without the compilers to call out before opening its registry entry, and lose a write.
+- **In CI:** the prover runs only with a `CERTORAKEY` secret, which the repository doesn't have yet.
 
 ## Strengths
 

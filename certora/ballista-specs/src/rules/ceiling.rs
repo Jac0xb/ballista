@@ -186,4 +186,25 @@ mod tests {
         let view = ProgramView::parse(&bytes).expect("still parses");
         assert_eq!(view.verify().err(), Some(TemplateError::InvalidCpi(0)));
     }
+
+    /// The record `verify_invoke` writes passes `verify_single_instruction` on the host, for a
+    /// program that lists a declared signer. At f1acfa1 the prover's front end dropped that path
+    /// (`assume(r5 != r0)` after `verify_record_header`'s operand test), so `accepted` was the
+    /// constant 0 and the slicer removed every assert in the ceiling rule and its twin.
+    #[test]
+    fn the_rules_invoke_record_is_accepted() {
+        let mut builder = ProgramBuilder::new();
+        let account = builder.account(ACCOUNT_SIGNER, None, None, 0);
+        let callee = builder.account(ACCOUNT_EXECUTABLE, None, None, 0);
+        let cpi = builder.cpi(callee, &[(account, ACCOUNT_SIGNER)], &[]);
+        builder.invoke(cpi, None);
+        let bytes = builder.build().expect("builds");
+        let view = ProgramView::parse(&bytes).expect("parses");
+        let mut slot = core::mem::MaybeUninit::uninit();
+        let record =
+            InstructionSlot::write(&mut slot, OP_INVOKE, NO_INDEX, 0, NO_INDEX, NO_INDEX, 0, 0);
+        let mut typing: [Option<RegisterInfo>; MAX_REGISTERS] = core::array::from_fn(|_| None);
+        let verdict = view.verify_single_instruction(record, 0, LoopScope::Root, None, &mut typing);
+        assert_eq!(verdict, Ok((1, 0)));
+    }
 }

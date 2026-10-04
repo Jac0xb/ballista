@@ -540,6 +540,25 @@ mod tests {
         assert_eq!(mul_div_u128(7, b, 2, true), Err(err(BallistaError::ArithmeticOverflow)));
     }
 
+    /// The Certora counterexample to `rule_u64_mul_div_is_exact` at f1acfa1. The product is
+    /// u64::MAX, so `mul64`'s `low` is `0xffff_ffff_0000_0000 | 0xffff_ffff`. The prover's
+    /// model gave that OR as `0xffff_ffff_0000_0000` and flagged it as "Imprecision detected".
+    /// The program gets it right: ceil((2^64 - 1) / (2^64 - 2^32 + 1)) = 2.
+    #[test]
+    fn mul_div_matches_the_prover_counterexample() {
+        let (a, b, c) = ((1u64 << 32) + 1, (1u64 << 32) - 1, 0xffff_ffff_0000_0001u64);
+        let product = a as u128 * b as u128;
+        for round_up in [false, true] {
+            let exact = product / c as u128 + u128::from(round_up && product % c as u128 != 0);
+            assert_eq!(
+                mul_div(round_up, U64(a), U64(b), U64(c)),
+                Ok(U64(exact as u64)),
+                "round_up = {round_up}"
+            );
+        }
+        assert_eq!(mul_div(true, U64(a), U64(b), U64(c)), Ok(U64(2)));
+    }
+
     #[test]
     fn mul_div_on_registers() {
         assert_eq!(mul_div(false, U64(1_000_003), U64(7), U64(3)), Ok(U64(2_333_340)));

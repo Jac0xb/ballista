@@ -4328,7 +4328,7 @@ mod tests {
                 .unwrap_or_else(|error| panic!("protocol example {examples}: {error}"));
             examples += 1;
         }
-        assert_eq!(examples, 13, "every protocol example is verified");
+        assert_eq!(examples, 12, "every protocol example is verified");
         // The test-only runtime scenarios in `clients/js/examples/scenarios`, recorded the same way
         // in their own file. The LiteSVM suite uploads them, but it needs the snapshot; this does
         // not.

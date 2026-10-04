@@ -41,8 +41,6 @@ klend-interface = { git = "https://github.com/Kamino-Finance/klend", rev = "a087
 # The 2.x types klend-interface speaks, renamed so they cannot be mistaken for this crate's own.
 solana-pubkey-v2 = { package = "solana-pubkey", version = "2.1" }
 solana-instruction-v2 = { package = "solana-instruction", version = "2.1" }
-# No marginfi crate: at the deployed commit its type crate pins solana-instruction =3.4.0, and
-# LiteSVM needs ~3.5. See src/marginfi.rs.
 # Orca's own client and math, for setup: instruction builders, PDAs, account decoders, quotes.
 # orca_whirlpools_client 8.0.0, the latest release, requires solana-program ^3, so the tree below
 # carries v3 Solana crates beside the v4 ones the rest of this file pins; cargo unifies each only

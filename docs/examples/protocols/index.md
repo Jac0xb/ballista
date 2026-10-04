@@ -1,10 +1,10 @@
 # Protocol templates
 
-Twelve example templates. Eleven work with real Solana protocols: Jupiter, Kamino, marginfi, Orca
-and Pyth, and one of those, the daily cap, also keeps state between runs. The twelfth settles a
-trade at a price someone signed off chain. Each one works with a value that only exists while the
-transaction runs, such as what a swap returned or what a position has earned. The source files are
-in `clients/js/examples/protocols/`.
+Ten example templates. Nine work with real Solana protocols: Jupiter, Kamino, Orca and Pyth, and
+one of those, the daily cap, also keeps state between runs. The tenth settles a trade at a price
+someone signed off chain. Each one works with a value that only exists while the transaction runs,
+such as what a swap returned or what a position has earned. The source files are in
+`clients/js/examples/protocols/`.
 
 **Status:** Tested locally in [LiteSVM](https://github.com/LiteSVM/litesvm) against copies of the
 protocols' mainnet programs and accounts; not yet run on devnet or mainnet.
@@ -19,8 +19,6 @@ points, and check them against the protocols' current programs before you use th
 | [Cap a caller's daily swaps](/examples/protocols/daily-cap) | Jupiter + registry | How much wrapped SOL this caller can sell now, as its cap refills |
 | [Repay what a swap produced](/examples/protocols/kamino-repay) | Jupiter → Kamino | How much the swap produced |
 | [Liquidate with a minimum payout](/examples/protocols/kamino-liquidate) | Kamino | How much collateral the liquidator received |
-| [Withdraw everything, with a minimum](/examples/protocols/marginfi-withdraw) | marginfi | How much the withdrawal returned |
-| [Move a position into Kamino](/examples/protocols/marginfi-to-kamino) | marginfi → Kamino | How much marginfi released, to deposit in Kamino |
 | [Compound collected fees](/examples/protocols/orca-compound) | Orca | How much the position had earned |
 | [Harvest positions that earned](/examples/protocols/orca-harvest) | Orca | Which positions have earned enough to collect |
 | [Act only on a fresh price](/examples/protocols/pyth-gate) | Pyth → Jupiter | Whether the price is recent, precise and in range |
@@ -37,7 +35,7 @@ points, and check them against the protocols' current programs before you use th
 - **Rust.** Each Rust template is byte-identical to the TypeScript one, and each Rust run passes
   the accounts, flags and inputs its template declares, right after any instructions it needs before
   it: Kamino's refreshes, or the Ed25519 instruction (`clients/rust/tests/protocol_templates.rs`).
-- **Running against copies of the protocols.** The eleven protocol templates run as signed
+- **Running against copies of the protocols.** The nine protocol templates run as signed
   transactions in LiteSVM, a local Solana runtime, against the protocols' programs and accounts
   copied from mainnet at a single slot. The tests never touch the network (`tests/protocols/`). The
   signed quote runs the same way against a copy of mainnet's Token program, with the Ed25519
@@ -45,8 +43,8 @@ points, and check them against the protocols' current programs before you use th
   (`tests/ballista/`). None has run on devnet or mainnet. Each page says what its runs showed.
 - **Account offsets.** The Orca, Pyth and SPL Token offsets are also checked against real devnet
   accounts by an opt-in test; see [reading offsets](#reading-offsets-from-an-account). The Kamino
-  and marginfi templates don't read those protocols' accounts. They read SPL token accounts: their
-  balances before and after each call and, where it matters, who owns them.
+  templates don't read Kamino's accounts. They read SPL token accounts: their balances before and
+  after each call and, where it matters, who owns them.
 - **Jupiter calls.** The six templates that call Jupiter send its `route` instruction, with
   `route`'s first accounts in the order Jupiter's published interface lists them and the rest as an
   account group. The semantics test checks this, and the protocol tests send real routes, recorded

@@ -18,8 +18,6 @@ export const JUPITER_V6 = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4' as const
 export const KAMINO_LEND = 'KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD' as const;
 /** Orca Whirlpools, from `declare_id!` in programs/whirlpool/src/lib.rs. */
 export const ORCA_WHIRLPOOL = 'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc' as const;
-/** marginfi v2. */
-export const MARGINFI_V2 = 'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA' as const;
 /** Pyth Solana receiver, the non-`pro-compatible` build. */
 export const PYTH_RECEIVER = 'rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ' as const;
 /** SPL Memo. Orca's v2 instructions take it, for Token-2022 transfers that require a memo. */
@@ -188,10 +186,6 @@ export const ORCA_INCREASE_LIQUIDITY_BY_TOKEN_AMOUNTS_V2 = anchorDiscriminator(
  * u128, max_sqrt_price: u128 }`, the enum's only variant, as its one-byte Borsh tag.
  */
 export const ORCA_BY_TOKEN_AMOUNTS = Uint8Array.of(0);
-/** `lending_account_withdraw(amount: u64, withdraw_all: Option<bool>)`. */
-export const MARGINFI_WITHDRAW = anchorDiscriminator('lending_account_withdraw');
-/** `lending_account_deposit(amount: u64, ...)`. */
-export const MARGINFI_DEPOSIT = anchorDiscriminator('lending_account_deposit');
 
 /** Borsh `Option::None`. */
 export const OPTION_NONE = Uint8Array.of(0);

@@ -29,7 +29,7 @@ compiles OpenSSL from source, which needs perl, make and a C compiler.
 | `snapshot/accounts.json` | Every account's data |
 | `snapshot/routes.json` | Each Jupiter route's quote and instructions, by name |
 | `snapshot/programs/*.so` | Program binaries, in Git LFS |
-| `snapshot-lending/` | The Kamino and marginfi templates' snapshot, from `manifests/lending.json`, in the same four parts |
+| `snapshot-lending/` | The Kamino templates' snapshot, from `manifests/lending.json`, in the same four parts |
 | `snapshot-orca/` | The same files for the Orca tests: both SOL/USDC Whirlpools, their vaults and tick arrays, and five programs |
 
 `scripts/snapshot/manifests/` says what to take: programs, accounts and the swaps to quote. To

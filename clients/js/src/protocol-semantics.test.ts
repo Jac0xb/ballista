@@ -29,8 +29,6 @@ import {
   jupiterOracleCheckedSwap,
   kaminoLiquidateWithProof,
   kaminoRepaySwapOutput,
-  marginfiToKaminoRebalance,
-  marginfiWithdrawAllWithFloor,
   orcaCompoundFees,
   orcaHarvestManyPositions,
   pythFreshPriceGate,
@@ -66,8 +64,6 @@ import {
   KAMINO_LEND,
   KAMINO_LIQUIDATE,
   KAMINO_REPAY,
-  MARGINFI_V2,
-  MARGINFI_WITHDRAW,
   PYTH,
   PYTH_RECEIVER,
   SPL_MINT,
@@ -616,9 +612,8 @@ const kaminoCalls: [string, Template, { discriminator: Uint8Array; declared: num
   ['jupiterDepositExactOutput', jupiterDepositExactOutput, { discriminator: KAMINO_DEPOSIT, declared: 14, amount: { kind: 'variable', name: 'received' } }],
   ['kaminoRepaySwapOutput', kaminoRepaySwapOutput, { discriminator: KAMINO_REPAY, declared: 9, amount: { kind: 'variable', name: 'swapped' } }],
   ['kaminoLiquidateWithProof', kaminoLiquidateWithProof, { discriminator: KAMINO_LIQUIDATE, declared: 20, amount: { kind: 'input', name: 'liquidityAmount' } }],
-  ['marginfiToKaminoRebalance', marginfiToKaminoRebalance, { discriminator: KAMINO_DEPOSIT, declared: 14, amount: { kind: 'variable', name: 'moved' } }],
 ];
-const kaminoDeposits: Template[] = [jupiterDepositExactOutput, marginfiToKaminoRebalance];
+const kaminoDeposits: Template[] = [jupiterDepositExactOutput];
 
 /** The examples whose `accounts` pin `program`, by name. */
 function pinning(program: string): string[] {
@@ -683,8 +678,6 @@ const payouts: [string, string, Template, { account: string; signer: string }][]
   ['kaminoLiquidateWithProof', 'bountyGoesToTheLiquidator', kaminoLiquidateWithProof, { account: 'userDestinationLiquidity', signer: 'liquidator' }],
   ['kaminoLiquidateWithProof', 'seizedCollateralGoesToTheLiquidator', kaminoLiquidateWithProof, { account: 'userDestinationCollateral', signer: 'liquidator' }],
   ['kaminoRepaySwapOutput', 'swapPaysTheBorrower', kaminoRepaySwapOutput, { account: 'borrowedAssetAta', signer: 'borrower' }],
-  ['marginfiWithdrawAllWithFloor', 'withdrawalGoesToTheAuthority', marginfiWithdrawAllWithFloor, { account: 'destinationAta', signer: 'authority' }],
-  ['marginfiWithdrawAllWithFloor', 'sweepGoesToTheAuthority', marginfiWithdrawAllWithFloor, { account: 'treasuryAta', signer: 'authority' }],
 ];
 
 describe('every token account a lending template pays belongs to its signer', () => {
@@ -698,27 +691,6 @@ describe('every token account a lending template pays belongs to its signer', ()
     expect(template.accounts[signer]?.signer).toBe(true);
     const all = steps(template);
     expect(all.indexOf(check)).toBeLessThan(all.findIndex((step) => step.kind === 'invoke'));
-  });
-});
-
-const marginfiWithdrawals: [string, Template][] = [
-  ['marginfiToKaminoRebalance', marginfiToKaminoRebalance],
-  ['marginfiWithdrawAllWithFloor', marginfiWithdrawAllWithFloor],
-];
-
-describe('marginfi withdrawals', () => {
-  test('every example that pins marginfi is listed here', () => {
-    expect(pinning(MARGINFI_V2)).toEqual(marginfiWithdrawals.map(([name]) => name).sort());
-  });
-
-  test.each(marginfiWithdrawals)("%s forwards the health check's banks and oracles after withdraw's eight accounts", (_, template) => {
-    const [withdraw] = invokesOf(template, 'marginfi') as [Invoke];
-    const [discriminator] = withdraw.data;
-    expect(discriminator?.kind === 'literal' ? [...discriminator.bytes] : []).toEqual([...MARGINFI_WITHDRAW]);
-    expect(withdraw.accounts).toHaveLength(8);
-    expect(withdraw.accountGroup).toBe('healthAccounts');
-    // The vault authority is a PDA marginfi signs for; nothing writes it.
-    expect(withdraw.accounts[5]!.writable).toBe(false);
   });
 });
 

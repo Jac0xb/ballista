@@ -32,7 +32,6 @@ const JUPITER_V6: Pubkey = pubkey!("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
 const KAMINO_LEND: Pubkey = pubkey!("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");
 const KAMINO_FARMS: Pubkey = pubkey!("FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr");
 const ORCA_WHIRLPOOL: Pubkey = pubkey!("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc");
-const MARGINFI_V2: Pubkey = pubkey!("MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA");
 const MEMO_PROGRAM: Pubkey = pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 const WRAPPED_SOL_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 const USDC_MINT: Pubkey = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
@@ -152,26 +151,6 @@ pub fn kamino_farm_pair(farm: Option<(Pubkey, Pubkey)>) -> [AccountMeta; 2] {
     }
 }
 // #endregion kamino-refreshes
-
-// #region marginfi-health
-/// marginfi's `healthAccounts`: for every balance the account still holds after the withdrawal,
-/// `(bank, oracle)`, passed read-only, bank then oracle, by bank address from highest to lowest.
-/// Empty when the withdrawn balance was the only one. A bank priced by more than one account
-/// (staked, Kamino) takes more than this passes.
-pub fn marginfi_health_accounts(remaining_balances: &[(Pubkey, Pubkey)]) -> Vec<AccountMeta> {
-    let mut balances = remaining_balances.to_vec();
-    balances.sort_by_key(|&(bank, _)| std::cmp::Reverse(bank));
-    balances
-        .iter()
-        .flat_map(|&(bank, oracle)| {
-            [
-                AccountMeta::new_readonly(bank, false),
-                AccountMeta::new_readonly(oracle, false),
-            ]
-        })
-        .collect()
-}
-// #endregion marginfi-health
 
 // #region jupiter-deposit
 pub struct JupiterDepositAccounts {
@@ -673,126 +652,6 @@ pub fn run_kamino_liquidate(
 }
 // #endregion kamino-liquidate
 
-// #region marginfi-withdraw
-pub struct MarginfiWithdrawAccounts {
-    pub marginfi_group: Pubkey,
-    pub marginfi_account: Pubkey,
-    pub authority: Pubkey,
-    pub bank: Pubkey,
-    pub bank_liquidity_vault: Pubkey,
-    /// A PDA marginfi signs for, so it is passed read-only.
-    pub bank_liquidity_vault_authority: Pubkey,
-    /// Where marginfi pays the withdrawal, and the treasury it is swept to: both the authority's
-    /// own token accounts.
-    pub destination_ata: Pubkey,
-    pub treasury_ata: Pubkey,
-}
-
-/// `remaining_balances` is `(bank, oracle)` for every balance the marginfi account still holds
-/// after this one is emptied; see [`marginfi_health_accounts`].
-pub fn run_marginfi_withdraw(
-    template: Pubkey,
-    a: &MarginfiWithdrawAccounts,
-    minimum_withdrawn: u64,
-    remaining_balances: &[(Pubkey, Pubkey)],
-) -> Result<Instruction, Box<dyn Error>> {
-    let instruction = templates::marginfi_withdraw_all_with_floor()
-        .compile()?
-        .run(template)
-        .input("minimumWithdrawn", minimum_withdrawn)
-        .account("marginfi", MARGINFI_V2)
-        .account("tokenProgram", TOKEN_PROGRAM_ID)
-        .account("marginfiGroup", a.marginfi_group)
-        .account("marginfiAccount", a.marginfi_account)
-        .account("authority", a.authority)
-        .account("bank", a.bank)
-        .account("bankLiquidityVault", a.bank_liquidity_vault)
-        .account(
-            "bankLiquidityVaultAuthority",
-            a.bank_liquidity_vault_authority,
-        )
-        .account("destinationAta", a.destination_ata)
-        .account("treasuryAta", a.treasury_ata)
-        .group(
-            "healthAccounts",
-            marginfi_health_accounts(remaining_balances),
-        )
-        .instruction()?;
-    Ok(instruction)
-}
-// #endregion marginfi-withdraw
-
-// #region marginfi-to-kamino
-pub struct MarginfiToKaminoAccounts {
-    pub owner: Pubkey,
-    /// The owner's token account the assets pass through.
-    pub wallet_ata: Pubkey,
-    pub marginfi_group: Pubkey,
-    pub marginfi_account: Pubkey,
-    pub marginfi_bank: Pubkey,
-    pub marginfi_vault: Pubkey,
-    pub marginfi_vault_authority: Pubkey,
-    pub obligation: Pubkey,
-    pub lending_market: Pubkey,
-    pub lending_market_authority: Pubkey,
-    pub reserve: Pubkey,
-    pub reserve_liquidity_mint: Pubkey,
-    pub reserve_liquidity_supply: Pubkey,
-    pub reserve_collateral_mint: Pubkey,
-    pub reserve_destination_deposit_collateral: Pubkey,
-    /// The reserve's collateral farm, if it has one; see [`kamino_farm_pair`].
-    pub collateral_farm: Option<(Pubkey, Pubkey)>,
-}
-
-/// `remaining_balances` is `(bank, oracle)` for every balance the marginfi account still holds
-/// after this one is emptied; see [`marginfi_health_accounts`].
-///
-/// Send it behind [`kamino_refreshes`], in the same transaction.
-pub fn run_marginfi_to_kamino(
-    template: Pubkey,
-    a: &MarginfiToKaminoAccounts,
-    minimum_moved: u64,
-    remaining_balances: &[(Pubkey, Pubkey)],
-) -> Result<Instruction, Box<dyn Error>> {
-    // Kamino's v2 deposit ends in the farm pair and the Farms program.
-    let mut farm_accounts = kamino_farm_pair(a.collateral_farm).to_vec();
-    farm_accounts.push(AccountMeta::new_readonly(KAMINO_FARMS, false));
-    let instruction = templates::marginfi_to_kamino_rebalance()
-        .compile()?
-        .run(template)
-        .input("minimumMoved", minimum_moved)
-        .account("marginfi", MARGINFI_V2)
-        .account("kamino", KAMINO_LEND)
-        .account("tokenProgram", TOKEN_PROGRAM_ID)
-        .account("instructionsSysvar", INSTRUCTIONS_SYSVAR_ID)
-        .account("owner", a.owner)
-        .account("walletAta", a.wallet_ata)
-        .account("marginfiGroup", a.marginfi_group)
-        .account("marginfiAccount", a.marginfi_account)
-        .account("marginfiBank", a.marginfi_bank)
-        .account("marginfiVault", a.marginfi_vault)
-        .account("marginfiVaultAuthority", a.marginfi_vault_authority)
-        .account("obligation", a.obligation)
-        .account("lendingMarket", a.lending_market)
-        .account("lendingMarketAuthority", a.lending_market_authority)
-        .account("reserve", a.reserve)
-        .account("reserveLiquidityMint", a.reserve_liquidity_mint)
-        .account("reserveLiquiditySupply", a.reserve_liquidity_supply)
-        .account("reserveCollateralMint", a.reserve_collateral_mint)
-        .account(
-            "reserveDestinationDepositCollateral",
-            a.reserve_destination_deposit_collateral,
-        )
-        .group(
-            "healthAccounts",
-            marginfi_health_accounts(remaining_balances),
-        )
-        .group("farmAccounts", farm_accounts)
-        .instruction()?;
-    Ok(instruction)
-}
-// #endregion marginfi-to-kamino
-
 // #region signed-quote
 /// The quote a maker signs off chain, as `signed-quote-settlement.ts` reads it.
 pub struct Quote {
@@ -935,7 +794,7 @@ fn route_data() -> Vec<u8> {
 /// records it by: its instructions, the run last.
 pub type SampleRun = (&'static str, fn() -> Vec<Instruction>);
 
-pub const RUNS: [SampleRun; 12] = [
+pub const RUNS: [SampleRun; 10] = [
     ("jupiterDailyCapSwap", || {
         let data = route_data();
         let route = RouteQuote::split(&data);
@@ -1030,50 +889,6 @@ pub const RUNS: [SampleRun; 12] = [
         let route = RouteQuote::split(&data);
         transaction.push(run_kamino_repay(TEMPLATE, &a, &route, 1_000_000, group(20)).unwrap());
         transaction
-    }),
-    ("marginfiToKaminoRebalance", || {
-        let a = MarginfiToKaminoAccounts {
-            owner: key(1),
-            wallet_ata: key(2),
-            marginfi_group: key(3),
-            marginfi_account: key(4),
-            marginfi_bank: key(5),
-            marginfi_vault: key(6),
-            marginfi_vault_authority: key(7),
-            obligation: key(8),
-            lending_market: key(9),
-            lending_market_authority: key(10),
-            reserve: key(11),
-            reserve_liquidity_mint: key(12),
-            reserve_liquidity_supply: key(13),
-            reserve_collateral_mint: key(14),
-            reserve_destination_deposit_collateral: key(15),
-            collateral_farm: Some((key(16), key(17))),
-        };
-        let mut transaction = kamino_refreshes(
-            a.lending_market,
-            a.obligation,
-            &[(a.reserve, key(18))],
-            &[],
-            &[],
-        );
-        transaction
-            .push(run_marginfi_to_kamino(TEMPLATE, &a, 1_000_000, &[(key(19), key(20))]).unwrap());
-        transaction
-    }),
-    ("marginfiWithdrawAllWithFloor", || {
-        let a = MarginfiWithdrawAccounts {
-            marginfi_group: key(1),
-            marginfi_account: key(2),
-            authority: key(3),
-            bank: key(4),
-            bank_liquidity_vault: key(5),
-            bank_liquidity_vault_authority: key(6),
-            destination_ata: key(7),
-            treasury_ata: key(8),
-        };
-        let remaining = [(key(9), key(10)), (key(11), key(12))];
-        vec![run_marginfi_withdraw(TEMPLATE, &a, 1_000_000, &remaining).unwrap()]
     }),
     ("orcaCompoundFees", || {
         let a = OrcaCompoundAccounts {

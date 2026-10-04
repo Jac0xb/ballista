@@ -140,14 +140,6 @@ const examplesSidebar = [
         ],
       },
       {
-        text: 'marginfi',
-        collapsed: true,
-        items: [
-          { text: 'Withdraw everything, with a minimum', link: '/examples/protocols/marginfi-withdraw' },
-          { text: 'Move a position into Kamino', link: '/examples/protocols/marginfi-to-kamino' },
-        ],
-      },
-      {
         text: 'Orca',
         collapsed: true,
         items: [

@@ -39,11 +39,6 @@ pub const ALL: &[Example] = &[
     ("jupiterOracleCheckedSwap", jupiter_oracle_checked_swap),
     ("kaminoLiquidateWithProof", kamino_liquidate_with_proof),
     ("kaminoRepaySwapOutput", kamino_repay_swap_output),
-    ("marginfiToKaminoRebalance", marginfi_to_kamino_rebalance),
-    (
-        "marginfiWithdrawAllWithFloor",
-        marginfi_withdraw_all_with_floor,
-    ),
     ("orcaCompoundFees", orca_compound_fees),
     ("orcaHarvestManyPositions", orca_harvest_many_positions),
     ("pythFreshPriceGate", pyth_fresh_price_gate),
@@ -62,8 +57,6 @@ const JUPITER_V6: Pubkey = pubkey!("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
 const KAMINO_LEND: Pubkey = pubkey!("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");
 /// Orca Whirlpools.
 const ORCA_WHIRLPOOL: Pubkey = pubkey!("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc");
-/// marginfi v2.
-const MARGINFI_V2: Pubkey = pubkey!("MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA");
 /// Pyth Solana receiver, the non-`pro-compatible` build.
 const PYTH_RECEIVER: Pubkey = pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
 /// SPL Memo. Orca's v2 instructions take it.
@@ -143,15 +136,8 @@ fn orca_increase_liquidity_by_token_amounts_v2() -> [u8; 8] {
 /// `IncreaseLiquidityMethod::ByTokenAmounts`, the enum's only variant, as its Borsh tag.
 const ORCA_BY_TOKEN_AMOUNTS: [u8; 1] = [0];
 
-/// marginfi `lending_account_withdraw(amount: u64, withdraw_all: Option<bool>)`.
-fn marginfi_withdraw() -> [u8; 8] {
-    anchor_discriminator("lending_account_withdraw")
-}
-
 /// Borsh `Option::None`.
 const OPTION_NONE: [u8; 1] = [0];
-/// Borsh `Option::Some(true)`.
-const SOME_TRUE: [u8; 2] = [1, 1];
 
 /// The route's platform fee account and rate are chosen by whoever builds the run: cap the rate.
 const MAX_PLATFORM_FEE_BPS: u64 = 0;
@@ -716,171 +702,6 @@ pub fn kamino_repay_swap_output() -> Template {
         )
 }
 // #endregion kamino-repay
-
-// ================================================================================= marginfi
-
-// #region marginfi-to-kamino
-/// Move a whole marginfi deposit into Kamino, depositing exactly what marginfi released.
-pub fn marginfi_to_kamino_rebalance() -> Template {
-    Template::new()
-        .input("minimumMoved", Type::U64)
-        .account("marginfi", account::program(MARGINFI_V2))
-        .account("kamino", account::program(KAMINO_LEND))
-        .account("tokenProgram", account::program(TOKEN_PROGRAM_ID))
-        .account(
-            "instructionsSysvar",
-            account::readonly().address(INSTRUCTIONS_SYSVAR_ID),
-        )
-        .account("owner", account::signer().writable())
-        .account("walletAta", token_account())
-        .account("marginfiGroup", account::readonly())
-        .account("marginfiAccount", account::writable())
-        .account("marginfiBank", account::writable())
-        .account("marginfiVault", account::writable())
-        .account("marginfiVaultAuthority", account::readonly())
-        .account("obligation", account::writable())
-        .account("lendingMarket", account::readonly())
-        .account("lendingMarketAuthority", account::readonly())
-        .account("reserve", account::writable())
-        .account("reserveLiquidityMint", account::readonly())
-        .account("reserveLiquiditySupply", account::writable())
-        .account("reserveCollateralMint", account::writable())
-        .account("reserveDestinationDepositCollateral", account::writable())
-        .account_group("healthAccounts")
-        .account_group("farmAccounts")
-        .step(
-            step::snapshot("walletBefore", balance_of("walletAta"))
-                .label("readWalletBeforeWithdraw"),
-        )
-        .step(
-            step::invoke("marginfi")
-                .readonly("marginfiGroup")
-                .writable("marginfiAccount")
-                .signer("owner")
-                .writable("marginfiBank")
-                .writable("walletAta")
-                .readonly("marginfiVaultAuthority")
-                .writable("marginfiVault")
-                .readonly("tokenProgram")
-                .account_group("healthAccounts")
-                .data(data::literal(marginfi_withdraw()))
-                // `amount` is ignored when `withdraw_all` is Some(true), but Borsh still reads it.
-                .data(data::u64(u64(0)))
-                .data(data::literal(SOME_TRUE))
-                .label("withdrawFromMarginfi"),
-        )
-        .step(
-            step::let_("moved", balance_of("walletAta") - snapshot("walletBefore"))
-                .label("measureWithdrawal"),
-        )
-        .step(step::require(var("moved").gte(input("minimumMoved"))).label("worthRebalancing"))
-        // v2: the v1 handler refuses every caller but Kamino itself and a short whitelist.
-        .step(
-            step::invoke("kamino")
-                .writable_signer("owner")
-                .writable("obligation")
-                .readonly("lendingMarket")
-                .readonly("lendingMarketAuthority")
-                .writable("reserve")
-                .readonly("reserveLiquidityMint")
-                .writable("reserveLiquiditySupply")
-                .writable("reserveCollateralMint")
-                .writable("reserveDestinationDepositCollateral")
-                .writable("walletAta")
-                // `placeholder_user_destination_collateral`: the Kamino program means "none".
-                .readonly("kamino")
-                .readonly("tokenProgram")
-                .readonly("tokenProgram")
-                .readonly("instructionsSysvar")
-                .account_group("farmAccounts")
-                .data(data::literal(kamino_deposit()))
-                // Exactly what marginfi released, not an estimate of it.
-                .data(data::u64(var("moved")))
-                .label("depositIntoKamino"),
-        )
-}
-// #endregion marginfi-to-kamino
-
-// #region marginfi-withdraw
-/// Withdraw a whole marginfi deposit and sweep it to the treasury, if it clears a floor.
-pub fn marginfi_withdraw_all_with_floor() -> Template {
-    Template::new()
-        .input("minimumWithdrawn", Type::U64)
-        .account("marginfi", account::program(MARGINFI_V2))
-        .account("tokenProgram", account::program(TOKEN_PROGRAM_ID))
-        .account("marginfiGroup", account::readonly())
-        .account("marginfiAccount", account::writable())
-        .account("authority", account::signer())
-        .account("bank", account::writable())
-        .account("bankLiquidityVault", account::writable())
-        .account("bankLiquidityVaultAuthority", account::readonly())
-        .account("destinationAta", token_account())
-        .account("treasuryAta", token_account())
-        .account_group("healthAccounts")
-        // marginfi pays whichever token account it is given, and the sweep pays whichever treasury
-        // the run names.
-        .step(
-            step::require(
-                account_data(
-                    "destinationAta",
-                    TOKEN_ACCOUNT_OWNER_OFFSET,
-                    ReadType::Pubkey,
-                )
-                .eq(key("authority")),
-            )
-            .label("withdrawalGoesToTheAuthority"),
-        )
-        .step(
-            step::require(
-                account_data("treasuryAta", TOKEN_ACCOUNT_OWNER_OFFSET, ReadType::Pubkey)
-                    .eq(key("authority")),
-            )
-            .label("sweepGoesToTheAuthority"),
-        )
-        .step(
-            step::snapshot("balanceBefore", balance_of("destinationAta"))
-                .label("readBalanceBeforeWithdraw"),
-        )
-        .step(
-            step::invoke("marginfi")
-                .readonly("marginfiGroup")
-                .writable("marginfiAccount")
-                .signer("authority")
-                .writable("bank")
-                .writable("destinationAta")
-                .readonly("bankLiquidityVaultAuthority")
-                .writable("bankLiquidityVault")
-                .readonly("tokenProgram")
-                .account_group("healthAccounts")
-                .data(data::literal(marginfi_withdraw()))
-                // `amount` is ignored when `withdraw_all` is Some(true), but Borsh still reads it.
-                .data(data::u64(u64(0)))
-                .data(data::literal(SOME_TRUE))
-                .label("withdrawAll"),
-        )
-        .step(
-            step::let_(
-                "withdrawn",
-                balance_of("destinationAta") - snapshot("balanceBefore"),
-            )
-            .label("measureWithdrawal"),
-        )
-        .step(
-            step::require(var("withdrawn").gte(input("minimumWithdrawn")))
-                .label("withdrawalMetItsFloor"),
-        )
-        .step(
-            token_transfer(
-                "tokenProgram",
-                "destinationAta",
-                "treasuryAta",
-                "authority",
-                var("withdrawn"),
-            )
-            .label("sweepToTreasury"),
-        )
-}
-// #endregion marginfi-withdraw
 
 // ===================================================================================== Orca
 

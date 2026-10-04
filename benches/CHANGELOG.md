@@ -34,6 +34,14 @@ the same commit and says why here.
 
 ## Pending: verifier fixes, not merged
 
+### 2026-10-03 · Group-opcode verification at finalization · `claude/verification`
+- **Change:** the verifier now checks the operands of `GROUP_LENGTH`, `GROUP_ANY` and `GROUP_COUNT`
+  and marks a filter's segments as used, which the account-group merge added. Runs are unchanged.
+- **Measured:** create template, payroll 30 rows: 4,709 → 4,722 (+13). No other case or example
+  moved.
+- **Checked:** `tests/ballista` 93/93; the executor fuzzer at 20k seeds in normal and limits mode.
+- **Watch:** every opcode the operand table learns adds a little to finalization.
+
 ### 2026-10-03 · Canonical encodings at finalization · `claude/pf-verifier`
 - **Change:** `verify` refuses a record that sets a field its opcode leaves unused, with one
   operand table checked beside the record's reserved bytes and flags. CPI data goes through

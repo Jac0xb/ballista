@@ -157,7 +157,7 @@ struct Floor {
     count: fn(&Stats) -> usize,
 }
 
-const FLOORS: [Floor; 12] = [
+const FLOORS: [Floor; 13] = [
     // Measured per 1,000 at 20,000 seeds, normal / limits: 175 / 99.
     Floor { what: "successful runs the model compared", normal: 87, limits: 50, count: |s| s.compared_runs },
     // 262 / 850.
@@ -182,6 +182,8 @@ const FLOORS: [Floor; 12] = [
     Floor { what: "predicted failures the run matched exactly", normal: 70, limits: 40, count: |s| s.exact_failures },
     // 441 / 424.
     Floor { what: "failed runs whose Ballista code was classified", normal: 220, limits: 210, count: |s| s.classified_failures },
+    // 42.6 / 59.4: GROUP_LENGTH, GROUP_ANY and GROUP_COUNT results the model computed.
+    Floor { what: "group opcodes the model evaluated", normal: 20, limits: 28, count: |s| s.compared_group_values },
 ];
 
 /// Floors apply from this many cases; fewer are a smoke run whose counts are too noisy to judge.

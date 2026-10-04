@@ -41,6 +41,8 @@ pub const ALL: &[Example] = &[
     ("kaminoRepaySwapOutput", kamino_repay_swap_output),
     ("orcaCompoundFees", orca_compound_fees),
     ("orcaHarvestManyPositions", orca_harvest_many_positions),
+    ("pumpFunBuyBasket", pump_fun_buy_basket),
+    ("pumpFunSellAll", pump_fun_sell_all),
     ("pythFreshPriceGate", pyth_fresh_price_gate),
     ("signedQuoteSettlement", signed_quote_settlement),
     ("tokenSweepIntoSwap", token_sweep_into_swap),
@@ -61,6 +63,10 @@ const ORCA_WHIRLPOOL: Pubkey = pubkey!("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uct
 const PYTH_RECEIVER: Pubkey = pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
 /// SPL Memo. Orca's v2 instructions take it.
 const MEMO_PROGRAM: Pubkey = pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+/// pump.fun's bonding-curve program. Not PumpSwap, the AMM a coin moves to when it graduates.
+const PUMP_FUN: Pubkey = pubkey!("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
+/// Pump Fees, which pump.fun invokes on every trade for its fee rates.
+const PUMP_FEES: Pubkey = pubkey!("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ");
 /// The wrapped SOL mint. Its token accounts count their balance in lamports.
 const WRAPPED_SOL_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 /// Circle's USDC mint.
@@ -94,6 +100,11 @@ const ORCA_POSITION_LENGTH: u32 = 216;
 const ORCA_POSITION_LIQUIDITY: u32 = 72;
 const ORCA_POSITION_FEE_OWED_A: u32 = 112;
 const ORCA_POSITION_FEE_OWED_B: u32 = 136;
+
+/// pump.fun `BondingCurve`: `complete` follows the discriminator and five `u64`s. A curve holds
+/// at least the bytes through it; later upgrades appended fields.
+const PUMP_CURVE_MIN_LENGTH: u32 = 49;
+const PUMP_CURVE_COMPLETE: u32 = 48;
 
 // --------------------------------------------------------------------------- instructions
 
@@ -139,6 +150,20 @@ const ORCA_BY_TOKEN_AMOUNTS: [u8; 1] = [0];
 /// Borsh `Option::None`.
 const OPTION_NONE: [u8; 1] = [0];
 
+/// pump.fun `buy(amount, max_sol_cost, track_volume)`: 16 named accounts, then the coin's
+/// `bonding-curve-v2` PDA and a buyback fee recipient.
+fn pump_fun_buy() -> [u8; 8] {
+    anchor_discriminator("buy")
+}
+
+/// pump.fun `sell(amount, min_sol_output)`: 14 named accounts, then the same two.
+fn pump_fun_sell() -> [u8; 8] {
+    anchor_discriminator("sell")
+}
+
+/// pump.fun's `OptionBool(true)`: `buy` records the volume for its trading rewards.
+const PUMP_TRACK_VOLUME: [u8; 1] = [1];
+
 /// The route's platform fee account and rate are chosen by whoever builds the run: cap the rate.
 const MAX_PLATFORM_FEE_BPS: u64 = 0;
 
@@ -146,6 +171,13 @@ const MAX_PLATFORM_FEE_BPS: u64 = 0;
 fn token_account() -> Account {
     account::writable()
         .owner(TOKEN_PROGRAM_ID)
+        .min_data_length(TOKEN_ACCOUNT_LENGTH)
+}
+
+/// A token account of Token-2022, read as data. pump.fun mints its coins with it.
+fn token_2022_account() -> Account {
+    account::writable()
+        .owner(TOKEN_2022_PROGRAM_ID)
         .min_data_length(TOKEN_ACCOUNT_LENGTH)
 }
 
@@ -970,6 +1002,205 @@ pub fn orca_harvest_many_positions() -> Template {
         )
 }
 // #endregion orca-harvest
+
+// ================================================================================= pump.fun
+
+// #region pump-buy-basket
+/// Buy several pump.fun coins on their bonding curves, the total within a budget.
+pub fn pump_fun_buy_basket() -> Template {
+    let row = account::iteration;
+    Template::new()
+        // The most the whole basket may take from the buyer, in lamports: fees and rent included.
+        .input("budget", Type::U64)
+        .account("pumpProgram", account::program(PUMP_FUN))
+        .account("global", account::readonly())
+        .account("buyer", account::signer().writable())
+        .account("systemProgram", account::program(SYSTEM_PROGRAM_ID))
+        .account("tokenProgram", account::program(TOKEN_2022_PROGRAM_ID))
+        .account("eventAuthority", account::readonly())
+        .account("globalVolumeAccumulator", account::writable())
+        .account("userVolumeAccumulator", account::writable())
+        .account("feeConfig", account::readonly())
+        .account("feeProgram", account::program(PUMP_FEES))
+        .account("buybackFeeRecipient", account::writable())
+        .batch(
+            // Each buy makes eight calls, and a transaction holds at most 64.
+            Batch::new(7)
+                .min_iterations(1)
+                .account("mint", account::readonly())
+                .account(
+                    "bondingCurve",
+                    account::writable()
+                        .owner(PUMP_FUN)
+                        .min_data_length(PUMP_CURVE_MIN_LENGTH),
+                )
+                .account("curveTokenAccount", account::writable())
+                .account("buyerTokenAccount", token_2022_account())
+                .account("creatorVault", account::writable())
+                .account("bondingCurveV2", account::readonly())
+                .account("feeRecipient", account::writable())
+                // Base units of the coin to buy.
+                .input("amount", Type::U64)
+                // The most this buy may cost, in lamports, fees included. pump.fun enforces it.
+                .input("maxSolCost", Type::U64),
+        )
+        .step(step::let_("spent", u64(0)))
+        .step(
+            step::for_each()
+                // pump.fun checks only the mint of the account it pays.
+                .step(
+                    step::require(
+                        account_data(
+                            row("buyerTokenAccount"),
+                            TOKEN_ACCOUNT_OWNER_OFFSET,
+                            ReadType::Pubkey,
+                        )
+                        .eq(key("buyer")),
+                    )
+                    .label("tokensGoToTheBuyer"),
+                )
+                // A graduated coin trades on PumpSwap; say so before pump.fun refuses the buy.
+                .step(
+                    step::require(
+                        account_data(row("bondingCurve"), PUMP_CURVE_COMPLETE, ReadType::Bool)
+                            .not(),
+                    )
+                    .label("curveNotGraduated"),
+                )
+                .step(step::let_("lamportsBefore", lamports("buyer")).label("readLamportsBefore"))
+                .step(
+                    step::invoke("pumpProgram")
+                        .readonly("global")
+                        .writable(row("feeRecipient"))
+                        .readonly(row("mint"))
+                        .writable(row("bondingCurve"))
+                        .writable(row("curveTokenAccount"))
+                        .writable(row("buyerTokenAccount"))
+                        .writable_signer("buyer")
+                        .readonly("systemProgram")
+                        .readonly("tokenProgram")
+                        .writable(row("creatorVault"))
+                        .readonly("eventAuthority")
+                        .readonly("pumpProgram")
+                        .writable("globalVolumeAccumulator")
+                        .writable("userVolumeAccumulator")
+                        .readonly("feeConfig")
+                        .readonly("feeProgram")
+                        .readonly(row("bondingCurveV2"))
+                        .writable("buybackFeeRecipient")
+                        .data(data::literal(pump_fun_buy()))
+                        .data(data::u64(row_input("amount")))
+                        .data(data::u64(row_input("maxSolCost")))
+                        .data(data::literal(PUMP_TRACK_VOLUME))
+                        .label("buyOnTheCurve"),
+                )
+                // What the buy took from the buyer: the price, the fees, and any rent.
+                .step(
+                    step::assign(
+                        "spent",
+                        var("spent") + (var("lamportsBefore") - lamports("buyer")),
+                    )
+                    .label("addWhatItCost"),
+                )
+                .step(step::require(var("spent").lte(input("budget"))).label("withinBudget"))
+                .carry("spent")
+                .label("everyCoin"),
+        )
+}
+// #endregion pump-buy-basket
+
+// #region pump-sell-all
+/// Sell a whole balance of a pump.fun coin on its bonding curve, with a floor on the SOL received.
+pub fn pump_fun_sell_all() -> Template {
+    Template::new()
+        // The least the sale must pay the seller, in lamports, after every fee pump.fun takes.
+        .input("minSolOut", Type::U64)
+        .account("pumpProgram", account::program(PUMP_FUN))
+        .account("global", account::readonly())
+        .account("feeRecipient", account::writable())
+        // pump.fun derives the curve from this mint, and refuses a curve of any other.
+        .account("mint", account::readonly())
+        .account(
+            "bondingCurve",
+            account::writable()
+                .owner(PUMP_FUN)
+                .min_data_length(PUMP_CURVE_MIN_LENGTH),
+        )
+        .account("curveTokenAccount", account::writable())
+        // Sold whole. Must belong to the seller and hold `mint`.
+        .account("sellerTokenAccount", token_2022_account())
+        .account("seller", account::signer().writable())
+        .account("systemProgram", account::program(SYSTEM_PROGRAM_ID))
+        .account("creatorVault", account::writable())
+        .account("tokenProgram", account::program(TOKEN_2022_PROGRAM_ID))
+        .account("eventAuthority", account::readonly())
+        .account("feeConfig", account::readonly())
+        .account("feeProgram", account::program(PUMP_FEES))
+        .account("bondingCurveV2", account::readonly())
+        .account("buybackFeeRecipient", account::writable())
+        // A delegate approved on someone else's account could otherwise sell their balance.
+        .step(
+            step::require(
+                account_data(
+                    "sellerTokenAccount",
+                    TOKEN_ACCOUNT_OWNER_OFFSET,
+                    ReadType::Pubkey,
+                )
+                .eq(key("seller")),
+            )
+            .label("sellsTheSellersOwnTokens"),
+        )
+        .step(
+            step::require(
+                account_data(
+                    "sellerTokenAccount",
+                    TOKEN_ACCOUNT_MINT_OFFSET,
+                    ReadType::Pubkey,
+                )
+                .eq(key("mint")),
+            )
+            .label("holdsTheCurvesCoin"),
+        )
+        // A graduated coin trades on PumpSwap; say so before pump.fun refuses the sale.
+        .step(
+            step::require(account_data("bondingCurve", PUMP_CURVE_COMPLETE, ReadType::Bool).not())
+                .label("curveNotGraduated"),
+        )
+        // Whatever the account holds when the transaction runs.
+        .step(step::let_("balance", balance_of("sellerTokenAccount")).label("readBalance"))
+        .step(step::require(var("balance").gt(u64(0))).label("hasTokensToSell"))
+        .step(step::let_("lamportsBefore", lamports("seller")).label("readLamportsBefore"))
+        .step(
+            step::invoke("pumpProgram")
+                .readonly("global")
+                .writable("feeRecipient")
+                .readonly("mint")
+                .writable("bondingCurve")
+                .writable("curveTokenAccount")
+                .writable("sellerTokenAccount")
+                .writable_signer("seller")
+                .readonly("systemProgram")
+                .writable("creatorVault")
+                .readonly("tokenProgram")
+                .readonly("eventAuthority")
+                .readonly("pumpProgram")
+                .readonly("feeConfig")
+                .readonly("feeProgram")
+                .readonly("bondingCurveV2")
+                .writable("buybackFeeRecipient")
+                .data(data::literal(pump_fun_sell()))
+                .data(data::u64(var("balance")))
+                // pump.fun's own floor, left at 0: the check below measures what arrived.
+                .data(data::u64(u64(0)))
+                .label("sellEverything"),
+        )
+        // The price, net of pump.fun's and the creator's fees.
+        .step(
+            step::require((lamports("seller") - var("lamportsBefore")).gte(input("minSolOut")))
+                .label("receivedAtLeastMinSolOut"),
+        )
+}
+// #endregion pump-sell-all
 
 // ===================================================================================== Pyth
 

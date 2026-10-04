@@ -19,8 +19,9 @@ use std::error::Error;
 
 use ballista_sdk::template::Row;
 use ballista_sdk::{
-    anchor_discriminator, find_registry_entry_address, ED25519_PROGRAM_ID, INSTRUCTIONS_SYSVAR_ID,
-    SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID,
+    anchor_discriminator, find_registry_entry_address, ASSOCIATED_TOKEN_PROGRAM_ID,
+    ED25519_PROGRAM_ID, INSTRUCTIONS_SYSVAR_ID, SYSTEM_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
+    TOKEN_PROGRAM_ID,
 };
 use solana_program::{
     instruction::{AccountMeta, Instruction},
@@ -33,6 +34,8 @@ const KAMINO_LEND: Pubkey = pubkey!("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD
 const KAMINO_FARMS: Pubkey = pubkey!("FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr");
 const ORCA_WHIRLPOOL: Pubkey = pubkey!("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc");
 const MEMO_PROGRAM: Pubkey = pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+const PUMP_FUN: Pubkey = pubkey!("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
+const PUMP_FEES: Pubkey = pubkey!("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ");
 const WRAPPED_SOL_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 const USDC_MINT: Pubkey = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
 
@@ -758,6 +761,180 @@ pub fn run_signed_quote(
 }
 // #endregion signed-quote
 
+// #region pump-accounts
+/// pump.fun's `Global`, `["global"]`.
+pub const PUMP_GLOBAL: Pubkey = pubkey!("4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf");
+/// Anchor's event authority, `["__event_authority"]`: pump.fun logs each trade by calling itself.
+pub const PUMP_EVENT_AUTHORITY: Pubkey = pubkey!("Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1");
+/// `["global_volume_accumulator"]`.
+pub const PUMP_GLOBAL_VOLUME_ACCUMULATOR: Pubkey =
+    pubkey!("Hq2wp8uJ9jCPsYgNHex8RtqdvMPfVGoYwjvF1ATiwn2Y");
+/// Pump Fees' `["fee_config", pump.fun]`.
+pub const PUMP_FEE_CONFIG: Pubkey = pubkey!("8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt");
+/// `Global.fee_recipient`, which an ordinary coin's trades may pay. `Global.fee_recipients` lists
+/// seven more.
+pub const PUMP_FEE_RECIPIENT: Pubkey = pubkey!("62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV");
+/// `Global.reserved_fee_recipient`, which a mayhem-mode coin's trades may pay instead.
+pub const PUMP_RESERVED_FEE_RECIPIENT: Pubkey =
+    pubkey!("GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS");
+/// One of `Global.buyback_fee_recipients`, which every trade pays.
+pub const PUMP_BUYBACK_FEE_RECIPIENT: Pubkey =
+    pubkey!("9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7");
+
+/// A pump.fun coin, as its bonding curve describes it.
+pub struct PumpCoin {
+    pub mint: Pubkey,
+    /// `BondingCurve.creator`: the 32 bytes at offset 49 of the curve's data.
+    pub creator: Pubkey,
+    /// `BondingCurve.is_mayhem_mode`: the byte at offset 81.
+    pub mayhem: bool,
+}
+
+fn pump_pda(seeds: &[&[u8]]) -> Pubkey {
+    Pubkey::find_program_address(seeds, &PUMP_FUN).0
+}
+
+/// `owner`'s associated token account for the Token-2022 mint `mint`.
+pub fn token_2022_ata(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(
+        &[
+            owner.as_ref(),
+            TOKEN_2022_PROGRAM_ID.as_ref(),
+            mint.as_ref(),
+        ],
+        &ASSOCIATED_TOKEN_PROGRAM_ID,
+    )
+    .0
+}
+
+/// `["user_volume_accumulator", user]`. pump.fun creates it on the user's first buy.
+pub fn pump_user_volume_accumulator(user: &Pubkey) -> Pubkey {
+    pump_pda(&[b"user_volume_accumulator", user.as_ref()])
+}
+
+impl PumpCoin {
+    /// `["bonding-curve", mint]`.
+    pub fn bonding_curve(&self) -> Pubkey {
+        pump_pda(&[b"bonding-curve", self.mint.as_ref()])
+    }
+
+    /// The curve's own token account, which coins are bought from and sold into.
+    pub fn curve_token_account(&self) -> Pubkey {
+        token_2022_ata(&self.bonding_curve(), &self.mint)
+    }
+
+    /// `["creator-vault", creator]`: the creator's fees accrue here.
+    pub fn creator_vault(&self) -> Pubkey {
+        pump_pda(&[b"creator-vault", self.creator.as_ref()])
+    }
+
+    /// `["bonding-curve-v2", mint]`, which `buy` and `sell` take since pump.fun's April 2026
+    /// upgrade, whether or not it exists.
+    pub fn bonding_curve_v2(&self) -> Pubkey {
+        pump_pda(&[b"bonding-curve-v2", self.mint.as_ref()])
+    }
+
+    /// A fee recipient of the kind the coin's mode needs.
+    pub fn fee_recipient(&self) -> Pubkey {
+        if self.mayhem {
+            PUMP_RESERVED_FEE_RECIPIENT
+        } else {
+            PUMP_FEE_RECIPIENT
+        }
+    }
+}
+// #endregion pump-accounts
+
+// #region pump-buy-basket
+/// One coin of the basket.
+pub struct PumpBuy {
+    pub coin: PumpCoin,
+    /// Base units to buy.
+    pub amount: u64,
+    /// The most this buy may cost, in lamports, fees included.
+    pub max_sol_cost: u64,
+}
+
+/// 1 to 7 rows, one per coin, bought into the buyer's own associated token accounts, which must
+/// exist. `budget` caps what the whole basket takes from the buyer. Put a compute-budget
+/// instruction first: a buy costs pump.fun about 75,000 compute units. Without a lookup table, two
+/// coins fit a transaction; see the page for more.
+pub fn run_pump_buy_basket(
+    template: Pubkey,
+    buyer: Pubkey,
+    buys: &[PumpBuy],
+    budget: u64,
+) -> Result<Instruction, Box<dyn Error>> {
+    let instruction = templates::pump_fun_buy_basket()
+        .compile()?
+        .run(template)
+        .input("budget", budget)
+        .account("pumpProgram", PUMP_FUN)
+        .account("global", PUMP_GLOBAL)
+        .account("buyer", buyer)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("tokenProgram", TOKEN_2022_PROGRAM_ID)
+        .account("eventAuthority", PUMP_EVENT_AUTHORITY)
+        .account("globalVolumeAccumulator", PUMP_GLOBAL_VOLUME_ACCUMULATOR)
+        .account(
+            "userVolumeAccumulator",
+            pump_user_volume_accumulator(&buyer),
+        )
+        .account("feeConfig", PUMP_FEE_CONFIG)
+        .account("feeProgram", PUMP_FEES)
+        .account("buybackFeeRecipient", PUMP_BUYBACK_FEE_RECIPIENT)
+        .rows(buys.iter().map(|buy| {
+            let coin = &buy.coin;
+            Row::new()
+                .account("mint", coin.mint)
+                .account("bondingCurve", coin.bonding_curve())
+                .account("curveTokenAccount", coin.curve_token_account())
+                .account("buyerTokenAccount", token_2022_ata(&buyer, &coin.mint))
+                .account("creatorVault", coin.creator_vault())
+                .account("bondingCurveV2", coin.bonding_curve_v2())
+                .account("feeRecipient", coin.fee_recipient())
+                .input("amount", buy.amount)
+                .input("maxSolCost", buy.max_sol_cost)
+        }))
+        .instruction()?;
+    Ok(instruction)
+}
+// #endregion pump-buy-basket
+
+// #region pump-sell-all
+/// Sells everything in the seller's associated token account for `coin`, and fails unless the
+/// seller receives at least `min_sol_out` lamports after fees.
+pub fn run_pump_sell_all(
+    template: Pubkey,
+    seller: Pubkey,
+    coin: &PumpCoin,
+    min_sol_out: u64,
+) -> Result<Instruction, Box<dyn Error>> {
+    let instruction = templates::pump_fun_sell_all()
+        .compile()?
+        .run(template)
+        .input("minSolOut", min_sol_out)
+        .account("pumpProgram", PUMP_FUN)
+        .account("global", PUMP_GLOBAL)
+        .account("feeRecipient", coin.fee_recipient())
+        .account("mint", coin.mint)
+        .account("bondingCurve", coin.bonding_curve())
+        .account("curveTokenAccount", coin.curve_token_account())
+        .account("sellerTokenAccount", token_2022_ata(&seller, &coin.mint))
+        .account("seller", seller)
+        .account("systemProgram", SYSTEM_PROGRAM_ID)
+        .account("creatorVault", coin.creator_vault())
+        .account("tokenProgram", TOKEN_2022_PROGRAM_ID)
+        .account("eventAuthority", PUMP_EVENT_AUTHORITY)
+        .account("feeConfig", PUMP_FEE_CONFIG)
+        .account("feeProgram", PUMP_FEES)
+        .account("bondingCurveV2", coin.bonding_curve_v2())
+        .account("buybackFeeRecipient", PUMP_BUYBACK_FEE_RECIPIENT)
+        .instruction()?;
+    Ok(instruction)
+}
+// #endregion pump-sell-all
+
 // ------------------------------------------------------------- sample runs
 
 /// A stand-in template address for the sample runs.
@@ -794,7 +971,7 @@ fn route_data() -> Vec<u8> {
 /// records it by: its instructions, the run last.
 pub type SampleRun = (&'static str, fn() -> Vec<Instruction>);
 
-pub const RUNS: [SampleRun; 10] = [
+pub const RUNS: [SampleRun; 12] = [
     ("jupiterDailyCapSwap", || {
         let data = route_data();
         let route = RouteQuote::split(&data);
@@ -927,6 +1104,29 @@ pub const RUNS: [SampleRun; 10] = [
             })
             .collect();
         vec![run_orca_harvest(TEMPLATE, &a, &rows, 10_000).unwrap()]
+    }),
+    ("pumpFunBuyBasket", || {
+        // Two ordinary coins and one in mayhem mode.
+        let buys: Vec<_> = (0..3)
+            .map(|row| PumpBuy {
+                coin: PumpCoin {
+                    mint: key(30 + row),
+                    creator: key(40 + row),
+                    mayhem: row == 2,
+                },
+                amount: 1_000_000_000_000,
+                max_sol_cost: 100_000_000,
+            })
+            .collect();
+        vec![run_pump_buy_basket(TEMPLATE, key(1), &buys, 250_000_000).unwrap()]
+    }),
+    ("pumpFunSellAll", || {
+        let coin = PumpCoin {
+            mint: key(30),
+            creator: key(40),
+            mayhem: false,
+        };
+        vec![run_pump_sell_all(TEMPLATE, key(1), &coin, 50_000_000).unwrap()]
     }),
     ("pythFreshPriceGate", || {
         let gate = PriceGate {

@@ -1,8 +1,8 @@
 # Protocol templates
 
-Ten example templates. Nine work with real Solana protocols: Jupiter, Kamino, Orca and Pyth, and
-one of those, the daily cap, also keeps state between runs. The tenth settles a trade at a price
-someone signed off chain. Each one works with a value that only exists while the transaction runs,
+Twelve example templates. Eleven work with real Solana protocols: Jupiter, Kamino, Orca, pump.fun
+and Pyth, and one of those, the daily cap, also keeps state between runs. The twelfth settles a
+trade at a price someone signed off chain. Each one works with a value that only exists while the transaction runs,
 such as what a swap returned or what a position has earned. The source files are in
 `clients/js/examples/protocols/`.
 
@@ -21,6 +21,8 @@ points, and check them against the protocols' current programs before you use th
 | [Liquidate with a minimum payout](/examples/protocols/kamino-liquidate) | Kamino | How much collateral the liquidator received |
 | [Compound collected fees](/examples/protocols/orca-compound) | Orca | How much the position had earned |
 | [Harvest positions that earned](/examples/protocols/orca-harvest) | Orca | Which positions have earned enough to collect |
+| [Buy a basket within a budget](/examples/protocols/pump-buy-basket) | pump.fun | What each buy cost, and whether the total is within budget |
+| [Sell all of a coin above a floor](/examples/protocols/pump-sell-all) | pump.fun | How much there is to sell, and what the sale paid |
 | [Act only on a fresh price](/examples/protocols/pyth-gate) | Pyth → Jupiter | Whether the price is recent, precise and in range |
 | [Settle at a signed quote](/examples/protocols/signed-quote) | Ed25519 → SPL Token | Whether the maker signed this quote for this taker, and it hasn't expired |
 
@@ -35,7 +37,7 @@ points, and check them against the protocols' current programs before you use th
 - **Rust.** Each Rust template is byte-identical to the TypeScript one, and each Rust run passes
   the accounts, flags and inputs its template declares, right after any instructions it needs before
   it: Kamino's refreshes, or the Ed25519 instruction (`clients/rust/tests/protocol_templates.rs`).
-- **Running against copies of the protocols.** The nine protocol templates run as signed
+- **Running against copies of the protocols.** The eleven protocol templates run as signed
   transactions in LiteSVM, a local Solana runtime, against the protocols' programs and accounts
   copied from mainnet at a single slot. The tests never touch the network (`tests/protocols/`). The
   signed quote runs the same way against a copy of mainnet's Token program, with the Ed25519
@@ -44,7 +46,8 @@ points, and check them against the protocols' current programs before you use th
 - **Account offsets.** The Orca, Pyth and SPL Token offsets are also checked against real devnet
   accounts by an opt-in test; see [reading offsets](#reading-offsets-from-an-account). The Kamino
   templates don't read Kamino's accounts. They read SPL token accounts: their balances before and
-  after each call and, where it matters, who owns them.
+  after each call and, where it matters, who owns them. The pump.fun templates read one pump.fun
+  field, a curve's `complete` flag, and the tests read it from live and graduated mainnet curves.
 - **Jupiter calls.** The six templates that call Jupiter send its `route` instruction, with
   `route`'s first accounts in the order Jupiter's published interface lists them and the rest as an
   account group. The semantics test checks this, and the protocol tests send real routes, recorded
@@ -78,6 +81,7 @@ is also the stronger guarantee: the update carries all the required signatures, 
 | | `conf` `u64` | 81 |
 | | `exponent` `i32` | 89 |
 | | `publish_time` `i64` | 93 |
+| pump.fun `BondingCurve` | `complete` `bool` | 48 |
 | Orca `Position` | `liquidity` `u128` | 72 |
 | | `fee_owed_a` `u64` | 112 |
 | | `fee_owed_b` `u64` | 136 |
@@ -85,9 +89,10 @@ is also the stronger guarantee: the update carries all the required signatures, 
 | | `owner` | 32 |
 | | `amount` `u64` | 64 |
 
-Pyth and Orca are Anchor programs (Anchor is the most common Solana program framework). Anchor
-starts each account's data with an eight-byte discriminator, a tag that identifies the account
-type, and the Pyth and Orca offsets above count those eight bytes. Anchor instructions start with a
+Pyth, Orca and pump.fun are Anchor programs (Anchor is the most common Solana program framework).
+Anchor starts each account's data with an eight-byte discriminator, a tag that identifies the
+account type, and their offsets above count those eight bytes. A Token-2022 token account keeps
+its mint, owner and balance where an SPL Token account does. Anchor instructions start with a
 discriminator too. The templates compute discriminators instead of copying them: the first eight
 bytes of `sha256("global:<handler>")` for an instruction and of `sha256("account:<Name>")` for an
 account.
@@ -145,8 +150,8 @@ The run files bind accounts with `pinned` and `at`:
 ## Rust helpers {#rust-helpers}
 
 The Rust templates share these constants and helpers: the program addresses, account offsets and
-instruction discriminators, `token_account()` to declare an SPL Token account, `balance_of()` to
-read its balance, and `jupiter_route_data()` and `platform_fee_within_cap()` for the Jupiter
+instruction discriminators, `token_account()` and `token_2022_account()` to declare an SPL Token or
+Token-2022 account, `balance_of()` to read its balance, and `jupiter_route_data()` and `platform_fee_within_cap()` for the Jupiter
 templates.
 
 ::: details The Rust helpers

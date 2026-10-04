@@ -147,6 +147,14 @@ const examplesSidebar = [
           { text: 'Harvest positions that earned', link: '/examples/protocols/orca-harvest' },
         ],
       },
+      {
+        text: 'pump.fun',
+        collapsed: true,
+        items: [
+          { text: 'Buy a basket within a budget', link: '/examples/protocols/pump-buy-basket' },
+          { text: 'Sell all of a coin above a floor', link: '/examples/protocols/pump-sell-all' },
+        ],
+      },
       { text: 'Pyth', collapsed: true, items: [{ text: 'Act only on a fresh price', link: '/examples/protocols/pyth-gate' }] },
       { text: 'Ed25519', collapsed: true, items: [{ text: 'Settle at a signed quote', link: '/examples/protocols/signed-quote' }] },
     ],

@@ -14,6 +14,7 @@
 //!   return data and the `Program data:` lines a transaction left.
 //! - [`kamino`] builds Kamino Lend's instructions and reads its reserves and obligations.
 //! - [`lending`] loads the lending snapshot and holds the setup the Kamino scenarios share.
+//! - [`pump`] builds pump.fun's own `buy` and `sell` and reads its bonding curves.
 //!
 //! Tests may write only three kinds of state directly: test wallets' SOL and token balances,
 //! oracle prices, and the clock. Every other change goes through the protocols' own instructions.
@@ -22,6 +23,7 @@ pub mod kamino;
 pub mod lending;
 pub mod oracle;
 pub mod orca;
+pub mod pump;
 pub mod snapshot;
 pub mod template;
 pub mod tx;

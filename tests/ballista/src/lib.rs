@@ -17,6 +17,7 @@ mod tests {
     mod account_groups;
     mod compiler_fuzz;
     mod critic_loops;
+    mod group_scans;
     mod property_findings;
     mod register_reuse;
 

@@ -140,14 +140,6 @@ const examplesSidebar = [
         ],
       },
       {
-        text: 'marginfi',
-        collapsed: true,
-        items: [
-          { text: 'Withdraw everything, with a minimum', link: '/examples/protocols/marginfi-withdraw' },
-          { text: 'Move a position into Kamino', link: '/examples/protocols/marginfi-to-kamino' },
-        ],
-      },
-      {
         text: 'Orca',
         collapsed: true,
         items: [
@@ -156,7 +148,6 @@ const examplesSidebar = [
         ],
       },
       { text: 'Pyth', collapsed: true, items: [{ text: 'Act only on a fresh price', link: '/examples/protocols/pyth-gate' }] },
-      { text: 'Jito', collapsed: true, items: [{ text: 'Tip only from profit', link: '/examples/protocols/jito-tip' }] },
       { text: 'Ed25519', collapsed: true, items: [{ text: 'Settle at a signed quote', link: '/examples/protocols/signed-quote' }] },
     ],
   },

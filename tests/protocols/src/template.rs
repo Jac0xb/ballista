@@ -567,7 +567,7 @@ mod tests {
     #[test]
     fn every_example_lines_up_with_its_payload() {
         let (examples, scenarios) = (examples(), scenarios());
-        assert_eq!(examples.iter().count(), 13);
+        assert_eq!(examples.iter().count(), 10);
         assert_eq!(scenarios.iter().count(), 6);
         for (name, example) in examples.iter().chain(scenarios.iter()) {
             // `Run::new` checks the header's counts against the name lists.

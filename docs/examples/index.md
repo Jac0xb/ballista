@@ -21,10 +21,10 @@ without Ballista:
 
 ## Protocol templates {#live-protocols}
 
-[Thirteen templates](/examples/protocols/) work with Jupiter, Kamino, marginfi, Orca, Pyth and
-Jito, or settle a trade at a signed quote. Each acts on a value that exists only while the
-transaction runs, such as what a swap produced. They were tested locally in LiteSVM, against the
-programs they call and accounts copied from mainnet, and have not yet run on devnet or mainnet.
+[Ten templates](/examples/protocols/) work with Jupiter, Kamino, Orca and Pyth, or settle a trade
+at a signed quote. Each acts on a value that exists only while the transaction runs, such as what a
+swap produced. They were tested locally in LiteSVM, against the programs they call and accounts
+copied from mainnet, and have not yet run on devnet or mainnet.
 
 ## Composition
 

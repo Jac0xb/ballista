@@ -143,7 +143,6 @@ a, button, input { -webkit-tap-highlight-color: transparent; }
 }
 .VPNavBarSearch .DocSearch-Button:hover { border-color: var(--rule); background: transparent; }
 .DocSearch-Button .DocSearch-Button-Key { border-radius: 0; box-shadow: none; }
-.VPNavBarSocialLinks { border-left: 1px solid var(--rule); }
 .VPNavBar .VPFlyout .menu .VPMenu { border-radius: 0; box-shadow: 3px 3px 0 var(--shadow); }
 .VPHome { margin: 0 !important; }
 .VPHome > .vp-doc.container { max-width: 1184px; padding: 0 40px 84px; margin: 0 auto; }

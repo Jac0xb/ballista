@@ -8,6 +8,8 @@ mod encoding;
 #[cfg(kani)]
 mod executor;
 #[cfg(kani)]
+mod group;
+#[cfg(kani)]
 mod invoke;
 #[cfg(kani)]
 mod lifecycle;

@@ -55,6 +55,61 @@ platform tools up to v1.53; the program builds with v1.54. Both ship rustc 1.89.
 - **Vacuity.** Every conf sets `rule_sanity: basic`.
 - **Coverage.** A host test checks that each of the 112 rules sits in exactly one conf.
 
+## Prover results at f1acfa1
+
+certora-cli 8.19.2, 2026-10-03, on the merge of PR #8. **Proved** has the same meaning as at
+cb2fb2d (below).
+
+| Conf | Job | Rules | Result |
+| --- | --- | --- | --- |
+| `run.conf` | [c923c129](https://prover.certora.com/output/5644982/c923c1299f234fcb873180bdd92e203d) | 17 | All verified |
+| `run-candidates.conf` | [72932216](https://prover.certora.com/output/5644982/72932216439d43178531c49fc0411617) | 27 | All verified |
+| `run-candidates-memcmp.conf` | [25c562c5](https://prover.certora.com/output/5644982/25c562c5ae484bf0bdb7e0891359788a) | 2 | All verified |
+| `run-twins.conf` | [c46e4f53](https://prover.certora.com/output/5644982/c46e4f538fac4c18804dc60599da2b07) | 13 | All violated, as required |
+| `run-twins-memcmp.conf` | [8c814058](https://prover.certora.com/output/5644982/8c8140582e8141e88c934001147a046d) | 1 | Violated, as required |
+| `run-blocked.conf` | [3c3d8186](https://prover.certora.com/output/5644982/3c3d81863565421ab2abeb7e6db4827e) | 52 | 23 verified, 17 violated, 12 errors |
+
+The blocked conf's 17 violations break down as follows:
+- 8 twins;
+- 5 diagnostics;
+- `u128` add's overflow reachability, unchanged because the conf still lacks
+  `-solanaTACSoundSignedMath`;
+- the 3 rules triaged below.
+
+The 12 errors are the typing (8) and lifecycle (4) rules. The prover could not encode them:
+`[3001] access to an indeterminate stack location`.
+
+**Proved (20):** the 19 from cb2fb2d, plus the writable and executable constraints. Their split
+asserts verified, both reachability rules passed, and the twin failed.
+
+**Not proved: the CPI privilege ceiling.** It and its twin verified, but vacuously: the slicer
+found no assertions to check. `rule_sanity: basic` passed anyway; only the reachability rules
+caught it.
+
+### Triage
+
+| Rule | Cause | Evidence |
+| --- | --- | --- |
+| `rule_u64_mul_div_is_exact` | Prover: an OR of two unknowns. Not a program bug. | The counterexample is a = 2^32 + 1, b = 2^32 − 1, c = `0xffff_ffff_0000_0001`, rounding up. The product is `u64::MAX`, and `mul64` builds its low word as `0xffff_ffff_0000_0000 \| 0xffff_ffff`. The trace says `Imprecision detected: BWOr(18446744069414584320, 4294967295) = 18446744073709551615, but is 18446744069414584320`. On the host, `mul_div` returns 2, the exact ceiling (`mul_div_matches_the_prover_counterexample`). |
+| `rule_cpi_requests_reach_an_accepted_listed_account`, `rule_cpi_requests_reach_a_signer_request` | Prover: its front end drops the verifier's accepting path. Every `INVOKE` is refused in the model. | `verify_record_header` gained an operand check in 4f8aebe, after cb2fb2d. In the SBF the prover translates, the branch where that check passes is replaced by `assume(r5 != r0)`. So `accepted` is the constant 0, and the satisfy condition becomes `BWAnd(0x0, listed)`. The inputs pass the check: the record is opcode 41 with operand bytes `ff 00 ff ff`, and the binary's tables give `OPERAND_FIELDS[41] = 6` and `UNUSED_OPERAND_BYTES[6] = 0xff0000ff`. `the_rules_invoke_record_is_accepted` shows the host accepts that record. |
+
+The ceiling's accepting path is feasible, so dropping it is an unsound prune, not an
+over-approximation. A likely mechanism, unconfirmed: the address of `OPERAND_FIELDS` is not marked
+as a global (`r6 = 414880`, where `UNUSED_OPERAND_BYTES` gets `415136 /*set_global*/`). If the
+prover reads that byte as 0, the mask becomes `UNUSED_OPERAND_BYTES[0] = 0xffffffff`, which
+`a = 0` fails.
+
+No spec fix is possible. The table lookup is program code, and an `INVOKE` must name descriptor 0.
+This commit adds only the two host tests.
+
+### Run next
+
+- Report the prune to Certora, citing job 3c3d8186 and `rule_cpi_requests_reach_an_accepted_listed_account`.
+- Or compute the operand mask without the byte table in the program, then rerun the four
+  `rule_cpi_requests_*` rules.
+- Any rule that reaches `verify_record_header` with a used operand can pass vacuously the same
+  way. Trust it only with a passing reachability rule.
+
 ## Prover results at cb2fb2d
 
 certora-cli 8.19.2, 2026-10-03. **Proved** means the rule verified, its sanity check passed, every

@@ -15,7 +15,7 @@ use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::{pubkey, Pubkey};
 use solana_sdk_ids::system_program;
 
-pub const BALLISTA_ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
+pub const BALLISTA_ID: Pubkey = pubkey!("BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR");
 /// The probe program's id in Mollusk. Fixed, so the generator's `World` can name it. The bytes
 /// start with "PROBE" to stand out in a trace. The probe ELF's own declared id is irrelevant:
 /// Mollusk maps the ELF to whichever id it is loaded under.

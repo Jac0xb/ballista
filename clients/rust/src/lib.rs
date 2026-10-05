@@ -34,7 +34,7 @@ pub use logs::{
 /// The address of the pre-release devnet build, which the functions without `_for_program`
 /// use. That build has an upgrade authority and rejects templates from this repository: pass
 /// your own deployment's address to the `_for_program` functions.
-pub const ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
+pub const ID: Pubkey = pubkey!("BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR");
 pub const BALLISTA_ID: Pubkey = ID;
 pub const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111");
 pub const TOKEN_PROGRAM_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");

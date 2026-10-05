@@ -22,7 +22,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 ELF = ROOT / 'target/sbpf-solana-solana/release/ballista.so'
-BALLISTA = 'BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD'
+BALLISTA = 'BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR'
 READELF = sorted(glob.glob(os.path.expanduser('~/.cache/solana/*/platform-tools/llvm/bin/llvm-readelf')))[-1]
 
 

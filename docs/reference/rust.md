@@ -130,8 +130,7 @@ A [registry](/reference/language#registries) keeps state between runs, in entrie
 - `template_hash(payload)` is the payload's SHA-256 hash, which the upload instructions carry.
 
 Both address functions derive under `ballista_sdk::ID`, the address of the pre-release devnet
-build, which rejects templates from this repository
-([status](/guide/security#audit-status)). Each has a `_for_program` variant that takes your
+build ([status](/guide/security#audit-status)). Each has a `_for_program` variant that takes your
 deployment's program ID, as every instruction builder does.
 
 The crate also exports `TEMPLATE_SEED`, `BALLISTA_ID` (the same as `ID`), and the program IDs

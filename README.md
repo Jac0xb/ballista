@@ -95,7 +95,7 @@ Node.js 22 or later and pnpm.
 git clone https://github.com/Jac0xb/ballista.git && cd ballista
 cargo build-sbf --manifest-path programs/ballista/Cargo.toml
 solana-test-validator --reset \
-  --bpf-program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD target/deploy/ballista.so
+  --bpf-program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR target/deploy/ballista.so
 ```
 
 Then, in a second terminal, upload a template, run it, and decode a failed run:

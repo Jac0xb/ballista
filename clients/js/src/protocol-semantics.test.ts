@@ -877,7 +877,7 @@ describe('the Orca harvest runner', () => {
 });
 
 describe('the Orca harvest runner names the program that refused', () => {
-  const BALLISTA = 'BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD';
+  const BALLISTA = 'BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR';
   const WHIRLPOOLS = 'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc';
 
   test('blames Whirlpools for its own code, though Ballista uses the same number', () => {

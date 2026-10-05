@@ -22,7 +22,7 @@ use solana_pubkey::{pubkey, Pubkey};
 use solana_sdk_ids::system_program;
 
 const BALLISTA_ELF: &[u8] = include_bytes!("../../../target/deploy/ballista.so");
-const ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
+const ID: Pubkey = pubkey!("BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR");
 const TEMPLATE_SEED: &[u8] = b"template";
 
 /// One template, its runtime accounts, and its run data.

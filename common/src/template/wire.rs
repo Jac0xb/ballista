@@ -5,7 +5,12 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 pub const TEMPLATE_PROGRAM_MAGIC: [u8; 4] = *b"BVM1";
 pub const TEMPLATE_PROGRAM_VERSION: u8 = 1;
 
-pub const MAX_TEMPLATE_PAYLOAD_LEN: usize = 10_240;
+/// The largest account Ballista can create for a template. The program creates it through a CPI,
+/// and Solana allows an account created inside a CPI at most 10,240 bytes.
+pub const MAX_TEMPLATE_ACCOUNT_LEN: usize = 10_240;
+/// The largest payload a template account holds: the account's maximum less its header. A larger
+/// payload would pass the verifier and then fail to upload with the runtime's `InvalidRealloc`.
+pub const MAX_TEMPLATE_PAYLOAD_LEN: usize = MAX_TEMPLATE_ACCOUNT_LEN - super::TEMPLATE_ACCOUNT_HEADER_LEN;
 pub const MAX_RUNTIME_ACCOUNTS: usize = 120;
 pub const MAX_INPUTS: usize = 32;
 pub const MAX_INPUT_BYTES: usize = 1_024;
@@ -1040,6 +1045,12 @@ mod tests {
         assert_eq!(header.batch_min_iterations(), 2);
         assert_eq!(header.flags(), PROGRAM_FLAG_EMIT_EVENT);
         assert_eq!(PROGRAM_HEADER_LEN, 24);
+    }
+
+    #[test]
+    fn the_payload_cap_leaves_room_for_the_account_header() {
+        assert_eq!(MAX_TEMPLATE_PAYLOAD_LEN, 10_160);
+        assert_eq!(MAX_TEMPLATE_PAYLOAD_LEN + crate::template::TEMPLATE_ACCOUNT_HEADER_LEN, MAX_TEMPLATE_ACCOUNT_LEN);
     }
 
     #[test]

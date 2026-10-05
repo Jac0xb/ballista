@@ -153,6 +153,8 @@ export interface RunErrorExplanation {
   account?: { index: number; name: string; row?: number };
   /** The input that failed to decode, when the context is an input index. */
   input?: string;
+  /** The batch row of `input`, when it is a row input. */
+  inputRow?: number;
   message: string;
 }
 
@@ -162,6 +164,38 @@ export interface ExplainRunErrorOptions {
   logs?: readonly string[];
   /** The Ballista deployment to expect in the logs. Defaults to `BALLISTA_PROGRAM_ADDRESS`. */
   programAddress?: string;
+}
+
+/**
+ * What an `InvalidRunInputs` context points at. The program decodes the fixed inputs, then each
+ * row's inputs in order, and the context is the running index of the value that failed; trailing
+ * bytes after the last value report the index one past it. That index is also the first row
+ * input of the next row, so on a row boundary the two readings are both given. A context of 0
+ * can also mean a short account-group length prefix, in a template with groups.
+ */
+function describeInputContext(
+  compiled: CompiledTemplate,
+  context: number,
+): { input?: string; row?: number; text: string } {
+  const groupPrefix =
+    context === 0 && compiled.accountGroupOrder.length > 0 ? ', or the account-group length prefix is short' : '';
+  const fixed = compiled.inputOrder.length;
+  if (context < fixed) {
+    const input = compiled.inputOrder[context]!;
+    return { input, text: `input ${input} could not be decoded${groupPrefix}` };
+  }
+  const perRow = compiled.rowInputOrder.length;
+  if (perRow === 0) return { text: `unexpected trailing input bytes${groupPrefix}` };
+  const offset = context - fixed;
+  const row = Math.floor(offset / perRow);
+  const input = compiled.rowInputOrder[offset % perRow]!;
+  const trailing =
+    offset % perRow !== 0
+      ? ''
+      : row === 0
+        ? ', or unexpected trailing input bytes'
+        : `, or unexpected trailing input bytes after row ${row - 1}`;
+  return { input, row, text: `input ${input} in row ${row} could not be decoded${trailing}${groupPrefix}` };
 }
 
 /**
@@ -186,9 +220,13 @@ export function explainRunError(
   }
   switch (error.name) {
     case 'InvalidRunInputs': {
-      const input = compiled.inputOrder[error.context];
-      const message = input ? `${error.name}: input ${input} could not be decoded` : `${error.name}: unexpected trailing input bytes`;
-      return { error, ...(input ? { input } : {}), message };
+      const described = describeInputContext(compiled, error.context);
+      return {
+        error,
+        ...(described.input !== undefined ? { input: described.input } : {}),
+        ...(described.row !== undefined ? { inputRow: described.row } : {}),
+        message: `${error.name}: ${described.text}`,
+      };
     }
     case 'InvalidAccountRange':
       return { error, message: `${error.name}: ${error.context} runtime accounts or iterations were supplied` };

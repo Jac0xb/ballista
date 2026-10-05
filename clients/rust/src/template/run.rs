@@ -208,6 +208,37 @@ impl CompiledTemplate {
         }
     }
 
+    /// What an `InvalidRunInputs` context points at, as the TypeScript SDK's `explainRunError`
+    /// describes it. The program decodes the fixed inputs, then each row's inputs in order, and
+    /// the context is the running index of the value that failed; trailing bytes after the last
+    /// value report the index one past it. That index is also the first row input of the next
+    /// row, so on a row boundary both readings are given. A context of 0 can also mean a short
+    /// account-group length prefix, in a template with groups.
+    fn describe_input_context(&self, context: usize) -> String {
+        let group_prefix = if context == 0 && !self.account_group_order.is_empty() {
+            ", or the account-group length prefix is short"
+        } else {
+            ""
+        };
+        let fixed = self.input_order.len();
+        if let Some(input) = self.input_order.get(context) {
+            return format!("input {input} could not be decoded{group_prefix}");
+        }
+        let per_row = self.row_input_order.len();
+        if per_row == 0 {
+            return format!("unexpected trailing input bytes{group_prefix}");
+        }
+        let offset = context - fixed;
+        let row = offset / per_row;
+        let input = &self.row_input_order[offset % per_row];
+        let trailing = match (offset % per_row, row) {
+            (0, 0) => ", or unexpected trailing input bytes".to_string(),
+            (0, row) => format!(", or unexpected trailing input bytes after row {}", row - 1),
+            _ => String::new(),
+        };
+        format!("input {input} in row {row} could not be decoded{trailing}{group_prefix}")
+    }
+
     /// Explains a failed run's custom error code against this template, as the TypeScript SDK's
     /// `explainRunError(code, compiled).message`: `RequirementFailed at steps[1] (aboveReserve)`
     /// names the step, and its label, that failed. `None` for a code that is not Ballista's, such
@@ -222,10 +253,7 @@ impl CompiledTemplate {
             ));
         }
         Some(match error.name {
-            "InvalidRunInputs" => match self.input_order.get(context) {
-                Some(input) => format!("{}: input {input} could not be decoded", error.name),
-                None => format!("{}: unexpected trailing input bytes", error.name),
-            },
+            "InvalidRunInputs" => format!("{}: {}", error.name, self.describe_input_context(context)),
             "InvalidAccountRange" => format!(
                 "{}: {} runtime accounts or iterations were supplied",
                 error.name, error.context

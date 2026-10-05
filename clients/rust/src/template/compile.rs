@@ -777,7 +777,7 @@ impl<'t> Compiler<'t> {
         bytes.extend_from_slice(&self.blob);
         if bytes.len() > MAX_TEMPLATE_PAYLOAD_LEN {
             return Err(error(format!(
-                "Compiled template is {} bytes; maximum is 10240",
+                "Compiled template is {} bytes; maximum is {MAX_TEMPLATE_PAYLOAD_LEN}",
                 bytes.len()
             )));
         }

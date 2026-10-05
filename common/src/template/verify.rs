@@ -1222,10 +1222,10 @@ impl ProgramView<'_> {
     /// each: the full sets cost creating each cookbook template about 75 compute units more.
     #[inline(never)]
     fn verify_references(&self) -> Result<(), TemplateError> {
-        // A payload has room for at most 1,277 data segments, and the header counts at most 255
-        // descriptors.
+        // A payload has room for fewer than MAX_TEMPLATE_PAYLOAD_LEN / 8 data segments, and the
+        // header counts at most 255 descriptors. Rounded up, so every segment that fits has a bit.
         const SEGMENT_WORDS: usize =
-            MAX_TEMPLATE_PAYLOAD_LEN / core::mem::size_of::<DataSegment>() / 64;
+            MAX_TEMPLATE_PAYLOAD_LEN.div_ceil(core::mem::size_of::<DataSegment>() * 64);
         if self.cpis.len() <= 64 && self.data_segments.len() <= 64 {
             self.verify_references_in::<1, 1>()
         } else {

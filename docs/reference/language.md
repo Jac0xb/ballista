@@ -46,7 +46,8 @@ Anything else stays as `bytes`.
 
 A template declares up to 32 named inputs, each with one of the six types. A `bytes` input also
 declares a maximum length from 1 to 1,024. That maximum counts toward the worst-case CPI data size
-the verifier checks.
+the verifier checks. A run's data holds at most 1,024 bytes, and a `bytes` value's 2-byte length
+prefix counts toward it, so one value can carry at most 1,022 bytes.
 
 Callers send the input values as one byte string, in declaration order; the encoding is on
 [Wire format](/reference/wire-format#run-data). Declaration order is therefore part of a template's
@@ -86,10 +87,11 @@ The compiler enforces two pinning rules:
 - An account whose data the template reads must pin its `owner` or its `address`. A byte offset
   only has a meaning when you know which program wrote the data.
 
-Setting `unsafeUnpinned: true` on an account (`.unsafe_unpinned()` in Rust) waives both rules for
-that account. Use it when a template deliberately accepts a program or data that the caller
-chooses. Reading the transaction's other instructions has a stricter rule that nothing waives; see
-[Introspection](#introspection).
+Setting `unsafeUnpinned: true` on an account (`.unsafe_unpinned()` in Rust) waives both pins for
+that account: an invoked program's `address`, though it must still be marked `executable`, and the
+`owner` or `address` of an account whose data is read. Use it when a template deliberately accepts a
+program or data that the caller chooses. Reading the transaction's other instructions has a stricter
+rule that nothing waives; see [Introspection](#introspection).
 
 Accounts are named in steps with `account.fixed(name)` for an account in the schema and
 `account.iteration(name)` for an account in the current batch row, inside a `forEach` loop. Two
@@ -146,7 +148,7 @@ types, which return-data and instruction-data reads share:
 
 | Read type | Result |
 | --- | --- |
-| `bool` | `bool`; the run fails unless the byte is 0 or 1 |
+| `bool` | `bool`; the run fails with `TypeMismatch` unless the byte is 0 or 1 |
 | `u8`, `u16`, `u32`, `u64` | `u64`, so a one-byte flag and an eight-byte amount combine without a cast |
 | `i32`, `i64` | `i64`; an `i32` is sign-extended, so a negative value stays negative |
 | `u128` | `u128` |
@@ -154,14 +156,16 @@ types, which return-data and instruction-data reads share:
 
 - **A constant offset** raises the account's minimum data length. If a template reads a `u64` at
   offset 64, the compiler records that the account must hold at least 72 bytes, and every run
-  checks it.
+  checks it when it starts. If a CPI then shrinks or closes the account, a read after it fails
+  with `InvalidRuntimeAccount`.
 - **An offset computed during the run**, a `u64` expression, lets the position depend on an input
-  or an earlier read. Such a read does not raise the minimum data length, and it fails the run if
-  it extends past the end of the data.
+  or an earlier read. Such a read does not raise the minimum data length, and it fails the run
+  with `InvalidRuntimeAccount` if it extends past the end of the data.
 - **`accountDataBytes`** reads exactly `length` bytes (1 to 1,024) as a `bytes` value, from a `u64`
   offset. The bytes are used in place rather than copied, which is safe only because the account
   cannot change during the run. So the compiler rejects an account declared `writable`, and a run
-  fails with `WritableAccountBytesRead` if the account is passed as writable. This read never
+  fails with `WritableAccountBytesRead` if the transaction marks the account writable anywhere,
+  even in another of its instructions. This read never
   raises the minimum data length. A range past the end of the data fails the run with
   `InstructionOutOfRange`.
 
@@ -183,9 +187,10 @@ right vault or [ATA](/reference/glossary#ata) instead of trusting the caller.
 
 Deriving a PDA needs a bump: one extra seed byte, tried from 255 downward until the result is a
 valid program address. The first value that works is the canonical bump. By default the template
-searches for it, and each attempt costs 1,500 [compute units](/reference/glossary#compute-units).
-Passing a `u64` bump as the third argument derives the address once instead. A bump above 255, or
-one that does not produce a valid program address, fails the run.
+searches for it, and each attempt costs about 500
+[compute units](/reference/glossary#compute-units). Passing a `u64` bump as the third argument
+derives the address once instead. A bump above 255, or one that does not produce a valid program
+address, fails the run.
 
 The two forms prove slightly different things. Without a bump, a match proves the account is the
 canonical PDA for those seeds. With a bump, a match proves the account is the PDA for those seeds
@@ -220,7 +225,7 @@ that Solana fills with the transaction's instructions.
 | `expression.instructionProgram(sysvar, index)` | `pubkey`, the program that instruction `index` calls |
 | `expression.instructionAccountCount(sysvar, index)` | `u64`, how many accounts it passes |
 | `expression.instructionAccount(sysvar, index, position)` | `pubkey`, the account at `position` |
-| `expression.instructionAccountFlags(sysvar, index, position)` | `u64`: bit 0 signer, bit 1 writable |
+| `expression.instructionAccountFlags(sysvar, index, position)` | `u64`: bit 0 signer, bit 1 writable, as the whole transaction marks the account, so the fee payer always reads as both |
 | `expression.instructionAccountIsSigner(...)`, `expression.instructionAccountIsWritable(...)` | `bool`, one of those flags; same arguments |
 | `expression.instructionDataLength(sysvar, index)` | `u64`, the length of its data |
 | `expression.instructionData(sysvar, index, offset, type)` | One of the [read types](#account-data) |
@@ -283,6 +288,9 @@ Bit operations work on unsigned integers. A shift amount is always a `u64`.
 | `expression.shiftLeft(a, n)` | `a`: `u64` or `u128`; `n`: `u64` | the type of `a` | A set bit would be shifted out |
 | `expression.shiftRight(a, n)` | as `shiftLeft` | the type of `a`, rounded down | Never; a shift of the full width or more gives 0 |
 | `expression.bitAnd(a, b)`, `expression.bitOr(a, b)`, `expression.bitXor(a, b)` | matching `u64` or `u128` | same | Never |
+
+A zero divisor fails with `DivisionByZero` (6014). Every other failure in these tables fails with
+`ArithmeticOverflow` (6013).
 
 `expression.bytesLength(value)` takes a `bytes` value and returns its length as a `u64`.
 
@@ -417,7 +425,8 @@ Instruction data, logs, and return data are built from two part constructors.
 | `data.encode(encoding, value)` | A value encoded as `u8`, `u16`, `u32`, `u64`, `i64`, `u128`, `pubkey`, `bool`, or `bytes` |
 
 The unsigned encodings `u8`, `u16`, `u32`, and `u64` accept a `u64` or `u128` value and fail the run
-if it does not fit, so a template can write a one-byte field without giving up checked arithmetic.
+with `ArithmeticOverflow` if it does not fit, so a template can write a one-byte field without
+giving up checked arithmetic.
 A `bytes` part is inserted as is, with no length prefix; if the program expects a length, add it as
 a separate part, such as `data.encode('u32', expression.bytesLength(value))`.
 
@@ -440,10 +449,12 @@ and clients to read.
   it do, and `parseProgramData` (TypeScript) and `program_data` (Rust) follow them. Any template can
   log the same tag, so before trusting a line, check which template ran: the run instruction's
   template account, or the run event's template address.
-- **Logs can be cut short.** Solana keeps 10,000 bytes of a transaction's logs by default, counting
-  every program's lines, then writes `Log truncated` and drops the rest. Base64 makes an `emit`'s
-  line a third longer than its bytes, so many emits, or a transaction whose other programs log a
-  lot, can lose lines while the run itself succeeds.
+- **Logs can be cut short.** A simulation keeps 10,000 bytes of a transaction's logs, counting
+  every program's lines, and so can an RPC node set up to limit them; landed transactions on
+  devnet have kept more than 20,000. Past the limit Solana writes `Log truncated` once and drops
+  each line that would not fit, so a later, shorter line can still appear. Base64 makes an
+  `emit`'s line a third longer than its bytes, so many emits, or a transaction whose other programs
+  log a lot, can lose lines while the run itself succeeds.
 - **A failed transaction keeps its logs.** Lines logged before a later failure still appear, so
   check that the transaction succeeded before you trust them.
 
@@ -456,7 +467,8 @@ invoked it.
   call returns; another template does so with [`expression.returnData`](#return-data).
 - **It names the program, not the template.** It proves only that Ballista set it. A template that
   reads a nested run's return data must pin the inner template's address, or a run of any template
-  could supply it.
+  could supply it. Pinning is enough only if that template sets return data itself: one that sets
+  none passes up whatever its own nested run returned.
 - **A transaction's return data is its last instruction's.** Each instruction starts with none, so
   any instruction after the run replaces it. Put the run last, or read the run's `Program return:`
   log line. That line names the program whose call ended, not the one that set the bytes, so after
@@ -576,11 +588,13 @@ Ballista program; its seeds are on [Wire format](/reference/wire-format#registry
   value with `select`.
 - **Fields are the only way in.** `accountData` and `accountDataBytes` of an entry are refused. The
   entry account's `key`, `owner`, `lamports`, `dataLength`, and `isEmpty` stay readable, as for any
-  account.
+  account. Reading an open entry's data through another slot fails too: `accountData` with
+  Solana's `AccountBorrowFailed`, `accountDataBytes` with `WritableAccountBytesRead`.
 - **A CPI may pass an entry read-only, never writable.** The compiler refuses it, and the verifier
   refuses the template with `InvalidRegistry` (6132). If another fixed account, a batch-row
   account or an account group member that a CPI passes writable turns out to be an open entry,
-  the CPI fails with `RegistryReentry` (6026). The verifier also refuses an open after any CPI, so
+  the CPI fails with `RegistryReentry` (6026), as does a CPI that passes an open entry read-only
+  and the template's own account writable. The verifier also refuses an open after any CPI, so
   every CPI meets this check, and no other run can change an entry between this run's read and its
   write.
 

@@ -1078,6 +1078,25 @@ mod output_steps {
     }
 
     #[test]
+    fn a_compiled_template_fits_the_largest_account_a_cpi_can_create_less_its_header() {
+        // Nine 1,000-byte emits, then one whose filler lands the payload on a chosen length.
+        let sized = |filler: usize| {
+            let mut steps: Vec<Step> = (0..9u8)
+                .map(|index| step::emit([data::literal([84, 65, 71, index]), data::literal(vec![index + 1; 1_000])]))
+                .collect();
+            steps.push(step::emit([data::literal([84, 65, 71, 9]), data::literal(vec![10; filler])]));
+            with_steps(&[], false, steps)
+        };
+        let base = compile(sized(1)).bytes.len() - 1;
+        assert_eq!(wire::MAX_TEMPLATE_PAYLOAD_LEN, 10_160);
+        assert_eq!(compile(sized(wire::MAX_TEMPLATE_PAYLOAD_LEN - base)).bytes.len(), wire::MAX_TEMPLATE_PAYLOAD_LEN);
+        fails(
+            sized(wire::MAX_TEMPLATE_PAYLOAD_LEN - base + 1),
+            "Compiled template is 10161 bytes; maximum is 10160",
+        );
+    }
+
+    #[test]
     fn an_output_takes_1_to_64_parts() {
         let parts = |count: usize| -> Vec<DataPart> {
             (0..count)

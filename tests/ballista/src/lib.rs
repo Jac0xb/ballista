@@ -819,6 +819,29 @@ mod tests {
 
     /// Anyone can send lamports to a predictable template address before it is created. Creation
     /// must tolerate that instead of letting dust block the ID forever.
+    /// The template account is its header plus the payload, and the program creates it through a
+    /// CPI, where Solana allows at most 10,240 bytes. The largest payload therefore begins, in an
+    /// account of exactly that size; one byte more is refused before any account is created.
+    #[test]
+    fn the_largest_payload_fills_the_largest_account_a_cpi_can_create() {
+        use ballista_common::template::{MAX_TEMPLATE_ACCOUNT_LEN, MAX_TEMPLATE_PAYLOAD_LEN};
+
+        let creator = Pubkey::new_unique();
+        let context = context(funded_accounts([creator], 10_000_000_000));
+        let (template, _) = find_template_pda(&creator, 12);
+        let largest = begin_template_instruction(creator, 12, MAX_TEMPLATE_PAYLOAD_LEN as u32, [7; 32]);
+        let result = context.process_instruction(&largest);
+        assert!(result.program_result.is_ok(), "{result:#?}");
+        let length = context.account_store.borrow().get(&template).expect("template account").data().len();
+        assert_eq!(length, MAX_TEMPLATE_ACCOUNT_LEN);
+
+        let (over_template, _) = find_template_pda(&creator, 13);
+        let over = begin_template_instruction(creator, 13, MAX_TEMPLATE_PAYLOAD_LEN as u32 + 1, [7; 32]);
+        let result = context.process_instruction(&over);
+        assert_eq!(custom_code(&result), Some(6000), "InvalidInstructionData: {result:#?}");
+        assert!(context.account_store.borrow().get(&over_template).is_none_or(|account| account.data().is_empty()));
+    }
+
     #[test]
     fn create_template_succeeds_on_a_prefunded_pda() {
         let creator = Pubkey::new_unique();

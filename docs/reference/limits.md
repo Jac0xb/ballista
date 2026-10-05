@@ -83,7 +83,7 @@ in all. See [what it costs](/guide/why-ballista#cost). The rules are under
 
 | Limit | Maximum |
 | --- | ---: |
-| Compiled template | 10,240 bytes |
+| Compiled template | 10,160 bytes (a CPI can allocate 10,240, less the 80-byte account header) |
 | [Registers](#registers) | 64 |
 | VM instructions | 128 (minimum 1) |
 | [PDA](/reference/glossary#pda) seeds per derivation, not counting the bump | 15 |

@@ -20,7 +20,11 @@ import {
 } from './schema.js';
 
 export const TEMPLATE_PROGRAM_VERSION = 1;
-export const MAX_TEMPLATE_PAYLOAD_LENGTH = 10_240;
+/**
+ * The largest compiled template that can be stored: 10,240 bytes, the most Solana lets a program
+ * allocate inside a CPI, less the template account's 80-byte header.
+ */
+export const MAX_TEMPLATE_PAYLOAD_LENGTH = 10_160;
 export const MAX_RUNTIME_ACCOUNTS = 120;
 export const MAX_ROW_INPUTS = 8;
 export const MAX_INPUT_VALUES = 256;
@@ -546,7 +550,7 @@ class Compiler {
     output.raw(this.blob);
     const bytes = output.finish();
     if (bytes.length > MAX_TEMPLATE_PAYLOAD_LENGTH) {
-      throw new RangeError(`Compiled template is ${bytes.length} bytes; maximum is 10240`);
+      throw new RangeError(`Compiled template is ${bytes.length} bytes; maximum is ${MAX_TEMPLATE_PAYLOAD_LENGTH}`);
     }
 
     return {

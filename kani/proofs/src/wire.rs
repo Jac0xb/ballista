@@ -3,7 +3,7 @@
 //! readers, the instruction-data parser, and the reference accessors the verifier and the executor
 //! share.
 //!
-//! The parser proofs take every payload up to the 10,240-byte cap, the largest a template can hold
+//! The parser proofs take every payload up to the 10,160-byte cap, the largest a template can hold
 //! (the bound the swarm's critic showed feasible). They are cheap at that size because the parser
 //! reads only the 24 header bytes and slice bounds.
 
@@ -56,12 +56,12 @@ fn assert_same_view(a: &ProgramView<'_>, b: &ProgramView<'_>) {
     assert!(core::ptr::eq(a.blob, b.blob));
 }
 
-/// `ProgramView::parse` never panics or reads out of bounds, on every payload of up to 10,240
+/// `ProgramView::parse` never panics or reads out of bounds, on every payload of up to 10,160
 /// bytes (the cap). When it accepts one, the magic, version, flags and reserved byte are valid and
 /// the nine sections tile the payload exactly: each has its header count's length, starts where
 /// the previous one ended, and the blob ends at the payload's end. A payload shorter than the
 /// header is `Truncated`; a foreign magic is reported before the version, and the version before
-/// anything else. Bound: payload length 0 to 10,240, every byte symbolic.
+/// anything else. Bound: payload length 0 to 10,160, every byte symbolic.
 #[kani::proof]
 #[kani::unwind(5)]
 fn parse_never_panics_and_sections_tile_the_payload() {
@@ -105,7 +105,7 @@ fn parse_never_panics_and_sections_tile_the_payload() {
     }
 }
 
-/// A payload past the 10,240-byte cap is refused with `PayloadTooLarge` and its length, before
+/// A payload past the 10,160-byte cap is refused with `PayloadTooLarge` and its length, before
 /// anything is read. Bound: lengths 10,241 to 10,248, every byte symbolic.
 #[kani::proof]
 fn parse_refuses_payloads_over_the_cap() {
@@ -120,7 +120,7 @@ fn parse_refuses_payloads_over_the_cap() {
 /// payload `parse` accepts it returns the same view, all nine sections naming the same bytes; and
 /// it accepts a payload `parse` refuses only for a check it documents skipping (flags and the
 /// reserved byte; the cap is outside this bound and `parse_refuses_payloads_over_the_cap` covers
-/// it), still tiling the payload exactly. Bound: payload length 0 to 10,240, every byte symbolic.
+/// it), still tiling the payload exactly. Bound: payload length 0 to 10,160, every byte symbolic.
 #[kani::proof]
 #[kani::unwind(5)]
 fn parse_finalized_agrees_with_parse() {
@@ -291,8 +291,8 @@ const INSTRUCTION_DATA: usize = 48;
 /// `BallistaInstruction::parse` never panics, and every instruction it accepts is exactly its
 /// documented layout: re-encoding the parsed fields gives back the input byte for byte, so no
 /// trailing or missing byte is ignored and no two inputs parse alike. `CreateTemplate` is
-/// `[0] ‖ id (u16) ‖ hash (32) ‖ payload (1..=10,240)`, `BeginTemplate` `[1] ‖ id ‖ length (u32,
-/// 1..=10,240) ‖ hash`, `WriteTemplateChunk` `[2] ‖ offset (u32) ‖ bytes (1..=10,240)`,
+/// `[0] ‖ id (u16) ‖ hash (32) ‖ payload (1..=10,160)`, `BeginTemplate` `[1] ‖ id ‖ length (u32,
+/// 1..=10,160) ‖ hash`, `WriteTemplateChunk` `[2] ‖ offset (u32) ‖ bytes (1..=10,160)`,
 /// `FinalizeTemplate` `[3]`, `CancelTemplate` `[4]`, `Run` `[5] ‖ inputs (at most 1,024)`.
 /// Bound: instruction data 0 to 48 bytes, every byte symbolic (so the payload, chunk and input
 /// length caps themselves are not reached).

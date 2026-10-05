@@ -75,7 +75,7 @@ Raised by `CreateTemplate` or `FinalizeTemplate` when the template fails its che
 | Code | Hex | Name | Meaning |
 | ---: | --- | --- | --- |
 | 6100 | `0x17D4` | `Truncated` | The template is shorter than its header says |
-| 6101 | `0x17D5` | `PayloadTooLarge` | The template is over 10,240 bytes |
+| 6101 | `0x17D5` | `PayloadTooLarge` | The template is over 10,160 bytes. Only off-chain verification reports it: an upload that large is refused first, with `InvalidInstructionData` |
 | 6102 | `0x17D6` | `InvalidMagic` | The template does not start with `BVM1` |
 | 6103 | `0x17D7` | `UnsupportedVersion` | Unknown bytecode version |
 | 6104 | `0x17D8` | `InvalidReservedBytes` | A reserved byte or flag is set |

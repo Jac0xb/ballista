@@ -5,6 +5,7 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ADDRESS_BYTES,
   ED25519_PROGRAM_ADDRESS_BYTES,
   INSTRUCTIONS_SYSVAR_ADDRESS_BYTES,
+  MAX_TEMPLATE_PAYLOAD_LENGTH,
   SYSTEM_PROGRAM_ADDRESS_BYTES,
   TOKEN_PROGRAM_ADDRESS_BYTES,
   account,
@@ -1122,6 +1123,21 @@ describe('output steps', () => {
     expect(() => compileSteps({}, [step.setReturnData([data.literal(new Uint8Array(1025))])])).toThrow(
       'setReturnData can encode 1025 bytes; maximum is 1024',
     );
+  });
+
+  test('a compiled template fits the largest account a CPI can create, less its header', () => {
+    // Nine 1,000-byte emits, then one whose filler lands the payload on a chosen length.
+    const sized = (filler: number) =>
+      compileSteps({}, [
+        ...Array.from({ length: 9 }, (_, index) =>
+          step.emit([data.literal(Uint8Array.of(84, 65, 71, index)), data.literal(new Uint8Array(1_000).fill(index + 1))]),
+        ),
+        step.emit([data.literal(Uint8Array.of(84, 65, 71, 9)), data.literal(new Uint8Array(filler).fill(10))]),
+      ]);
+    const base = sized(1).bytes.length - 1;
+    expect(MAX_TEMPLATE_PAYLOAD_LENGTH).toBe(10_160);
+    expect(sized(MAX_TEMPLATE_PAYLOAD_LENGTH - base).bytes.length).toBe(MAX_TEMPLATE_PAYLOAD_LENGTH);
+    expect(() => sized(MAX_TEMPLATE_PAYLOAD_LENGTH - base + 1)).toThrow('Compiled template is 10161 bytes; maximum is 10160');
   });
 
   test('an output takes 1 to 64 parts', () => {

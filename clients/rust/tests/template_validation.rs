@@ -802,6 +802,56 @@ mod ballista_compiler {
 
 // --------------------------------------------------------------------------------- data segments
 
+mod run_error_explanations {
+    use super::*;
+
+    #[test]
+    fn names_a_row_input_and_its_row_and_gives_both_readings_on_a_row_boundary() {
+        let rows = compile(
+            Template::new()
+                .input("fee", Type::U64)
+                .batch(
+                    Batch::new(4)
+                        .account("recipient", account::readonly())
+                        .input("amount", Type::U64)
+                        .input("memo", Type::U64),
+                )
+                .step(step::for_each().step(step::require(greater_than_or_equal(
+                    row_input("amount"),
+                    row_input("memo"),
+                )))),
+        );
+        let explain = |context: u32| rows.explain_error((context << 16) | 6008);
+        assert_eq!(explain(0).as_deref(), Some("InvalidRunInputs: input fee could not be decoded"));
+        // Mid-row: only a decode failure reads this way.
+        assert_eq!(
+            explain(2).as_deref(),
+            Some("InvalidRunInputs: input memo in row 0 could not be decoded")
+        );
+        // On a row boundary, trailing bytes after the previous row report the same index.
+        assert_eq!(
+            explain(1).as_deref(),
+            Some("InvalidRunInputs: input amount in row 0 could not be decoded, or unexpected trailing input bytes")
+        );
+        assert_eq!(
+            explain(3).as_deref(),
+            Some(
+                "InvalidRunInputs: input amount in row 1 could not be decoded, or unexpected trailing input bytes after row 0"
+            )
+        );
+
+        let grouped = compile(
+            Template::new()
+                .account_group("extra")
+                .step(step::require(greater_than(group_length("extra"), u64(0)))),
+        );
+        assert_eq!(
+            grouped.explain_error(6008).as_deref(),
+            Some("InvalidRunInputs: unexpected trailing input bytes, or the account-group length prefix is short")
+        );
+    }
+}
+
 mod data_segments {
     use super::*;
 

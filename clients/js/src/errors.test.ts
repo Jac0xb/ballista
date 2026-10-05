@@ -79,6 +79,45 @@ describe('error decoding', () => {
     });
   });
 
+  test('names a row input and its row, and gives both readings on a row boundary', () => {
+    const rows = compileTemplate(
+      defineTemplate({
+        inputs: { fee: { type: 'u64' } },
+        accounts: {},
+        batch: { maxIterations: 4, row: { recipient: {} }, rowInputs: { amount: { type: 'u64' }, memo: { type: 'u64' } } },
+        steps: [step.forEach([step.require(expression.greaterThanOrEqual(expression.rowInput('amount'), expression.rowInput('memo')))])],
+      }),
+    );
+    expect(explainRunError(6008, rows)).toMatchObject({ input: 'fee', message: 'InvalidRunInputs: input fee could not be decoded' });
+    // Mid-row: only a decode failure reads this way.
+    expect(explainRunError((2 << 16) | 6008, rows)).toMatchObject({
+      input: 'memo',
+      inputRow: 0,
+      message: 'InvalidRunInputs: input memo in row 0 could not be decoded',
+    });
+    expect(explainRunError((4 << 16) | 6008, rows)?.message).toBe('InvalidRunInputs: input memo in row 1 could not be decoded');
+    // On a row boundary, trailing bytes after the previous row report the same index.
+    expect(explainRunError((1 << 16) | 6008, rows)?.message).toBe(
+      'InvalidRunInputs: input amount in row 0 could not be decoded, or unexpected trailing input bytes',
+    );
+    expect(explainRunError((3 << 16) | 6008, rows)).toMatchObject({
+      input: 'amount',
+      inputRow: 1,
+      message: 'InvalidRunInputs: input amount in row 1 could not be decoded, or unexpected trailing input bytes after row 0',
+    });
+
+    const grouped = compileTemplate(
+      defineTemplate({
+        accounts: {},
+        accountGroups: ['extra'],
+        steps: [step.require(expression.greaterThan(expression.groupLength('extra'), expression.u64(0)))],
+      }),
+    );
+    expect(explainRunError(6008, grouped)?.message).toBe(
+      'InvalidRunInputs: unexpected trailing input bytes, or the account-group length prefix is short',
+    );
+  });
+
   test('explains account, input, and range failures by name', () => {
     expect(explainRunError((1 << 16) | 6020, budgeted)).toMatchObject({
       account: { index: 1, name: 'source' },

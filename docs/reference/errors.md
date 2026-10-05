@@ -23,7 +23,7 @@ instruction. Four carry something else:
 | Kind | Name | Context |
 | ---: | --- | --- |
 | 6008 | `InvalidRunInputs` | Index of the value that could not be decoded, fixed values first. For leftover bytes, the number of values. For missing group-length bytes, `0` |
-| 6010 | `InvalidAccountRange` | The number of accounts, or of rows, that was out of range |
+| 6010 | `InvalidAccountRange` | The number of accounts, or of rows, that was out of range. The program reads only an instruction's first 128 accounts, the template's included, so more than 127 runtime accounts report 127 |
 | 6020 | `AccountConstraintFailed` | Index of the account, where `0` is the first account after the template account |
 | 6021 | `CpiAccountLimitExceeded` | The CPI's total account count, which exceeded 64 |
 
@@ -38,7 +38,7 @@ Raised while uploading or running a template.
 | ---: | --- | --- | --- |
 | 6000 | `0x1770` | `InvalidInstructionData` | The instruction data could not be parsed |
 | 6001 | `0x1771` | `InvalidTemplateAccount` | The template account has the wrong address, owner or layout |
-| 6002 | `0x1772` | `InvalidTemplateProgram` | The template size is invalid, or the stored template does not match what the run expects |
+| 6002 | `0x1772` | `InvalidTemplateProgram` | The stored template does not match what the run expects |
 | 6003 | `0x1773` | `TemplateNotUploading` | Write, finalize or cancel on a template that is already finalized |
 | 6004 | `0x1774` | `TemplateNotFinalized` | Run on a template that is still uploading |
 | 6005 | `0x1775` | `InvalidCreator` | The signer is not the template's creator |
@@ -62,11 +62,17 @@ Raised while uploading or running a template.
 | 6023 | `0x1787` | `InstructionOutOfRange` | A read asked for an instruction, account position or byte range that does not exist |
 | 6024 | `0x1788` | `WritableAccountBytesRead` | `accountDataBytes` read an account the transaction passed as writable |
 | 6025 | `0x1789` | `InvalidRegistryEntry` | An account passed as a registry entry is not that entry (wrong address, owner, size or header), or is an entry this run already has open (two entries of one registry with equal keys) |
-| 6026 | `0x178A` | `RegistryReentry` | A CPI passed an open registry entry as writable |
+| 6026 | `0x178A` | `RegistryReentry` | A CPI passed an open registry entry as writable, or passed one read-only with the template's own account writable |
 
 A declared signer that did not sign fails with Solana's `MissingRequiredSignature`, not a Ballista
 code. A registry entry passed read-only fails before the first step with `AccountConstraintFailed`
 (6020) and the entry's account index.
+
+The upload instructions take an exact account list and report a wrong one with Solana's errors:
+an extra or missing account fails with `NotEnoughAccountKeys`, a creator or template account that
+is not writable with `MissingRequiredSignature`, and a third account that is not the System program
+with `IncorrectProgramId`. An empty chunk, or a size of 0 or over 10,160 bytes, fails with
+`InvalidInstructionData` (6000).
 
 ## Verifier codes
 

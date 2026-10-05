@@ -6,16 +6,17 @@
 
 fn main() {
     decode();
-    println!("decoded (7 << 16) | 6015 as RequirementFailed at program counter 7");
+    println!("decoded (8 << 16) | 6015 as RequirementFailed at program counter 8");
 }
 
 // #region decode
 fn decode() {
     use ballista_sdk::decode_ballista_error;
 
-    // A failed `require` at program counter 7: the kind in the low 16 bits, the context in the high 16.
-    let decoded = decode_ballista_error((7 << 16) | 6015).unwrap();
+    // The budget `require` failing at program counter 8: the kind in the low 16 bits, the context
+    // in the high 16.
+    let decoded = decode_ballista_error((8 << 16) | 6015).unwrap();
     assert_eq!(decoded.name, "RequirementFailed");
-    assert_eq!(decoded.context, 7);
+    assert_eq!(decoded.context, 8);
 }
 // #endregion decode

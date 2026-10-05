@@ -45,8 +45,8 @@ assertPda({
 
 ## Supply the bump
 
-Searching for the canonical bump costs 1,500 [compute units](/reference/glossary#compute-units) per
-attempt. The caller can find it off chain for free and pass it to `assertPda` or `assertAta`:
+Searching for the canonical bump costs about 500 [compute units](/reference/glossary#compute-units)
+per attempt. The caller can find it off chain for free and pass it to `assertPda` or `assertAta`:
 
 ```ts
 import { account, assertPda, expression } from '@jac0xb/ballista';

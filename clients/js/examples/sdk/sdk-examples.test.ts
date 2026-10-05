@@ -101,9 +101,15 @@ describe('a template that reports back', () => {
   });
 });
 
+/** The program counter of the budget step's `require`: the last instruction that step emits. */
+const budgetedPayrollRequirePc = () =>
+  compileTemplate(budgetedPayroll).sourceMap.filter((entry) => entry.label === 'withinBudget').at(-1)!.pc;
+
 describe('decoding an error code', () => {
   test('gives the values the page shows', () => {
-    expect(decoded).toEqual({ code: 464_767, kind: 6015, name: 'RequirementFailed', context: 7, source: 'runtime' });
+    expect(decoded).toEqual({ code: 530_303, kind: 6015, name: 'RequirementFailed', context: 8, source: 'runtime' });
+    // The code the page shows is the one the budget check really fails with.
+    expect(budgetedPayrollRequirePc()).toBe(8);
     expect(explained).toBe('RequirementFailed at steps[2] (withinBudget)');
   });
 });

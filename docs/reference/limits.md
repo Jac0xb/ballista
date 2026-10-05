@@ -161,15 +161,22 @@ So a run alone in its transaction fits about **61 runtime accounts**:
 - the fee payer takes a third, unless it is also one of the run's accounts;
 - every other instruction takes the accounts it adds, such as the Compute Budget program.
 
-Ballista's limit of 120 runtime accounts can't be reached in one transaction today. To carry 61
-accounts in bytes, use a version 1 transaction, up to 4,096 bytes, or a
-version 0 transaction, up to 1,232 bytes, with an address lookup table.
+So Ballista's limit of 120 runtime accounts is reached only by passing some addresses in more than
+one slot, such as an account group that lists one account several times.
+
+To carry 61 accounts in bytes, use a version 1 transaction, up to 4,096 bytes, or a version 0
+transaction, up to 1,232 bytes, with an address lookup table. A version 1 transaction needs its
+compute-unit and loaded-data limits set in the message: without them the run fails with
+`MaxLoadedAccountsDataSizeExceeded` or gets no compute units. `createComputeUnitProvider` sets
+both.
 
 ### Instruction trace {#instruction-trace}
 
 A transaction runs at most **64 instructions in total**: its own instructions plus every CPI at
 every depth, including the calls a called program makes itself. The run is one of them, so even
-alone in its transaction a run can make at most 63 CPIs. Ballista's count can't see nested calls,
+alone in its transaction a run can make at most 63 CPIs. A 65th call fails with
+`MaxInstructionTraceLengthExceeded`; a transaction of 65 instructions of its own is refused before
+it runs. Ballista's count can't see nested calls,
 so size a loop to the trace, not only to its `max`.
 
 In a local test against copies of the mainnet programs, a template sells SOL through Jupiter in

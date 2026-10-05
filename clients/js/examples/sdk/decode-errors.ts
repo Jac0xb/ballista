@@ -13,11 +13,12 @@ const compiled = compileTemplate(budgetedPayroll);
 // #region decode
 import { decodeBallistaError, explainRunError } from '@jac0xb/ballista';
 
-// A failed `require` at program counter 7: the kind in the low 16 bits, the context in the high 16.
-export const decoded = decodeBallistaError((7 << 16) | 6015);
-// { code: 464767, kind: 6015, name: 'RequirementFailed', context: 7, source: 'runtime' }
+// The budget `require` failing at program counter 8: the kind in the low 16 bits, the context in
+// the high 16.
+export const decoded = decodeBallistaError((8 << 16) | 6015);
+// { code: 530303, kind: 6015, name: 'RequirementFailed', context: 8, source: 'runtime' }
 
 // `compiled` is the template that ran, compiled: here the budgeted payroll from Batch execution.
-export const explained = explainRunError((7 << 16) | 6015, compiled)?.message;
+export const explained = explainRunError((8 << 16) | 6015, compiled)?.message;
 // 'RequirementFailed at steps[2] (withinBudget)'
 // #endregion decode

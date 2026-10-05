@@ -70,7 +70,7 @@ describe('error decoding', () => {
   });
 
   test('explains a failed require by its step and label', () => {
-    const requirePc = budgeted.sourceMap.find((entry) => entry.label === 'withinBudget')!.pc;
+    const requirePc = budgeted.sourceMap.filter((entry) => entry.label === 'withinBudget').at(-1)!.pc;
     const explanation = explainRunError((requirePc << 16) | 6015, budgeted);
     expect(explanation).toMatchObject({
       error: { name: 'RequirementFailed', context: requirePc },
@@ -169,7 +169,7 @@ describe('codes from Kit', () => {
   });
 
   test('explain as a bigint as they do as a number', () => {
-    const requirePc = budgeted.sourceMap.find((entry) => entry.label === 'withinBudget')!.pc;
+    const requirePc = budgeted.sourceMap.filter((entry) => entry.label === 'withinBudget').at(-1)!.pc;
     expect(explainRunError((BigInt(requirePc) << 16n) | 6015n, budgeted)?.message).toBe(
       'RequirementFailed at steps[2] (withinBudget)',
     );
@@ -191,7 +191,7 @@ describe('which program failed', () => {
     `Program ${BALLISTA_PROGRAM_ADDRESS} failed: custom program error: 0x1771`,
   ];
   /** Ballista's own `require` fails at the budget check. */
-  const requirePc = budgeted.sourceMap.find((entry) => entry.label === 'withinBudget')!.pc;
+  const requirePc = budgeted.sourceMap.filter((entry) => entry.label === 'withinBudget').at(-1)!.pc;
   const ballistaRefused = [
     `Program ${BALLISTA_PROGRAM_ADDRESS} invoke [1]`,
     `Program 11111111111111111111111111111111 invoke [2]`,

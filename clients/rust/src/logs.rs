@@ -237,7 +237,7 @@ fn sextet(byte: u8) -> Option<u8> {
 mod tests {
     use super::*;
 
-    const BALLISTA: &str = "BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD";
+    const BALLISTA: &str = "BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR";
     const JUPITER: &str = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
 
     fn key(text: &str) -> Pubkey {

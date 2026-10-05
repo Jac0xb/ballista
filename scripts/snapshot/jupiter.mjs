@@ -14,7 +14,7 @@ import { fetchWithRetry, parseJson, stringifyJson } from './rpc.mjs';
 
 export const JUPITER_V6 = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4';
 export const ASSOCIATED_TOKEN_PROGRAM = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
-export const BALLISTA_PROGRAM = 'BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD';
+export const BALLISTA_PROGRAM = 'BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR';
 
 const API_KEY = process.env.JUPITER_API_KEY || '';
 /** Keyless `lite-api.jup.ag` by default; `api.jup.ag` when a key is set. */

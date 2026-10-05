@@ -129,10 +129,12 @@ not stored on chain.
 
 Each release of the Ballista program will be deployed under its own address with no upgrade
 authority, so that nobody can change what a stored template means. No release exists yet. The
-pre-release build on devnet still has an upgrade authority: whoever holds it can change what every
-template on that build does, so while you use it, you trust that key. It also predates this
-repository's template format and rejects its templates. See
-[Audit status](/guide/security#audit-status).
+pre-release build on devnet, built from this repository, still has an upgrade authority: whoever
+holds it can change what every template on that build does, so while you use it, you trust that
+key. See [Audit status](/guide/security#audit-status).
+
+- **Devnet program:** [`BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR`](https://explorer.solana.com/address/BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR?cluster=devnet)
+- **Its upgrade authority:** `A9TciQEkWp1uh8ee4DpPyXgi4twSfUuNFe9sGEvjxfsQ`
 
 A template's address is derived from the program that finalized it, so each template belongs to
 that one deployment. A new deployment is a different program, and templates must be uploaded again

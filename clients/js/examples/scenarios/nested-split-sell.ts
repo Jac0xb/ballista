@@ -29,7 +29,7 @@ export const TEST_CREATOR = '2WGAww33k4mjMVckFknzzv62LcCSY7Q57mA75n1vwDmB';
 /** The id the protocol tests upload `splitSellInner` under. */
 export const INNER_TEMPLATE_ID = 31;
 /** `splitSellInner` as the protocol tests upload it: the template address of `TEST_CREATOR` and `INNER_TEMPLATE_ID`. */
-export const INNER_TEMPLATE_ADDRESS = 'HKA6yk5NTxosVJU5bchRvvf5D5eMrBu3ywjNE465RCDm';
+export const INNER_TEMPLATE_ADDRESS = 'BdqkiRneA8meWntv1JEDTxdFcg8xsxRLr9EEVgycUTQ3';
 /** ASCII `PAID`: the tag of the outer run's event. */
 export const PAYOUT_EVENT_TAG = new TextEncoder().encode('PAID');
 

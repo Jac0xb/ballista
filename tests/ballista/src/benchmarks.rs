@@ -24,7 +24,7 @@ use solana_sdk_ids::system_program;
 use spl_token_interface::state::{Account as TokenAccount, AccountState, Mint};
 
 const BALLISTA_ELF: &[u8] = include_bytes!("../../../target/deploy/ballista.so");
-const ID: Pubkey = pubkey!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
+const ID: Pubkey = pubkey!("BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR");
 const TEMPLATE_SEED: &[u8] = b"template";
 const MANIFEST: &str = include_str!("../../../fixtures/benchmarks.json");
 /// A timestamp late enough that every example's deadline and gate comparison is satisfiable.

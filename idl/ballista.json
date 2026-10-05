@@ -1,5 +1,5 @@
 {
-  "address": "BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD",
+  "address": "BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR",
   "metadata": {
     "name": "ballista",
     "version": "1.0.0",
@@ -7,7 +7,7 @@
     "description": "Bounded orchestration VM for immutable, reusable SVM transaction templates",
     "repository": "https://github.com/Jac0xb/ballista",
     "deployments": {
-      "devnet": "BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD"
+      "devnet": "BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR"
     }
   },
   "docs": [

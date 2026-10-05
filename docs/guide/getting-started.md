@@ -22,7 +22,7 @@ it, build the program, and start a local validator with the program loaded. This
 git clone https://github.com/Jac0xb/ballista.git
 cargo build-sbf --manifest-path ballista/programs/ballista/Cargo.toml
 solana-test-validator --reset \
-  --bpf-program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD ballista/target/deploy/ballista.so
+  --bpf-program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR ballista/target/deploy/ballista.so
 ```
 
 Leave it running. In another terminal, in the same directory, set up your project:

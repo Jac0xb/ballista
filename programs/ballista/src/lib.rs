@@ -36,7 +36,7 @@ pub mod processor;
 mod profile;
 pub mod utils;
 
-declare_id!("BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD");
+declare_id!("BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR");
 
 #[cfg(not(feature = "no-entrypoint"))]
 mod init {

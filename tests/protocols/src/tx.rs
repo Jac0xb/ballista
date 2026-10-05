@@ -675,13 +675,13 @@ mod tests {
     #[test]
     fn the_first_failed_line_names_the_innermost_program() {
         let logs = lines(&[
-            "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD invoke [1]",
+            "Program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR invoke [1]",
             "Program log: step failed: not a program id",
             "Program 11111111111111111111111111111111 invoke [2]",
             "Transfer: insufficient lamports 5, need 10",
             "Program 11111111111111111111111111111111 failed: custom program error: 0x1",
-            "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD consumed 900 of 200000 compute units",
-            "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD failed: custom program error: 0x1",
+            "Program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR consumed 900 of 200000 compute units",
+            "Program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR failed: custom program error: 0x1",
         ]);
         assert_eq!(innermost_failure(&logs), Some((SYSTEM_PROGRAM_ID, Some(1))));
     }
@@ -689,8 +689,8 @@ mod tests {
     #[test]
     fn a_failure_without_a_custom_code_has_none() {
         let logs = lines(&[
-            "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD invoke [1]",
-            "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD failed: missing required signature for instruction",
+            "Program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR invoke [1]",
+            "Program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR failed: missing required signature for instruction",
         ]);
         assert_eq!(innermost_failure(&logs), Some((ballista_sdk::ID, None)));
         assert_eq!(innermost_failure(&lines(&["Program log: done"])), None);
@@ -702,7 +702,7 @@ mod tests {
     fn a_program_s_compute_units_are_its_outermost_invocation_s() {
         let outcome = Outcome {
             logs: lines(&[
-                "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD invoke [1]",
+                "Program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR invoke [1]",
                 "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 invoke [2]",
                 "Program log: consumed 7 of 8 compute units",
                 "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 invoke [3]",
@@ -710,8 +710,8 @@ mod tests {
                 "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 success",
                 "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 consumed 41000 of 130000 compute units",
                 "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 success",
-                "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD consumed 52000 of 200000 compute units",
-                "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD success",
+                "Program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR consumed 52000 of 200000 compute units",
+                "Program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR success",
             ]),
             compute_units: 52_150,
             fee: 5_000,
@@ -730,7 +730,7 @@ mod tests {
     fn a_program_s_own_compute_units_leave_out_its_callees() {
         let outcome = Outcome {
             logs: lines(&[
-                "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD invoke [1]",
+                "Program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR invoke [1]",
                 "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 invoke [2]",
                 "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 invoke [3]",
                 "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 consumed 1500 of 90000 compute units",
@@ -741,8 +741,8 @@ mod tests {
                 "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]",
                 "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 76 of 88000 compute units",
                 "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success",
-                "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD consumed 52000 of 200000 compute units",
-                "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD success",
+                "Program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR consumed 52000 of 200000 compute units",
+                "Program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR success",
             ]),
             compute_units: 52_000,
             fee: 5_000,
@@ -762,16 +762,16 @@ mod tests {
     #[test]
     fn program_data_belongs_to_the_invocation_around_it() {
         let logs = lines(&[
-            "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD invoke [1]",
-            "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD invoke [2]",
+            "Program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR invoke [1]",
+            "Program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR invoke [2]",
             "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 invoke [3]",
             "Program data: AQI=",
             "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 success",
             "Program data: U0xDRQ==",
             "Program log: data: not a data line",
-            "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD success",
+            "Program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR success",
             "Program data: UEFJRA== AA==",
-            "Program BLSTAxXJ6fXnsQ2hxZmFQ1MYQaxpdqAtRNuo6ckY2mfD success",
+            "Program BLSTAmUBA29tcRUvoq5DBYxRhGptrnWPtfQW65RszRWR success",
         ]);
         let logged = |program, height, fields: &[&[u8]]| ProgramData {
             program,

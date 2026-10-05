@@ -7,9 +7,8 @@ What protects a template, what does not, and what has and has not been reviewed.
 **Ballista is on mainnet, and unaudited.** No third party has reviewed the program or the SDKs.
 <AuditFund />
 
-- **The devnet build**, at the address the SDKs use by default, is an older pre-release that
-  rejects templates from this repository. Its [upgrade authority](/guide/trust-model#deployments)
-  can still change it.
+- **The devnet build**, at the address the SDKs use by default, is a pre-release built from this
+  repository. Its [upgrade authority](/guide/trust-model#deployments) can still change it.
 - **Each release will be immutable**, deployed with no upgrade authority. See
   [Deployments](/guide/trust-model#deployments).
 

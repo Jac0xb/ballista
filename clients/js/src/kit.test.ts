@@ -39,8 +39,8 @@ const systemAddress = address('11111111111111111111111111111111');
 describe('Solana Kit adapter', () => {
   test('derives the template PDA identically to Rust', async () => {
     await expect(getTemplateAddress(systemAddress, 7)).resolves.toEqual([
-      address('CFbBQL1sPP69VFwLutH11V4cpaCUSyvaCDfAeetHEtJW'),
-      255,
+      address('DbDNUnVFe9GDHz2gYsnqiM4n2Zkb8ZZn5J29NhLNc9kH'),
+      252,
     ]);
   });
 

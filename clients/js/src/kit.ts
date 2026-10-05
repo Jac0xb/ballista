@@ -437,12 +437,16 @@ export async function buildKitTemplateUploadPlan(input: {
     if (measureInstructionInTransaction(input.transactionMessage, createInstruction).fits) {
       plan = oneShot;
     } else {
-      const maxInstructionDataBytes = findLargestWriteInstructionData(
+      const largestWrite = findLargestWriteInstructionData(
         input.transactionMessage,
         programAddress,
         input.creator,
         templateAddress,
       );
+      // A create carries one more account than a write (the System program), so a create can be
+      // too big where a write of the same data fits. Keep the limit under the create's own size,
+      // so the planner always chunks here rather than returning the create that did not fit.
+      const maxInstructionDataBytes = Math.min(largestWrite, oneShot.instructions[0]!.data.length - 1);
       plan = planTemplateUpload(input.compiled, input.templateId, { maxInstructionDataBytes });
     }
   } else {

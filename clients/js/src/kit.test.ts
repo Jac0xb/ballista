@@ -8,6 +8,7 @@ import {
   getTransactionMessageComputeUnitLimit,
   getTransactionMessageLoadedAccountsDataSizeLimit,
   pipe,
+  setTransactionMessageComputeUnitLimit,
   setTransactionMessageFeePayer,
   setTransactionMessageLifetimeUsingBlockhash,
 } from '@solana/kit';
@@ -28,7 +29,7 @@ import {
   measureTransactionMessage,
   type ComputeUnitRpc,
 } from './kit.js';
-import { account, defineTemplate, expression, step } from './schema.js';
+import { account, data, defineTemplate, expression, step } from './schema.js';
 import { systemTransfer } from './helpers.js';
 
 const decoder = getAddressDecoder();
@@ -154,6 +155,35 @@ describe('Solana Kit adapter', () => {
       appendTransactionMessageInstruction(plan.instructions[0]!.instruction, baseMessage),
     );
     expect(measured.fits).toBe(true);
+  });
+
+  test('every planned upload instruction fits a version 0 message with a compute limit', async () => {
+    // Templates of about 919 to 951 bytes used to get a one-shot create that did not fit: the
+    // fallback sized writes, and a write of the same data has one account fewer than a create.
+    const creator = byteAddress(3);
+    const baseMessage = pipe(
+      createTransactionMessage({ version: 0 }),
+      (value) => setTransactionMessageFeePayer(creator, value),
+      (value) =>
+        setTransactionMessageLifetimeUsingBlockhash(
+          { blockhash: blockhash('11111111111111111111111111111111'), lastValidBlockHeight: 1n },
+          value,
+        ),
+      (value) => setTransactionMessageComputeUnitLimit(1_400_000, value),
+    );
+    let chunked = 0;
+    for (let length = 840; length <= 1_000; length += 1) {
+      const compiled = compileTemplate(
+        defineTemplate({ accounts: {}, steps: [step.setReturnData([data.literal(new Uint8Array(length).fill(7))])] }),
+      );
+      const plan = await buildKitTemplateUploadPlan({ compiled, creator, templateId: 4, transactionMessage: baseMessage });
+      if (plan.mode === 'chunked') chunked += 1;
+      for (const item of plan.instructions) {
+        const measured = measureTransactionMessage(appendTransactionMessageInstruction(item.instruction, baseMessage));
+        expect(measured.fits, `${compiled.bytes.length}-byte template, ${item.kind}`).toBe(true);
+      }
+    }
+    expect(chunked).toBeGreaterThan(0);
   });
 
   test('simulates and applies a buffered compute unit limit', async () => {
